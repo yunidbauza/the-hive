@@ -9,16 +9,26 @@ import {
 import type { RunCommand } from '../gh';
 import type { RunAsync } from '../github/run';
 
-import { couldNotRun, failure } from './outcome';
+import { couldNotRun, failure, transcriptFailure } from './outcome';
 import { readSlackStatus } from './status';
+import { withTty } from './tty';
 
 /**
- * Sign-in as a subprocess, not as a terminal (HIVE-123).
+ * Sign-in as a subprocess, with a terminal it never types into (HIVE-123).
  *
- * `claude mcp login` opens the system browser and waits on the callback port;
- * it needs no tty of its own, so a visible PTY pane would show the user a
- * spinner and nothing else. The browser is where the flow actually happens,
- * and the pane reports the outcome.
+ * `claude mcp login` opens the system browser and waits on the callback port,
+ * so a visible PTY pane would show the user a spinner and nothing else. The
+ * browser is where the flow actually happens, and the pane reports the
+ * outcome.
+ *
+ * What it does need is a **controlling terminal**, which is a change and not
+ * an original fact. At 2.1.252 this ran happily on a pipe; at 2.1.259 the CLI
+ * checks `process.stdin.isTTY` when its callback server starts listening and
+ * aborts the flow outright without one, so the sign-in failed with
+ * `stdin isn't a terminal` before the browser could answer — every time,
+ * whatever the user did. `tty.ts` supplies the terminal and explains why it
+ * supplies it the way it does; the sign-in still runs headless, and still
+ * reads nothing from stdin.
  *
  * Two commands rather than one, because `add` is configuration and `login` is
  * the interactive half — and an `add` that genuinely failed must not be
@@ -109,11 +119,17 @@ export async function signInToSlack(
       return failure(added);
     }
 
-    const logged = await run(claude, ['mcp', 'login', SLACK_SERVER_KEY], {
+    /*
+      The one verb here that gets a terminal, and the only one that needs one:
+      the add, the read-back and the remove all answer a pipe perfectly well,
+      and a pty would cost each of them a merged, escape-painted transcript in
+      place of the clean stderr their captions are built from.
+    */
+    const logged = await withTty(run)(claude, ['mcp', 'login', SLACK_SERVER_KEY], {
       timeoutMs: SLACK_SIGN_IN_TIMEOUT_MS,
     });
 
-    if (logged.code !== 0) return failure(logged);
+    if (logged.code !== 0) return transcriptFailure(logged);
   } catch (cause) {
     return couldNotRun(cause);
   }

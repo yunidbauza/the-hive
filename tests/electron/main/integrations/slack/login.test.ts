@@ -8,6 +8,10 @@ import {
   SLACK_SIGN_IN_TIMEOUT_MS,
 } from '../../../../../electron/main/integrations/slack/login';
 import { SILENT_FAILURE, TIMED_OUT } from '../../../../../electron/main/integrations/slack/outcome';
+import {
+  TTY_LAUNCHER,
+  TTY_LAUNCHER_ARGS,
+} from '../../../../../electron/main/integrations/slack/tty';
 import { SLACK_CALLBACK_PORT, SLACK_CLIENT_ID, SLACK_MCP_URL } from '@shared/slack-contract';
 
 /**
@@ -28,6 +32,19 @@ const CONNECTED = 'Status: ✓ Connected';
 const missing = () => ({ code: 1, stdout: '', stderr: 'No MCP server found', timedOut: false });
 
 /**
+ * The `claude` subcommand a call names.
+ *
+ * Read by looking for `mcp` rather than by index, because the sign-in is the
+ * one verb that runs behind a tty launcher (`tty.ts`) and so does not start
+ * its own argv.
+ */
+const verb = (args: readonly string[]): string | undefined => {
+  const mcp = args.indexOf('mcp');
+
+  return mcp === -1 ? undefined : args[mcp + 1];
+};
+
+/**
  * The default runner: everything succeeds, and the read-back says connected.
  *
  * Written as one function over argv rather than a call counter, because the
@@ -35,26 +52,68 @@ const missing = () => ({ code: 1, stdout: '', stderr: 'No MCP server found', tim
  * a counter would silently mean something different in each test.
  */
 const happy = (args: readonly string[]) =>
-  Promise.resolve(args[1] === 'get' ? { ...ok(), stdout: CONNECTED } : ok());
+  Promise.resolve(verb(args) === 'get' ? { ...ok(), stdout: CONNECTED } : ok());
 
 describe('signInToSlack', () => {
   it("adds the server with Slack's own client id, at user scope", async () => {
-    const calls: string[][] = [];
-    const run = (_f: string, args: readonly string[]) => {
-      calls.push([...args]);
+    const calls: { file: string; args: string[] }[] = [];
+    const run = (file: string, args: readonly string[]) => {
+      calls.push({ file, args: [...args] });
 
       return happy(args);
     };
 
     await signInToSlack('claude', run);
 
-    expect(calls[0]).toEqual([
-      'mcp', 'add', '--transport', 'http', 'slack', SLACK_MCP_URL,
-      '--client-id', SLACK_CLIENT_ID,
-      '--callback-port', String(SLACK_CALLBACK_PORT),
-      '--scope', 'user',
-    ]);
-    expect(calls[1]).toEqual(['mcp', 'login', 'slack']);
+    expect(calls[0]).toEqual({
+      file: 'claude',
+      args: [
+        'mcp', 'add', '--transport', 'http', 'slack', SLACK_MCP_URL,
+        '--client-id', SLACK_CLIENT_ID,
+        '--callback-port', String(SLACK_CALLBACK_PORT),
+        '--scope', 'user',
+      ],
+    });
+  });
+
+  /**
+   * The regression this module was rewritten for.
+   *
+   * `claude mcp login` aborts its OAuth flow the moment its callback server
+   * starts listening if `process.stdin.isTTY` is false — measured at 2.1.259,
+   * where 2.1.252 had been happy on a pipe. Spawned straight from main the
+   * sign-in could therefore never succeed, whatever the user did in the
+   * browser. Asserted as the launcher actually leading the argv, because
+   * "runs `mcp login`" is exactly what the broken version also did.
+   */
+  it('gives the sign-in a controlling terminal, which the cli now demands', async () => {
+    const calls: { file: string; args: string[] }[] = [];
+    const run = (file: string, args: readonly string[]) => {
+      calls.push({ file, args: [...args] });
+
+      return happy(args);
+    };
+
+    await signInToSlack('/usr/local/bin/claude', run);
+
+    expect(calls[1]).toEqual({
+      file: TTY_LAUNCHER,
+      args: [...TTY_LAUNCHER_ARGS, '/usr/local/bin/claude', 'mcp', 'login', 'slack'],
+    });
+  });
+
+  /** Only the sign-in. Nothing else in this module waits on a human. */
+  it('leaves the reads and the add on a plain pipe', async () => {
+    const files: string[] = [];
+    const run = (file: string, args: readonly string[]) => {
+      files.push(file);
+
+      return happy(args);
+    };
+
+    await signInToSlack('claude', run);
+
+    expect(files).toEqual(['claude', TTY_LAUNCHER, 'claude']);
   });
 
   /**
@@ -93,7 +152,7 @@ describe('signInToSlack', () => {
       calls.push([...args]);
 
       return Promise.resolve(
-        args[1] === 'get'
+        verb(args) === 'get'
           ? { ...ok(), stdout: 'Status: ! Needs authentication' }
           : ok(),
       );
@@ -120,7 +179,7 @@ describe('signInToSlack', () => {
     const run = (_f: string, args: readonly string[]) => {
       calls.push([...args]);
 
-      if (args[1] === 'add') {
+      if (verb(args) === 'add') {
         return Promise.resolve({
           code: 1,
           stdout: '',
@@ -134,7 +193,7 @@ describe('signInToSlack', () => {
 
     const status = await signInToSlack('claude', run);
 
-    expect(calls.map((args) => args[1])).toEqual(['add', 'get', 'login', 'get']);
+    expect(calls.map(verb)).toEqual(['add', 'get', 'login', 'get']);
     expect(status).toEqual({ kind: 'connected' });
   });
 
@@ -150,7 +209,7 @@ describe('signInToSlack', () => {
       calls.push([...args]);
 
       return Promise.resolve(
-        args[1] === 'add'
+        verb(args) === 'add'
           ? { code: 1, stdout: '', stderr: 'bad url', timedOut: false }
           : missing(),
       );
@@ -158,14 +217,14 @@ describe('signInToSlack', () => {
 
     const status = await signInToSlack('claude', run);
 
-    expect(calls.map((args) => args[1])).toEqual(['add', 'get']);
+    expect(calls.map(verb)).toEqual(['add', 'get']);
     expect(status).toEqual({ kind: 'error', message: 'bad url' });
   });
 
   /** A read-back that cannot answer is not evidence the add was redundant. */
   it('keeps the add’s failure when the read-back is itself broken', async () => {
     const run = (_f: string, args: readonly string[]) =>
-      args[1] === 'add'
+      verb(args) === 'add'
         ? Promise.resolve({ code: 1, stdout: '', stderr: 'bad url', timedOut: false })
         : Promise.reject(new Error('spawn ENOENT'));
 
@@ -178,7 +237,7 @@ describe('signInToSlack', () => {
   it('reports a failed browser flow with the reason the cli gave', async () => {
     const run = (_f: string, args: readonly string[]) =>
       Promise.resolve(
-        args[1] === 'login'
+        verb(args) === 'login'
           ? { code: 1, stdout: '', stderr: 'callback port 3118 is in use', timedOut: false }
           : ok(),
       );
@@ -190,6 +249,34 @@ describe('signInToSlack', () => {
   });
 
   /**
+   * The sign-in reads a **transcript**, not a stderr stream: one pty carries
+   * both, so the banner the CLI opened with is sitting in front of the reason
+   * it stopped. The last line is the outcome; the first line is "Starting
+   * authentication", which is the one thing the user already knows.
+   */
+  it('captions the sign-in from the end of the transcript, not the start', async () => {
+    const transcript = [
+      'Starting authentication for "slack"…',
+      '[mcp-sdk] SEP-2352: stored OAuth credential has no \'issuer\' stamp.',
+      'Visit this URL to authorize:',
+      '  https://slack.com/oauth/v2_user/authorize?client_id=1601185624273',
+      'Waiting for authorization… (^C to cancel)',
+      'Couldn\'t complete authentication for "slack": access_denied',
+    ].join('\n');
+    const run = (_f: string, args: readonly string[]) =>
+      Promise.resolve(
+        verb(args) === 'login'
+          ? { code: 1, stdout: transcript, stderr: '', timedOut: false }
+          : ok(),
+      );
+
+    await expect(signInToSlack('claude', run)).resolves.toEqual({
+      kind: 'error',
+      message: 'Couldn\'t complete authentication for "slack": access_denied',
+    });
+  });
+
+  /**
    * A login that hit its cap has printed "waiting for your browser…" and
    * nothing else. Echoing that as the error would be worse than saying
    * nothing; saying nothing is what it used to do.
@@ -197,7 +284,7 @@ describe('signInToSlack', () => {
   it('names the timeout rather than echoing the waiting message', async () => {
     const run = (_f: string, args: readonly string[]) =>
       Promise.resolve(
-        args[1] === 'login'
+        verb(args) === 'login'
           ? {
               code: -1,
               stdout: 'Opening your browser to complete authentication…',
@@ -216,7 +303,7 @@ describe('signInToSlack', () => {
   it('never leaves the caption blank when the cli fails silently', async () => {
     const run = (_f: string, args: readonly string[]) =>
       Promise.resolve(
-        args[1] === 'get'
+        verb(args) === 'get'
           ? missing()
           : { code: 1, stdout: '', stderr: '', timedOut: false },
       );
