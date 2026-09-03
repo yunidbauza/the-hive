@@ -1095,6 +1095,35 @@ health-checks the server over HTTP**, about 1.7 s measured, so on `gh.ts`'s
 — and two components ask for it on mount. Only `claude mcp remove` stays
 synchronous: a local JSON edit with no network and no model in it.
 
+**`claude mcp login` needs a controlling terminal, and this is a change.** At
+2.1.252 it ran happily on a pipe, which is what the original design rested on:
+the browser is where the flow happens, a loopback callback on port 3118 is what
+ends it, and a visible pane would have shown a spinner. At 2.1.259 the CLI
+checks `process.stdin.isTTY` the moment that callback server starts listening
+and **aborts the flow** without one — before the browser can answer — reporting
+`stdin isn't a terminal, so authentication can't be completed here`. So the
+sign-in failed unconditionally, whatever the user did in Slack. The terminal is
+wanted only for a fallback (pasting the redirect URL by hand), so the fix is to
+supply one and go on ignoring stdin: `slack/tty.ts` runs that one verb behind
+`/usr/bin/script`. Not `node-pty`, which lives in the pty-host process because a
+segfault in a native addon must not be a segfault in main, and not
+`Sessions.openCommand`, which streams to the renderer rather than answering the
+caller — `script` is a system binary on the only platform this app packages
+for, and being a decorator over the same injected `RunAsync` keeps the per-verb
+timeout, the `maxBuffer` cap and the quit `AbortSignal` applying unchanged. Two
+things were measured because the fix would be quietly broken without either:
+the child's exit status propagates through `script`, and killing `script` takes
+the child with it — so a timeout or a quit still releases port 3118.
+
+The cost is that one pty carries both output streams, merged and painted with
+escape sequences. `readTranscript` undoes the painting, and `outcome.ts` grew a
+second caption rule for it: `transcriptFailure` takes the **last** line where
+`failure` takes the first, because a transcript opens with the banner and the
+URL and only ends with the reason it stopped. Both now drop the `[mcp-sdk]`
+warning the SDK prints in front of every answer — it is about how the
+credential was stored, not about the command that ran, and as the first line of
+stderr it was the first thing the settings pane showed for every Slack error.
+
 **`claude mcp add` is not idempotent.** A second add of the same server prints
 `MCP server slack already exists in user config` on stderr and exits 1
 (measured). Treating that as a failed add made an expired token unrecoverable —

@@ -7,7 +7,13 @@ import {
   MAX_MESSAGE_CHARS,
   SILENT_FAILURE,
   TIMED_OUT,
+  transcriptFailure,
 } from '../../../../../electron/main/integrations/slack/outcome';
+
+/** What the mcp sdk prints in front of every answer, whatever the answer is. */
+const NOISE =
+  "[mcp-sdk] SEP-2352: stored OAuth credential has no 'issuer' stamp " +
+  '(pre-upgrade storage or provider not round-tripping the value).';
 
 /**
  * The shared failure shape (HIVE-123).
@@ -77,6 +83,89 @@ describe('failure', () => {
     expect(failure({ stderr: 'no such server', stdout: '' })).toEqual({
       kind: 'error',
       message: 'no such server',
+    });
+  });
+
+  /**
+   * The sdk prints this on every call and prints it *first*, so a caption
+   * built from the head of stderr opened with a paragraph about credential
+   * storage and buried the sentence the user could act on. It is exactly what
+   * the settings pane showed for the sign-in that could not reach a terminal.
+   */
+  it('drops the sdk warning that leads every stream', () => {
+    expect(failure({ stderr: `${NOISE}\nbad url`, stdout: '' })).toEqual({
+      kind: 'error',
+      message: 'bad url',
+    });
+  });
+
+  /**
+   * A stderr carrying nothing but the warning is a stream that said nothing —
+   * so stdout, which did say something, must not stay hidden behind it.
+   */
+  it('reads stdout when the warning was all stderr had', () => {
+    expect(failure({ stderr: NOISE, stdout: 'usage: claude mcp add' })).toEqual({
+      kind: 'error',
+      message: 'usage: claude mcp add',
+    });
+  });
+});
+
+/**
+ * A pty carries stdout and stderr on one stream, so a failing sign-in hands
+ * back its whole session and the reason it stopped is at the **end** of it.
+ */
+describe('transcriptFailure', () => {
+  const transcript = [
+    'Starting authentication for "slack"…',
+    NOISE,
+    'Visit this URL to authorize:',
+    '  https://slack.com/oauth/v2_user/authorize?client_id=1601185624273',
+    '',
+    'Waiting for authorization… (^C to cancel)',
+    'Couldn\'t complete authentication for "slack": access_denied',
+  ].join('\n');
+
+  it('captions from the last line of the session, not the banner it opened with', () => {
+    expect(transcriptFailure({ stdout: transcript, stderr: '' })).toEqual({
+      kind: 'error',
+      message: 'Couldn\'t complete authentication for "slack": access_denied',
+    });
+  });
+
+  it('reads both streams, in the order a terminal would have shown them', () => {
+    expect(
+      transcriptFailure({ stdout: 'Starting…', stderr: 'callback port 3118 is in use' }),
+    ).toEqual({ kind: 'error', message: 'callback port 3118 is in use' });
+  });
+
+  /** A transcript that ends mid-wait is not the error it looks like. */
+  it('still names a timeout rather than the line it was killed on', () => {
+    expect(
+      transcriptFailure({
+        stdout: 'Waiting for authorization… (^C to cancel)',
+        stderr: '',
+        timedOut: true,
+      }),
+    ).toEqual({ kind: 'error', message: TIMED_OUT });
+  });
+
+  it('never returns a blank message', () => {
+    expect(transcriptFailure({ stdout: `\n${NOISE}\n  \n`, stderr: '' })).toEqual({
+      kind: 'error',
+      message: SILENT_FAILURE,
+    });
+  });
+
+  it('caps a runaway line the same way every other caption is capped', () => {
+    const status = transcriptFailure({
+      stdout: `banner\n${'x'.repeat(MAX_MESSAGE_CHARS * 4)}`,
+      stderr: '',
+    });
+
+    expect(status).toEqual({
+      kind: 'error',
+      message: `${'x'.repeat(MAX_MESSAGE_CHARS)}…`,
     });
   });
 });
