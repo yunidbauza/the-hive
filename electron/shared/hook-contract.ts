@@ -420,6 +420,16 @@ export const DONE_PATH = '/done';
  * Quoted, because the shell substitutes the value and a URL must stay a single
  * word. The grant and the body still derive from this one builder, so they
  * cannot drift into a permission prompt inside the app's own built-in.
+ *
+ * **This solves the `exec-env` container and not the `rewrite` one.** Every
+ * other generated artifact can bake a resolved identity for a container whose
+ * environment has gone stale; this one cannot, because the plugin directory is
+ * shared by every session and the body has nowhere per-session to differ. A
+ * reattached `rewrite` container therefore runs `/done` against a creation-time
+ * origin and token, `--fail` makes that a non-zero exit, and the session does
+ * not close. That is a known gap, not an oversight: closing it needs a
+ * per-session plugin directory, which is a cost this story declined to pay for
+ * one line of one file. See `ContainerFreshness`.
  */
 export const doneCommand = (): string =>
   `curl -sS --fail -m 5 -X POST "$${HOOK_ENV_RECEIVER_URL}${DONE_PATH}"` +

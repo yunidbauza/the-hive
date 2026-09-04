@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { mkdtempSync, rmSync } from 'node:fs';
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -199,6 +199,129 @@ describe('writeSessionContainerFiles', () => {
     );
 
     expect(written).toBe(join(dir, CONTAINER_SESSIONS_DIR, 'sess-1'));
+  });
+});
+
+describe('the mode a resolved token is written with', () => {
+  const identity = { session: 'sess-1', token: 'deadbeef' };
+
+  const modeOf = async (path: string): Promise<string> =>
+    ((await stat(path)).mode & 0o777).toString(8);
+
+  it('keeps every rewrite file owner-only, not just the script', async () => {
+    const root = await writeSessionContainerFiles(
+      dir,
+      'sess-1',
+      containerOrigins(ORIGINS, ALIAS),
+      identity,
+    );
+
+    /*
+      All three carry the same live token the script does. A 0644 here is a
+      token any local user can read and authenticate every call with.
+    */
+    expect(await modeOf(join(root, 'claude-hooks.settings.json'))).toBe('600');
+    expect(await modeOf(join(root, 'claude-agent.settings.json'))).toBe('600');
+    expect(await modeOf(join(root, 'hive.mcp.json'))).toBe('600');
+    expect(await modeOf(join(root, 'statusline.sh'))).toBe('700');
+  });
+
+  it('leaves the secret-free exec-env set readable, so it can be mounted', async () => {
+    await writeSharedContainerFiles(dir, containerOrigins(ORIGINS, ALIAS));
+
+    expect(await modeOf(join(dir, 'hive', 'container', 'hive.mcp.json'))).toBe(
+      '644',
+    );
+  });
+
+  it('tightens a file that already existed at the looser mode', async () => {
+    /*
+      `writeFile`'s mode applies only on create. The shared set is written first
+      here, so the per-session path would inherit 0644 without the explicit
+      chmod — and would keep it for the rest of the file's life.
+    */
+    const root = join(dir, CONTAINER_SESSIONS_DIR, 'sess-1');
+
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, 'hive.mcp.json'), '{}', {
+      encoding: 'utf8',
+      mode: 0o644,
+    });
+
+    await writeSessionContainerFiles(
+      dir,
+      'sess-1',
+      containerOrigins(ORIGINS, ALIAS),
+      identity,
+    );
+
+    expect(await modeOf(join(root, 'hive.mcp.json'))).toBe('600');
+  });
+});
+
+describe('the options only the placing caller knows', () => {
+  const identity = { session: 'sess-1', token: 'deadbeef' };
+
+  it('carries the run into a rewrite config, so concurrent runs stay apart', async () => {
+    const root = await writeSessionContainerFiles(
+      dir,
+      'sess-1',
+      containerOrigins(ORIGINS, ALIAS),
+      identity,
+      { run: 'run-7' },
+    );
+
+    const mcp = JSON.parse(
+      await readFile(join(root, 'hive.mcp.json'), 'utf8'),
+    ) as { mcpServers: { hive: { headers: Record<string, string> } } };
+
+    expect(mcp.mcpServers.hive.headers['x-hive-run']).toBe('run-7');
+  });
+
+  it('sends an empty run for a pty session, which the route reads as absent', async () => {
+    const root = await writeSessionContainerFiles(
+      dir,
+      'sess-1',
+      containerOrigins(ORIGINS, ALIAS),
+      identity,
+    );
+
+    const mcp = JSON.parse(
+      await readFile(join(root, 'hive.mcp.json'), 'utf8'),
+    ) as { mcpServers: { hive: { headers: Record<string, string> } } };
+
+    expect(mcp.mcpServers.hive.headers['x-hive-run']).toBe('');
+  });
+
+  it('names the status line script where the container will see it', async () => {
+    await writeSharedContainerFiles(dir, containerOrigins(ORIGINS, ALIAS), {
+      containerRoot: '/opt/hive',
+    });
+
+    const settings = JSON.parse(
+      await readFile(
+        join(dir, 'hive', 'container', 'claude-hooks.settings.json'),
+        'utf8',
+      ),
+    ) as { statusLine: { command: string } };
+
+    expect(settings.statusLine.command).toContain('/opt/hive/statusline.sh');
+    expect(settings.statusLine.command).not.toContain(dir);
+  });
+
+  it('falls back to the real path, which is right for a same-path mount', async () => {
+    await writeSharedContainerFiles(dir, containerOrigins(ORIGINS, ALIAS));
+
+    const settings = JSON.parse(
+      await readFile(
+        join(dir, 'hive', 'container', 'claude-hooks.settings.json'),
+        'utf8',
+      ),
+    ) as { statusLine: { command: string } };
+
+    expect(settings.statusLine.command).toContain(
+      join(dir, 'hive', 'container', 'statusline.sh'),
+    );
   });
 });
 

@@ -71,6 +71,15 @@ export interface HookRuntimeOptions {
    * whatever it said at boot. Injected rather than read from `../config`
    * directly, which is what keeps this runtime's job the receiver's lifecycle
    * and nothing else.
+   *
+   * **A reload does not rewrite the files already on disk.** This is read once
+   * per `start()` for the generated set, and live by
+   * {@link HookRuntime.containerOrigin}. So after a reload that changes the
+   * alias, a containerised session would reach the receiver over MCP at the new
+   * one while its hook settings still name the old — ledger calls working,
+   * status and inbox events going nowhere. Rewriting the set on
+   * `config:reload` belongs with the story that makes anything read it
+   * (HIVE-133); until then nothing consumes either value in production.
    */
   hostAlias?: () => string;
   /** Overridable for tests; `0` asks the OS for a free port. */
@@ -340,16 +349,45 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
           — and each holds a resolved token that a new `launchSecret` has
           already invalidated.
         */
-        try {
-          const alias = hostAlias();
+        /*
+          Its own `try`, ahead of the write and never blocking it. `rm` with
+          `force` swallows a missing path but not `EPERM` or `EBUSY`, and a
+          single undeletable orphan must not be the reason this launch has no
+          container set at all — that would be a cleanup task blocking the work,
+          reported under a message about the work.
 
+          `[]` keeps nothing, and that is correct *here* rather than in general:
+          `start()` runs once per app launch, before any session is spawned, so
+          every directory under it belongs to a previous launch — and each holds
+          a token that this launch's new `launchSecret` has already invalidated.
+          A caller that ran this with sessions live would have to pass them.
+        */
+        try {
           await sweepSessionContainerFiles(userDataPath, []);
+        } catch (cause) {
+          console.info(
+            `[hive] stale container session files could not be swept (${String(cause)})`,
+          );
+        }
+
+        try {
+          if (created.origin === null) {
+            /*
+              No origin means no honest container set: every URL in it is built
+              from one. `envFor` handles the same case by omitting
+              `HIVE_RECEIVER_URL` rather than substituting `url`, whose `/hook`
+              suffix would make the MCP endpoint `…/hook/mcp` — a 404 on every
+              call, with nothing anywhere to say why.
+            */
+            throw new Error('the receiver bound without an origin');
+          }
+
           await writeSharedContainerFiles(
             userDataPath,
             containerOrigins(
               {
                 url,
-                origin: created.origin ?? url,
+                origin: created.origin,
                 ...(sessionMetrics() && created.metricsUrl !== null
                   ? { metricsUrl: created.metricsUrl }
                   : {}),
@@ -357,7 +395,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
                   ? {}
                   : { readyUrl: created.readyUrl }),
               },
-              alias,
+              hostAlias(),
             ),
           );
         } catch (cause) {

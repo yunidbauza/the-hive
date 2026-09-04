@@ -468,6 +468,27 @@ describe('hookSettings — freshness (HIVE-132)', () => {
     expect(emitted).toContain(`$${HOOK_ENV_TOKEN}`);
     expect(emitted).not.toContain('deadbeef');
   });
+
+  /*
+    The bytes, not a substring. `toContain` would survive a reordered key or an
+    `allowedEnvVars` that moved position — and JSON key order is exactly what
+    changed shape here, since that field became a conditional spread. This is
+    the artifact the no-host-change criterion most depends on, so it is pinned
+    the way `metricsScript` is: one hand-written expectation, compared whole.
+  */
+  it('serialises with the key order it had before the freshness parameter', () => {
+    const handler = (
+      hookSettings('http://127.0.0.1:63999/hook').hooks.Stop as {
+        hooks: Record<string, unknown>[];
+      }[]
+    )[0]!.hooks[0]!;
+
+    expect(JSON.stringify(handler)).toBe(
+      '{"type":"http","url":"http://127.0.0.1:63999/hook",' +
+        '"headers":{"x-hive-session":"$HIVE_SESSION_ID","x-hive-token":"$HIVE_HOOK_TOKEN"},' +
+        '"allowedEnvVars":["HIVE_SESSION_ID","HIVE_HOOK_TOKEN"],"timeout":10}',
+    );
+  });
 });
 
 describe('metricsScript — freshness (HIVE-132)', () => {

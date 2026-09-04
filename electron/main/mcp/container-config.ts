@@ -25,6 +25,14 @@ import { MCP_PATH, MCP_SERVER_NAME } from '@shared/mcp-contract';
  * `--strict-mcp-config` is passed on every wake (`agents/waker.ts:234`), which
  * makes this file the *entire* server set a run can see. It is therefore
  * emitted complete, never as something to merge.
+ *
+ * "Complete" means the hive server and nothing else, which is the whole set for
+ * a session and **not** for an agent that names an integration. Pointing a wake
+ * at this file directly would silently drop that agent's Slack server; the
+ * route for an agent is `agentMcpConfig`, handed
+ * {@link containerHiveServerSpec} as its hive descriptor — which is why
+ * `McpServerSpec` became a stdio-or-http union rather than this module growing
+ * an integrations parameter of its own.
  */
 
 /** The HTTP descriptor, the counterpart to `config.ts`'s stdio one. */
