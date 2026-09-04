@@ -374,7 +374,7 @@ describe('strip orientation', () => {
       </TooltipProvider>,
     );
 
-    expect(screen.getByRole('tablist')).toHaveClass('gap-4');
+    expect(screen.getByRole('tablist')).toHaveClass('gap-2.5');
     expect(screen.getByRole('tablist')).not.toHaveClass('gap-0.5');
   });
 

@@ -400,16 +400,17 @@ export function AgentsSection() {
       <SettingsSectionHeader title="Agents" description={description} />
 
       {/*
-        220px, not the 150 this pane inherited from `skills-section.tsx`.
+        190px, not the 150 this pane inherited from `skills-section.tsx`.
 
         A skill row is one word. An agent row is four things — its icon, a
         monospace name, its status, and an `edited` flag — and at 150 the middle
         two collided: `pr-patrol` ran straight into `paused` with no gap between
         them, and a name any longer than that ellipsised on a pane with 500px
-        of unused width beside it. The detail pane gives up 70px it was not
-        short of.
+        of unused width beside it. The detail pane gives up 40px it was not
+        short of — enough for the longest name a row realistically carries, and
+        no more, because every pixel here comes out of the form beside it.
       */}
-      <div className="grid min-h-0 flex-1 grid-cols-[220px_minmax(0,1fr)] gap-3">
+      <div className="grid min-h-0 flex-1 grid-cols-[190px_minmax(0,1fr)] gap-3">
         <div className="flex flex-col overflow-y-auto rounded-[7px] border border-border">
           {agents.map((agent) => {
             const active = agent.name === open;

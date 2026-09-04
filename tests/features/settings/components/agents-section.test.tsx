@@ -144,7 +144,7 @@ describe('AgentsSection', () => {
       const target = await screen.findByRole('button', { name: /slack-watcher/ });
 
       expect(target.parentElement?.parentElement).toHaveClass(
-        'grid-cols-[220px_minmax(0,1fr)]',
+        'grid-cols-[190px_minmax(0,1fr)]',
       );
     });
 
