@@ -169,6 +169,24 @@ describe('AgentRunLog', () => {
 
       expect(divider()).toBeInTheDocument();
     });
+
+    /*
+      Both sides of this seam are the same black, so a 1px rule in
+      `border-soft` is indistinguishable from the row rules a few pixels above
+      it — the divider between two documents read as one more receipts row. A
+      band of the panel ground is the one thing a rule sharing that black
+      cannot be, and the grip is the first time the control has looked like
+      something you can drag.
+    */
+    it('draws the seam as a gutter with a grip, not as a row rule', () => {
+      seed({ runs: [run(1)] });
+
+      const { container } = render(<AgentRunLog name="watcher" />);
+
+      expect(divider()).toHaveClass('h-3', 'bg-bg');
+      expect(divider()).not.toHaveClass('bg-border-soft');
+      expect(container.querySelectorAll('.rounded-full')).toHaveLength(3);
+    });
   });
 
   describe('the two regions', () => {
@@ -844,6 +862,50 @@ describe('AgentRunLog', () => {
 
       expect(label).toBeInTheDocument();
       expect(label).not.toHaveClass('uppercase');
+    });
+
+    /*
+      One run ran into the next. The boundary between two runs used to be a
+      hairline with 4px above it — *less* air than the turns inside a single run
+      get — so `#8ba21108` began before the eye had registered that `#fa6a1df7`
+      had ended, which is the complaint this pins. Space is the separator now,
+      and it has to be visibly larger than the space within a run for the
+      nesting to read at all.
+    */
+    it('separates one run from the next with space, not a hairline', () => {
+      seed({ status: 'working', live: [task(1, 'review PR 166'), standing()] });
+      lines(['task line'], 'live-task-1');
+      lines(['standing line'], 'live-standing');
+
+      render(<AgentRunLog name="watcher" />);
+
+      const group = within(screen.getByTestId('run-output'))
+        .getByText(/task · #live-tas/)
+        .closest('div[class*="pt-["]');
+
+      expect(group).toHaveClass('pt-[18px]', 'pb-2');
+      expect(group).not.toHaveClass('border-t');
+    });
+
+    /*
+      The id is the mark that says a different run starts here, and it used to
+      render at `palette.dim` — the colour of the column headings and of the
+      empty state — which made it the quietest thing in the block it opened. It
+      wears the blue the same id already wears in the receipts table now, in a
+      chip, so a header can never be read as a line of output.
+    */
+    it('draws the run id as a chip in the colour its receipt uses', () => {
+      seed({ status: 'working', live: [standing()] });
+      lines(['standing line'], 'live-standing');
+
+      render(<AgentRunLog name="watcher" />);
+
+      const label = within(screen.getByTestId('run-output')).getByText(
+        /standing · #live-sta/,
+      );
+
+      expect(label).toHaveClass('bg-hover');
+      expect(label).toHaveStyle({ color: '#8fb5ff' });
     });
 
     it('keeps lines with no run tag together at the end', () => {

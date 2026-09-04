@@ -3,6 +3,10 @@ import { writeFileSync } from 'node:fs';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 
 import { selectRailTab } from '../fixtures/rail-tabs';
+import {
+  expectAgentSource,
+  fillAgentSource,
+} from './fixtures/agent-source';
 import { launchHive } from './fixtures/hive-app';
 
 /**
@@ -68,7 +72,7 @@ async function authorAgent(page: Page): Promise<void> {
 
   await page.getByRole('button', { name: '+ New agent' }).click();
   await page.getByRole('tab', { name: 'Source' }).click();
-  await page.getByLabel('Agent source').fill(DEFINITION);
+  await fillAgentSource(page, DEFINITION);
   await page.getByRole('button', { name: 'Save' }).click();
 
   await expect(page.getByRole('button', { name: /slack-watcher/ })).toBeVisible();
@@ -124,12 +128,8 @@ test('accepts spaces typed into the agent form fields', async ({}, testInfo) => 
   */
   await page.getByRole('tab', { name: 'Source' }).click();
 
-  await expect(page.getByLabel('Agent source')).toHaveValue(
-    /description: watches my open PRs/,
-  );
-  await expect(page.getByLabel('Agent source')).toHaveValue(
-    /tools: \[Bash\(gh \*\), Read\]/,
-  );
+  await expectAgentSource(page, /description: watches my open PRs/);
+  await expectAgentSource(page, /tools: \[Bash\(gh \*\), Read\]/);
 
   await app.close();
 });

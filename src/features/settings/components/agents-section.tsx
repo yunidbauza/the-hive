@@ -11,26 +11,26 @@ import {
   saveAgent,
 } from '@/lib/agents';
 
+import { Icon } from '@components/ui/icon';
 import { SwarmCreature } from '@components/ui/swarm-creature';
 import { AgentEditor } from '@features/settings/components/agent-editor';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
 import { SkillDiscardConfirm } from '@features/settings/components/skill-discard-confirm';
 import { useAgents } from '@hooks/use-agents';
-import { readSlackStatus } from '@lib/slack';
 import {
   AGENT_NAME_PATTERN,
   isReservedAgentName,
   type AgentProblem,
 } from '@shared/agent-contract';
-import type { SlackStatus } from '@shared/slack-contract';
 import { agentRunQueued, agentRunRefusal } from '@stores/hive-store';
 
 /**
  * The Agents section of settings (HIVE-114).
  *
- * `skills-section.tsx`'s skeleton — master–detail, 150px list beside the
- * editor — with three deliberate differences, each earned rather than
- * inherited:
+ * `skills-section.tsx`'s skeleton — master–detail, a list beside the editor —
+ * with three deliberate differences, each earned rather than inherited (and a
+ * fourth in the list itself: it is wider, and its rows carry the agent's icon,
+ * because an agent row says four things where a skill row says one):
  *
  * 1. **A broken definition can be opened.** An invalid *skill*'s row is
  *    disabled because main could not read a name out of the file, so there was
@@ -70,8 +70,7 @@ import { agentRunQueued, agentRunRefusal } from '@stores/hive-store';
  * phrasing that `wakePrompt` dropped for naming no work. A user who kept the
  * seeded body got an agent whose standing instructions said nothing to carry
  * out, one screen after the Source tab told them to write instructions rather
- * than a description. `slackWatcherTemplate` below is the worked version of the
- * same shape.
+ * than a description.
  */
 const templateFor = (taken: readonly string[]): string => `---
 name: ${nextAgentName(taken)}
@@ -84,59 +83,6 @@ autonomy: ask
 ---
 
 Watch … , and when you find … , do … .
-`;
-
-/**
- * The example this epic exists to demonstrate (HIVE-123).
- *
- * Three things in it are load-bearing and must not be "tidied":
- *
- * `check: always` — an onchange agent wakes only when the *ledger* changed,
- * and this agent's change lives in Slack, where this process cannot see it.
- * With `onchange` it would never wake at all.
- *
- * `mcp__slack__*` in `tools:` — `mcp:` puts the server in the process;
- * `tools:` is the grant HIVE-119 made a real fence. Naming only `mcp: [slack]`
- * produces an agent that can see Slack's tools and is denied every one.
- *
- * `autonomy: ask` plus the body's instruction — nothing in the preamble stops
- * an agent posting to Slack unasked, so the instruction to ask first is this
- * file's own and belongs in its body.
- *
- * `icon` deliberately reads `ph-slack-logo`, not the brief's
- * `ph-chat-teardrop-dots` — the icon registry (`components/ui/icon.tsx`'s
- * `GLYPHS`) has no entry for the latter, so it would draw the fallback
- * question mark on the very row meant to demonstrate the feature. Slack's own
- * logo was already registered for this purpose (see "Agents (033)" there).
- */
-const slackWatcherTemplate = (): string => `---
-name: slack-watcher
-description: Watches my Slack mentions and drafts replies for me to approve
-icon: ph-slack-logo
-wake:
-  every: 5m
-  check: always
-  on: [ledger, slack.mention]
-mcp: [slack]
-tools: [Read, Grep, mcp__slack__*]
-autonomy: ask
-limits:
-  turns: 40
-  budget_usd: 0.50
-  rotate_after: 50
----
-
-You watch my Slack mentions.
-
-On every wake, read your ledger inbox first. Then search Slack for messages that
-mention me since your last run. For each one that needs a reply, draft it and ask
-me to approve it with ledger_ask, putting the draft in the quote and offering
-approve / edit / reject. Never post to Slack before I have approved the words.
-
-When I approve, post the reply as me, then post one ledger_done naming the thread,
-passing the permalink of what you posted as meta: { slack: { permalink: "…" } }.
-That exact key is what turns the card into a link to your message. If nothing
-mentions me, end your turn silently.
 `;
 
 /** Why this name cannot be saved, or `null`. Mirrors main's own rules. */
@@ -176,30 +122,8 @@ export function AgentsSection() {
    * one agent cannot be read as being about the next.
    */
   const [runNotice, setRunNotice] = useState<string | null>(null);
-  /** Gates the Slack-watcher example below. `null` until the read resolves. */
-  const [slackStatus, setSlackStatus] = useState<SlackStatus | null>(null);
-
   useEffect(() => {
     void loadAgents();
-  }, []);
-
-  /*
-    Read on mount only, mirroring `slack-group.tsx`'s own effect: `claude mcp
-    get slack`, parsed, answers in well under a second and spends no model
-    turn. `testSlack()` is never called here — that is the one verb that
-    spends a real model turn, and this pane only needs to know whether Slack
-    is connected, not whether every tool call currently succeeds.
-  */
-  useEffect(() => {
-    let cancelled = false;
-
-    void readSlackStatus().then((next) => {
-      if (!cancelled) setSlackStatus(next);
-    });
-
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   const agents = snapshot?.agents ?? [];
@@ -312,32 +236,6 @@ export function AgentsSection() {
         setBuffer(templateFor(allNames));
         // Never equal to the buffer, so a fresh template counts as unsaved —
         // which it is: nothing has been written.
-        setSaved(null);
-        setProblems([]);
-        setRunNotice(null);
-      },
-      discardQuestion,
-      discardDetail,
-      'Discard',
-    );
-  };
-
-  /*
-    Both conditions gate the button below: Slack must actually be reachable
-    (`connected` — not `pending-approval`, which still fails every tool call),
-    and there must be no agent already claiming the name the template writes,
-    or "create the example" would silently collide with one the user wrote
-    themselves.
-  */
-  const showSlackExample =
-    slackStatus?.kind === 'connected' &&
-    !allNames.includes('slack-watcher');
-
-  const createSlackWatcher = (): void => {
-    guard(
-      () => {
-        setOpen(null);
-        setBuffer(slackWatcherTemplate());
         setSaved(null);
         setProblems([]);
         setRunNotice(null);
@@ -488,15 +386,6 @@ export function AgentsSection() {
             + New agent
           </button>
 
-          {showSlackExample && (
-            <button
-              type="button"
-              onClick={createSlackWatcher}
-              className="w-fit rounded-md border border-border px-3 py-1.5 text-[12.5px] text-brand hover:bg-hover"
-            >
-              Create example: Slack watcher
-            </button>
-          )}
         </div>
 
         <p className="mt-auto pt-2 text-[11px] text-subtle">
@@ -510,7 +399,18 @@ export function AgentsSection() {
     <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-hidden px-5 py-4">
       <SettingsSectionHeader title="Agents" description={description} />
 
-      <div className="grid min-h-0 flex-1 grid-cols-[150px_minmax(0,1fr)] gap-3">
+      {/*
+        190px, not the 150 this pane inherited from `skills-section.tsx`.
+
+        A skill row is one word. An agent row is four things — its icon, a
+        monospace name, its status, and an `edited` flag — and at 150 the middle
+        two collided: `pr-patrol` ran straight into `paused` with no gap between
+        them, and a name any longer than that ellipsised on a pane with 500px
+        of unused width beside it. The detail pane gives up 40px it was not
+        short of — enough for the longest name a row realistically carries, and
+        no more, because every pixel here comes out of the form beside it.
+      */}
+      <div className="grid min-h-0 flex-1 grid-cols-[190px_minmax(0,1fr)] gap-3">
         <div className="flex flex-col overflow-y-auto rounded-[7px] border border-border">
           {agents.map((agent) => {
             const active = agent.name === open;
@@ -527,16 +427,37 @@ export function AgentsSection() {
                 */
                 onClick={() => openAgent(agent.name)}
                 title={broken ? agent.invalid : undefined}
-                className={`flex items-center justify-between gap-2 border-b border-border-soft px-2.5 py-1.5 text-left text-[12.5px] last:border-b-0 hover:bg-hover hover:text-ink ${
+                /*
+                  Not `justify-between`. With two children it read as "name
+                  left, status right"; the icon made three, and the spare width
+                  the wider list bought went *between the glyph and the name it
+                  belongs to*. The identity is one group pinned left — glyph
+                  then name — and the status is what floats to the far edge.
+                */
+                className={`flex items-center gap-2 border-b border-border-soft px-2.5 py-1.5 text-left text-[12.5px] last:border-b-0 hover:bg-hover hover:text-ink ${
                   active ? 'bg-active text-ink' : 'text-muted'
                 }`}
               >
+                {/*
+                  The agent's own glyph, from `icon:` in its frontmatter — the
+                  same field the form edits two panes away, and already on
+                  `AgentSummary`, so it costs no round trip. It is what makes
+                  the list scannable rather than read: a fleet of five agents is
+                  five shapes before it is five names.
+                */}
+                <Icon
+                  name={agent.icon}
+                  size={14}
+                  className="shrink-0 text-brand"
+                />
                 <span className="truncate font-mono">{agent.name}</span>
                 {broken ? (
-                  <span className="shrink-0 text-[11px] text-amber">invalid</span>
+                  <span className="ml-auto shrink-0 text-[11px] text-amber">
+                    invalid
+                  </span>
                 ) : (
                   <span
-                    className="shrink-0 text-[11px] text-subtle"
+                    className="ml-auto shrink-0 text-[11px] text-subtle"
                     title={
                       agent.wake.everyMs === undefined &&
                       agent.wake.on.length === 0
@@ -562,15 +483,6 @@ export function AgentsSection() {
             + New agent
           </button>
 
-          {showSlackExample && (
-            <button
-              type="button"
-              onClick={createSlackWatcher}
-              className="border-t border-border-soft px-2.5 py-1.5 text-left text-[11.5px] text-brand hover:bg-hover"
-            >
-              Create example: Slack watcher
-            </button>
-          )}
         </div>
 
         {buffer === null ? (

@@ -80,6 +80,16 @@ export interface EditorSurfaceProps {
   onChange: (text: string) => void;
   /** ⌘S / Ctrl+S. Bound here so it fires even while the editor holds focus. */
   onSave: () => void;
+  /**
+   * What this editor is editing, for screen readers.
+   *
+   * CodeMirror gives its content a `textbox` role but nothing to call it, so
+   * an unnamed surface announces as "edit text" and nothing more. The explorer
+   * can leave it off — its editor sits under a tab strip naming the open file,
+   * which is the accessible context — but a surface mounted somewhere with no
+   * such heading has to name itself. Settings' agent Source tab passes it.
+   */
+  ariaLabel?: string;
 }
 
 /** The compartment the lazily-loaded grammar lands in. */
@@ -118,6 +128,7 @@ export function EditorSurface({
   tabWidth,
   onChange,
   onSave,
+  ariaLabel,
 }: EditorSurfaceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -165,6 +176,7 @@ export function EditorSurface({
     wordWrap,
     lineNumbers,
     tabWidth,
+    ariaLabel ?? '',
   ].join('|');
 
   /**
@@ -235,6 +247,9 @@ export function EditorSurface({
        * `readOnly` note in `center-stage.tsx`.
        */
       EditorView.editable.of(!readOnly),
+      ...(ariaLabel === undefined
+        ? []
+        : [EditorView.contentAttributes.of({ 'aria-label': ariaLabel })]),
       EditorView.theme({
         '&': { fontSize: `${fontSize}px` },
         '.cm-content, .cm-gutters': { fontFamily },
@@ -320,7 +335,18 @@ export function EditorSurface({
     trim(statesRef.current, fileKey);
     activeKeyRef.current = fileKey;
     view.setState(state);
-  }, [fileKey, value, configKey, readOnly, fontFamily, fontSize, wordWrap, lineNumbers, tabWidth]);
+  }, [
+    fileKey,
+    value,
+    configKey,
+    readOnly,
+    fontFamily,
+    fontSize,
+    wordWrap,
+    lineNumbers,
+    tabWidth,
+    ariaLabel,
+  ]);
 
   /**
    * The grammar, once its chunk arrives.

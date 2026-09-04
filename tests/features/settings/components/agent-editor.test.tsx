@@ -1,8 +1,9 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import { AgentEditor } from '@features/settings/components/agent-editor';
+import { surfaceText } from '@tests/support/editor-surface';
 
 import type { AgentProblem } from '@shared/agent-contract';
 
@@ -205,9 +206,7 @@ describe('AgentEditor', () => {
 
       await userEvent.click(screen.getByRole('tab', { name: 'Source' }));
 
-      expect(screen.getByRole('textbox', { name: 'Agent source' })).toHaveValue(
-        SOURCE,
-      );
+      expect(surfaceText('Agent source')).toBe(SOURCE);
     });
 
     it('edits the buffer from the Source tab too', async () => {
@@ -230,9 +229,7 @@ describe('AgentEditor', () => {
       rerender(<AgentEditor {...props} source={edited} />);
       await userEvent.click(screen.getByRole('tab', { name: 'Source' }));
 
-      expect(screen.getByRole('textbox', { name: 'Agent source' })).toHaveValue(
-        edited,
-      );
+      expect(surfaceText('Agent source')).toBe(edited);
     });
   });
 
@@ -374,6 +371,64 @@ describe('AgentEditor', () => {
 
       render(<AgentEditor {...props} />);
       expect(screen.getByText('saved')).toBeInTheDocument();
+    });
+  });
+
+  /*
+    The Source tab is the explorer's own editor now, not a textarea, and the
+    three things that buys are the reason: a gutter (the footer reports problems
+    by line), the floating find panel, and ⌘S bound *inside* the view — the only
+    place a save shortcut can be bound and still fire while CodeMirror holds
+    focus.
+  */
+  describe('the Source tab is a real editor', () => {
+    it('numbers the lines', async () => {
+      const { container } = render(<AgentEditor {...props} />);
+      await userEvent.click(screen.getByRole('tab', { name: 'Source' }));
+
+      expect(container.querySelector('.cm-lineNumbers')).not.toBeNull();
+    });
+
+    it('saves on ⌘S while the editor holds focus', async () => {
+      const onSave = vi.fn();
+      render(<AgentEditor {...props} onSave={onSave} />);
+      await userEvent.click(screen.getByRole('tab', { name: 'Source' }));
+
+      fireEvent.keyDown(screen.getByRole('textbox', { name: 'Agent source' }), {
+        key: 's',
+        metaKey: true,
+      });
+
+      /*
+        Once, not twice. CodeMirror prevents the default when it handles the
+        key and the event still bubbles to the frame's own listener — and a
+        second save is not harmless here, because a rename goes through a
+        different bridge call than a write.
+      */
+      expect(onSave).toHaveBeenCalledTimes(1);
+    });
+
+    it('saves on ⌘S from the Form tab too, where there is no editor', () => {
+      const onSave = vi.fn();
+      render(<AgentEditor {...props} onSave={onSave} />);
+
+      fireEvent.keyDown(screen.getByRole('textbox', { name: 'name' }), {
+        key: 's',
+        metaKey: true,
+      });
+
+      expect(onSave).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves every other key to whatever is focused', () => {
+      const onSave = vi.fn();
+      render(<AgentEditor {...props} onSave={onSave} />);
+
+      fireEvent.keyDown(screen.getByRole('textbox', { name: 'name' }), {
+        key: 's',
+      });
+
+      expect(onSave).not.toHaveBeenCalled();
     });
   });
 });

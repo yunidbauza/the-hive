@@ -455,10 +455,22 @@ export function AgentRunLog({ name }: AgentRunLogProps) {
         heading on a finished log, the output itself on a live one. Only when
         there are receipts to divide from: a log that is one empty-state line
         has nothing on either side of a seam.
+
+        **A gutter, not a hairline**, and the reason is that both sides of this
+        particular seam are the same black. A 1px rule in `border-soft` is
+        exactly what separates one receipt row from the next a few pixels above,
+        so the divider between two *documents* read as one more row of the
+        table. A 12px band of the panel ground cuts the black in two, which is
+        the one thing a rule sharing that black cannot do — and `-mx-2.5`
+        carries it out through the log's own padding so it spans edge to edge
+        rather than floating inside the text column. `grip` puts the dots in it;
+        the handle has been draggable since HIVE-116 and never looked it.
       */}
       {!hasReceipts ? null : (
         <SplitHandle
           axis="horizontal"
+          grip
+          className="-mx-2.5 h-3 bg-bg"
           containerRef={halves}
           label="Resize the run receipts"
           value={split}
@@ -484,7 +496,7 @@ export function AgentRunLog({ name }: AgentRunLogProps) {
           now, and a hairline under a hairline read as a 2px seam.
         */
         <p
-          className="shrink-0 pt-1.5 pb-0.5 text-[0.85em] tracking-[0.1em] uppercase"
+          className="shrink-0 pt-2 pb-0.5 text-[0.85em] tracking-[0.1em] uppercase"
           style={{ color: palette.dim }}
         >
           Latest output
@@ -505,8 +517,18 @@ export function AgentRunLog({ name }: AgentRunLogProps) {
         ) : (
           groups.map((group, groupIndex) => (
             <div
+              /*
+                **Space is the separator here, not the rule.** A run boundary
+                used to be a hairline with 4px above it, which is less air than
+                the turns *inside* a run get — so one run's fold and the next
+                run's id sat a line apart and `#8ba21108` began before the eye
+                had registered that `#fa6a1df7` had ended. 18px above and 8px
+                below makes the gap between runs plainly larger than any gap
+                within one, which is the only way a reader tells nesting apart
+                without reading. The rule moves onto the label's own line below.
+              */
               key={group.key}
-              className="border-t border-border-soft pt-1 pb-0.5 first:border-t-0 first:pt-0"
+              className="pt-[18px] pb-2 first:pt-0"
             >
               {/*
                 Which run is talking. Unlabelled for the untagged group, because
@@ -522,12 +544,31 @@ export function AgentRunLog({ name }: AgentRunLogProps) {
                 prompt back at whoever typed it.
               */}
               {group.label === null ? null : (
-                <p
-                  className="text-[0.85em] tracking-[0.1em]"
-                  style={{ color: palette.dim }}
-                >
-                  {group.label}
-                </p>
+                /*
+                  A chip and a rule, rather than a dim line of text.
+
+                  The id used to render at `palette.dim` — the colour of the
+                  column headings and of the empty state — so the one mark that
+                  says *a different run starts here* was the quietest thing in
+                  the block it opened. It takes `palette.blue` now, which is
+                  what the same id already wears in the receipts table above, so
+                  a reader following one run down the pane sees one colour for
+                  it in both halves. The chip fill and the rule running off to
+                  the right are the shape: a header can no longer be mistaken
+                  for a line of output, whatever it happens to say.
+                */
+                <div className="flex items-center gap-2 pb-1">
+                  <p
+                    className="rounded bg-hover px-1.5 py-px text-[0.85em] tracking-[0.06em]"
+                    style={{ color: palette.blue }}
+                  >
+                    {group.label}
+                  </p>
+                  <span
+                    aria-hidden="true"
+                    className="h-px flex-1 bg-border-soft"
+                  />
+                </div>
               )}
 
               {group.turns.map((turn, turnIndex) => (

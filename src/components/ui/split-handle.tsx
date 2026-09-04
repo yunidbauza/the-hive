@@ -61,6 +61,25 @@ interface SplitHandleProps {
    */
   collapseBelow?: number;
   onCollapse?: () => void;
+  /**
+   * Draw the seam as a **gutter with a grip** rather than as a hairline.
+   *
+   * The default appearance is a 1px rule with a 5px invisible hit area, which
+   * is right where the seam divides two surfaces that already look different —
+   * the editor's panes, a rail against the stage. It is wrong where both sides
+   * are the same black: in the agent run log the receipts table and the output
+   * share one ground, so a hairline in `border-soft` is indistinguishable from
+   * the row rules a few pixels above it, and the divider read as one more table
+   * row (HIVE polish). A caller passing this sizes the handle itself — 12px of
+   * band, filled from its own `className` — and gets three dots centred in it
+   * instead of the rule, which is also the first time this control has looked
+   * draggable.
+   *
+   * The hover and focus fills move to the dots for the same reason: a 12px band
+   * flooding brand-blue is a much louder answer to a pointer than a hairline
+   * doing it.
+   */
+  grip?: boolean;
   /** Extra classes for positioning — the rails absolutely-position their handle. */
   className?: string;
 }
@@ -112,6 +131,7 @@ export function SplitHandle({
   onReset,
   collapseBelow,
   onCollapse,
+  grip = false,
   className,
 }: SplitHandleProps) {
   const vertical = axis === 'vertical';
@@ -340,19 +360,39 @@ export function SplitHandle({
           the 1px target the enlarged area exists to avoid, which a browser test
           reports as the neighbouring pane "intercepting pointer events".
         */
-        'group relative z-10 shrink-0 bg-border-soft focus-visible:bg-brand focus-visible:outline-none',
+        'group relative z-10 shrink-0 focus-visible:outline-none',
+        grip ? '' : 'bg-border-soft focus-visible:bg-brand',
         vertical ? 'w-px cursor-col-resize' : 'h-px cursor-row-resize',
         className,
       )}
     >
-      {/* The hit area. Transparent, centred on the hairline, five times wider. */}
-      <span
-        aria-hidden="true"
-        className={cn(
-          'absolute group-hover:bg-brand',
-          vertical ? '-inset-x-[2px] inset-y-0' : 'inset-x-0 -inset-y-[2px]',
-        )}
-      />
+      {grip ? (
+        /*
+          The grip. Three dots centred in the band the caller sized, and the
+          only thing that answers the pointer here — see {@link
+          SplitHandleProps.grip} on why the fill cannot stay on the band itself.
+        */
+        <span
+          aria-hidden="true"
+          className={cn(
+            'pointer-events-none absolute inset-0 flex items-center justify-center gap-[3px]',
+            vertical && 'flex-col',
+          )}
+        >
+          <span className="size-[3px] rounded-full bg-border group-hover:bg-muted group-focus-visible:bg-brand" />
+          <span className="size-[3px] rounded-full bg-border group-hover:bg-muted group-focus-visible:bg-brand" />
+          <span className="size-[3px] rounded-full bg-border group-hover:bg-muted group-focus-visible:bg-brand" />
+        </span>
+      ) : (
+        /* The hit area. Transparent, centred on the hairline, five times wider. */
+        <span
+          aria-hidden="true"
+          className={cn(
+            'absolute group-hover:bg-brand',
+            vertical ? '-inset-x-[2px] inset-y-0' : 'inset-x-0 -inset-y-[2px]',
+          )}
+        />
+      )}
     </button>
   );
 }
