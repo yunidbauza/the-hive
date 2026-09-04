@@ -203,7 +203,7 @@ describe('the settings file grants no permissions', () => {
       `--upload-file` sends one — none needing a shell operator, so none caught
       by Claude Code's `&&`/`;` handling.
     */
-    const command = doneCommand('http://127.0.0.1:51234/done');
+    const command = doneCommand();
     /*
       Quoted, because the rule contains a colon-space inside its `-H` arguments
       and YAML forbids that in a plain scalar. `done-skill.test.ts` is where the

@@ -53,11 +53,15 @@ import { doneCommand } from '@shared/hook-contract';
 /**
  * The skill, pointed at a receiver that is listening.
  *
- * `doneUrl` is baked in at write time rather than read from the environment at
- * run time, which is the same trade `metricsScript` takes in `hooks/settings.ts`
- * and for the same reason: the port is known before this file is written, and
- * threading it through a third variable would put a value in every pty for
- * something no session needs to see.
+ * `doneUrl` is a **liveness signal only** — it chooses between an inert body and
+ * a working one, and is never interpolated. The command reads the receiver's
+ * origin from the environment instead (HIVE-132), because this directory is
+ * shared by every session and a containerised one cannot reach the loopback
+ * address a host session would have baked. See {@link doneCommand}.
+ *
+ * It was baked once, on the reasoning that threading the URL through a variable
+ * would put a value in every pty for something no session needs to see. That
+ * was already untrue: `HIVE_RECEIVER_URL` is in every pty for the MCP host.
  *
  * `null` writes a body that promises nothing. A built-in whose first act is a
  * failed request is worse than one that is honestly inert — the app said it
@@ -65,7 +69,7 @@ import { doneCommand } from '@shared/hook-contract';
  * appearing to work and leaving a terminal open.
  */
 export const doneSkill = (doneUrl: string | null): string =>
-  doneUrl === null ? INERT : active(doneUrl);
+  doneUrl === null ? INERT : active();
 
 /**
  * The frontmatter, with the skill's own tool grant when it has a command to run.
@@ -148,13 +152,11 @@ ${allowedTools === undefined ? '' : `allowed-tools: ${yamlScalar(allowedTools)}\
  * narrate what it just did, and a paragraph written after the request has landed
  * is a paragraph the user reads in a terminal that is already closing.
  */
-const active = (doneUrl: string): string => `${frontmatter(
-  `Bash(${doneCommand(doneUrl)})`,
-)}
+const active = (): string => `${frontmatter(`Bash(${doneCommand()})`)}
 Run exactly this command:
 
 \`\`\`sh
-${doneCommand(doneUrl)}
+${doneCommand()}
 \`\`\`
 
 That request tells The Hive this session is finished. The app closes the

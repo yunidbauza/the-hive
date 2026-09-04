@@ -386,9 +386,23 @@ export const DONE_PATH = '/done';
  * instead of vanishing. `--fail` makes a 4xx a non-zero exit for the same
  * reason, so a session whose token went stale reports it rather than appearing
  * to succeed and never closing.
+ *
+ * ## Why the URL is a variable and not baked in (HIVE-132)
+ *
+ * A containerised session cannot reach the loopback origin a host session would
+ * bake, and the plugin directory is **one** directory shared by every session —
+ * so a baked URL would force a second plugin root and a second copy of
+ * `writePluginDir`'s regenerate-and-prune machinery, to vary one line of one
+ * file. {@link HOOK_ENV_RECEIVER_URL} is already in every pty for the MCP host,
+ * so reading it here adds nothing to the environment and lets one directory
+ * serve the host and container flavours both.
+ *
+ * Quoted, because the shell substitutes the value and a URL must stay a single
+ * word. The grant and the body still derive from this one builder, so they
+ * cannot drift into a permission prompt inside the app's own built-in.
  */
-export const doneCommand = (url: string): string =>
-  `curl -sS --fail -m 5 -X POST ${url}` +
+export const doneCommand = (): string =>
+  `curl -sS --fail -m 5 -X POST "$${HOOK_ENV_RECEIVER_URL}${DONE_PATH}"` +
   ` -H "${HOOK_HEADER_SESSION}: $${HOOK_ENV_SESSION}"` +
   ` -H "${HOOK_HEADER_TOKEN}: $${HOOK_ENV_TOKEN}"`;
 
