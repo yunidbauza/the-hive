@@ -42,7 +42,7 @@ export const BUILT_IN_THEME: HiveTheme = {
         keyword: '#b39ff0', string: '#74b79c', number: '#ffac47',
         comment: '#6b779f', name: '#8fa7f2', type: '#7fd0e0',
         operator: '#98a3cc', constant: '#ff8d85', invalid: '#ff8d85',
-        activeLine: '#171e3c', selection: '#2b3768',
+        activeLine: '#202b50', selection: '#2b3768',
       },
       terminal: {
         bg: '#0b1023', ink: '#dbe4ff', dim: '#7c88b8', black: '#0b1023',
@@ -73,7 +73,7 @@ export const BUILT_IN_THEME: HiveTheme = {
         keyword: '#6f42c1', string: '#2e6b52', number: '#a1541a',
         comment: '#8e949c', name: '#334fa9', type: '#0b6b7d',
         operator: '#73767c', constant: '#b3271f', invalid: '#d3372f',
-        activeLine: '#f4f9ff', selection: '#cfe3f7',
+        activeLine: '#eef7ff', selection: '#cfe3f7',
       },
       terminal: {
         bg: '#f7fafb', ink: '#2c2f34', dim: '#6b6e74', black: '#2c2f34',
