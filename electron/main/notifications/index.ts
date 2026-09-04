@@ -38,8 +38,9 @@ import type { NotificationHub } from './hub';
  *
  * `Stop` was never the answer. It fires at the end of every turn, including the
  * many the user is watching, and a row per turn is the notification stream
- * people stop reading. Claude's `Notification/idle_prompt` fires sixty seconds
- * later with nobody having typed, and that debounce is the whole difference.
+ * people stop reading. Claude's `Notification/idle_prompt` fires once the idle
+ * wait elapses with nobody having typed, and that debounce is the whole
+ * difference.
  *
  * ## The foreground gate (HIVE-81)
  *
@@ -127,7 +128,7 @@ const WAITING_KIND: Record<string, NotificationKind> = {
  * because `Notification` is a single event that means two different things and
  * only one of them belongs in the inbox:
  *
- * - `idle_prompt` — the turn ended and sixty seconds passed with nothing typed.
+ * - `idle_prompt` — the turn ended and the idle wait passed with nothing typed.
  *   Nothing else reports this, and it is the commonest way a session ends up
  *   waiting on a human.
  * - `permission_prompt` — mapped to `undefined` **on purpose**. It arrives about
@@ -348,7 +349,8 @@ export function createNotifier(options: NotifierOptions): Notifier {
    * Sessions already announced as out of instructions.
    *
    * `Notification/idle_prompt` is the only producer here that Claude may repeat
-   * on its own: it fires sixty seconds after a turn ends with nothing typed, and
+   * on its own: it fires once the idle wait elapses after a turn ends with
+   * nothing typed, and
    * a session left alone all afternoon is a session that can reach that
    * condition again without anything having changed. The hub's own dedup cannot
    * help — it keys on an id, and every repeat is a genuinely new event at a new
@@ -365,7 +367,7 @@ export function createNotifier(options: NotifierOptions): Notifier {
    * place, so it stays quiet until the user actually types. Reviewed and kept
    * (HIVE-81, finding 9): **a dismissal is acknowledgement.** The user was told
    * the session is waiting on them and swiped it away; re-announcing the same
-   * unchanged fact sixty seconds later is the behaviour this branch exists to
+   * unchanged fact one wait later is the behaviour this branch exists to
    * end — the running app said "is waiting on you" four times in twenty-six
    * minutes about one idle session. Clearing the mark on dismiss would hand
    * that back, with the dismissal itself as the trigger. Recorded here so the
@@ -636,8 +638,8 @@ export function createNotifier(options: NotifierOptions): Notifier {
       if (kind === undefined) return;
 
       /*
-        `session.input_needed` keeps its meaning — a minute passed and nothing
-        was typed — and stops firing while something is still running
+        `session.input_needed` keeps its meaning — the idle wait passed and
+        nothing was typed — and stops firing while something is still running
         (HIVE-89). The mark is deliberately not spent by a suppressed prompt:
         the one that arrives after the agent finishes is the first real one.
       */

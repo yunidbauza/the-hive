@@ -63,10 +63,11 @@ export type NotificationSource = 'session' | 'github' | 'agent' | 'app';
  * It had no producer until story 106 because there was no event to hang it on.
  * `Stop` is not it — `Stop` fires at the end of *every* turn, including the many
  * the user is sitting and watching, and a row per turn is the notification
- * stream nobody trusts. Claude's `Notification/idle_prompt` fires sixty seconds
- * after `Stop` with nobody having typed, and that debounce is exactly the
- * difference between "the turn ended" and "you walked away". Measured, not
- * assumed — see `hook-contract.ts`.
+ * stream nobody trusts. Claude's `Notification/idle_prompt` fires once the idle
+ * wait elapses after `Stop` with nobody having typed, and that debounce is
+ * exactly the difference between "the turn ended" and "you walked away".
+ * Measured, not assumed, and the wait is the user's own setting rather than a
+ * constant — see `hook-contract.ts`.
  *
  * ## Why `session.waiting` and `session.asked` became one kind (HIVE-83)
  *
@@ -328,9 +329,10 @@ export const NOTIFICATION_KIND_SPECS: Record<
    * after the turn arrives: Claude Code re-invokes the agent to collect the
    * result and that turn ends in a `Stop` of its own. Those later cases are
    * why this is a kind of its own rather than a tighter filter on
-   * `session.input_needed`: `idle_prompt` is a sixty-second timer that starts
-   * at the end of the turn, so it cannot describe a background agent
-   * finishing twenty minutes later.
+   * `session.input_needed`: `idle_prompt` is a timer that starts at the end of
+   * the turn and runs for however long this machine is set to wait
+   * (`hook-contract.ts`), so it cannot describe a background agent finishing
+   * twenty minutes later.
    *
    * `both`, because this is the fact the user walked away to wait for.
    */
@@ -347,14 +349,14 @@ export const NOTIFICATION_KIND_SPECS: Record<
     source: 'session',
     label: 'When a session runs out of instructions',
     description:
-      'Its turn ended and a minute passed with nothing typed. Not a question — it has simply finished and is waiting on you.',
+      'Its turn ended and nothing was typed for a while. Not a question — it has simply finished and is waiting on you.',
     icon: 'ph-keyboard',
     tone: 'amber',
     /**
      * `inbox`, not `both` — and not `off` either.
      *
      * What makes this kind chatty is the toast, not the row. `off` would also
-     * take away the row, and the row is the record that a minute passed with
+     * take away the row, and the row is the record that the wait ran out with
      * nothing typed. Since HIVE-89 the moment work actually *stopped* has a
      * kind of its own (`session.idle`, `both`), and this one is gated off the
      * same `idleDetail`: it no longer fires while a background agent or script
