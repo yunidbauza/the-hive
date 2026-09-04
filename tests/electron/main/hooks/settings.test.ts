@@ -429,3 +429,76 @@ describe('writeHookSettings', () => {
     expect(written.disableAgentView).toBe(true);
   });
 });
+
+/** The `Stop` handler, which every emitter builds the same way. */
+const stopHandler = (
+  settings: ReturnType<typeof hookSettings>,
+): { headers: Record<string, string>; allowedEnvVars?: string[] } =>
+  (
+    settings.hooks.Stop as {
+      hooks: { headers: Record<string, string>; allowedEnvVars?: string[] }[];
+    }[]
+  )[0]!.hooks[0]!;
+
+describe('hookSettings — freshness (HIVE-132)', () => {
+  const identity = { session: 'sess-1', token: 'deadbeef' };
+
+  it('references the environment when no identity is given', () => {
+    const handler = stopHandler(hookSettings('http://127.0.0.1:63999/hook'));
+
+    expect(handler.headers[HOOK_HEADER_SESSION]).toBe(`$${HOOK_ENV_SESSION}`);
+    expect(handler.allowedEnvVars).toEqual([HOOK_ENV_SESSION, HOOK_ENV_TOKEN]);
+  });
+
+  it('bakes the identity and drops allowedEnvVars when one is given', () => {
+    const handler = stopHandler(
+      hookSettings('http://host.docker.internal:63999/hook', undefined, identity),
+    );
+
+    expect(handler.headers[HOOK_HEADER_SESSION]).toBe('sess-1');
+    expect(handler.headers[HOOK_HEADER_TOKEN]).toBe('deadbeef');
+    expect(handler.allowedEnvVars).toBeUndefined();
+  });
+
+  it('is byte-identical to today when no identity is given', () => {
+    const emitted = JSON.stringify(
+      hookSettings('http://127.0.0.1:63999/hook', 'http://127.0.0.1:63999/ready'),
+    );
+
+    expect(emitted).toContain(`$${HOOK_ENV_TOKEN}`);
+    expect(emitted).not.toContain('deadbeef');
+  });
+});
+
+describe('metricsScript — freshness (HIVE-132)', () => {
+  it('guards on the environment when no identity is given', () => {
+    const script = metricsScript('http://127.0.0.1:63999/statusline');
+
+    expect(script).toContain(`[ -n "$${HOOK_ENV_SESSION}" ] || exit 0`);
+  });
+
+  it('bakes the identity and drops the guards when one is given', () => {
+    const script = metricsScript(
+      'http://host.docker.internal:63999/statusline',
+      { session: 'sess-1', token: 'deadbeef' },
+    );
+
+    expect(script).toContain(`${HOOK_HEADER_SESSION}: sess-1`);
+    expect(script).toContain(`${HOOK_HEADER_TOKEN}: deadbeef`);
+    expect(script).not.toContain('|| exit 0');
+    expect(script.trimEnd().endsWith('exit 0')).toBe(true);
+  });
+});
+
+describe('agentSettings — freshness (HIVE-132)', () => {
+  it('passes the identity through and keeps the permission fence', () => {
+    const settings = agentSettings(
+      'http://host.docker.internal:63999/hook',
+      undefined,
+      { session: 'sess-1', token: 'deadbeef' },
+    );
+
+    expect(stopHandler(settings).headers[HOOK_HEADER_TOKEN]).toBe('deadbeef');
+    expect(settings.permissions.ask).toEqual(['*']);
+  });
+});
