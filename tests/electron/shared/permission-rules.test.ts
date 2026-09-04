@@ -237,6 +237,52 @@ describe('rungsFor guards the text it composes', () => {
     expect(rungs.some((rung) => rung.id === 'allow-family')).toBe(false);
   });
 
+  /**
+   * The label is what fits in a 316px rail; the rule and the caption are what
+   * is true. A real path is nowhere near short enough to be all three.
+   */
+  it('elides a deep directory in the label while the rule and caption stay whole', () => {
+    const dir = '/Users/yunid.bauza/.hive/work/prpd';
+    const family = rungsFor('Edit', { file_path: `${dir}/watch.json` })[1];
+
+    expect(family?.label).toBe('…/prpd/**');
+    expect(family?.label.length).toBeLessThanOrEqual(22);
+    expect(family?.rule).toBe(`Edit(${dir}/**)`);
+    expect(family?.caption).toBe(`never asks again under ${dir}.`);
+  });
+
+  it('leaves a directory that already fits spelled out', () => {
+    expect(rungsFor('Read', { file_path: '/repo/src/a.ts' })[1]?.label).toBe('/repo/src/**');
+  });
+
+  /**
+   * A last segment that overruns the budget on its own is cut as well —
+   * `…/worktree-fix-rung-labels/**` is an ordinary directory in this repo and
+   * is still too wide for the rail.
+   */
+  it('cuts a last segment that is too long even without its parents', () => {
+    const family = rungsFor('Edit', {
+      file_path: '/repo/.hive/work/worktree-fix-rung-labels/a.ts',
+    })[1];
+
+    expect(family?.label).toBe('…/worktree-fix-run…/**');
+    expect(family?.label.length).toBe(22);
+    expect(family?.rule).toBe('Edit(/repo/.hive/work/worktree-fix-rung-labels/**)');
+  });
+
+  /**
+   * A single long segment has no parent to elide *to*, so it gains no `…/`
+   * prefix — that would claim one it does not have — but it is still cut.
+   */
+  it('cuts a long single-segment directory without inventing a parent', () => {
+    const label = rungsFor('Read', {
+      file_path: 'a-very-long-directory-name-indeed/a.ts',
+    })[1]?.label;
+
+    expect(label).toBe('a-very-long-direct…/**');
+    expect(label?.startsWith('…/')).toBe(false);
+  });
+
   it('still composes the ordinary rules a real call produces', () => {
     expect(rungsFor('Read', { file_path: '/repo/src/a.ts' })[1]?.rule).toBe('Read(/repo/src/**)');
     expect(rungsFor('Read', { file_path: '/My Files/a.ts' })[1]?.rule).toBe('Read(/My Files/**)');

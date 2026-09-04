@@ -1063,6 +1063,15 @@ export function AgentForm({
                   options={wakeOptions}
                   value={wakeEvery}
                   onChange={(next) => set('wake.every', next)}
+                  /*
+                    Nine intervals, and a tenth whenever the file names one the
+                    presets do not offer. They do not fit the field column, and
+                    the two that fell off the end were `12h` and `daily` — the
+                    widest intervals the control has, unreachable by pointer.
+                    Every label here is two or three characters, so a second
+                    row costs nothing and hides nothing.
+                  */
+                  wrap
                 />,
               )
             : null}

@@ -47,7 +47,14 @@ export function PermissionControls({
   const selected = rungs.find((rung) => rung.id === scope) ?? rungs[0];
 
   return (
-    <div className="mt-1.5 flex flex-col gap-1.5">
+    /*
+      `w-full min-w-0`: this sits in the card's wrapping button row, where a
+      flex item is sized by its content and may not shrink below it. The
+      ladder's `max-w-full` measures against *this* element, so without the
+      two together the group's cap is the width of its own longest label
+      rather than the width of the rail.
+    */
+    <div className="mt-1.5 flex w-full min-w-0 flex-col gap-1.5">
       <SegmentedControl
         label="How far this permission reaches"
         options={rungs.map((rung) => ({ value: rung.id, label: rung.label }))}
