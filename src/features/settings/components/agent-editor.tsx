@@ -83,10 +83,11 @@ interface AgentEditorProps {
  *
  * ## Why the real editor, and not a `<textarea>`
  *
- * This used to be a plain textarea, on `skill-editor.tsx`'s argument that the
- * editor seam exists for repo files and mounting it here would pull the
- * explorer's stack into settings so the user can write a paragraph. That
- * argument undersold what an AGENT.md is. It is not a paragraph: it is a
+ * This used to be a plain textarea, on the argument `skill-editor.tsx` then
+ * made — that the editor seam exists for repo files, and mounting it here would
+ * pull the explorer's stack into settings so the user can write a paragraph.
+ * That argument undersold what an AGENT.md is, and the skills pane has since
+ * abandoned it too. It is not a paragraph: it is a
  * frontmatter block with a dozen keys whose problems the footer reports **by
  * line**, and a body long enough to scroll — so a reader told "unknown key on
  * line 7" had to count rows with a finger, and could not search the file at

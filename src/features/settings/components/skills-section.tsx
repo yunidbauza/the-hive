@@ -83,7 +83,7 @@ export function SkillsSection() {
      * Only the rename one, and the difference is what each question *quotes*.
      * "Rename /standup to /stand-up?" reads its destination out of the buffer,
      * and this confirm is deliberately not modal — it appears beside a live
-     * `<textarea>` the user can keep typing in. Type on, and the question is
+     * editor the user can keep typing in. Type on, and the question is
      * asking about text that is no longer on screen, while `act` would write
      * the text that was. Neither honouring the stale question nor silently
      * switching to the new one is honest, so the question goes away and Save
@@ -91,7 +91,7 @@ export function SkillsSection() {
      *
      * "Discard changes to /standup?" quotes nothing from the buffer — more
      * typing only makes it more true — so it stays put, and the existing
-     * Escape-from-the-textarea behaviour is unchanged.
+     * Escape-from-the-editor behaviour is unchanged.
      */
     staleOnEdit?: boolean;
   } | null>(null);
