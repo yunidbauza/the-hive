@@ -29,7 +29,8 @@
 
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["./electron/shared/*"]
+      "@shared/*": ["./electron/shared/*"],
+      "@main/*": ["./electron/main/*"]
     }
   },
   "include": ["electron"]

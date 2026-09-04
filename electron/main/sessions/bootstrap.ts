@@ -1,3 +1,4 @@
+import { shellQuote } from '@main/sessions/shell-quote';
 import { AUTH_ENV_KEYS } from '@shared/config-contract';
 import {
   BOOTSTRAP_DEBOUNCE_MS,
@@ -15,28 +16,6 @@ import {
  * exit non-zero, which `&&` turns into "the session opened and did nothing".
  */
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/**
- * Single-quote a path for a POSIX shell.
- *
- * The one argument on this command line that genuinely needs it. `--name` and
- * `--session-id` are filtered against closed patterns and `--model`/`--effort`
- * against closed lists, so none of them can carry a metacharacter — but the
- * settings path is `app.getPath('userData')`, and on macOS that is
- * `~/Library/Application Support/the-hive/…`. **It contains a space on every
- * Mac**, which the shell splits, so `claude` received `--settings
- * /Users/…/Application` plus a stray positional argument it read as an initial
- * prompt, and hook status never worked at all.
- *
- * An earlier comment here claimed an app-generated path "has none of them".
- * That was wrong on the most common platform this app runs on, which is why the
- * rule is now enforced in code instead of asserted in prose.
- *
- * Single quotes rather than escaping: inside them a POSIX shell interprets
- * nothing, so the only character needing care is the single quote itself, and
- * `'\''` closes, escapes and reopens.
- */
-const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
 
 /**
  * When to write `claude` into a freshly spawned shell (story 096).

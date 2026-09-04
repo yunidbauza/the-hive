@@ -516,6 +516,9 @@ export type ContainerFreshness = 'exec-env' | 'rewrite';
 /** Secret-free and correct for every non-reattach runtime. */
 export const DEFAULT_FRESHNESS: ContainerFreshness = 'exec-env';
 
+/** Where a container project's expanded environment goes in its command line. */
+export const ENV_PLACEHOLDER = '{env}';
+
 /** One DNS label: alphanumeric, inner hyphens allowed, no leading or trailing one. */
 const HOST_ALIAS_LABEL = /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/;
 
