@@ -288,3 +288,55 @@ describe('AdvancedSection', () => {
     expect(readAppInfo).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * HIVE-131's Containers group.
+ *
+ * Its own behaviour lives in `container-alias-group.test.tsx`; what this pins is
+ * *placement* — the pane's top half, with the controls that change behaviour,
+ * rather than down among About/Updates/Diagnostics, which only answer questions.
+ */
+describe('AdvancedSection — the Containers group (HIVE-131)', () => {
+  beforeEach(() => {
+    readAppInfo.mockResolvedValue(info());
+    install();
+  });
+
+  afterEach(() => {
+    resetProjectConfig();
+    vi.clearAllMocks();
+  });
+
+  it('renders the host alias between Config file and Reset', () => {
+    render(<AdvancedSection />);
+
+    const headings = screen
+      .getAllByRole('heading', { level: 3 })
+      .map((node) => node.textContent);
+
+    expect(headings).toContain('Containers');
+    expect(headings.indexOf('Containers')).toBeGreaterThan(
+      headings.indexOf('Config file'),
+    );
+    expect(headings.indexOf('Containers')).toBeLessThan(
+      headings.indexOf('Reset'),
+    );
+  });
+
+  it('shows the resolved default when the file names no block', () => {
+    render(<AdvancedSection />);
+
+    expect(screen.getByLabelText('Host alias')).toHaveValue(
+      'host.docker.internal',
+    );
+  });
+
+  it('shows a configured alias over the default', () => {
+    install({ receiver: { hostAlias: 'host.containers.internal' } });
+    render(<AdvancedSection />);
+
+    expect(screen.getByLabelText('Host alias')).toHaveValue(
+      'host.containers.internal',
+    );
+  });
+});
