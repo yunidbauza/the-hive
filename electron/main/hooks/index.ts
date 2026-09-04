@@ -328,6 +328,36 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
           url,
           created.readyUrl ?? undefined,
         );
+
+        /*
+          Ahead of the three assignments below, and that placement is the whole
+          correctness argument (HIVE-133).
+
+          `containerOrigin()` is gated on `receiver` alone, so the instant
+          `receiver = created` runs, a containerised session is spawnable and
+          can write its own directory under this root. With the sweep after that
+          line — where it used to be, 33 lines further down — a session opened
+          during app boot wrote its directory and then had it deleted, and every
+          hook and MCP call from that container 403'd with nothing logged.
+
+          Here, `[]` is not an assumption to be defended but a fact: no session
+          can exist yet, because the gate that permits one has not been assigned.
+          The `live` parameter stays in the signature for a mid-run sweep that
+          does not exist today.
+
+          Its own `try`, and never blocking the write below. `rm` with `force`
+          swallows a missing path but not `EPERM` or `EBUSY`, and a single
+          undeletable orphan must not be the reason this launch has no container
+          set at all.
+        */
+        try {
+          await sweepSessionContainerFiles(userDataPath, []);
+        } catch (cause) {
+          console.info(
+            `[hive] stale container session files could not be swept (${String(cause)})`,
+          );
+        }
+
         settingsPath = newSettingsPath;
         agentSettingsPath = newAgentSettingsPath;
         receiver = created;
@@ -343,33 +373,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
           down. Those files are what every host session depends on; these are
           what no host session touches, so the honest failure is a log and a
           receiver that still works for everyone it already worked for.
-
-          The sweep runs first and keeps nothing: `start()` is a fresh launch,
-          so every per-session directory under it is an orphan of a previous one
-          — and each holds a resolved token that a new `launchSecret` has
-          already invalidated.
         */
-        /*
-          Its own `try`, ahead of the write and never blocking it. `rm` with
-          `force` swallows a missing path but not `EPERM` or `EBUSY`, and a
-          single undeletable orphan must not be the reason this launch has no
-          container set at all — that would be a cleanup task blocking the work,
-          reported under a message about the work.
-
-          `[]` keeps nothing, and that is correct *here* rather than in general:
-          `start()` runs once per app launch, before any session is spawned, so
-          every directory under it belongs to a previous launch — and each holds
-          a token that this launch's new `launchSecret` has already invalidated.
-          A caller that ran this with sessions live would have to pass them.
-        */
-        try {
-          await sweepSessionContainerFiles(userDataPath, []);
-        } catch (cause) {
-          console.info(
-            `[hive] stale container session files could not be swept (${String(cause)})`,
-          );
-        }
-
         try {
           if (created.origin === null) {
             /*

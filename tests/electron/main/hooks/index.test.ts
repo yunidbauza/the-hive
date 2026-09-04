@@ -36,6 +36,29 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 const writeFileSpy = vi.mocked((await import('node:fs/promises')).writeFile);
 const realWriteFile = writeFileSpy.getMockImplementation()!;
 
+/**
+ * The same pass-through shape, over the sweep and the container-set write
+ * (HIVE-133): everything forwards to the real implementation by default, so
+ * the tests already below that read the container-flavoured set off disk
+ * keep working unchanged. Only the ordering test overrides the sweep's
+ * implementation, and only for the one call it needs to observe.
+ */
+vi.mock('../../../../electron/main/container/generated', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('../../../../electron/main/container/generated')
+  >();
+  return {
+    ...actual,
+    sweepSessionContainerFiles: vi.fn(actual.sweepSessionContainerFiles),
+    writeSharedContainerFiles: vi.fn(actual.writeSharedContainerFiles),
+  };
+});
+
+const sweepSpy = vi.mocked(
+  (await import('../../../../electron/main/container/generated')).sweepSessionContainerFiles,
+);
+const realSweep = sweepSpy.getMockImplementation()!;
+
 const noopHandlers: HookHandlers = {
   knowsSession: () => true,
   // The second id space (HIVE-115), closed: this suite is about the runtime's
@@ -251,5 +274,50 @@ describe('createHookRuntime — the container-flavoured set (HIVE-132)', () => {
     expect(started.envFor('sess-a')['HIVE_RECEIVER_URL']).toMatch(
       /^http:\/\/127\.0\.0\.1:\d+$/,
     );
+  });
+});
+
+describe('createHookRuntime — sweep ordering (HIVE-133)', () => {
+  let dir: string;
+  let ledger: Ledger;
+  let runtime: HookRuntime | undefined;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'hive-hooks-sweep-'));
+    ledger = createLedger({ dir, knowsParty: () => true });
+  });
+
+  afterEach(async () => {
+    sweepSpy.mockImplementation(realSweep);
+    await runtime?.stop();
+    runtime = undefined;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('sweeps orphan container directories before a session can be spawned', async () => {
+    // `containerOrigin()` is gated on `receiver` alone, and that gate is what
+    // makes a containerised spawn viable — so whatever `containerOrigin()`
+    // answers *while the sweep itself is running* is the actual invariant.
+    // If the sweep runs after `receiver` is assigned, this observes a real
+    // origin mid-sweep, which is the 33-line window the finding describes.
+    let originDuringSweep: string | null | undefined;
+
+    sweepSpy.mockImplementation(async (...args) => {
+      originDuringSweep = runtime?.containerOrigin();
+      return realSweep(...args);
+    });
+
+    runtime = createHookRuntime({ userDataPath: dir, sessionMetrics: () => false, ledger });
+    await runtime.start(noopHandlers);
+
+    expect(sweepSpy).toHaveBeenCalled();
+    expect(originDuringSweep).toBeNull();
+  });
+
+  it('still keeps nothing, because no session can exist yet', async () => {
+    runtime = createHookRuntime({ userDataPath: dir, sessionMetrics: () => false, ledger });
+    await runtime.start(noopHandlers);
+
+    expect(sweepSpy).toHaveBeenCalledWith(dir, []);
   });
 });
