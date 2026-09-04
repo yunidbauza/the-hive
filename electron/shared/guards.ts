@@ -13,6 +13,7 @@ import {
   PROJECT_KEY_HINT,
   isAbsoluteContainerPath,
   isContainerFreshness,
+  isContainerProbe,
   isEnvArgTemplate,
   isHostAlias,
   isProjectKey,
@@ -776,6 +777,20 @@ export function assertContainer(value: unknown, label: string): ContainerConfig 
 
   if (raw.envArg !== undefined && !isEnvArgTemplate(raw.envArg)) {
     throw new IpcValidationError(`${label}.envArg must contain {name} and {value}`);
+  }
+  /*
+    `isContainerProbe` first — the same rule `parse.ts` applies, so a value
+    this guard accepts is a value the file reader accepts too. `assertText`
+    runs *as well as*, not instead of: it adds a length cap and a
+    control-character ban that the reader does not enforce. That makes this
+    guard strictly stricter than the reader on those two axes, which is the
+    safe direction to differ in — the pane can refuse something a hand-edited
+    file would tolerate, but nothing a hand-edited file accepts is silently
+    dropped by the pane's read. Do not "fix" this back into symmetry by
+    dropping `assertText`.
+  */
+  if (raw.probe !== undefined && !isContainerProbe(raw.probe)) {
+    throw new IpcValidationError(`${label}.probe expected a non-empty string`);
   }
   if (raw.freshness !== undefined && !isContainerFreshness(raw.freshness)) {
     throw new IpcValidationError(`${label}.freshness must be "exec-env" or "rewrite"`);

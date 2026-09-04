@@ -1067,6 +1067,15 @@ describe('parseSetProjectRuntimeRequest container', () => {
     });
   });
 
+  // A real command survives, exactly like every other field in the block.
+  it('accepts a probe', () => {
+    const withProbe = { ...container, probe: 'test -f /workspace/ready' };
+    expect(parseSetProjectRuntimeRequest({ id: 'p', container: withProbe })).toEqual({
+      id: 'p',
+      container: withProbe,
+    });
+  });
+
   it.each([
     [{ ...container, workspace: 'relative' }],
     [{ ...container, hiveDir: '' }],
@@ -1075,6 +1084,13 @@ describe('parseSetProjectRuntimeRequest container', () => {
     // The alias names a network destination; the guard is not looser than the reader.
     [{ ...container, hostAlias: 'bad host' }],
     [{ ...container, hostAlias: '10.0.0.5?' }],
+    // Whitespace is not a command — the exact case that would have caught a
+    // guard that trims where the reader's `isContainerProbe` does not.
+    [{ ...container, probe: '   ' }],
+    [{ ...container, probe: '' }],
+    [{ ...container, probe: 42 }],
+    // Not a block at all.
+    ['x'],
   ])('refuses %j', (bad) => {
     expect(() => parseSetProjectRuntimeRequest({ id: 'p', container: bad })).toThrow(
       IpcValidationError,

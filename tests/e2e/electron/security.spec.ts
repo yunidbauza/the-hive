@@ -621,12 +621,25 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
      * Story 104's two mutating verbs, and they *are* capabilities — the kind
      * this test exists to make deliberate rather than accidental.
      *
-     * What keeps them within story 082's posture: neither takes a destination,
-     * so writes stay confined to the config file; `setProjectRuntime` names an
-     * existing project by id and is refused if that id is not on disk; and the
-     * env map — the one payload here that reaches process control — is checked
-     * key by key against a whitelist pattern, with the terminal's own three
-     * variables and `__proto__` refused outright.
+     * `setProjectRuntime` names an existing project by id and is refused if
+     * that id is not on disk; the env map — the one payload here that reaches
+     * process control — is checked key by key against a whitelist pattern,
+     * with the terminal's own three variables and `__proto__` refused
+     * outright.
+     *
+     * HIVE-133 widened `setProjectRuntime` with a `container` block, and that
+     * block **can** carry a network destination: `container.hostAlias`
+     * overrides the receiver alias for one project, deciding which host that
+     * project's sessions send hook payloads — bearing a valid
+     * `HIVE_HOOK_TOKEN` — to, exactly as the top-level alias does below for
+     * every project. It is not a looser route to the same effect: `hostAlias`
+     * here is validated by `assertContainer` with the very same `isHostAlias`
+     * predicate `setReceiver` uses, per DNS label against an allowlist, so a
+     * value this verb accepts is never a value the global one would refuse.
+     * The rest of the block stays confined to the config file the same way
+     * `setJira`'s connection settings do — `workspace`/`hiveDir` are paths
+     * inside a container that has to be told them, not paths this process
+     * opens, and `envArg`/`freshness`/`probe` are shape, not destinations.
      */
     /**
       * Story 106's `setNotifications` — a capability, and the mildest one on

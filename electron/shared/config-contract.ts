@@ -634,6 +634,10 @@ export const isEnvArgTemplate = (value: unknown): value is string =>
 export const isContainerFreshness = (value: unknown): value is ContainerFreshness =>
   value === 'exec-env' || value === 'rewrite';
 
+/** A probe is a command to run; whitespace is not one. */
+export const isContainerProbe = (value: unknown): value is string =>
+  typeof value === 'string' && value.trim() !== '';
+
 /** One DNS label: alphanumeric, inner hyphens allowed, no leading or trailing one. */
 const HOST_ALIAS_LABEL = /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/;
 

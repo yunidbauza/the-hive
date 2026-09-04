@@ -5,6 +5,7 @@ import {
   SUPPORTED_CONFIG_VERSIONS,
   isAbsoluteContainerPath,
   isContainerFreshness,
+  isContainerProbe,
   isEnvArgTemplate,
   isHostAlias,
   unsafeEnvReason,
@@ -344,7 +345,7 @@ function optionalContainer(
 
   let probe: string | undefined;
   if (value.probe !== undefined) {
-    if (typeof value.probe !== 'string' || value.probe.trim() === '') {
+    if (!isContainerProbe(value.probe)) {
       errors.push(`${label}.container.probe: expected a non-empty string — container ignored`);
       return undefined;
     }
