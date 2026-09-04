@@ -399,6 +399,72 @@ test('writes check and a daily cap, and hides check on a schedule', async ({}, t
  * which missed it and drew the fallback question mark on the agent's own row.
  * Anything authored through the form now carries a name the registry resolves.
  */
+/**
+ * Every interval is on the control, and every interval can be clicked.
+ *
+ * `WAKE_OPTIONS` grew to nine when the calendar mode made the gap obvious, and
+ * nine of them do not fit the form's field column: the group ran past its own
+ * right edge and the last two — `12h` and `daily` — were drawn outside it, so
+ * the widest intervals the control offers were the two a pointer could not
+ * reach. Adding an option to a control that silently drops the overflow is how
+ * that happened, which is why the geometry is asserted here rather than the
+ * count.
+ *
+ * Measured in the built app: whether nine segments fit a column is a question
+ * only layout answers, and happy-dom performs none.
+ */
+test('every wake interval stays inside the control, and daily is clickable', async ({}, testInfo) => {
+  const { app, page, configPath } = await launchWithConfig((name) =>
+    testInfo.outputPath(name),
+  );
+
+  try {
+    await openAgents(page);
+
+    await page.getByRole('button', { name: '+ New agent' }).click();
+
+    const name = page.getByRole('textbox', { name: 'name' });
+    await expect(name).toBeVisible();
+    await name.fill('slow-watcher');
+    await page
+      .getByRole('textbox', { name: 'description' })
+      .fill('Watches, rarely.');
+
+    // The template opens in interval mode, so the control is there to measure.
+    const every = page.getByRole('radiogroup', { name: 'Wake every' });
+    await expect(every).toBeVisible();
+
+    /*
+      Every group in the form, not only the one that was reported. The bug is
+      "a control silently drops what it cannot fit", and `Model` is five
+      options in the same column — asserting on the interval row alone would
+      leave the next one to be found by a user.
+    */
+    const outside = await page.evaluate(() =>
+      [...document.querySelectorAll('[role="radiogroup"]')].flatMap((group) => {
+        const box = group.getBoundingClientRect();
+        return [...group.querySelectorAll('[role="radio"]')]
+          .filter((radio) => radio.getBoundingClientRect().right > box.right + 1)
+          .map((radio) => `${group.getAttribute('aria-label')}: ${radio.textContent}`);
+      }),
+    );
+    expect(outside, 'options drawn outside their own control').toEqual([]);
+
+    // And the far end of the ladder is not merely on screen but usable.
+    await every.getByRole('radio', { name: 'daily', exact: true }).click();
+    await page.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByRole('button', { name: /slow-watcher/ })).toBeVisible();
+
+    const written = readFileSync(
+      join(dirname(configPath), 'agents', 'slow-watcher', 'AGENT.md'),
+      'utf8',
+    );
+    expect(written).toContain('every: daily');
+  } finally {
+    await app.close();
+  }
+});
+
 test('seeds a new agent with an icon the registry can draw', async ({}, testInfo) => {
   const { app, page } = await launchWithConfig((name) =>
     testInfo.outputPath(name),

@@ -75,6 +75,7 @@ import type { SessionMetrics } from '@shared/metrics-contract';
 import { NOTIFICATION_CAP } from '@shared/notification-contract';
 import {
   hiveNameFromTitle,
+  soleTicketKeyIn,
   SESSION_EFFORTS,
   SESSION_MODELS,
   type SessionNameOrigin,
@@ -277,8 +278,13 @@ export interface SetSessionTicketOptions {
    *   exactly as it was, an agent-chosen title (HIVE-108) goes on being the
    *   agent's to change, and it never displaces an existing ticket of either
    *   kind.
+   * - `'rename'` is `'prompt'` plus the right to displace a key that was
+   *   **also** spoken. It is the one caller that has heard the user name a
+   *   ticket *while already looking at the row the other key is on: a
+   *   `/rename` typed into the session, carrying nothing but a key. See
+   *   {@link HiveState.renameSession}, which is its only caller.
    */
-  source?: 'prompt' | 'branch';
+  source?: 'prompt' | 'branch' | 'rename';
 }
 
 interface HiveState {
@@ -3279,7 +3285,62 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    * most: Claude repaints several times a second, and a normaliser that grew its
    * input would rename the session on every frame.
    */
-  renameSession: (id, name, origin = 'agent') =>
+  renameSession: (id, name, origin = 'agent') => {
+    /**
+     * A rename that is **nothing but a ticket key** moves the session to that
+     * ticket.
+     *
+     * Handled before the updater, and by delegation, for two reasons. The
+     * decision needs an effect — main has to be told, or the association dies
+     * with the window — and an effect must not run inside a `set` updater;
+     * that is the shape `setSessionTicket` already documents and uses. And
+     * everything this case needs, that action already does: the de-duplicated
+     * name, the pin, the `ticketInferred` clean-up, the console line and the
+     * note. Re-deriving any of it here would be a second definition of what it
+     * means to point a session at a ticket.
+     *
+     * ## Why the gates are what they are
+     *
+     * - **`origin === 'rename'` only.** Claude writes one `ai-title` per
+     *   conversation, from whatever it had drifted to, and a session that
+     *   discussed HIVE-99 for three hundred turns can title itself with that
+     *   key. Re-pointing on a guess would silently refile the work — the one
+     *   error `session-history-contract.ts` names as having no obvious way to
+     *   be noticed.
+     * - **A pinned row with a ticket only.** A rename may *move* a link the
+     *   user made and confirmed against Jira; it may not conjure one. An
+     *   unpinned row keeps the behaviour it had before this: the key becomes its
+     *   name and nothing is associated.
+     * - **Not a session id.** `sess-01` satisfies the key grammar exactly as
+     *   `HIVE-73` does — see {@link soleTicketKeyIn}, which answers about
+     *   grammar and leaves this to its callers — and re-pointing on one would
+     *   file the session under an imaginary project.
+     * - **Not the key it already has.** Claude repaints its title several
+     *   times a second, so every frame after the first arrives here; without
+     *   this the row would re-link, re-line the console and re-notify main
+     *   many times a second for the rest of its life.
+     */
+    if (origin === 'rename') {
+      const spoken = soleTicketKeyIn(name);
+      const state = get();
+      const target = currentSessionIn(state, id);
+      const entity = state.entities[target];
+
+      if (
+        spoken !== undefined &&
+        !SESSION_ID_PREFIX_PATTERN.test(spoken.toLowerCase()) &&
+        entity !== undefined &&
+        isSession(entity) &&
+        entity.namePinned === true &&
+        entity.ticket !== undefined &&
+        entity.ticket !== spoken &&
+        !isEnded(entity.status)
+      ) {
+        get().setSessionTicket(target, spoken, { source: 'rename' });
+        return;
+      }
+    }
+
     set((state) => {
       // The terminal's current row, for the reason `setSessionStatus` gives:
       // a rename after a `/clear` describes the new conversation, not the
@@ -3446,7 +3507,8 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       return {
         entities: { ...state.entities, [target]: { ...entity, name: unique } },
       };
-    }),
+    });
+  },
 
   /**
    * Record what a session says about its own context and rate limits (HIVE-79).
@@ -3625,7 +3687,18 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
      * for it, and it already retires the row and opens a successor.
      */
     if (entity.ticket !== undefined) {
-      const displaces = source === 'prompt' && entity.ticketInferred === true;
+      /*
+        `'rename'` displaces a spoken key, which is the exception the paragraph
+        above argues against — and it is the case that paragraph does not
+        cover. It reasons about a user naming a second ticket *in conversation*,
+        where the row is off to one side and the key is one clause of a
+        sentence about something else. A `/rename` carrying nothing but a key
+        is neither: they are looking at the row, they have typed its new name,
+        and the name is a ticket. There is nothing else it can mean, and
+        answering it with silence is what was reported.
+      */
+      const displaces =
+        source === 'rename' || (source === 'prompt' && entity.ticketInferred === true);
       if (!displaces) return;
     }
     // An ended row is history; naming it now would rewrite the record.
@@ -3648,7 +3721,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
      * it is called when it gets there.
      */
     const name =
-      source === 'prompt' ? ticketSessionName(ticket, state.entities) : undefined;
+      source === 'branch' ? undefined : ticketSessionName(ticket, state.entities);
 
     /**
      * `ticketInferred` is set by the branch path and *removed* by the prompt

@@ -56,6 +56,26 @@ interface SegmentedControlProps<T extends string> {
    * greyed, and keyboard traversal steps over it.
    */
   disabledValues?: readonly T[];
+  /**
+   * Lets the group fall onto a second row rather than clip what will not fit.
+   *
+   * The two ways a group can overrun its column want opposite answers, and
+   * neither is safe as the default.
+   *
+   * A **few options, one of them data** — the permission ladder, whose middle
+   * rung is labelled with a file path — must not wrap: a card whose footprint
+   * changes with the path in it reads as broken, and the long label can give
+   * up width because it is elided at the source anyway. That is the default.
+   *
+   * **Many short options** — the nine wake intervals — must not truncate:
+   * every label is two or three characters, so there is no width to take and
+   * shrinking them yields nine segments reading `1…`. Without a second row
+   * they simply overflowed, and `12h` and `daily` were drawn outside the box:
+   * the two longest intervals the control offers were the two a pointer could
+   * not reach. Nothing shrinks when this is set — an option that will not fit
+   * gets a row, not an ellipsis.
+   */
+  wrap?: boolean;
   className?: string;
 }
 
@@ -66,6 +86,7 @@ export function SegmentedControl<T extends string>({
   onChange,
   disabled = false,
   disabledValues,
+  wrap = false,
   className,
 }: SegmentedControlProps<T>) {
   const groupId = useId();
@@ -85,6 +106,26 @@ export function SegmentedControl<T extends string>({
    * order entirely, so it falls back to the first option that can be reached.
    */
   const tabStop = isDead(value) ? selectable[0]?.value : value;
+
+  /**
+   * The one segment allowed to give up width when the group cannot fit.
+   *
+   * Letting every segment shrink is the CSS default and it is the wrong
+   * default here: flex distributes the shortfall in proportion to each item's
+   * own width, so a group holding a file path and the word `once` truncates
+   * *both* — `once` became `o…`, which costs the user a legible option to
+   * save four pixels the long segment had to spare.
+   *
+   * Widest by label length rather than by measured width: this component
+   * never measures, and it does not need to — the labels share one font and
+   * one padding, so the longest string is the widest segment, and a tie means
+   * two segments that could each equally well absorb the loss.
+   */
+  const widest = options.reduce<SegmentedOption<T> | undefined>(
+    (longest, option) =>
+      longest === undefined || option.label.length > longest.label.length ? option : longest,
+    undefined,
+  );
 
   /**
    * Move selection *and* focus together.
@@ -131,7 +172,15 @@ export function SegmentedControl<T extends string>({
       aria-label={label}
       aria-disabled={disabled || undefined}
       className={cn(
-        'inline-flex items-center gap-0.5 rounded-[7px] border border-border-soft bg-panel-2 p-0.5',
+        /*
+          `max-w-full` is what keeps an `inline-flex` honest. Sized to its
+          content by default, a group whose options are labelled with data
+          rather than with copy — the permission ladder's family rung is a
+          file path — grows past whatever contains it, and in the
+          316px rail that is the difference between a control and a bug.
+        */
+        'inline-flex max-w-full items-center gap-0.5 rounded-[7px] border border-border-soft bg-panel-2 p-0.5',
+        wrap && 'flex-wrap',
         disabled && 'opacity-45',
         className,
       )}
@@ -188,6 +237,19 @@ export function SegmentedControl<T extends string>({
             }}
             className={cn(
               'rounded-[5px] px-2.5 py-1 text-[12.5px] outline-none',
+              /*
+                One line, always: a wrapped label makes the group taller and
+                every segment in it taller with it, which is how a long path
+                turned `all Edit` into two lines.
+
+                Only the widest segment may then shrink, and `min-w-0` is the
+                half that does the work — without it a flex item refuses to go
+                below its own text, so `truncate` would have nothing to
+                truncate to. The label stays whole in the DOM either way, so
+                the option's accessible name is never the elided one.
+              */
+              'whitespace-nowrap',
+              !wrap && option === widest ? 'min-w-0 truncate' : 'shrink-0',
               'focus-visible:ring-1 focus-visible:ring-brand',
               selected
                 ? 'bg-active text-ink'
