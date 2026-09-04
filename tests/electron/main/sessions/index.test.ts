@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AUTH_ENV_KEYS,
   DEFAULT_JIRA,
+  DEFAULT_RECEIVER,
   DEFAULT_NOTIFICATIONS,
   type ConfigSnapshot,
 } from '../../../../electron/shared/config-contract';
@@ -93,6 +94,7 @@ const CONFIG: ConfigSnapshot = {
   ],
   notifications: { ...DEFAULT_NOTIFICATIONS },
   jira: { ...DEFAULT_JIRA },
+  receiver: { ...DEFAULT_RECEIVER },
   subscriptionAuth: true,
   sessionMetrics: true,
   importLoginEnv: true,

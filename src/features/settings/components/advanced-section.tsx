@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useSwarmPhrase } from '@/hooks/use-swarm-phrase';
 
 import { ConfigResetConfirm } from '@features/settings/components/config-reset-confirm';
+import { ContainerAliasGroup } from '@features/settings/components/container-alias-group';
 import { SettingsGroup } from '@features/settings/components/settings-group';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
 import { useProjectConfig } from '@hooks/use-project-config';
@@ -343,6 +344,8 @@ export function AdvancedSection() {
           <p className="text-[11.5px] text-green">{reloaded}</p>
         )}
       </SettingsGroup>
+
+      <ContainerAliasGroup hostAlias={snapshot.receiver.hostAlias} />
 
       <SettingsGroup
         title="Reset"

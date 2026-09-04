@@ -28,11 +28,13 @@ import type {
   SetNotificationsRequest,
   SetProjectKeyRequest,
   SetProjectRuntimeRequest,
+  SetReceiverRequest,
   SetRuntimeRequest,
 } from './config-contract';
 import {
   NOTIFICATION_KEYS,
   PROJECT_KEY_HINT,
+  isHostAlias,
   isProjectKey,
   unsafeEnvReason,
 } from './config-contract';
@@ -1059,6 +1061,45 @@ export function parseSetJiraRequest(input: unknown): SetJiraRequest {
 
   if (Object.keys(request).length === 0) {
     return fail('setJira: nothing to change');
+  }
+  return request;
+}
+
+/**
+ * A container host alias.
+ *
+ * The rule itself is {@link isHostAlias}, in `config-contract.ts`, **shared with
+ * the file reader** rather than restated here: the set this verb accepts and the
+ * set `config/parse.ts` accepts have to be the same set, and two spellings of
+ * "looks like a hostname" drift. An earlier pair of spellings disagreed on a
+ * length bound, so a 300-character alias hand-written into the file parsed
+ * cleanly while the identical string over this channel was refused.
+ *
+ * Trimming is this side's own courtesy — a user pastes with padding, and the
+ * *stored* value is trimmed, so the two sides still agree on every value that
+ * reaches the file.
+ */
+export function assertHostAlias(value: unknown, label: string): string {
+  const raw = assertString(value, label).trim();
+  if (raw.length === 0) return fail(`${label}: must not be empty`);
+  if (!isHostAlias(raw)) {
+    return fail(`${label}: expected a hostname — no scheme, port, path or credentials`);
+  }
+  return raw;
+}
+
+/** Payload of `config:set-receiver` (HIVE-131). */
+export function parseSetReceiverRequest(input: unknown): SetReceiverRequest {
+  const raw = assertShape(input, [], 'setReceiver', ['hostAlias']);
+
+  const request: SetReceiverRequest = {
+    ...(raw.hostAlias !== undefined
+      ? { hostAlias: assertHostAlias(raw.hostAlias, 'setReceiver.hostAlias') }
+      : {}),
+  };
+
+  if (Object.keys(request).length === 0) {
+    return fail('setReceiver: nothing to change');
   }
   return request;
 }

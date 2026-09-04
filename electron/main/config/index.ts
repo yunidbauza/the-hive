@@ -5,6 +5,7 @@ import {
   DEFAULT_CLAUDE_COMMAND,
   DEFAULT_IMPORT_LOGIN_ENV,
   DEFAULT_JIRA,
+  DEFAULT_RECEIVER,
   DEFAULT_SESSION_METRICS,
   DEFAULT_SUBSCRIPTION_AUTH,
   DEFAULT_PROJECT_ICON,
@@ -22,6 +23,7 @@ import {
   type SetNotificationsRequest,
   type SetProjectKeyRequest,
   type SetProjectRuntimeRequest,
+  type SetReceiverRequest,
   type SetRuntimeRequest,
 } from '@shared/config-contract';
 import { resolveNotificationPrefs } from '@shared/notification-contract';
@@ -136,6 +138,9 @@ export function loadConfig(): ConfigSnapshot {
     // Defaults *under* whatever the file named, so a file declaring only a site
     // still answers for both fields (HIVE-67).
     jira: { ...DEFAULT_JIRA, ...parsed.jira },
+    // Defaults *under* whatever the file named, exactly as `jira` does above
+    // (HIVE-131). A plain spread suffices — there is no legacy shape to migrate.
+    receiver: { ...DEFAULT_RECEIVER, ...parsed.receiver },
     errors: parsed.errors,
   };
 
@@ -809,6 +814,38 @@ export function setJira(request: SetJiraRequest): ConfigSnapshot {
       applyOverride(current, 'jql', request.jql);
 
       return { ...draft, jira: current };
+    }),
+  );
+}
+
+/**
+ * Change the container host alias (HIVE-131).
+ *
+ * The block is spread, never rebuilt, for the same reason every other verb
+ * spreads its target: a key this build has not heard of — the opt-in `bind`
+ * this story deferred, hand-written in the meantime — must survive a save made
+ * by this one.
+ *
+ * There is no clearing arm. An unset alias is not a meaningful state, so the
+ * renderer sends {@link DEFAULT_RECEIVER}'s value when the field is emptied
+ * rather than asking for the key to be removed.
+ */
+export function setReceiver(request: SetReceiverRequest): ConfigSnapshot {
+  return commit(
+    writeConfig((draft) => {
+      // A non-object block is replaced rather than merged into. The reader has
+      // already reported it, and merging onto a string would produce something
+      // neither the user nor the parser meant.
+      const current =
+        typeof draft.receiver === 'object' &&
+        draft.receiver !== null &&
+        !Array.isArray(draft.receiver)
+          ? { ...(draft.receiver as Record<string, unknown>) }
+          : {};
+
+      if (request.hostAlias !== undefined) current.hostAlias = request.hostAlias;
+
+      return { ...draft, receiver: current };
     }),
   );
 }

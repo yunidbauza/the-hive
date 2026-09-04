@@ -15,6 +15,7 @@ import type {
   SetNotificationsRequest,
   SetProjectKeyRequest,
   SetProjectRuntimeRequest,
+  SetReceiverRequest,
   SetRuntimeRequest,
 } from '@shared/config-contract';
 import type {
@@ -182,6 +183,18 @@ export const setNotificationPrefs = (
  */
 export const setJiraConnection = (request: SetJiraRequest): Promise<void> =>
   mutate((bridge) => bridge.config.setJira(request));
+
+/**
+ * Change the container host alias (HIVE-131).
+ *
+ * Routed through `mutate` like every other settings write, so the fresh snapshot
+ * main returns becomes the one every subscriber reads. Nothing consumes the
+ * alias yet — HIVE-132 is what bakes it into a container session's generated
+ * files — so this write is durable configuration rather than a live switch.
+ */
+export const setReceiverConfig = (
+  request: SetReceiverRequest,
+): Promise<void> => mutate((bridge) => bridge.config.setReceiver(request));
 
 /**
  * What this machine's `gh` looks like (story 106).

@@ -56,6 +56,7 @@ import type {
   SetNotificationsRequest,
   SetProjectKeyRequest,
   SetProjectRuntimeRequest,
+  SetReceiverRequest,
   SetRuntimeRequest,
 } from './config-contract';
 import type {
@@ -223,6 +224,14 @@ export const CH = {
    * one part that does not live in that file.
    */
   configSetJira: 'config:set-jira',
+  /**
+   * The container host alias (HIVE-131).
+   *
+   * A `config:` channel because it writes the config file and returns the fresh
+   * snapshot, like every other settings verb. What it sets is a *name*, never an
+   * address with a port — the port is the receiver's, assigned at bind time.
+   */
+  configSetReceiver: 'config:set-receiver',
   /**
    * The Jira credential and the connection test (HIVE-67).
    *
@@ -1273,6 +1282,14 @@ export interface HiveBridge {
      * file the product invites the user to hand-edit.
      */
     setJira(request: SetJiraRequest): Promise<ConfigSnapshot>;
+    /**
+     * Change the container host alias (HIVE-131).
+     *
+     * An absent field is untouched. There is no clearing arm — the substitution
+     * always needs a name, so emptying the field in Settings sends the default
+     * rather than removing the key.
+     */
+    setReceiver(request: SetReceiverRequest): Promise<ConfigSnapshot>;
     /**
      * Show the config file in the OS file manager (story 107).
      *
@@ -2427,6 +2444,19 @@ export const BRIDGE_CONFIG_KEYS = [
    * its own namespace because it is not config.
    */
   'setJira',
+  /**
+   * HIVE-131. The container host alias — and it **does name a network
+   * destination**, the first verb here that does.
+   *
+   * From HIVE-132 onward this hostname is the host in `HIVE_RECEIVER_URL` for a
+   * containerised session, and a session is handed `HIVE_HOOK_TOKEN` alongside
+   * it, so the alias decides where authenticated hook traffic is addressed.
+   * `assertHostAlias` bounds it to a hostname — per-label allowlist, shared with
+   * the file reader, no scheme, port, path, credentials or delimiter — and it
+   * names no *file*, opens no socket and changes no bind. See the fuller
+   * justification beside `'setReceiver'` in `tests/e2e/electron/security.spec.ts`.
+   */
+  'setReceiver',
 ] as const;
 
 /** The exact key set of `window.hive.pty`. */

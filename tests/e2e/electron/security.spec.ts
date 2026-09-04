@@ -653,6 +653,38 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
      */
     'setProjectKey',
     'setProjectRuntime',
+    /**
+     * HIVE-131's `setReceiver`, and it **does name a network destination** —
+     * the first verb on the config bridge that does. Read that plainly, because
+     * the follow-up bind story will lean on whatever this paragraph says.
+     *
+     * It stores the hostname a containerised session uses to address this app.
+     * Nothing consumes it on this branch, but HIVE-132 routes
+     * `HIVE_RECEIVER_URL` through it, and `agents/waker.ts:45` hands a session
+     * `HIVE_HOOK_TOKEN` alongside that URL. So from that story onward, the alias
+     * decides which host receives hook payloads bearing a valid token. A
+     * renderer able to call this verb with `evil.com` redirects authenticated
+     * hook traffic — a well-formed hostname is enough; no delimiter trick is
+     * needed. An earlier draft of this comment claimed "nothing it carries can
+     * name a destination", which was simply false.
+     *
+     * What genuinely bounds it, and what the assertion is worth:
+     *
+     * - `assertHostAlias` shares one predicate with the file reader
+     *   (`isHostAlias`), validating per DNS label against an **allowlist**. No
+     *   scheme, port, path, credentials, or authority-terminating delimiter
+     *   survives it — an earlier blocklist let `?`, `#`, `@` and `\` through,
+     *   each of which silently re-pointed the address at port 80 of another
+     *   host.
+     * - It names no *file*: the one file the bridge can write is still chosen by
+     *   main, as for every verb above.
+     * - It opens **no socket and changes no bind**. The receiver still binds
+     *   `127.0.0.1`, and nothing on this bridge can widen that. The opt-in
+     *   non-loopback bind was deliberately left out of HIVE-131 — which is why
+     *   this verb adds no listening surface, and why that claim, unlike the
+     *   destination one, holds.
+     */
+    'setReceiver',
     'setRuntime',
     'startClone',
   ]);
