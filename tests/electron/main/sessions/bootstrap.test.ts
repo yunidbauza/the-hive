@@ -886,7 +886,11 @@ describe('sessionCommand container projects', () => {
     expect(command).not.toContain('Application Support');
   });
 
-  it('rewrites the per-session directory in rewrite mode', () => {
+  it('maps a nested per-session settings path the same way (freshness is not read here)', () => {
+    // `sessionCommand` never branches on `freshness` — that only decides, one
+    // layer up, which host path `settingsPath` is in the first place. This
+    // exercises a deeper, per-session path shape through the same `mapped()`
+    // logic the first test already covers for a flat one.
     const command = sessionCommand('docker exec -it {env} devbox claude', {
       settingsPath:
         '/Users/dev/Library/Application Support/The Hive/hive/container/sessions/hero-refresh/claude-hooks.settings.json',
@@ -898,14 +902,42 @@ describe('sessionCommand container projects', () => {
     );
   });
 
+  it('drops an unmappable flag without dropping its neighbours', () => {
+    /**
+     * The property most likely to leak a host path into a container's argv if
+     * `mapped()` ever regresses: `/etc/hive/x.json` is under neither
+     * `projectPath` nor `<userData>/hive`, so `toContainer` returns `null` and
+     * the flag must vanish — not survive as the host path, and not survive as
+     * an empty-quoted argument. The other two flags, which *are* mappable,
+     * must still come through untouched.
+     */
+    const command = sessionCommand('docker exec -it {env} devbox claude', {
+      settingsPath: '/etc/hive/x.json',
+      mcpConfig: paths.mcpConfig,
+      pluginDir: paths.pluginDir,
+      container,
+    });
+
+    expect(command).not.toContain('--settings');
+    expect(command).not.toContain('/etc/hive/x.json');
+    expect(command).not.toContain("--settings ''");
+    expect(command).toContain("--mcp-config '/hive/container/hive.mcp.json'");
+    expect(command).toContain("--plugin-dir '/hive/plugin'");
+  });
+
   it('leaves the command alone when it has no placeholder', () => {
     // Task 9's diagnostic is what refuses this; a half-built command is worse.
+    // Pinned with `toBe` rather than `toContain`: dropping the `?? line`
+    // fallback and leaking `substituteEnv`'s `null` in would still satisfy
+    // both a `toContain('docker exec -it devbox claude')` and a
+    // `not.toContain('-e HIVE_SESSION_ID')` on a longer, broken string.
     const command = sessionCommand('docker exec -it devbox claude', {
       ...paths,
       container,
     });
-    expect(command).toContain('docker exec -it devbox claude');
-    expect(command).not.toContain('-e HIVE_SESSION_ID');
+    expect(command).toBe(
+      "docker exec -it devbox claude --settings '/hive/container/claude-hooks.settings.json' --plugin-dir '/hive/plugin' --mcp-config '/hive/container/hive.mcp.json' && exit",
+    );
   });
 
   it('is byte-identical to today for a project with no container block', () => {
