@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { mkdtempSync, rmSync } from 'node:fs';
+import { readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -168,5 +169,87 @@ describe('createHookRuntime — settings write atomicity', () => {
 
     expect(runtime.settingsPathFor()).not.toBeNull();
     expect(runtime.agentSettingsPathFor()).not.toBeNull();
+  });
+});
+
+describe('createHookRuntime — the container-flavoured set (HIVE-132)', () => {
+  let dir: string;
+  let ledger: Ledger;
+  let runtime: HookRuntime | undefined;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'hive-hooks-container-'));
+    ledger = createLedger({ dir, knowsParty: () => true });
+  });
+
+  afterEach(async () => {
+    await runtime?.stop();
+    runtime = undefined;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const start = async (): Promise<HookRuntime> => {
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => true,
+      hostAlias: () => 'host.docker.internal',
+      ledger,
+    });
+    await runtime.start(noopHandlers);
+
+    return runtime;
+  };
+
+  it('writes the container set beside the host one when the receiver binds', async () => {
+    await start();
+
+    const written = await readdir(join(dir, 'hive', 'container'));
+
+    expect(written).toContain('hive.mcp.json');
+    expect(written).toContain('claude-hooks.settings.json');
+  });
+
+  it('addresses the alias in the container set, loopback in the host one', async () => {
+    await start();
+
+    const container = await readFile(
+      join(dir, 'hive', 'container', 'claude-hooks.settings.json'),
+      'utf8',
+    );
+    const host = await readFile(
+      join(dir, 'hive', 'claude-hooks.settings.json'),
+      'utf8',
+    );
+
+    expect(container).toContain('host.docker.internal');
+    expect(host).toContain('127.0.0.1');
+    expect(host).not.toContain('host.docker.internal');
+  });
+
+  it('reports the origin a container must use, not loopback', async () => {
+    const started = await start();
+
+    expect(started.containerOrigin()).toMatch(
+      /^http:\/\/host\.docker\.internal:\d+$/,
+    );
+  });
+
+  it('reports null before the receiver has bound', () => {
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      hostAlias: () => 'host.docker.internal',
+      ledger,
+    });
+
+    expect(runtime.containerOrigin()).toBeNull();
+  });
+
+  it('leaves a host session environment untouched', async () => {
+    const started = await start();
+
+    expect(started.envFor('sess-a')['HIVE_RECEIVER_URL']).toMatch(
+      /^http:\/\/127\.0\.0\.1:\d+$/,
+    );
   });
 });
