@@ -2,6 +2,7 @@ import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
+  type HookIdentity,
   HOOK_ENV_SESSION,
   HOOK_ENV_TOKEN,
   HOOK_EVENTS,
@@ -97,22 +98,7 @@ export const AGENT_SETTINGS_FILE = join(
   'claude-agent.settings.json',
 );
 
-/**
- * Resolved values baked in place of the `$VAR` references (HIVE-132).
- *
- * Given only in `rewrite` freshness, for a container whose environment was
- * fixed at creation time and has since gone stale. Omitted everywhere else —
- * including for an `exec-env` container, whose file differs from a host
- * session's by its URL alone.
- *
- * A resolved token on disk is the trade that mode makes, and it is *per
- * session* precisely because the token is: `tokenFor` derives it from the
- * receiver's launch secret and one session's id.
- */
-export interface HookIdentity {
-  session: string;
-  token: string;
-}
+export type { HookIdentity } from '@shared/hook-contract';
 
 export interface HookSettings {
   hooks: Record<string, unknown[]>;
@@ -257,7 +243,23 @@ export function hookSettings(
   const ready =
     readyUrl === undefined
       ? []
-      : [{ matcher: '*', hooks: [{ type: 'command', command: readyCommand(readyUrl) }] }];
+      : [
+          {
+            matcher: '*',
+            hooks: [
+              {
+                type: 'command',
+                /*
+                  The identity rides along here too. This is a `command` hook,
+                  so its `$VAR`s are the *shell's* rather than Claude Code's
+                  `allowedEnvVars` — and a stale container environment breaks
+                  `/ready` exactly the way it breaks the http hooks (HIVE-132).
+                */
+                command: readyCommand(readyUrl, identity),
+              },
+            ],
+          },
+        ];
 
   return {
     hooks: Object.fromEntries(
