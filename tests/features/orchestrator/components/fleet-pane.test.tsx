@@ -8,6 +8,7 @@ import {
   FleetPane,
   TRANSCRIPT_FLOOR,
   consoleSplitBounds,
+  DIVIDER_BAND,
 } from '@features/orchestrator/components/fleet-pane';
 import {
   MAX_SPLIT_RATIO,
@@ -51,9 +52,35 @@ describe('consoleSplitBounds', () => {
     // transcript 112px against a 160px floor. The cap is where the floor is.
     const { min, max } = consoleSplitBounds(560, true);
 
-    expect(max).toBeCloseTo((560 - TRANSCRIPT_FLOOR.px) / 560, 5);
+    expect(max).toBeCloseTo((560 - TRANSCRIPT_FLOOR.px - DIVIDER_BAND.px) / 560, 5);
     expect(max).toBeLessThan(MAX_SPLIT_RATIO);
     expect(min).toBe(MIN_SPLIT_RATIO);
+  });
+
+  /*
+    The divider is a `shrink-0` layout sibling inside the very box these bounds
+    are measured against, so its band is height the transcript does not get.
+    Leaving it out let the cap promise the transcript exactly its floor and
+    then hand it twelve pixels less — CSS held the floor, the table absorbed
+    the difference, and the slider announced a share nothing on screen
+    reflected. It was a pixel while the seam was a hairline; the gutter is what
+    made it matter.
+  */
+  it('spends the divider’s own band out of the transcript’s share', () => {
+    const withBand = consoleSplitBounds(560, true);
+
+    // The share the cap allows, plus the band, must still leave the floor.
+    expect(560 - withBand.max * 560 - DIVIDER_BAND.px).toBeCloseTo(
+      TRANSCRIPT_FLOOR.px,
+      5,
+    );
+    // And it is strictly tighter than the band-blind arithmetic it replaced.
+    expect(withBand.max).toBeLessThan((560 - TRANSCRIPT_FLOOR.px) / 560);
+  });
+
+  /* Two spellings of one number: a class edit that misses the constant is a bug. */
+  it('paints the band at the height the arithmetic spends', () => {
+    expect(DIVIDER_BAND.className).toBe(`h-${DIVIDER_BAND.px / 4}`);
   });
 
   it('floors the table at a header and two rows', () => {
@@ -121,6 +148,25 @@ describe('FleetPane', () => {
     });
 
     expect(useAppearanceStore.getState().consoleSplitRatio).toBe(CONSOLE_SPLIT_DEFAULT);
+  });
+
+  /*
+    The same seam the agent run log draws, and for the same reason: the fleet
+    table and the overmind console sit on one terminal black, so a 1px rule in
+    `border-soft` is indistinguishable from the row rules a few pixels above it
+    and the divider between two regions read as one more ended session. A band
+    of the panel ground is the one thing a rule sharing that black cannot be.
+  */
+  it('draws the seam as a gutter with a grip, not as another table row', () => {
+    renderPane();
+
+    const divider = screen.getByRole('slider', { name: 'Resize the fleet table' });
+
+    expect(divider).toHaveClass('h-3', 'bg-bg');
+    expect(divider).not.toHaveClass('bg-border-soft');
+    // Scoped to the handle rather than the tree: `renderPane`'s own `container`
+    // is the pane's ref, and the dots are the handle's own children anyway.
+    expect(divider.querySelectorAll('.rounded-full')).toHaveLength(3);
   });
 
   it('hands the divider the unmeasured bounds under happy-dom', () => {

@@ -1,5 +1,7 @@
 import { useLayoutEffect, useState, type RefObject } from 'react';
 
+import { cn } from '@/lib/utils';
+
 import { SplitHandle } from '@components/ui/split-handle';
 import { SessionTable } from '@features/orchestrator/components/session-table';
 import {
@@ -23,6 +25,22 @@ export const CONSOLE_SPLIT_DEFAULT = 0.5;
  * turns it into the largest share the table may claim.
  */
 export const TRANSCRIPT_FLOOR = { px: 160, className: 'min-h-40' } as const;
+
+/**
+ * The divider's own band, in pixels and as the class it is painted with.
+ *
+ * Two spellings of one number for the same reason {@link TRANSCRIPT_FLOOR}
+ * keeps two: this one is a **layout sibling** of the two panes, not a hairline
+ * floating over them, so it spends height that {@link consoleSplitBounds} has
+ * to account for. A reader changing the class has to move the constant with it.
+ *
+ * It was one pixel until the seam became a gutter, which is why the arithmetic
+ * below never mentioned it: at `h-px` the divergence was a pixel and the
+ * docstring's "bounds follow the paint" was true enough. At twelve it is not.
+ * Note that the hairline's larger *hit* area was never part of this — that span
+ * is `absolute`, so it has always occupied exactly no layout.
+ */
+export const DIVIDER_BAND = { px: 12, className: 'h-3' } as const;
 
 /**
  * The table's floor: a header and two rows at the console's type size. The
@@ -63,7 +81,22 @@ export function consoleSplitBounds(
   }
 
   const min = Math.max(MIN_SPLIT_RATIO, FLEET_FLOOR_PX / height);
-  const max = Math.min(MAX_SPLIT_RATIO, (height - TRANSCRIPT_FLOOR.px) / height);
+  /*
+    The band comes out of the transcript's remainder, not the table's basis.
+    The table's share is `flex-basis: <ratio>%` of this same measured box, so
+    what is left for the transcript is `height - ratio*height - band` — and the
+    cap exists to keep that at or above the floor. Leaving the band out of it
+    let the slider announce a share the transcript's own `min-h-40` then
+    refused to yield, so the table painted a band shorter than the number and
+    the drag had a dead zone on the way back.
+
+    `min` is untouched: the table's floor is about the table's own basis, which
+    the band does not come out of.
+  */
+  const max = Math.min(
+    MAX_SPLIT_RATIO,
+    (height - TRANSCRIPT_FLOOR.px - DIVIDER_BAND.px) / height,
+  );
 
   return { min, max: Math.max(min, max) };
 }
@@ -161,8 +194,32 @@ export function FleetPane({ containerRef, floored }: FleetPaneProps) {
       >
         <SessionTable />
       </div>
+      {/*
+        A gutter, not a hairline — the same seam the agent run log draws, and
+        for the same reason.
+
+        Both sides of this divider are one terminal black: the fleet table
+        above, the overmind console below. A 1px rule in `border-soft` is
+        exactly what separates one ended session from the next a few pixels
+        above it, so the divider between two whole regions read as one more row
+        of the table. A 12px band of the **panel** ground cuts that black in
+        two, which is the one thing a rule sharing it cannot do, and `grip`
+        puts the dots in the band — the handle has been draggable all along and
+        never looked it.
+
+        No negative margin, unlike the run log's `-mx-2.5`. That one escapes
+        the log's own padding; this handle is a direct child of the stage's
+        unpadded split column and already spans edge to edge.
+
+        The band is real layout — `shrink-0` inside the very box the bounds are
+        measured against — so it is spelled as {@link DIVIDER_BAND} and spent in
+        `consoleSplitBounds`. The run log needs no equivalent: its own split has
+        no pixel floor for a band to eat into.
+      */}
       <SplitHandle
         axis="horizontal"
+        grip
+        className={cn(DIVIDER_BAND.className, 'bg-bg')}
         containerRef={containerRef}
         label="Resize the fleet table"
         value={painted}

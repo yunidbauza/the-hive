@@ -627,7 +627,14 @@ not only the ones that can raise `waiting`.
 
 `Notification` also fires with `notification_type: idle_prompt` — the turn
 ended and sixty seconds passed with nothing typed, the commonest way a session
-blocks on a human and the last of these to arrive. It does **not** report
+blocks on a human and the last of these to arrive. Sixty seconds is Claude
+Code's **default**, not a constant: it reads `messageIdleNotifThresholdMs` from
+the user's global config (`~/.claude.json`, default `60000`), which is not a
+`settings.json` key and so cannot be set per project or through the app's own
+merged settings. A machine whose owner has raised it will show a
+correspondingly later `session.input_needed` row, and — because the timer is
+re-armed on every turn-state change and cancelled outright by a typed prompt —
+a session woken more often than the threshold never reaches it at all. It does **not** report
 `waiting`: the turn is already over by the time it fires, nothing is blocked,
 and calling it `waiting` is what used to make the fleet dot lie. It reports
 `idle`, the same as the `Stop` a minute earlier, and still raises its inbox
@@ -707,6 +714,22 @@ measures it: a real `claude` in a real pty, driven through the app's own
 receiver, notifier and hub, against the vocabulary above. Run it again whenever
 the targeted Claude Code version moves — a payload shape changing under this
 tracker is exactly the kind of regression a fixture would not catch.
+
+### Leaving `waiting` is also what clears the row
+
+The same transition the fleet dot is built on retires the inbox row. A
+`session.blocked` says the session is stopped until the user acts, and — unlike
+the two "your turn again" kinds, which arriving at the session answers — looking
+at a block is not answering it. So the notifier marks a session when it raises
+one and asks the hub to sweep the row the moment the session stops being
+`waiting`, which is exactly an approved tool's `PostToolUse`, an answered
+`AskUserQuestion` (a tool, so the same path), or a typed refusal.
+
+Two exits emit nothing and therefore clear nothing until the next prompt:
+**Escape**, per the measured note above, and an answered **`Elicitation`**,
+whose block is held under the `UNPAIRED` sentinel with no tool name for a
+`PostToolUse` to pair against. Both fail in the direction of a row that outstays
+its fact rather than one that disappears while its session is still stopped.
 
 ## Two ABI facts that produce unreadable errors when forgotten
 

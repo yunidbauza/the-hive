@@ -184,6 +184,51 @@ const PLAIN_COPY: Partial<
 };
 
 /**
+ * The kinds that **arriving at the session** finishes.
+ *
+ * Both say the same thing in two registers — *the session is yours, come
+ * back* — so the moment its terminal is in front of the user the row has
+ * delivered itself and is nothing but a chore to clear. That is what
+ * `isForeground` means, and the hub is asked to sweep them on every foreground
+ * change (see `reevaluateForeground`).
+ *
+ * `session.blocked` is deliberately absent, and the difference is not one of
+ * degree. A block says *the session is stopped until you act*, and looking at
+ * it is not acting: the user can open the tab, read the question and walk away
+ * without answering, leaving a session that is still stopped and an inbox that
+ * has forgotten to say so. It is finished by {@link ANSWERED_KINDS} instead,
+ * on a signal that means the answer actually happened.
+ */
+const ARRIVAL_KINDS: readonly NotificationKind[] = [
+  'session.idle',
+  'session.input_needed',
+];
+
+/**
+ * The kinds that being **answered** finishes.
+ *
+ * Swept when the session stops being `waiting`, which is precisely the tracker
+ * reporting that nothing is blocked any more (`derive` in `tracker.ts` holds
+ * `waiting` while `blocked` is non-empty). Three ways in, all real:
+ *
+ * - the user approves, the tool runs, and its `PostToolUse` clears the entry
+ *   the `PermissionRequest` was paired to;
+ * - the user answers an `AskUserQuestion`, which *is* a tool and arrives the
+ *   same way;
+ * - the user types instead, and `UserPromptSubmit` clears `blocked` wholesale.
+ *
+ * ## The two exits this cannot see
+ *
+ * **Escape**, which the tracker records as emitting no event whatsoever, and an
+ * answered **`Elicitation`**, whose block is held under the `UNPAIRED` sentinel
+ * with no tool name for a `PostToolUse` to pair with. Both leave the row until
+ * the next prompt, which is the honest failure: the alternative is to infer an
+ * answer from silence, and a row cleared while its session is genuinely still
+ * stopped is an inbox that lies rather than one that nags.
+ */
+const ANSWERED_KINDS: readonly NotificationKind[] = ['session.blocked'];
+
+/**
  * Whether something is still running behind an `idle`.
  *
  * Presence, not membership: `session-contract.ts` promises `idleDetail` is
@@ -325,6 +370,16 @@ export function createNotifier(options: NotifierOptions): Notifier {
    * minutes about one idle session. Clearing the mark on dismiss would hand
    * that back, with the dismissal itself as the trigger. Recorded here so the
    * next reader does not read it as an oversight and repair it.
+   *
+   * **The arrival sweep does not clear it either, for the same reason and one
+   * more.** A sweep is a dismissal the user performed by walking back to the
+   * session, which is a stronger acknowledgement than swiping a row away, so
+   * the rule above already covers it. The additional reason is that the harm
+   * it looks like it should cause is unreachable: Claude Code arms its idle
+   * timer **once per idle stretch** and re-arms it only when the turn state
+   * changes, so any later `idle_prompt` is necessarily preceded by a
+   * `UserPromptSubmit` — which clears this mark before the prompt can be
+   * suppressed by it. There is no forgotten session hiding behind this set.
    */
   const announcedInputNeeded = new Set<string>();
 
@@ -427,6 +482,22 @@ export function createNotifier(options: NotifierOptions): Notifier {
   >();
 
   /**
+   * Sessions with a live `session.blocked` row that has yet to be answered.
+   *
+   * A **mark**, in the shape `announcedInputNeeded` already uses, rather than a
+   * set of notification ids — the notifier does not keep row ids and should not
+   * start. A row raised while the session was in the background is live in the
+   * hub's buffer under an id nobody here saw; only the hub can find it, and
+   * {@link NotificationHub.dismissForSession} is how it is asked to.
+   *
+   * What the mark buys is that the ask is an **edge**. Without it, every event
+   * carrying a non-`waiting` status — which is nearly all of them — would ask
+   * the hub to scan its buffer for rows that are not there. Set when a block is
+   * raised, spent by the first status that is no longer `waiting`.
+   */
+  const blockedRaised = new Set<string>();
+
+  /**
    * A session declared itself finished (HIVE-93).
    *
    * Routed into {@link sessionEvent} as an ending rather than handled here,
@@ -512,6 +583,29 @@ export function createNotifier(options: NotifierOptions): Notifier {
     }
 
     /**
+     * The block was answered, so its row has nothing left to say.
+     *
+     * Tested with the **same predicate** the pending row above expires by, and
+     * that is the point rather than a coincidence: `stillRelevant` already
+     * spells out what keeps a `session.blocked` worth chasing the user about,
+     * and "still worth chasing" and "still worth a row in the inbox" are one
+     * question. Two answers to it would be two rules to keep in step, and the
+     * first divergence would leave a row about a session that answered ten
+     * minutes ago.
+     *
+     * A session that was blocked when it **ended** takes its row with it, so no
+     * row is left whose click opens a session that is gone. Not via `hasEnded`,
+     * which `stillRelevant`'s blocked branch does not consult — that branch is
+     * the bare `status === 'waiting'`, and `terminated` and `done` are simply
+     * not `waiting`. The `/done` route reaches it too: `finishedEvent` calls
+     * this function with `status: 'done'`.
+     */
+    if (blockedRaised.has(entityId) && !stillRelevant('session.blocked', status, event)) {
+      blockedRaised.delete(entityId);
+      hub.dismissForSession(entityId, ANSWERED_KINDS);
+    }
+
+    /**
      * The inbox is routed off the hook **event**, never off the status.
      *
      * These are two different questions that used to share one branch. The
@@ -564,6 +658,15 @@ export function createNotifier(options: NotifierOptions): Notifier {
 
       if (kind === 'session.idle') armedIdle.delete(entityId);
 
+      /*
+        Marked before the raise, and for the same reason `announcedInputNeeded`
+        is: the gate downgrades rather than drops, so a gated block is a row
+        that exists and will need sweeping when it is answered. Marking after a
+        `null` raise would be wrong the other way — see the `raised === null`
+        guard below, which takes it back for a kind that was switched off.
+      */
+      if (kind === 'session.blocked') blockedRaised.add(entityId);
+
       const copy =
         PLAIN_COPY[kind] ??
         waitingCopy(
@@ -583,6 +686,27 @@ export function createNotifier(options: NotifierOptions): Notifier {
         body: copy.body,
         action,
       });
+
+      /*
+        No row, so nothing to sweep later.
+
+        **Guarded on the kind**, and it has to be. Unguarded, a `null` raise of
+        *any* kind wiped the block mark — and that is reachable, not
+        theoretical: an answered `Elicitation` leaves its block under `UNPAIRED`
+        with no tool name to pair against, so the tracker keeps reporting
+        `waiting`; the `idle_prompt` that follows raises `session.input_needed`;
+        and if the user has switched that kind off, `raise` answers `null`. The
+        genuinely blocked row would then have lost the mark that sweeps it, and
+        nothing but a hand could clear it.
+
+        `off` is also the *only* way to get `null` here. The dedup path cannot
+        produce one for this producer: session rows pass no
+        `NotificationInput.id`, so the hub mints a unique one every time and
+        `seen` can never match.
+      */
+      if (kind === 'session.blocked' && raised === null) {
+        blockedRaised.delete(entityId);
+      }
 
       /*
         Remember it if, and only if, it was gated — `unread: false` off a raise
@@ -662,12 +786,36 @@ export function createNotifier(options: NotifierOptions): Notifier {
     },
 
     reevaluateForeground(): void {
+      /*
+        The arrival sweep, and the hub is asked unconditionally rather than only
+        when something is pending. The two are not the same set: `pendingForeground`
+        holds rows that were *gated* — raised while the user was already watching
+        — while the rows this exists to clear are the opposite case, raised while
+        the session was in the background and live in a buffer the notifier
+        cannot see. Asking only when a pending entry existed would sweep exactly
+        the rows that needed it least.
+
+        Cheap enough to run on every tab switch: the hub answers a `filter` over
+        a capped buffer and, finding nothing, announces nothing at all.
+      */
+      hub.dismissForeground(ARRIVAL_KINDS);
+
       // Delete only on success. `hub.promote` answers `false` when a
       // collaborator (typically `prefs`) threw partway through — the entry
       // stays pending so the next focus change tries again, rather than the
       // session going silently un-rearmed for good.
       for (const [entityId, pending] of pendingForeground) {
-        if (isForeground(entityId)) continue;
+        if (isForeground(entityId)) {
+          /*
+            Its row has just been swept, so there is nothing left to promote —
+            and a promotion of a swept id would be a toast about a session the
+            user is standing in. Only for the kinds the sweep actually takes: a
+            pending `session.blocked` survives arriving, and must still promote
+            when the user looks away without answering.
+          */
+          if (ARRIVAL_KINDS.includes(pending.kind)) pendingForeground.delete(entityId);
+          continue;
+        }
         if (hub.promote(pending.id)) pendingForeground.delete(entityId);
       }
     },
