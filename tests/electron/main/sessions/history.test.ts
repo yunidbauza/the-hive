@@ -192,6 +192,73 @@ describe('session history', () => {
       expect(readHistory(file)[0]?.name).toBe('HIVE-104-back-key-interception');
     });
 
+    /**
+     * A re-point survives the quit.
+     *
+     * The store answers `/rename hive-131` on a row pinned to `HIVE-133` by
+     * moving the ticket, and it reaches this file the way every association
+     * does — `session:note`, which the IPC handler patches with `namePinned:
+     * true` beside the name. That flag is what makes the patch the *app
+     * repinning* rather than a title to normalise, so both fields land
+     * verbatim instead of the new name being folded back under the old key.
+     *
+     * Asserted rather than reasoned about, because this is the layer HIVE-107
+     * was: the row on screen was right and the file underneath it was not, and
+     * nobody found out until the next launch.
+     */
+    it('takes a re-pointed ticket and the name that came with it', () => {
+      const history = createSessionHistory(file, () => 1000);
+      history.record('sess-01', { project: 'p', task: '', status: 'working' });
+      history.record('sess-01', {
+        ticket: 'HIVE-133',
+        name: 'HIVE-133',
+        namePinned: true,
+      });
+
+      // Exactly what `handle(CH.sessionNote, …)` records for the re-point.
+      history.record('sess-01', {
+        ticket: 'HIVE-131',
+        name: 'HIVE-131',
+        namePinned: true,
+      });
+      history.flush();
+
+      expect(readHistory(file)[0]?.name).toBe('HIVE-131');
+      expect(readHistory(file)[0]?.ticket).toBe('HIVE-131');
+    });
+
+    /**
+     * And the title stream that follows it does not undo it.
+     *
+     * Claude goes on repainting `hive-131` several times a second after the
+     * rename, and each repaint reaches this file as an ordinary title with
+     * `nameOrigin: 'rename'`. Normalised against the *new* pin it answers
+     * `HIVE-131` and changes nothing; against the old one it would have
+     * answered `HIVE-133` and quietly rolled the rename back.
+     */
+    it('leaves a re-pointed name alone as the title keeps repainting', () => {
+      const history = createSessionHistory(file, () => 1000);
+      history.record('sess-01', { project: 'p', task: '', status: 'working' });
+      history.record('sess-01', {
+        ticket: 'HIVE-133',
+        name: 'HIVE-133',
+        namePinned: true,
+      });
+      history.record('sess-01', {
+        ticket: 'HIVE-131',
+        name: 'HIVE-131',
+        namePinned: true,
+      });
+
+      for (let i = 0; i < 5; i += 1) {
+        history.record('sess-01', { name: 'hive-131', nameOrigin: 'rename' });
+      }
+      history.flush();
+
+      expect(readHistory(file)[0]?.name).toBe('HIVE-131');
+      expect(readHistory(file)[0]?.ticket).toBe('HIVE-131');
+    });
+
     it('does not lengthen a pinned name on every repaint', () => {
       // The compounding failure, guarded here as well as in the store: the
       // prefix is the ticket, never the name the last repaint produced.
