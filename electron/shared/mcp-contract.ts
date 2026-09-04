@@ -1,8 +1,22 @@
+import type { AgentsDirectory } from './agent-contract';
+import type {
+  LedgerPostRequest,
+  LedgerReadQuery,
+  LedgerSnapshot,
+} from './ledger-contract';
+
 /**
  * The MCP wire protocol, as this app speaks it (HIVE-112).
  *
- * Types and constants only — `electron/shared` is compiled into the renderer,
- * main, and the MCP host alike, so nothing here may have a runtime import.
+ * `electron/shared` is compiled into the renderer, main, and the MCP host
+ * alike, so nothing here may have a **runtime import**, touch a Node API, or
+ * touch a DOM API. That is the constraint, and it is narrower than the "types
+ * and constants only" shorthand this file used to carry: a value with no
+ * imports behind it — {@link ReceiverError} below — costs a consumer nothing
+ * and is already the established pattern next door, where `guards.ts` exports
+ * `IpcValidationError` and a hundred lines of parsing logic that main and the
+ * renderer both call at runtime. The line that matters is what a module
+ * *drags in*, not whether it happens to be a value.
  *
  * ## Why these values are pinned rather than negotiated
  *
@@ -116,4 +130,64 @@ export interface CallToolResult {
    * would otherwise have to parse a JSON string or a sentence to get at it.
    */
   structuredContent?: Record<string, unknown>;
+}
+
+/**
+ * The one way the tools reach the ledger (HIVE-112, moved HIVE-130).
+ *
+ * Two implementations satisfy it and must stay indistinguishable to
+ * `mcp-tools.ts`: the stdio host's HTTP client (`mcp-host/client.ts`), and
+ * main's in-process client, which calls the receiver's own route handlers with
+ * no socket in between. Both are adapters over the same handlers, which is
+ * what keeps identity stamping, the caller-visibility filter and the body
+ * guards running exactly once, in the place they already live.
+ *
+ * No method takes a `from`: the caller is the authenticated session, so a model
+ * has no argument through which to name a different one.
+ */
+export interface ReceiverClient {
+  read(query: LedgerReadQuery): Promise<LedgerSnapshot>;
+  post(request: Omit<LedgerPostRequest, 'from'>): Promise<{ id: string; ref?: string }>;
+  /**
+   * Who else is on this machine (HIVE-127).
+   *
+   * Takes nothing, for the reason the tool behind it publishes no arguments:
+   * the caller is the session header this client already sends, and a
+   * parameter naming who is asking is a parameter a model can lie in.
+   */
+  agents(): Promise<AgentsDirectory>;
+}
+
+/** The path `POST /mcp` is served on (HIVE-130). */
+export const MCP_PATH = '/mcp';
+
+/**
+ * The cap on an MCP request body (HIVE-130).
+ *
+ * One JSON-RPC envelope wrapping one tool call, so it must comfortably hold a
+ * `ledger_post` body — which `Ledger.append` caps at `LEDGER_BODY_MAX` (16 KiB)
+ * on its own. Matching the hook path's 64 KiB leaves room for the envelope and
+ * keeps one number in the reader's head rather than two.
+ */
+export const MCP_MAX_BODY_BYTES = 64 * 1024;
+
+/**
+ * A refusal from the Hive, carrying the reason it gave (HIVE-112, moved 130).
+ *
+ * Lives here rather than beside either caller because there are now two: the
+ * stdio host's HTTP client throws it when the receiver answers non-2xx, and
+ * main's in-process client throws it when the very same handler returns a
+ * non-200 `Reply` with no socket in between. `mcp-tools.ts` catches it by
+ * `instanceof`, so a single definition is what keeps that check working for
+ * both transports — two copies would make a refusal raised in main invisible
+ * to a `catch` written against the host's.
+ */
+export class ReceiverError extends Error {
+  readonly status: number;
+
+  constructor(status: number, reason: string) {
+    super(reason);
+    this.name = 'ReceiverError';
+    this.status = status;
+  }
 }

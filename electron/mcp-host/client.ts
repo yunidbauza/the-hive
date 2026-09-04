@@ -3,14 +3,22 @@ import { HOOK_HEADER_SESSION, HOOK_HEADER_TOKEN } from '@shared/hook-contract';
 import {
   LEDGER_POST_PATH,
   LEDGER_READ_PATH,
-  type LedgerPostRequest,
-  type LedgerReadQuery,
   type LedgerSnapshot,
 } from '@shared/ledger-contract';
-import { RECEIVER_TIMEOUT_MS } from '@shared/mcp-contract';
+import {
+  RECEIVER_TIMEOUT_MS,
+  ReceiverError,
+  type ReceiverClient,
+} from '@shared/mcp-contract';
 
 /**
- * The MCP host's one way to reach the ledger (HIVE-112).
+ * The MCP host's one way to reach the ledger, over HTTP (HIVE-112).
+ *
+ * One of two implementations of {@link ReceiverClient} since HIVE-130 — this is
+ * the one that crosses a socket, used by the stdio host running as a child of
+ * `claude`. Main serves the same tools to a containerised session over
+ * `POST /mcp` with an in-process client instead, so the port and its
+ * {@link ReceiverError} moved to `@shared/mcp-contract` where both can see them.
  *
  * Both routes are **POST**, including the read: the receiver has never parsed a
  * query string and every route on it is POST-only, so a `GET /ledger` would be
@@ -21,30 +29,6 @@ import { RECEIVER_TIMEOUT_MS } from '@shared/mcp-contract';
  * suites that run in the same worker — an argument costs one line and is
  * assertable.
  */
-
-/** A refusal from the receiver, carrying the reason it gave. */
-export class ReceiverError extends Error {
-  readonly status: number;
-
-  constructor(status: number, reason: string) {
-    super(reason);
-    this.name = 'ReceiverError';
-    this.status = status;
-  }
-}
-
-export interface ReceiverClient {
-  read(query: LedgerReadQuery): Promise<LedgerSnapshot>;
-  post(request: Omit<LedgerPostRequest, 'from'>): Promise<{ id: string; ref?: string }>;
-  /**
-   * Who else is on this machine (HIVE-127).
-   *
-   * Takes nothing, for the reason the tool behind it publishes no arguments:
-   * the caller is the `x-hive-session` header this client already sends, and a
-   * parameter naming who is asking is a parameter a model can lie in.
-   */
-  agents(): Promise<AgentsDirectory>;
-}
 
 export interface ReceiverClientOptions {
   /** The receiver's base URL, from `HIVE_RECEIVER_URL`. */

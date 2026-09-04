@@ -6,6 +6,7 @@ import { AGENTS_PATH, type AgentsDirectory } from '@shared/agent-contract';
 import { parseLedgerPostBody, parseLedgerReadQuery } from '@shared/guards';
 import {
   CLEAR_REASON,
+  HOOK_HEADER_RUN,
   HOOK_HEADER_SESSION,
   HOOK_HEADER_TOKEN,
   HOOK_MAX_BODY_BYTES,
@@ -30,6 +31,15 @@ import {
   type LedgerSnapshot,
 } from '@shared/ledger-contract';
 import { keepNewest } from '@shared/ledger-derive';
+import {
+  MCP_MAX_BODY_BYTES,
+  MCP_PATH,
+  ReceiverError,
+  type JsonRpcRequest,
+  type ReceiverClient,
+} from '@shared/mcp-contract';
+import { handleMessage } from '@shared/mcp-protocol';
+import { createToolHandlers } from '@shared/mcp-tools';
 import {
   METRICS_MAX_BODY_BYTES,
   METRICS_PATH,
@@ -842,6 +852,143 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   }
 
   /**
+   * The MCP endpoint (HIVE-130).
+   *
+   * ## Why this is a route and not a second server
+   *
+   * The tools a containerised `claude` needs are the ones the stdio host
+   * already serves, and everything they are allowed to do is already decided by
+   * the three handlers above. So this route does not reach for `Ledger`: it
+   * builds a {@link ReceiverClient} whose three methods **call those handlers**
+   * with the request's own headers and a synthesized body, then unwrap the
+   * `Reply`. That is the same contract `mcp-host/client.ts` implements over a
+   * socket, minus the socket.
+   *
+   * The alternative — an in-process client that called `Ledger.append`
+   * directly — reads like the shorter path and silently skips four things that
+   * do not live in the ledger: `handleLedgerRead`'s caller-visibility filter
+   * (which is what stops one session reading another's entries), the `from`
+   * stamping in `hooks/index.ts`, `parseLedgerPostBody`'s discarding of a
+   * body-supplied `from`, and the agents directory, which `Ledger` has never
+   * heard of. Every one of those is a bug this app has already fixed once.
+   *
+   * ## What the transport owes the spec
+   *
+   * Streamable HTTP, single-response flavour. Four requirements are met here
+   * and nowhere else:
+   *
+   * - A request gets one JSON object back, not an SSE stream. The spec permits
+   *   either and obliges the client to support both.
+   * - A **notification** — no `id` — is `202 Accepted` with no body, which is
+   *   why this returns a bare `202` rather than a `{ status, json }`: the
+   *   object arm of {@link Reply} always writes a body.
+   * - `GET` is `405`, handled in the dispatcher. A bare `404` there would tell
+   *   a client there is no endpoint at all and send it off to the deprecated
+   *   HTTP+SSE transport.
+   * - A **present** `Origin` is refused. This socket is loopback today, so no
+   *   browser can reach it; the check is here anyway because the spec makes it
+   *   a MUST and because HIVE-131 is about to make the bind configurable —
+   *   at which point a page in the user's browser could resolve a hostile name
+   *   to this address. A configurable allowlist is that story's; refusing every
+   *   browser-supplied origin is this one's.
+   */
+  async function handleMcp(
+    headers: Record<string, string | string[] | undefined>,
+    body: string,
+    truncated: boolean,
+  ): Promise<Reply> {
+    /*
+      First, and by hand: nothing in the dispatcher authenticates a route. Every
+      handler on this server calls `reject` itself, and one that forgot would be
+      wide open — see the routes table.
+    */
+    const refusal = reject(headers);
+    if (refusal !== null) return refusal;
+
+    /*
+      Any `Origin` at all is a refusal, not merely an unrecognised one. The
+      legitimate callers here are `claude` processes, and none of them sends
+      one; a request that does came from something with a browser's request
+      model attached, which is exactly what the DNS-rebinding warning is about.
+    */
+    if (headers['origin'] !== undefined) return 403;
+
+    // Refused rather than drained, for `handleLedgerPost`'s reason: the caller
+    // is a tool waiting on a result, and a call quietly cut in half is worse
+    // than one that failed.
+    if (truncated) {
+      return { status: 413, json: { reason: `body exceeds ${MCP_MAX_BODY_BYTES} bytes` } };
+    }
+
+    let message: JsonRpcRequest;
+    try {
+      message = JSON.parse(body) as JsonRpcRequest;
+    } catch (cause) {
+      return { status: 400, json: { reason: describeCause(cause) } };
+    }
+
+    const reply = await handleMessage(message, createToolHandlers(clientFor(headers), []));
+
+    // `null` is the notification case — see the spec note above.
+    return reply === null ? 202 : { status: 200, json: reply };
+  }
+
+  /**
+   * A {@link ReceiverClient} that calls this server's own handlers.
+   *
+   * The headers are the *caller's*, forwarded whole, so `reject` runs again
+   * inside each handler and arrives at the same identity this route already
+   * authenticated. That second check is deliberate rather than wasteful: it
+   * means no future edit can reach a ledger handler through here without an
+   * identity, and it keeps these three call sites indistinguishable from the
+   * HTTP ones they mirror.
+   */
+  function clientFor(
+    headers: Record<string, string | string[] | undefined>,
+  ): ReceiverClient {
+    const run = headers[HOOK_HEADER_RUN];
+
+    /** A handler's `Reply`, as a value or a throw the tools already catch. */
+    const unwrap = <T,>(reply: Reply): T => {
+      if (typeof reply === 'number') throw new ReceiverError(reply, `the Hive refused the request (${reply})`);
+      if (reply.status !== 200) {
+        const { reason } = reply.json as { reason?: unknown };
+        throw new ReceiverError(
+          reply.status,
+          typeof reason === 'string' && reason !== ''
+            ? reason
+            : `the Hive refused the request (${reply.status})`,
+        );
+      }
+      return reply.json as T;
+    };
+
+    return {
+      read: async (query) =>
+        unwrap<LedgerSnapshot>(handleLedgerRead(headers, JSON.stringify(query), false)),
+
+      post: async (request) => {
+        /*
+          Stamped here, over whatever the model put in `meta`, exactly as
+          `mcp-host/client.ts` does before its body leaves the process. It is
+          the only thing that lets main tell one run's asks from a concurrent
+          neighbour's, so it cannot be a value the model chose.
+        */
+        const stamped =
+          typeof run === 'string' && run !== ''
+            ? { ...request, meta: { ...(request.meta ?? {}), run } }
+            : request;
+
+        return unwrap<{ id: string; ref?: string }>(
+          handleLedgerPost(headers, JSON.stringify(stamped), false),
+        );
+      },
+
+      agents: async () => unwrap<AgentsDirectory>(await handleAgents(headers)),
+    };
+  }
+
+  /**
    * A session declared itself finished (HIVE-93).
    *
    * The shortest handler here by a wide margin, and that is the design rather
@@ -1239,10 +1386,28 @@ export function createReceiver(options: ReceiverOptions): Receiver {
             `/ready` treat theirs.
           */
           { path: AGENTS_PATH, cap: 0, handle: (headers) => handleAgents(headers) },
+          { path: MCP_PATH, cap: MCP_MAX_BODY_BYTES, handle: handleMcp },
         ];
 
         const created = createServer((req, res) => {
           const route = routes.find((candidate) => candidate.path === (req.url ?? ''));
+
+          /**
+           * `GET /mcp` is `405`, not `404` — the one exception to the
+           * POST-only rule below (HIVE-130).
+           *
+           * The Streamable HTTP spec has the MCP endpoint serve both methods,
+           * and says a server offering no SSE stream answers the `GET` with
+           * `405 Method Not Allowed`. The distinction is not pedantry: a client
+           * that gets `404` here concludes there is no endpoint at this URL and
+           * falls back to the deprecated HTTP+SSE transport, which this server
+           * does not speak either.
+           */
+          if (req.method === 'GET' && route !== undefined && route.path === MCP_PATH) {
+            res.writeHead(405).end();
+            return;
+          }
+
           if (req.method !== 'POST' || route === undefined) {
             res.writeHead(404).end();
             return;

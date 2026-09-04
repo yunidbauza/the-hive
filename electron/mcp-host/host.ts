@@ -7,10 +7,10 @@ import {
 } from '@shared/hook-contract';
 import { AGENTS_TOOL, APPROVE_TOOL, LEDGER_TOOLS } from '@shared/ledger-tools';
 import type { CallToolResult } from '@shared/mcp-contract';
+import { createToolHandlers } from '@shared/mcp-tools';
 
 import { createReceiverClient } from './client';
 import type { RpcHandlers } from './rpc';
-import { createToolHandlers } from './tools';
 
 /**
  * The Hive's MCP server, minus the process wiring (HIVE-112).

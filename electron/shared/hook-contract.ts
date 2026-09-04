@@ -286,6 +286,24 @@ export const HOOK_HEADER_SESSION = 'x-hive-session';
 /** The header carrying the caller's own session-bound token (HIVE-112). */
 export const HOOK_HEADER_TOKEN = 'x-hive-token';
 
+/**
+ * The header carrying the run a `POST /mcp` caller belongs to (HIVE-130).
+ *
+ * The stdio host reads {@link HOOK_ENV_RUN} from its own environment and stamps
+ * `meta.run` on every write before the body leaves the process
+ * (`mcp-host/client.ts`). A session reaching the MCP endpoint over HTTP has no
+ * such process for us to read an environment from, so the run travels as a
+ * header instead — and it has to travel *somehow*, because `meta.run` is the
+ * only thing that lets main tell one run's asks and handoff from a concurrent
+ * neighbour's (HIVE-128).
+ *
+ * Optional, exactly as the environment variable is: a pty session has no run.
+ * Unlike the two above it is **not** an authenticated claim — it narrows a
+ * write to a run, it never widens what the caller may reach — so it is stamped
+ * where the body cannot override it and otherwise left alone.
+ */
+export const HOOK_HEADER_RUN = 'x-hive-run';
+
 /** The environment variable each session's pty carries its Hive id in. */
 export const HOOK_ENV_SESSION = 'HIVE_SESSION_ID';
 

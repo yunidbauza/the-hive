@@ -1,19 +1,19 @@
-import type { LedgerKind, LedgerReadQuery } from '@shared/ledger-contract';
-import { AGENTS_TOOL, APPROVE_TOOL, LEDGER_TOOLS } from '@shared/ledger-tools';
+import type { LedgerKind, LedgerReadQuery } from './ledger-contract';
+import { AGENTS_TOOL, APPROVE_TOOL, LEDGER_TOOLS } from './ledger-tools';
 import {
   LEDGER_READ_DEFAULT_LIMIT,
+  ReceiverError,
   type CallToolResult,
   type McpToolDefinition,
-} from '@shared/mcp-contract';
+  type ReceiverClient,
+} from './mcp-contract';
+import type { RpcHandlers } from './mcp-protocol';
 import {
   isToolName,
   matches,
   PERMISSION_DENY_MESSAGE,
   type PermissionDecision,
-} from '@shared/permission-rules';
-
-import { ReceiverError, type ReceiverClient } from './client';
-import type { RpcHandlers } from './rpc';
+} from './permission-rules';
 
 /**
  * The nine ledger tools, as behaviour (HIVE-112, `ledger_handoff` added by
