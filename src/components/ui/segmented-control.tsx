@@ -87,6 +87,27 @@ export function SegmentedControl<T extends string>({
   const tabStop = isDead(value) ? selectable[0]?.value : value;
 
   /**
+   * The one segment allowed to give up width when the group cannot fit
+   * (HIVE-129).
+   *
+   * Letting every segment shrink is the CSS default and it is the wrong
+   * default here: flex distributes the shortfall in proportion to each item's
+   * own width, so a group holding a file path and the word `once` truncates
+   * *both* — `once` became `o…`, which costs the user a legible option to
+   * save four pixels the long segment had to spare.
+   *
+   * Widest by label length rather than by measured width: this component
+   * never measures, and it does not need to — the labels share one font and
+   * one padding, so the longest string is the widest segment, and a tie means
+   * two segments that could each equally well absorb the loss.
+   */
+  const widest = options.reduce<SegmentedOption<T> | undefined>(
+    (longest, option) =>
+      longest === undefined || option.label.length > longest.label.length ? option : longest,
+    undefined,
+  );
+
+  /**
    * Move selection *and* focus together.
    *
    * In a radio group the two are the same gesture: arrowing to an option
@@ -131,7 +152,14 @@ export function SegmentedControl<T extends string>({
       aria-label={label}
       aria-disabled={disabled || undefined}
       className={cn(
-        'inline-flex items-center gap-0.5 rounded-[7px] border border-border-soft bg-panel-2 p-0.5',
+        /*
+          `max-w-full` is what keeps an `inline-flex` honest. Sized to its
+          content by default, a group whose options are labelled with data
+          rather than with copy — the permission ladder's family rung is a
+          file path (HIVE-129) — grows past whatever contains it, and in the
+          316px rail that is the difference between a control and a bug.
+        */
+        'inline-flex max-w-full items-center gap-0.5 rounded-[7px] border border-border-soft bg-panel-2 p-0.5',
         disabled && 'opacity-45',
         className,
       )}
@@ -188,6 +216,19 @@ export function SegmentedControl<T extends string>({
             }}
             className={cn(
               'rounded-[5px] px-2.5 py-1 text-[12.5px] outline-none',
+              /*
+                One line, always: a wrapped label makes the group taller and
+                every segment in it taller with it, which is how a long path
+                turned `all Edit` into two lines.
+
+                Only the widest segment may then shrink, and `min-w-0` is the
+                half that does the work — without it a flex item refuses to go
+                below its own text, so `truncate` would have nothing to
+                truncate to. The label stays whole in the DOM either way, so
+                the option's accessible name is never the elided one.
+              */
+              'whitespace-nowrap',
+              option === widest ? 'min-w-0 truncate' : 'shrink-0',
               'focus-visible:ring-1 focus-visible:ring-brand',
               selected
                 ? 'bg-active text-ink'

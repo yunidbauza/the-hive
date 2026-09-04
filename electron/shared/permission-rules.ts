@@ -317,6 +317,53 @@ const COMPOSABLE = /^[A-Za-z0-9 _\-./:+@~]+$/;
 
 const isSafeToCompose = (text: string): boolean => COMPOSABLE.test(text);
 
+/**
+ * The longest a rung label may be before the ladder stops fitting.
+ *
+ * The scope ladder is a segmented control in a 316px rail and its three
+ * labels share one row — `once`, the family rule, and `all <Tool>`. A real
+ * `file_path` is an absolute one, so the family label was routinely 37
+ * characters (`/Users/someone/.hive/work/prpd/**`) and ate the whole row:
+ * `all Edit` wrapped onto two lines and the group overflowed the rail, which
+ * is what HIVE-129 was reported as.
+ *
+ * 22 is what measurement leaves once the other two segments and their padding
+ * are taken out of the rail's ~290px of card content at 12.5px.
+ */
+const LABEL_MAX = 22;
+
+/**
+ * `/Users/y/.hive/work/prpd/**` → `…/prpd/**`, and a short one untouched.
+ *
+ * The label is the only part of a rung that is *display*, and it is the one
+ * part that has to fit — the `rule` it grants and the `caption` under it both
+ * keep the directory whole, so nothing the user consents to is hidden by this.
+ * The tail is what is kept because the tail is what distinguishes one
+ * directory from another; leaving it to a CSS truncation would keep the head
+ * instead and leave every rung reading `/Users/yunid.b…`.
+ *
+ * Two cuts, in order, because one is not enough. Dropping the parents fixes
+ * the reported case, but `.hive/work/worktree-fix-rung-labels` is an ordinary
+ * directory in this very app and `…/worktree-fix-rung-labels/**` is still 29
+ * characters — so a last segment that overruns the budget on its own is cut
+ * too. The bound has to hold in the *data*: the control can only truncate by
+ * taking width from a segment, and there is no width here to take that does
+ * not come out of `once` and `all <Tool>`.
+ *
+ * A directory with no parent never gains a `…/` prefix — that would claim a
+ * parent it does not have — but it is still cut to the budget.
+ */
+const elideDirLabel = (dir: string): string => {
+  if (`${dir}/**`.length <= LABEL_MAX) return `${dir}/**`;
+
+  const slash = dir.lastIndexOf('/');
+  const tail = slash === -1 ? dir : `…/${dir.slice(slash + 1)}`;
+
+  return `${tail}/**`.length <= LABEL_MAX
+    ? `${tail}/**`
+    : `${tail.slice(0, LABEL_MAX - '…/**'.length)}…/**`;
+};
+
 /** The family rule for a call, or `undefined` when the tool has no specifier. */
 const familyRuleFor = (
   toolName: string,
@@ -357,7 +404,7 @@ const familyRuleFor = (
   if (!isSafeToCompose(dir)) return undefined;
   return {
     rule: `${toolName}(${dir}/**)`,
-    label: `${dir}/**`,
+    label: elideDirLabel(dir),
     caption: `never asks again under ${dir}.`,
   };
 };

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 
 import {
   HOOK_ENV_RECEIVER_URL,
@@ -149,6 +149,135 @@ function postDeceptiveAskCommand(statusMarker: string): string {
     ` > '${statusMarker}'`
   );
 }
+
+/** A short directory, and one no rail could ever spell out (HIVE-129). */
+const SHORT_PATH = '/tmp/a.ts';
+const LONG_DIR = '/tmp/hive-e2e/a-directory-name-far-too-long-for-the-rail';
+
+/** A real permission ask for a path tool, posted the way a hook would. */
+function postPathAskCommand(tool: string, path: string, statusMarker: string): string {
+  const body = JSON.stringify({
+    to: 'overmind',
+    kind: 'ask',
+    body: `Allow ${tool}?`,
+    meta: { kind: 'permission', tool, input: { file_path: path } },
+  });
+
+  return (
+    `curl -sS -m 5 -o /dev/null -w '%{http_code}' -X POST "$${HOOK_ENV_RECEIVER_URL}${LEDGER_POST_PATH}"` +
+    ` -H "${HOOK_HEADER_SESSION}: $${HOOK_ENV_SESSION}"` +
+    ` -H "${HOOK_HEADER_TOKEN}: $${HOOK_ENV_TOKEN}"` +
+    ` -H "content-type: application/json"` +
+    ` --data-binary '${body}'` +
+    ` > '${statusMarker}'`
+  );
+}
+
+/**
+ * What a scope ladder actually occupies on screen: how tall it is, and how far
+ * past its own card it reaches.
+ */
+async function ladderBox(group: Locator): Promise<{
+  height: number;
+  overhang: number;
+}> {
+  return group.evaluate((element) => {
+    const card = element.closest('article')!;
+    const style = getComputedStyle(card);
+    const right =
+      card.getBoundingClientRect().right - Number.parseFloat(style.paddingRight);
+    return {
+      height: Math.round(element.getBoundingClientRect().height),
+      overhang: Math.round(element.getBoundingClientRect().right - right),
+    };
+  });
+}
+
+/**
+ * The ladder keeps its shape whatever the path is (HIVE-129).
+ *
+ * A `file_path` is an absolute path on a real machine, and the family rung
+ * used to be labelled with the whole directory — 37 characters of it in the
+ * reported case. In a 316px rail that pushed `all Edit` onto a second line and
+ * shoved the group past the card's edge, so the option the user wanted was
+ * only readable by dragging the rail wider.
+ *
+ * The invariant asserted is the one `permission-controls.tsx` already claims
+ * in prose: a card whose footprint changes with the tool's name reads as
+ * broken. Two asks, one short path and one that cannot possibly fit, must
+ * draw ladders of the same height — and neither may reach past the card.
+ * Measured in the built app, because no staged buffer can wrap text.
+ */
+test('the scope ladder keeps one row however long the path is', async ({}, testInfo) => {
+  const configPath = testInfo.outputPath('hive-config.json');
+  const bootstrapped = testInfo.outputPath('bootstrapped.txt');
+  const shortPosted = testInfo.outputPath('posted-short.txt');
+  const longPosted = testInfo.outputPath('posted-long.txt');
+  writeConfig(configPath, bootstrapped);
+
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+  const page = await app.firstWindow();
+
+  try {
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForSelector('header');
+
+    await page.getByRole('button', { name: 'New session', exact: true }).click();
+    const search = page.getByRole('textbox', { name: 'Search all projects' });
+    await expect(search).toBeFocused();
+    await page.keyboard.type(PROJECT);
+    await page.keyboard.press('Enter');
+
+    await expect(page.locator(`[data-terminal-id="${SESSION}"]`)).toBeVisible();
+    await expectMarker(bootstrapped, 'bootstrapped');
+
+    await shell(page, postPathAskCommand('Read', SHORT_PATH, shortPosted));
+    await expectMarker(shortPosted, '200');
+    await shell(page, postPathAskCommand('Edit', `${LONG_DIR}/watch.json`, longPosted));
+    await expectMarker(longPosted, '200');
+
+    await selectRailTab(page.getByRole('tab', { name: /^Inbox/ }));
+
+    const ladderIn = (tool: string) =>
+      page
+        .getByRole('article', { name: new RegExp(`^Ask from ${SESSION}: Allow ${tool}\\?`) })
+        .getByRole('radiogroup', { name: 'How far this permission reaches' });
+
+    const short = ladderIn('Read');
+    const long = ladderIn('Edit');
+    await expect(short).toBeVisible();
+    await expect(long).toBeVisible();
+
+    // The widest rung is elided to its tail rather than spelled out in full…
+    await expect(long.getByRole('radio', { name: /^…\// })).toBeVisible();
+    // …and the rung the bug hid is on screen, whole, next to it.
+    await expect(long.getByRole('radio', { name: 'all Edit', exact: true })).toBeVisible();
+
+    const shortBox = await ladderBox(short);
+    const longBox = await ladderBox(long);
+
+    expect(longBox.height).toBe(shortBox.height);
+    expect(longBox.overhang).toBeLessThanOrEqual(0);
+
+    /*
+      And the width came out of the segment that had it to spare. Flex shrinks
+      every item in proportion by default, so the first fix bought the row back
+      by clipping `once` to `o…` as well — a legible option traded for four
+      pixels the path segment could have given up on its own.
+    */
+    for (const name of ['once', 'all Edit']) {
+      const clipped = await long
+        .getByRole('radio', { name, exact: true })
+        .evaluate((element) => element.scrollWidth - element.clientWidth);
+      expect(clipped, `${name} is clipped`).toBeLessThanOrEqual(1);
+    }
+  } finally {
+    await app.close();
+  }
+});
 
 test('a permission card names the call the click authorises, not the body', async ({}, testInfo) => {
   const configPath = testInfo.outputPath('hive-config.json');
