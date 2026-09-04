@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 
 import type { AgentsDirectory } from '@shared/agent-contract';
 import { AUTH_ENV_KEYS, type ConfigSnapshot } from '@shared/config-contract';
-import type {
-  HookNotificationType,
-  IdleDetail,
-  ObservedStatus,
-  StatusHookEvent,
+import {
+  HOOK_ENV_RECEIVER_URL,
+  type HookNotificationType,
+  type IdleDetail,
+  type ObservedStatus,
+  type StatusHookEvent,
 } from '@shared/hook-contract';
 import {
   CH,
@@ -33,7 +35,9 @@ import {
 } from '@shared/session-contract';
 
 import { effectiveRuntime } from '../config/runtime';
+import { removeSessionContainerFiles } from '../container/generated';
 import type { HookRuntime } from '../hooks';
+import { withHostAlias } from '../hooks/container-origin';
 import { ticketKeysFromBranch } from '../hooks/ticket-intent';
 import { createStatusTracker } from '../hooks/tracker';
 import { createPtyIpc, type PtyIpc } from '../ipc/pty';
@@ -45,6 +49,7 @@ import { createActivityTracker, type ActivityTracker } from './activity';
 import { createBootstrap, sessionCommand, type Bootstrap } from './bootstrap';
 import { createBranchReader, resolveGit, type BranchReaderOptions } from './git';
 import type { SessionHistory } from './history';
+import { createPathMap } from './path-map';
 import { createSessionRegistry, type SessionRegistry } from './registry';
 import { createTitleReader, type TitleReader } from './title';
 import { createTitleOriginReader } from './title-origin';
@@ -71,6 +76,15 @@ export interface SessionsOptions {
   send: (channel: string, payload: unknown) => void;
   /** The workspace config, read per call so a reload is picked up. */
   config: () => ConfigSnapshot;
+  /**
+   * Electron's `userData`, where the generated sets live (HIVE-133).
+   *
+   * Passed in rather than resolved here for the reason every other consumer
+   * takes it as an option — `hooks`, `skills` and `mcp` are all handed
+   * `app.getPath('userData')` by `ipc/index.ts`. A module that reached for
+   * `app` itself would drag Electron into a unit test that has none.
+   */
+  userDataPath: string;
   maxSessions?: number;
   /**
    * The hook pipeline, when the app has one (HIVE-62).
@@ -367,6 +381,7 @@ export function createSessions(options: SessionsOptions): Sessions {
     supervisor,
     send,
     config,
+    userDataPath,
     maxSessions = MAX_SESSIONS,
     hooks,
     skills,
@@ -1603,6 +1618,23 @@ export function createSessions(options: SessionsOptions): Sessions {
     */
     forgetFinish(entityId);
 
+    /*
+      The one funnel every ending passes through — `ptyExit`, `ptyLost` and
+      `/done` alike — which is why the removal hangs off it rather than off any
+      one of them (HIVE-133).
+
+      Unconditional and fire-and-forget: `removeSessionContainerFiles` is silent
+      when the session never had a directory, which is every host session, so
+      asking the config whether this project was containerised would cost a read
+      to save an `rm` that already handles the answer. A failure here leaves an
+      orphan the launch sweep collects.
+    */
+    void removeSessionContainerFiles(userDataPath, entityId).catch((cause) => {
+      console.info(
+        `[hive] ${entityId}: container session files could not be removed (${String(cause)})`,
+      );
+    });
+
     const waiters = exitWaiters.get(entityId);
     if (!waiters) return;
     exitWaiters.delete(entityId);
@@ -1849,6 +1881,102 @@ export function createSessions(options: SessionsOptions): Sessions {
     const mcpConfig = mcp?.configPathFor() ?? null;
 
     /**
+     * A container project is launched from HIVE-132's container-flavoured set,
+     * not from the host one with its paths rewritten (HIVE-133).
+     *
+     * The difference is content, not location: the host files bake a loopback
+     * origin and, in `exec-env`, the container set uses `${VAR}` where the host
+     * set uses a resolved value. Rewriting the host file's *path* would name a
+     * container path holding the wrong file.
+     *
+     * `--plugin-dir` is the exception and stays shared. HIVE-132 made
+     * `doneCommand` read `$HIVE_RECEIVER_URL` rather than baking an origin, so
+     * one plugin directory serves host and container both.
+     */
+    const container = runtime.container;
+    /*
+      Read once rather than at each of the two places below that need it — a
+      hook environment is derived, not stored, so a second call would cost
+      nothing but a second `HMAC`. It is still one call rather than two,
+      because the object it returns is what both the merge and the
+      `HIVE_RECEIVER_URL` substitution read from, and reading a second,
+      independently-computed copy for the substitution is how the two would
+      drift.
+    */
+    const hookEnv = hooks?.envFor(request.entityId) ?? {};
+    const containerSpawn =
+      container === undefined || project?.path == null
+        ? undefined
+        : {
+            config: container,
+            map: createPathMap({
+              projectPath: project.path,
+              userDataPath,
+              workspace: container.workspace,
+              hiveDir: container.hiveDir,
+            }),
+            /*
+              `runtime.env` first, the app's own variables second. Project env
+              is the user's to control and wins everywhere else, but not here:
+              these are how a hook proves which row it speaks for. The spread
+              order is the whole guarantee, exactly as it is for the pty env
+              above — and now that project env crosses the boundary, it has to
+              be restated on the command line as well.
+            */
+            env: {
+              ...runtime.env,
+              ...hookEnv,
+              /*
+                Re-addressed by the *project's* alias, overriding the global one
+                `containerOrigin()` applies. `envFor`'s `HIVE_RECEIVER_URL` is
+                the loopback origin, which is unreachable from inside a
+                container, so this is a substitution rather than an addition —
+                and it must come after the spread that set it.
+
+                Absent when the receiver never bound: `envFor` omits the key
+                entirely in that case rather than substituting `url`, whose
+                `/hook` suffix would make the MCP endpoint `…/hook/mcp`.
+              */
+              ...(hookEnv[HOOK_ENV_RECEIVER_URL] === undefined
+                ? {}
+                : {
+                    [HOOK_ENV_RECEIVER_URL]: withHostAlias(
+                      hookEnv[HOOK_ENV_RECEIVER_URL],
+                      container.hostAlias,
+                    ),
+                  }),
+            },
+          };
+
+    /*
+      Where the container-flavoured *source* files live on the host, before
+      `sessionCommand`'s own `container.map` rewrites the flag into its
+      container-side spelling. `null` for a host project, exactly like
+      `containerSpawn` — checked against `container` directly rather than
+      `containerSpawn` so the compiler, not just the reader, knows `container`
+      is defined in the branch that dereferences `container.freshness`.
+    */
+    const containerSet =
+      container === undefined || containerSpawn === undefined
+        ? null
+        : container.freshness === 'rewrite'
+          ? join(userDataPath, 'hive', 'container', 'sessions', request.entityId)
+          : join(userDataPath, 'hive', 'container');
+
+    /*
+      The three flags this session's command line actually gets (HIVE-133).
+      `sessionCommand` maps whichever host path lands here through
+      `containerSpawn.map` into its container-side spelling — `settingsPath`
+      and `mcpConfig` swap to the container set; `pluginDir` is untouched,
+      because the plugin directory is shared between host and container
+      sessions (see the comment on `containerSpawn` above).
+    */
+    const spawnSettingsPath =
+      containerSet === null ? settingsPath : join(containerSet, 'claude-hooks.settings.json');
+    const spawnMcpConfig =
+      containerSet === null ? mcpConfig : join(containerSet, 'hive.mcp.json');
+
+    /**
      * Hoisted out of the `sessionCommand` call it used to sit inside (HIVE-87).
      *
      * It has to reach two places now — the command line, and the history — and
@@ -1985,21 +2113,39 @@ export function createSessions(options: SessionsOptions): Sessions {
           One file for every session since HIVE-82: nothing in it varies by
           theme any more, because Claude's is pinned to `dark-ansi` and the
           colours resolve against the terminal's palette at paint time.
+
+          `spawnSettingsPath`, not `settingsPath`: a container project's set
+          lives under `containerSet` (HIVE-133), and `sessionCommand` maps
+          whichever one lands here into its container-side spelling.
         */
-        ...(settingsPath == null ? {} : { settingsPath }),
+        ...(spawnSettingsPath == null ? {} : { settingsPath: spawnSettingsPath }),
         /*
           The generated plugin, when there is one (HIVE-96). Resolved above for
           the same reason `settingsPath` is: it is main's own path, chosen at
           spawn, and it never crosses IPC — `parseSpawnRequest` has no field for
           it and deliberately never will.
+
+          Unlike `settingsPath` and `mcpConfig`, never swapped for a
+          container-flavoured path: `--plugin-dir` is shared between host and
+          container sessions (see the comment on `containerSpawn` above).
         */
         ...(pluginDir == null ? {} : { pluginDir }),
         /*
           The ledger tools (HIVE-112). Resolved here for the same reason
           `pluginDir` is: it is main's own path, chosen at spawn, and it never
           crosses IPC.
+
+          `spawnMcpConfig`, for the reason `spawnSettingsPath` is above.
         */
-        ...(mcpConfig == null ? {} : { mcpConfig }),
+        ...(spawnMcpConfig == null ? {} : { mcpConfig: spawnMcpConfig }),
+        /*
+          The project runs inside a container (HIVE-133). `sessionCommand`
+          reads this to expand `container.env` at the command's `{env}`
+          placeholder and to rewrite the three flag paths above into their
+          container-side spelling — see `ContainerSpawn`'s own comment for
+          what each half does.
+        */
+        ...(containerSpawn === undefined ? {} : { container: containerSpawn }),
         /*
           Belt *and* braces, deliberately. `stripEnv` above covers the ambient
           environment and a project's own `env` block; this covers the login

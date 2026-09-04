@@ -6,6 +6,8 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { ResolvedContainer } from '../../../../electron/shared/config-contract';
+
 import { createLedger, type Ledger } from '../../../../electron/main/ledger';
 import {
   createHookRuntime,
@@ -51,11 +53,15 @@ vi.mock('../../../../electron/main/container/generated', async (importOriginal) 
     ...actual,
     sweepSessionContainerFiles: vi.fn(actual.sweepSessionContainerFiles),
     writeSharedContainerFiles: vi.fn(actual.writeSharedContainerFiles),
+    writeSessionContainerFiles: vi.fn(actual.writeSessionContainerFiles),
   };
 });
 
 const sweepSpy = vi.mocked(
   (await import('../../../../electron/main/container/generated')).sweepSessionContainerFiles,
+);
+const writeSessionSpy = vi.mocked(
+  (await import('../../../../electron/main/container/generated')).writeSessionContainerFiles,
 );
 const realSweep = sweepSpy.getMockImplementation()!;
 
@@ -319,5 +325,93 @@ describe('createHookRuntime — sweep ordering (HIVE-133)', () => {
     await runtime.start(noopHandlers);
 
     expect(sweepSpy).toHaveBeenCalledWith(dir, []);
+  });
+});
+
+describe('createHookRuntime — writeContainerSession (HIVE-133)', () => {
+  let dir: string;
+  let ledger: Ledger;
+  let runtime: HookRuntime | undefined;
+
+  /** Every field {@link ResolvedContainer} has, overridden per test. */
+  const container: ResolvedContainer = {
+    workspace: '/workspace',
+    hiveDir: '/hive',
+    envArg: '-e {name}={value}',
+    freshness: 'exec-env',
+    hostAlias: 'host.docker.internal',
+  };
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'hive-hooks-write-session-'));
+    ledger = createLedger({ dir, knowsParty: () => true });
+    writeSessionSpy.mockClear();
+  });
+
+  afterEach(async () => {
+    await runtime?.stop();
+    runtime = undefined;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('answers null before the receiver has bound', async () => {
+    // No `start()` — `containerFor` says `rewrite`, but there is no socket to
+    // address yet, and `writeContainerSession` must not write a set for a
+    // receiver whose URLs it cannot yet know.
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      ledger,
+      containerFor: () => ({ ...container, freshness: 'rewrite' }),
+    });
+
+    await expect(runtime.writeContainerSession('hero-refresh', 'p')).resolves.toBe(null);
+    expect(writeSessionSpy).not.toHaveBeenCalled();
+  });
+
+  it('answers null for a host project — containerFor found nothing', async () => {
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      ledger,
+      containerFor: () => undefined,
+    });
+    await runtime.start(noopHandlers);
+
+    await expect(runtime.writeContainerSession('hero-refresh', 'p')).resolves.toBe(null);
+    expect(writeSessionSpy).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing for an exec-env project', async () => {
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      ledger,
+      containerFor: () => ({ ...container, freshness: 'exec-env' }),
+    });
+    await runtime.start(noopHandlers);
+
+    await expect(runtime.writeContainerSession('hero-refresh', 'p')).resolves.toBe(null);
+    expect(writeSessionSpy).not.toHaveBeenCalled();
+  });
+
+  it('addresses the set by the project alias and keys it by entity id', async () => {
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      ledger,
+      containerFor: () => ({ ...container, freshness: 'rewrite', hostAlias: 'gateway' }),
+    });
+    await runtime.start(noopHandlers);
+
+    await runtime.writeContainerSession('hero-refresh', 'p');
+
+    expect(writeSessionSpy).toHaveBeenCalledWith(
+      dir,
+      'hero-refresh',
+      expect.objectContaining({ origin: expect.stringContaining('gateway') }),
+      expect.objectContaining({ session: 'hero-refresh' }),
+      expect.objectContaining({ containerRoot: '/hive/container/sessions/hero-refresh' }),
+    );
   });
 });

@@ -1,5 +1,7 @@
+import { join } from 'node:path';
+
 import type { AgentsDirectory } from '@shared/agent-contract';
-import { DEFAULT_RECEIVER } from '@shared/config-contract';
+import { DEFAULT_RECEIVER, type ResolvedContainer } from '@shared/config-contract';
 import {
   HOOK_ENV_RECEIVER_URL,
   HOOK_ENV_SESSION,
@@ -13,6 +15,7 @@ import type { SessionMetrics } from '@shared/metrics-contract';
 import {
   containerOrigins,
   sweepSessionContainerFiles,
+  writeSessionContainerFiles,
   writeSharedContainerFiles,
 } from '../container/generated';
 import type { Ledger } from '../ledger';
@@ -82,6 +85,17 @@ export interface HookRuntimeOptions {
    * (HIVE-133); until then nothing consumes either value in production.
    */
   hostAlias?: () => string;
+  /**
+   * A project's resolved container block, or `undefined` for a host project
+   * (HIVE-133).
+   *
+   * A getter, like {@link HookRuntimeOptions.sessionMetrics} and
+   * {@link HookRuntimeOptions.hostAlias}, and for the same two reasons: the
+   * config can be reloaded, and this module imports nothing from `config/`.
+   * `ipc/index.ts` supplies it as
+   * `(id) => effectiveRuntime(getConfig(), projectById(id)).container`.
+   */
+  containerFor?: (projectId: string | null) => ResolvedContainer | undefined;
   /** Overridable for tests; `0` asks the OS for a free port. */
   port?: number;
 }
@@ -204,6 +218,17 @@ export interface HookRuntime {
    * decision, and a host session's environment has to stay exactly what it is.
    */
   containerOrigin(): string | null;
+  /**
+   * Write one session's resolved container set, for a `rewrite` project.
+   *
+   * Returns the host directory written, or `null` when there was nothing to
+   * write — a host project, an `exec-env` project, or a receiver that never
+   * bound. The caller does not branch on why.
+   */
+  writeContainerSession(
+    entityId: string,
+    projectId: string | null,
+  ): Promise<string | null>;
   stop(): Promise<void>;
 }
 
@@ -213,6 +238,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
     port,
     sessionMetrics = () => true,
     hostAlias = () => DEFAULT_RECEIVER.hostAlias,
+    containerFor,
     ledger,
   } = options;
 
@@ -450,6 +476,66 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       if (running === null || running.origin === null) return null;
 
       return withHostAlias(running.origin, hostAlias());
+    },
+
+    async writeContainerSession(entityId, projectId) {
+      const running = receiver;
+      /*
+        `url` and `origin` are set together on a successful bind and cleared
+        together on the way down (`receiver.ts`), so this is one fact checked
+        twice, not two independent ones — but the type of each is `string |
+        null` on its own, and only checking `origin` would leave `url` typed
+        as possibly-`null` below.
+      */
+      if (running === null || running.origin === null || running.url === null) {
+        return null;
+      }
+
+      /*
+        Asked, not read. This module imports nothing from `config/` — see
+        {@link HookRuntimeOptions.ledger}: its only job is the receiver's
+        lifecycle, and `ipc/index.ts` is where a project's runtime is already
+        reachable. A getter rather than a value for the reason `sessionMetrics`
+        and `hostAlias` are getters: the config can be reloaded, and a value
+        captured at construction would pin whatever it said at boot.
+      */
+      const config = containerFor?.(projectId);
+
+      /*
+        `exec-env` writes nothing per session: every per-session value in that
+        set is a `${VAR}`, resolved by the runtime at each exec. Only `rewrite`
+        bakes a live token, which is the trade that mode exists to make.
+      */
+      if (config === undefined || config.freshness !== 'rewrite') return null;
+
+      return writeSessionContainerFiles(
+        userDataPath,
+        /*
+          The **entity id**, never the registry's `entityId.gN`. `tokenFor` is
+          HMAC(launchSecret, entityId) and the receiver compares against
+          `tokenFor(entityId)` for the id in `x-hive-session`, so a directory
+          named after the generation would carry a token refused on every call.
+        */
+        entityId,
+        containerOrigins(
+          {
+            url: running.url,
+            origin: running.origin,
+            ...(running.metricsUrl === null ? {} : { metricsUrl: running.metricsUrl }),
+            ...(running.readyUrl === null ? {} : { readyUrl: running.readyUrl }),
+          },
+          config.hostAlias,
+        ),
+        { session: entityId, token: running.tokenFor(entityId) },
+        {
+          /*
+            Where this set will be visible *inside* the container. The status
+            line script is the one value in the set naming a path rather than a
+            URL, so it is the only thing that needs it.
+          */
+          containerRoot: join(config.hiveDir, 'container', 'sessions', entityId),
+        },
+      );
     },
 
     envFor(entityId): Record<string, string> {

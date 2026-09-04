@@ -11,6 +11,7 @@ import {
   DEFAULT_RECEIVER,
   DEFAULT_NOTIFICATIONS,
   type ConfigSnapshot,
+  type ResolvedContainer,
 } from '../../../../electron/shared/config-contract';
 import type {
   HookAgentEvent,
@@ -35,6 +36,21 @@ import { createSessionHistory } from '../../../../electron/main/sessions/history
  * ordering rather than by starting processes. Terminal semantics get their own
  * runner under Electron's ABI (story 098).
  */
+
+/**
+ * `removeSessionContainerFiles` (HIVE-133), replaced outright rather than
+ * spied-through: this suite never writes a real container set to disk (that
+ * is `container/generated.test.ts`'s job), so the honest fake is one that
+ * resolves and records its calls, not one that touches a filesystem no test
+ * here has a directory for.
+ */
+vi.mock('../../../../electron/main/container/generated', () => ({
+  removeSessionContainerFiles: vi.fn(() => Promise.resolve()),
+}));
+
+const { removeSessionContainerFiles } = await import(
+  '../../../../electron/main/container/generated'
+);
 
 interface Sent {
   channel: string;
@@ -145,6 +161,14 @@ function fakeSupervisor(): PtyHostSupervisor {
 
 const OPEN = { entityId: 'hero-refresh', projectId: 'nova-web', cols: 80, rows: 24 };
 
+/**
+ * `SessionsOptions.userDataPath` (HIVE-133) — every `createSessions` call in
+ * this file passes the same fixed value, so a path built from it (a
+ * container project's generated set, `removeSessionContainerFiles`'s first
+ * argument) is assertable rather than a moving target.
+ */
+const USER_DATA_PATH = '/Users/dev/Library/Application Support/The Hive';
+
 /** Pinned so the command line is a constant rather than a moving target. */
 const TEST_UUID = '00000000-0000-4000-8000-000000000000';
 
@@ -218,6 +242,7 @@ beforeEach(() => {
     supervisor,
     send: (channel, payload) => sent.push({ channel, payload: payload as Record<string, unknown> }),
     config: () => CONFIG,
+    userDataPath: USER_DATA_PATH,
     /**
      * Pinned so the bootstrap command line is assertable (HIVE-61). A real
      * spawn generates a fresh uuid; what matters here is that one is passed,
@@ -287,6 +312,7 @@ describe('what a session runs', () => {
       send: (channel, payload) =>
         sent.push({ channel, payload: payload as Record<string, unknown> }),
       config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
       newSessionUuid: () => TEST_UUID,
       hooks: {
         settingsPathFor: (...args: unknown[]) => {
@@ -697,6 +723,7 @@ function harness(onIdle?: (entityId: string) => void): {
     send: (channel, payload) =>
       localSent.push({ channel, payload: payload as Record<string, unknown> }),
     config: () => CONFIG,
+    userDataPath: USER_DATA_PATH,
     newSessionUuid: () => TEST_UUID,
     ...(onIdle === undefined ? {} : { onIdle }),
     hooks: {
@@ -789,6 +816,7 @@ describe('status', () => {
       send: (channel, payload) =>
         sent.push({ channel, payload: payload as Record<string, unknown> }),
       config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
       newSessionUuid: () => TEST_UUID,
       hooks: {
         settingsPathFor: () => undefined,
@@ -859,6 +887,7 @@ describe('status', () => {
       send: (channel, payload) =>
         sent.push({ channel, payload: payload as Record<string, unknown> }),
       config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
       newSessionUuid: () => TEST_UUID,
       branchReader: {
         run,
@@ -942,6 +971,7 @@ describe('status', () => {
       send: (channel, payload) =>
         sent.push({ channel, payload: payload as Record<string, unknown> }),
       config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
       newSessionUuid: () => TEST_UUID,
       branchReader: { run, gitPath: () => '/usr/bin/git', now: () => clock.t },
       hooks: {
@@ -1163,6 +1193,7 @@ describe('status', () => {
       supervisor,
       send: () => {},
       config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
       newSessionUuid: () => TEST_UUID,
       hooks: {
         settingsPathFor: () => undefined,
@@ -1224,6 +1255,7 @@ describe('spawn preconditions', () => {
       send: (channel, payload) =>
         sent.push({ channel, payload: payload as Record<string, unknown> }),
       config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
       maxSessions: 2,
     });
 
@@ -1492,6 +1524,7 @@ describe('openCommand', () => {
       supervisor,
       send: () => {},
       config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
       maxSessions: 0,
     });
 
@@ -1532,6 +1565,7 @@ describe('session authentication', () => {
       send: (channel, payload) =>
         sent.push({ channel, payload: payload as Record<string, unknown> }),
       config: () => ({ ...CONFIG, subscriptionAuth: false }),
+      userDataPath: USER_DATA_PATH,
       newSessionUuid: () => TEST_UUID,
     });
 
@@ -1581,6 +1615,7 @@ describe('the history', () => {
       send: (channel, payload) =>
         sent.push({ channel, payload: payload as Record<string, unknown> }),
       config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
       newSessionUuid: () => TEST_UUID,
       history: {
         /*
@@ -1703,6 +1738,7 @@ describe('the history', () => {
         send: (channel, payload) =>
           sent.push({ channel, payload: payload as Record<string, unknown> }),
         config: () => CONFIG,
+        userDataPath: USER_DATA_PATH,
         newSessionUuid: () => TEST_UUID,
         history,
       });
@@ -1948,6 +1984,7 @@ describe('/done', () => {
       send: (channel, payload) =>
         local.push({ channel, payload: payload as Record<string, unknown> }),
       config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
       newSessionUuid: () => TEST_UUID,
       hooks: {
         settingsPathFor: () => undefined,
@@ -2383,6 +2420,7 @@ describe('the agent id space (HIVE-115)', () => {
       send: (channel, payload) =>
         localSent.push({ channel, payload: payload as Record<string, unknown> }),
       config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
       newSessionUuid: () => TEST_UUID,
       agentNames: () => names,
       onAgentTurnEnded: turnsEnded,
@@ -2495,5 +2533,203 @@ describe('the agent id space (HIVE-115)', () => {
     ).toEqual(['hero-refresh']);
 
     h.sessions.dispose();
+  });
+});
+
+describe('container spawn (HIVE-133)', () => {
+  /**
+   * Every field {@link ResolvedContainer} has, so a test overriding one — a
+   * `freshness`, a `hostAlias` — never has to restate the rest. `envArg`'s
+   * default is the one `bootstrap.test.ts` already exercises for
+   * `expandEnvArgs`, so a test here that wants the expanded environment on
+   * the command line only has to give `claudeCommand` its `{env}` placeholder.
+   */
+  const CONTAINER_DEFAULTS: ResolvedContainer = {
+    workspace: '/workspace',
+    hiveDir: '/hive',
+    envArg: '-e {name}={value}',
+    freshness: 'exec-env',
+    hostAlias: 'host.docker.internal',
+  };
+
+  /**
+   * Carries {@link ENV_PLACEHOLDER} the way `docker exec` needs it to
+   * (`bootstrap.test.ts`'s own fixture shape). `container.env` — the spread
+   * order the spoofing test exists to prove — never reaches the command line
+   * at all unless the placeholder is there for `substituteEnv` to fill in, so
+   * every fixture below uses this rather than the plain `'claude'` the rest
+   * of the file spawns with.
+   */
+  const CONTAINER_CLAUDE_COMMAND = 'docker exec -it {env} devbox claude';
+
+  /**
+   * Every instance this describe block's tests build, disposed together
+   * (HIVE-133's own tests are the first in this file to build more than one
+   * `createSessions` per test — the "removes on every kind of ending" case
+   * loops three times — so tracking them here is cheaper than repeating a
+   * `.dispose()` at the end of every `it`).
+   */
+  let created: Sessions[];
+
+  beforeEach(() => {
+    created = [];
+  });
+
+  afterEach(() => {
+    for (const instance of created) instance.dispose();
+  });
+
+  /**
+   * One containerised `nova-web`, spawned and captured, the way `themed` and
+   * `hooked` above build a session around one property under test rather than
+   * reusing the module's plain `sessions`.
+   *
+   * `envFor` answers the shape a bound receiver actually produces — all three
+   * `HIVE_*` variables, `HIVE_RECEIVER_URL` still loopback — so the
+   * `withHostAlias` substitution this task adds has something real to rewrite;
+   * a stub that omitted it would make every alias test vacuously true.
+   */
+  function spawnFixture(opts: {
+    container?: Partial<ResolvedContainer>;
+    projectEnv?: Record<string, string>;
+  }): {
+    command: string;
+    end: (ending?: 'ptyExit' | 'ptyLost' | 'done') => Promise<void>;
+  } {
+    const container: ResolvedContainer = { ...CONTAINER_DEFAULTS, ...opts.container };
+
+    const project = {
+      ...CONFIG.projects[0]!,
+      claudeCommand: CONTAINER_CLAUDE_COMMAND,
+      container,
+      ...(opts.projectEnv === undefined ? {} : { env: opts.projectEnv }),
+    };
+
+    const localConfig: ConfigSnapshot = {
+      ...CONFIG,
+      projects: [project, CONFIG.projects[1]!],
+    };
+
+    let onDone: ((entityId: string) => void) | undefined;
+
+    const instance = createSessions({
+      supervisor,
+      send: (channel, payload) =>
+        sent.push({ channel, payload: payload as Record<string, unknown> }),
+      config: () => localConfig,
+      userDataPath: USER_DATA_PATH,
+      newSessionUuid: () => TEST_UUID,
+      hooks: {
+        settingsPathFor: () => join(USER_DATA_PATH, 'hive', 'claude-hooks.settings.json'),
+        envFor: (entityId: string) => ({
+          HIVE_SESSION_ID: entityId,
+          HIVE_HOOK_TOKEN: 'tok-abc123',
+          HIVE_RECEIVER_URL: 'http://127.0.0.1:60123',
+        }),
+        writeContainerSession: () => Promise.resolve(null),
+        start: (handlers: { onDone: (entityId: string) => void }) => {
+          onDone = handlers.onDone;
+          return Promise.resolve();
+        },
+        stop: () => Promise.resolve(),
+      } as unknown as Parameters<typeof createSessions>[0]['hooks'],
+      mcp: {
+        configPathFor: () => join(USER_DATA_PATH, 'hive', 'hive.mcp.json'),
+      } as unknown as Parameters<typeof createSessions>[0]['mcp'],
+      skills: {
+        sync: () => Promise.resolve({ names: [] }),
+        pluginDirPath: () => join(USER_DATA_PATH, 'hive', 'plugin'),
+      } as unknown as Parameters<typeof createSessions>[0]['skills'],
+    });
+    created.push(instance);
+
+    instance.open(OPEN);
+    const sessionId = mintedFor('hero-refresh');
+
+    emitData({ sessionId, chunk: '$ ' });
+    vi.advanceTimersByTime(8); // the batch flush
+    vi.advanceTimersByTime(150); // the settling debounce
+    vi.advanceTimersByTime(SUBMIT);
+
+    const command = vi
+      .mocked(supervisor.write)
+      .mock.calls.find((call) => call[0] === sessionId && call[1] !== '\r')?.[1] as string;
+
+    return {
+      command,
+      end: async (ending: 'ptyExit' | 'ptyLost' | 'done' = 'ptyExit') => {
+        // `/done` arms `finishing` first; the exit that actually reaches
+        // `settleExit` still has to arrive, exactly as a real `&& exit` does.
+        if (ending === 'done') onDone?.('hero-refresh');
+        if (ending === 'ptyLost') {
+          emitLost({ sessionId });
+        } else {
+          emitExit({ sessionId, exitCode: 0 });
+        }
+        await Promise.resolve();
+      },
+    };
+  }
+
+  it('passes the container-flavoured settings and mcp paths, and the shared plugin dir', () => {
+    const { command } = spawnFixture({ container: { freshness: 'exec-env' } });
+
+    expect(command).toContain("--settings '/hive/container/claude-hooks.settings.json'");
+    expect(command).toContain("--mcp-config '/hive/container/hive.mcp.json'");
+    // HIVE-132 §3: `/done` reads $HIVE_RECEIVER_URL, so one plugin dir serves both.
+    expect(command).toContain("--plugin-dir '/hive/plugin'");
+  });
+
+  it('names the per-session directory in rewrite mode', () => {
+    const { command } = spawnFixture({ container: { freshness: 'rewrite' } });
+    expect(command).toContain(
+      "--settings '/hive/container/sessions/hero-refresh/claude-hooks.settings.json'",
+    );
+  });
+
+  it('addresses the receiver by the project alias, not loopback', () => {
+    const { command } = spawnFixture({
+      container: { freshness: 'exec-env', hostAlias: 'gateway' },
+    });
+    expect(command).toContain("HIVE_RECEIVER_URL='http://gateway:");
+    expect(command).not.toContain('127.0.0.1');
+  });
+
+  it('writes HIVE_ variables after project env, so a project cannot spoof one', () => {
+    const { command } = spawnFixture({
+      container: { freshness: 'exec-env' },
+      projectEnv: { HIVE_SESSION_ID: 'someone-else' },
+    });
+
+    const spoofed = command.indexOf("HIVE_SESSION_ID='someone-else'");
+    const real = command.indexOf("HIVE_SESSION_ID='hero-refresh'");
+    expect(real).toBeGreaterThan(spoofed);
+  });
+
+  it('removes the session directory when the session ends', async () => {
+    const { end } = spawnFixture({ container: { freshness: 'rewrite' } });
+    await end();
+    expect(removeSessionContainerFiles).toHaveBeenCalledWith(USER_DATA_PATH, 'hero-refresh');
+  });
+
+  it('removes by entity id, matching what the write was keyed by', async () => {
+    // `tokenFor` is HMAC(launchSecret, entityId), so the directory the hooks
+    // module wrote is named `hero-refresh`, never `hero-refresh.g3`.
+    const { end } = spawnFixture({ container: { freshness: 'rewrite' } });
+    await end();
+    expect(removeSessionContainerFiles).toHaveBeenCalledWith(USER_DATA_PATH, 'hero-refresh');
+    expect(removeSessionContainerFiles).not.toHaveBeenCalledWith(
+      USER_DATA_PATH,
+      expect.stringContaining('.g'),
+    );
+  });
+
+  it('removes on every kind of ending, including /done', async () => {
+    for (const ending of ['ptyExit', 'ptyLost', 'done'] as const) {
+      vi.mocked(removeSessionContainerFiles).mockClear();
+      const { end } = spawnFixture({ container: { freshness: 'rewrite' } });
+      await end(ending);
+      expect(removeSessionContainerFiles).toHaveBeenCalledTimes(1);
+    }
   });
 });
