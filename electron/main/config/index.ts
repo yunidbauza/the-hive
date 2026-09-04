@@ -5,6 +5,7 @@ import {
   DEFAULT_CLAUDE_COMMAND,
   DEFAULT_IMPORT_LOGIN_ENV,
   DEFAULT_JIRA,
+  DEFAULT_RECEIVER,
   DEFAULT_SESSION_METRICS,
   DEFAULT_SUBSCRIPTION_AUTH,
   DEFAULT_PROJECT_ICON,
@@ -136,6 +137,9 @@ export function loadConfig(): ConfigSnapshot {
     // Defaults *under* whatever the file named, so a file declaring only a site
     // still answers for both fields (HIVE-67).
     jira: { ...DEFAULT_JIRA, ...parsed.jira },
+    // Defaults *under* whatever the file named, exactly as `jira` does above
+    // (HIVE-131). A plain spread suffices — there is no legacy shape to migrate.
+    receiver: { ...DEFAULT_RECEIVER, ...parsed.receiver },
     errors: parsed.errors,
   };
 

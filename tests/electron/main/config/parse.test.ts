@@ -466,3 +466,113 @@ describe('top-level env', () => {
     expect(parsed.errors.join(' ')).toMatch(/set by the terminal/);
   });
 });
+
+/**
+ * HIVE-131's receiver block.
+ *
+ * Structurally the same contract `jira` has: a malformed block is reported and
+ * dropped, and the rest of the file still applies. The alias rule is
+ * deliberately *not* `assertJiraSite`'s — a single-label host and a literal IP
+ * are both legitimate here, and a `:` must be refused because the port belongs
+ * to the receiver, not to the name.
+ */
+describe('parseConfig — the receiver block (HIVE-131)', () => {
+  it('reads a hostAlias', () => {
+    const parsed = parseConfig(
+      doc({ receiver: { hostAlias: 'host.containers.internal' } }),
+      'config',
+    );
+
+    expect(parsed.receiver).toEqual({ hostAlias: 'host.containers.internal' });
+    expect(parsed.fatal).toBe(false);
+    expect(parsed.errors).toEqual([]);
+  });
+
+  it('leaves receiver undefined when the file has no block', () => {
+    const parsed = parseConfig(doc({}), 'config');
+
+    expect(parsed.receiver).toBeUndefined();
+    expect(parsed.errors).toEqual([]);
+  });
+
+  it('reports a non-object block and ignores it, without rejecting the file', () => {
+    const parsed = parseConfig(doc({ receiver: 'nope' }), 'config');
+
+    expect(parsed.receiver).toBeUndefined();
+    expect(parsed.fatal).toBe(false);
+    expect(parsed.errors).toEqual([
+      'config.receiver: expected an object — ignored',
+    ]);
+  });
+
+  it('reports an unknown key inside the block and keeps the rest', () => {
+    const parsed = parseConfig(
+      doc({ receiver: { hostAlias: 'a.b', bind: {} } }),
+      'config',
+    );
+
+    expect(parsed.receiver).toEqual({ hostAlias: 'a.b' });
+    expect(parsed.errors).toEqual([
+      'config.receiver: unknown key "bind" — ignored',
+    ]);
+  });
+
+  it('rejects a forbidden key by dropping the whole block', () => {
+    const parsed = parseConfig(
+      '{"version":2,"projects":[],"receiver":{"__proto__":"x"}}',
+      'config',
+    );
+
+    expect(parsed.receiver).toBeUndefined();
+    expect(parsed.fatal).toBe(false);
+    expect(parsed.errors).toEqual([
+      'config.receiver: forbidden key "__proto__" — receiver ignored',
+    ]);
+  });
+
+  it.each([
+    ['an empty string', ''],
+    ['whitespace inside', 'a b'],
+    ['surrounding whitespace', ' a '],
+    ['a path', 'a/b'],
+    ['a port', 'a:1234'],
+    ['a scheme', 'http://a'],
+  ])('rejects %s advisorily and leaves the field unset', (_label, value) => {
+    const parsed = parseConfig(
+      doc({ receiver: { hostAlias: value } }),
+      'config',
+    );
+
+    expect(parsed.receiver).toEqual({});
+    expect(parsed.fatal).toBe(false);
+    expect(parsed.errors).toEqual([
+      'config.receiver.hostAlias: expected a hostname — no scheme, path or port',
+    ]);
+  });
+
+  it('rejects a non-string advisorily', () => {
+    const parsed = parseConfig(doc({ receiver: { hostAlias: 7 } }), 'config');
+
+    expect(parsed.receiver).toEqual({});
+    expect(parsed.errors).toEqual([
+      'config.receiver.hostAlias: expected a hostname — no scheme, path or port',
+    ]);
+  });
+
+  it('accepts a bare single-label host and a literal IP', () => {
+    for (const hostAlias of ['gateway', '192.168.4.125']) {
+      const parsed = parseConfig(doc({ receiver: { hostAlias } }), 'config');
+      expect(parsed.receiver).toEqual({ hostAlias });
+      expect(parsed.errors).toEqual([]);
+    }
+  });
+
+  it('does not report receiver as an unknown top-level key', () => {
+    const parsed = parseConfig(
+      doc({ receiver: { hostAlias: 'a.b' } }),
+      'config',
+    );
+
+    expect(parsed.errors).toEqual([]);
+  });
+});

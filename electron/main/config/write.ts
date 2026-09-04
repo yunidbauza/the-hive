@@ -19,6 +19,7 @@ import {
   DEFAULT_SESSION_METRICS,
   DEFAULT_SUBSCRIPTION_AUTH,
   DEFAULT_JIRA,
+  DEFAULT_RECEIVER,
   type ConfigSnapshot,
 } from '@shared/config-contract';
 import { resolveNotificationPrefs } from '@shared/notification-contract';
@@ -283,6 +284,13 @@ export function writeConfig(
        */
       notifications: resolveNotificationPrefs(validated.notifications),
       jira: { ...DEFAULT_JIRA, ...validated.jira },
+      /*
+        Resolved here as well as in `loadConfig` (HIVE-131), because this
+        snapshot is the one every mutating verb returns and becomes the cache. A
+        block resolved on only the read path would leave every settings write
+        answering with a partial `receiver`.
+      */
+      receiver: { ...DEFAULT_RECEIVER, ...validated.receiver },
       errors: validated.errors,
     },
   };

@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_CLAUDE_COMMAND,
   DEFAULT_JIRA,
+  DEFAULT_RECEIVER,
   DEFAULT_NOTIFICATIONS,
   DEFAULT_SHELL,
   type ConfigSnapshot,
@@ -37,6 +38,7 @@ const snapshot = (over: Partial<ConfigSnapshot> = {}): ConfigSnapshot => ({
   projects: [],
   notifications: { ...DEFAULT_NOTIFICATIONS },
   jira: { ...DEFAULT_JIRA },
+  receiver: { ...DEFAULT_RECEIVER },
   subscriptionAuth: true,
   sessionMetrics: true,
   importLoginEnv: true,

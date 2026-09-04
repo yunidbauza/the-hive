@@ -1,11 +1,13 @@
 import {
   JIRA_KEYS,
   NOTIFICATION_KEYS,
+  RECEIVER_KEYS,
   SUPPORTED_CONFIG_VERSIONS,
   unsafeEnvReason,
   type JiraConfig,
   type NotificationPrefs,
   type ProjectOrigin,
+  type ReceiverConfig,
 } from '@shared/config-contract';
 import { PROJECT_KEY_HINT, isProjectKey } from '@shared/config-contract';
 import { assertId } from '@shared/guards';
@@ -109,6 +111,16 @@ export interface ParsedConfig {
    * for.
    */
   jira?: Partial<JiraConfig>;
+  /**
+   * HIVE-131's receiver block, exactly as the file declared it.
+   *
+   * `undefined` when the file has none — which every config written before this
+   * story does. Kept partial here rather than defaulted for the same reason
+   * `jira` is: the write path must be able to tell "the user chose this" from
+   * "the file said nothing", which is what keeps an untouched file from growing
+   * a block it never asked for.
+   */
+  receiver?: Partial<ReceiverConfig>;
   errors: string[];
   /** The version the file declared, or `null` when it was unreadable. */
   version: number | null;
@@ -155,6 +167,9 @@ const TOP_LEVEL_KEYS = [
   // HIVE-67, for the same reason. The block holds the site and the account
   // email; the API token is a secret and is deliberately not in this file.
   'jira',
+  // HIVE-131, for the same reason. The container host alias — a name, never an
+  // address with a port; the port belongs to the receiver.
+  'receiver',
   // HIVE-79. A boolean rather than a block, and the only key in this file that
   // changes how a session *authenticates* — see `AUTH_ENV_KEYS`.
   'subscriptionAuth',
@@ -514,6 +529,70 @@ function optionalJira(
   return jira;
 }
 
+/**
+ * A hostname with no scheme, path, port or whitespace.
+ *
+ * Deliberately **not** `assertJiraSite`'s rule, which demands at least two
+ * labels: `host.docker.internal` has three, but a user on a custom bridge may
+ * legitimately name a single-label host, and a literal IP must pass too.
+ *
+ * Rejecting `:` is what stops `host.docker.internal:1234` from becoming
+ * `http://host.docker.internal:1234:63999/hook`. An IPv6 literal is therefore
+ * unsupported — a documented limit, not an oversight.
+ */
+function isHostAlias(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.trim() === value &&
+    !/[\s/:]/.test(value)
+  );
+}
+
+/**
+ * HIVE-131's receiver block.
+ *
+ * Structurally identical to {@link optionalJira}, including its block-scoped
+ * rejections: a malformed block is reported and dropped, and the rest of the
+ * file still applies.
+ */
+function optionalReceiver(
+  record: Record<string, unknown>,
+  label: string,
+  errors: string[],
+): Partial<ReceiverConfig> | undefined {
+  const value = record.receiver;
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    errors.push(`${label}.receiver: expected an object — ignored`);
+    return undefined;
+  }
+
+  const at = `${label}.receiver`;
+
+  for (const key of Object.keys(value)) {
+    if (FORBIDDEN_KEYS.has(key)) {
+      errors.push(`${at}: forbidden key "${key}" — receiver ignored`);
+      return undefined;
+    }
+  }
+
+  if (!checkKeys(value, RECEIVER_KEYS, at, errors)) return undefined;
+
+  const receiver: Partial<ReceiverConfig> = {};
+  const raw = value.hostAlias;
+  if (raw !== undefined) {
+    if (isHostAlias(raw)) {
+      receiver.hostAlias = raw;
+    } else {
+      errors.push(
+        `${at}.hostAlias: expected a hostname — no scheme, path or port`,
+      );
+    }
+  }
+  return receiver;
+}
+
 export function parseConfig(text: string, label: string): ParsedConfig {
   const errors: string[] = [];
   // Every `return empty` below is a wholesale rejection, so `fatal` is set
@@ -564,6 +643,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
   const claudeCommand = optionalString(document, 'claudeCommand', label, errors);
   const notifications = optionalNotifications(document, label, errors);
   const jira = optionalJira(document, label, errors);
+  const receiver = optionalReceiver(document, label, errors);
   const subscriptionAuth = optionalBoolean(
     document,
     'subscriptionAuth',
@@ -599,6 +679,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       env,
       notifications,
       jira,
+      receiver,
       projects: [],
       errors,
       version,
@@ -616,6 +697,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       env,
       notifications,
       jira,
+      receiver,
       projects: [],
       errors,
       version,
@@ -725,6 +807,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
     env,
     notifications,
     jira,
+    receiver,
     projects,
     errors,
     version,

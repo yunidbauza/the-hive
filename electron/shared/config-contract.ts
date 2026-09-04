@@ -455,6 +455,45 @@ export const JIRA_KEYS: readonly (keyof JiraConfig)[] = [
 ];
 
 /**
+ * How a containerised session addresses this machine (HIVE-131).
+ *
+ * A container cannot reach `127.0.0.1` — inside one that is the container's own
+ * loopback. Docker Desktop and every comparable runtime on macOS proxy the
+ * connection from the host side, so the receiver's loopback bind is already
+ * reachable and only the *name* has to change. Measured against Docker Desktop
+ * 29.5.2, with the socket bound to `127.0.0.1` alone:
+ * `container → host.docker.internal:<port>` answers 200, while that same
+ * container's `127.0.0.1:<port>` is refused.
+ *
+ * A nested block rather than a flat `hostAlias` key, so the opt-in non-loopback
+ * bind — deferred, because it serves native Linux Docker and this app ships
+ * macOS only — has a namespace waiting rather than needing a second top-level
+ * key later.
+ */
+export interface ReceiverConfig {
+  /**
+   * The name a container resolves to reach the host.
+   *
+   * A plain string so any BYO runtime works — `host.docker.internal` for Docker
+   * Desktop, OrbStack and Rancher, `host.containers.internal` for podman, or a
+   * literal address for something exotic.
+   *
+   * **Never carries a port.** The port is the receiver's, assigned by the OS at
+   * bind time, and the substitution keeps it — which is why the parser rejects
+   * an alias containing `:`.
+   */
+  hostAlias: string;
+}
+
+/** Docker Desktop, OrbStack and Rancher all answer to this one. */
+export const DEFAULT_RECEIVER: ReceiverConfig = {
+  hostAlias: 'host.docker.internal',
+};
+
+/** The block's keys, for the parser's exact-key check. */
+export const RECEIVER_KEYS: readonly (keyof ReceiverConfig)[] = ['hostAlias'];
+
+/**
  * What `window.hive.config.get()` answers with.
  *
  * Note there is no `ok` / `valid` flag. A snapshot is always returned, even for
@@ -503,6 +542,15 @@ export interface ConfigSnapshot {
    * one that will eventually forget on one branch.
    */
   jira: JiraConfig;
+  /**
+   * How a container addresses this app, always fully resolved (HIVE-131).
+   *
+   * Defaulted here for the same reason `jira` and `notifications` are: main
+   * reads it wherever a container-flavoured file is generated, and a consumer
+   * that had to remember to apply defaults is one that will eventually forget
+   * on one branch.
+   */
+  receiver: ReceiverConfig;
   /**
    * Whether sessions authenticate on the Claude.ai plan (HIVE-79).
    *
@@ -971,6 +1019,7 @@ export function emptySnapshot(
     projects: [],
     notifications: { ...DEFAULT_NOTIFICATIONS },
     jira: { ...DEFAULT_JIRA },
+    receiver: { ...DEFAULT_RECEIVER },
     errors: [],
   };
 }
