@@ -49,6 +49,7 @@
     "test:title": "HIVE_LIVE_TITLE_PROOF=1 vitest run tests/live/title-conformance.test.ts",
     "test:kill": "HIVE_LIVE_KILL_PROOF=1 PW_ELECTRON_ONLY=1 playwright test --project=electron tests/e2e/electron/cmd-delete-line-kill.spec.ts",
     "test:ledger": "HIVE_LIVE_LEDGER_PROOF=1 vitest run tests/live/ledger-conformance.test.ts",
+    "test:mcp-http": "HIVE_LIVE_MCP_HTTP_PROOF=1 vitest run tests/live/mcp-http-conformance.test.ts",
     "test:agent": "HIVE_LIVE_AGENT_PROOF=1 vitest run tests/live/agent-conformance.test.ts"
   },
   "dependencies": {

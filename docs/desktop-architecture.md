@@ -37,10 +37,23 @@ keeps every ESLint import zone, alias site and `tests/` mirror intact.
 | `electron/preload/**` | renderer, sandboxed | `electron/shared/**` | `src/**`, `electron/main/**` |
 | `src/**` | renderer | `@shared` (**type-only**) | `electron/main/**`, `electron/preload/**` |
 
-`electron/shared/**` is types and constants only — no runtime imports, no Node
-APIs, no DOM APIs. It is the one module both sides may import, which makes the
-IPC contract a compile-time artifact instead of a convention. All three zones are
-ESLint-enforced and proved by `pnpm verify:boundaries`.
+`electron/shared/**` has **no runtime imports, no Node APIs, no DOM APIs**. It is
+the one module both sides may import, which makes the IPC contract a compile-time
+artifact instead of a convention. All three zones are ESLint-enforced and proved
+by `pnpm verify:boundaries`.
+
+That rule used to be written "types and constants only", which was never quite
+what the code did and by HIVE-130 was actively misleading: `guards.ts` exports
+`IpcValidationError` and a few hundred lines of parsing that main and the
+renderer both call at runtime, `ledger-derive.ts` exports nine functions the
+renderer's store calls on every merge, and `mcp-protocol.ts` and `mcp-tools.ts`
+now carry the MCP data layer so the stdio host and `POST /mcp` answer from one
+implementation rather than two. **What a module drags in is the constraint, not
+whether it happens to be a value** — a function with no imports behind it costs
+every consumer nothing, while a single `node:fs` import in this directory would
+put main-process code in the renderer bundle. The renderer still imports
+`@shared` **type-only** for anything with behaviour behind it; that row of the
+table above is the part that never moved.
 
 ## The bridge
 

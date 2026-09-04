@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { LedgerSnapshot } from '@shared/ledger-contract';
 import { PERMISSION_DENY_MESSAGE } from '@shared/permission-rules';
 
-import { ReceiverError, type ReceiverClient } from '../../../electron/mcp-host/client';
-import { createToolHandlers } from '../../../electron/mcp-host/tools';
+import { ReceiverError, type ReceiverClient } from '@shared/mcp-contract';
+import { createToolHandlers } from '@shared/mcp-tools';
 
 const emptySnapshot: LedgerSnapshot = { entries: [], openAsks: [], claims: {} };
 

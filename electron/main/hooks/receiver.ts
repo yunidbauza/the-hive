@@ -6,6 +6,7 @@ import { AGENTS_PATH, type AgentsDirectory } from '@shared/agent-contract';
 import { parseLedgerPostBody, parseLedgerReadQuery } from '@shared/guards';
 import {
   CLEAR_REASON,
+  HOOK_HEADER_RUN,
   HOOK_HEADER_SESSION,
   HOOK_HEADER_TOKEN,
   HOOK_MAX_BODY_BYTES,
@@ -30,6 +31,15 @@ import {
   type LedgerSnapshot,
 } from '@shared/ledger-contract';
 import { keepNewest } from '@shared/ledger-derive';
+import {
+  MCP_MAX_BODY_BYTES,
+  MCP_PATH,
+  ReceiverError,
+  type JsonRpcRequest,
+  type ReceiverClient,
+} from '@shared/mcp-contract';
+import { handleMessage, type RpcHandlers } from '@shared/mcp-protocol';
+import { createCursorStore, createToolHandlers, type CursorStore } from '@shared/mcp-tools';
 import {
   METRICS_MAX_BODY_BYTES,
   METRICS_PATH,
@@ -523,6 +533,25 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   let origin: string | null = null;
 
   /**
+   * One MCP read cursor per caller, for the lifetime of this receiver.
+   *
+   * See {@link handlersFor} for why the cursor is what is kept rather than the
+   * handler set. Cleared with the server, so a restart starts every caller
+   * fresh — matching the stdio host, whose cursor dies with its process.
+   */
+  const mcpCursors = new Map<string, CursorStore>();
+
+  /**
+   * The cap on that map.
+   *
+   * Generous against any real fleet — a machine with this many *distinct*
+   * callers alive at once is not a case this app has — and small enough that a
+   * caller id space that somehow grows without bound cannot turn a cursor into
+   * a leak.
+   */
+  const MCP_CURSOR_MAX = 256;
+
+  /**
    * Pull the event name out of a body too large to have been kept whole.
    *
    * `JSON.parse` cannot help on a truncated prefix, and the field is a fixed,
@@ -839,6 +868,201 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     const result = onLedgerPost(caller, request);
     if (!result.ok) return { status: result.status, json: { reason: result.reason } };
     return { status: 200, json: { id: result.id, ref: result.ref } };
+  }
+
+  /**
+   * The MCP endpoint (HIVE-130).
+   *
+   * ## Why this is a route and not a second server
+   *
+   * The tools a containerised `claude` needs are the ones the stdio host
+   * already serves, and everything they are allowed to do is already decided by
+   * the three handlers above. So this route does not reach for `Ledger`: it
+   * builds a {@link ReceiverClient} whose three methods **call those handlers**
+   * with the request's own headers and a synthesized body, then unwrap the
+   * `Reply`. That is the same contract `mcp-host/client.ts` implements over a
+   * socket, minus the socket.
+   *
+   * The alternative — an in-process client that called `Ledger.append`
+   * directly — reads like the shorter path and silently skips four things that
+   * do not live in the ledger: `handleLedgerRead`'s caller-visibility filter
+   * (which is what stops one session reading another's entries), the `from`
+   * stamping in `hooks/index.ts`, `parseLedgerPostBody`'s discarding of a
+   * body-supplied `from`, and the agents directory, which `Ledger` has never
+   * heard of. Every one of those is a bug this app has already fixed once.
+   *
+   * ## What the transport owes the spec
+   *
+   * Streamable HTTP, single-response flavour. Four requirements are met here
+   * and nowhere else:
+   *
+   * - A request gets one JSON object back, not an SSE stream. The spec permits
+   *   either and obliges the client to support both.
+   * - A **notification** — no `id` — is `202 Accepted` with no body, which is
+   *   why this returns a bare `202` rather than a `{ status, json }`: the
+   *   object arm of {@link Reply} always writes a body.
+   * - `GET` is `405`, handled in the dispatcher. A bare `404` there would tell
+   *   a client there is no endpoint at all and send it off to the deprecated
+   *   HTTP+SSE transport.
+   * - A **present** `Origin` is refused. This socket is loopback today, so no
+   *   browser can reach it; the check is here anyway because the spec makes it
+   *   a MUST and because HIVE-131 is about to make the bind configurable —
+   *   at which point a page in the user's browser could resolve a hostile name
+   *   to this address. A configurable allowlist is that story's; refusing every
+   *   browser-supplied origin is this one's.
+   */
+  async function handleMcp(
+    headers: Record<string, string | string[] | undefined>,
+    body: string,
+    truncated: boolean,
+  ): Promise<Reply> {
+    /*
+      First, and by hand: nothing in the dispatcher authenticates a route. Every
+      handler on this server calls `reject` itself, and one that forgot would be
+      wide open — see the routes table.
+    */
+    const refusal = reject(headers);
+    if (refusal !== null) return refusal;
+
+    /*
+      Any `Origin` at all is a refusal, not merely an unrecognised one. The
+      legitimate callers here are `claude` processes, and none of them sends
+      one; a request that does came from something with a browser's request
+      model attached, which is exactly what the DNS-rebinding warning is about.
+    */
+    if (headers['origin'] !== undefined) return 403;
+
+    // Refused rather than drained, for `handleLedgerPost`'s reason: the caller
+    // is a tool waiting on a result, and a call quietly cut in half is worse
+    // than one that failed.
+    if (truncated) {
+      return { status: 413, json: { reason: `body exceeds ${MCP_MAX_BODY_BYTES} bytes` } };
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch (cause) {
+      return { status: 400, json: { reason: describeCause(cause) } };
+    }
+
+    /*
+      A shape check, not just a parse. `null`, `5`, `"x"` and `[]` are all valid
+      JSON and none is a JSON-RPC message: `null` would throw on the destructure
+      inside `handleMessage` and surface as a bare 500, and the other three
+      destructure to all-`undefined`, land on the notification branch, and be
+      swallowed as a 202. Both are worse than saying what was wrong.
+    */
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return { status: 400, json: { reason: 'body must be a single JSON-RPC message object' } };
+    }
+
+    const reply = await handleMessage(parsed as JsonRpcRequest, handlersFor(headers));
+
+    // `null` is the notification case — see the spec note above.
+    return reply === null ? 202 : { status: 200, json: reply };
+  }
+
+  /**
+   * One handler set per request, over a cursor that outlives it (HIVE-130).
+   *
+   * `createToolHandlers` keeps a read cursor whose whole purpose is the
+   * undirected drain's high-water mark, and it is documented as living for the
+   * length of a *session* — true by construction over stdio, where `claude`
+   * starts one host and keeps it. A request is not a process, so this route has
+   * to supply that lifetime itself or the cursor is `undefined` on arrival every
+   * time and every drain re-reads the newest page.
+   *
+   * Only the cursor is kept. Memoising the handler set would capture the first
+   * request's headers in its client, and `handleMessage` awaits — so a second
+   * request from the same session could interleave and be answered against the
+   * first one's identity. Rebuilding from the headers actually presented is what
+   * makes that impossible.
+   *
+   * `grants` is `[]` deliberately, and it is not a stub: the stdio host reads
+   * `HIVE_GRANTS` from its environment, and `envFor` never sets that for a pty
+   * session either — so an empty list is exactly what an interactive session
+   * gets today on both transports, and `approve` fails closed for both. Handing
+   * an agent run its grants over HTTP needs a channel that does not exist yet
+   * and belongs to HIVE-133.
+   */
+  function handlersFor(
+    headers: Record<string, string | string[] | undefined>,
+  ): RpcHandlers {
+    const caller = headers[HOOK_HEADER_SESSION] as string;
+
+    let store = mcpCursors.get(caller);
+    if (store === undefined) {
+      store = createCursorStore();
+      /*
+        Bounded, because the key space is not: an agent name is a legal caller
+        and definitions come and go. Insertion-ordered, so the oldest key is the
+        first one — evicting it costs that caller one re-read of the newest
+        page, which is precisely the cost of never having had a cursor.
+      */
+      if (mcpCursors.size >= MCP_CURSOR_MAX) {
+        const oldest = mcpCursors.keys().next();
+        if (!oldest.done) mcpCursors.delete(oldest.value);
+      }
+      mcpCursors.set(caller, store);
+    }
+
+    return createToolHandlers(clientFor(headers), [], store);
+  }
+
+  /**
+   * A {@link ReceiverClient} that calls this server's own handlers.
+   *
+   * The headers are the *caller's*, forwarded whole, so `reject` runs again
+   * inside each handler and arrives at the same identity this route already
+   * authenticated. That second check is deliberate rather than wasteful: it
+   * means no future edit can reach a ledger handler through here without an
+   * identity, and it keeps these three call sites indistinguishable from the
+   * HTTP ones they mirror.
+   */
+  function clientFor(
+    headers: Record<string, string | string[] | undefined>,
+  ): ReceiverClient {
+    const run = headers[HOOK_HEADER_RUN];
+
+    /** A handler's `Reply`, as a value or a throw the tools already catch. */
+    const unwrap = <T,>(reply: Reply): T => {
+      if (typeof reply === 'number') throw new ReceiverError(reply, `the Hive refused the request (${reply})`);
+      if (reply.status !== 200) {
+        const { reason } = reply.json as { reason?: unknown };
+        throw new ReceiverError(
+          reply.status,
+          typeof reason === 'string' && reason !== ''
+            ? reason
+            : `the Hive refused the request (${reply.status})`,
+        );
+      }
+      return reply.json as T;
+    };
+
+    return {
+      read: async (query) =>
+        unwrap<LedgerSnapshot>(handleLedgerRead(headers, JSON.stringify(query), false)),
+
+      post: async (request) => {
+        /*
+          Stamped here, over whatever the model put in `meta`, exactly as
+          `mcp-host/client.ts` does before its body leaves the process. It is
+          the only thing that lets main tell one run's asks from a concurrent
+          neighbour's, so it cannot be a value the model chose.
+        */
+        const stamped =
+          typeof run === 'string' && run !== ''
+            ? { ...request, meta: { ...(request.meta ?? {}), run } }
+            : request;
+
+        return unwrap<{ id: string; ref?: string }>(
+          handleLedgerPost(headers, JSON.stringify(stamped), false),
+        );
+      },
+
+      agents: async () => unwrap<AgentsDirectory>(await handleAgents(headers)),
+    };
   }
 
   /**
@@ -1239,10 +1463,31 @@ export function createReceiver(options: ReceiverOptions): Receiver {
             `/ready` treat theirs.
           */
           { path: AGENTS_PATH, cap: 0, handle: (headers) => handleAgents(headers) },
+          { path: MCP_PATH, cap: MCP_MAX_BODY_BYTES, handle: handleMcp },
         ];
 
         const created = createServer((req, res) => {
           const route = routes.find((candidate) => candidate.path === (req.url ?? ''));
+
+          /**
+           * `GET /mcp` is `405`, not `404` — the one exception to the
+           * POST-only rule below (HIVE-130).
+           *
+           * The Streamable HTTP spec has the MCP endpoint serve both methods,
+           * and says a server offering no SSE stream answers the `GET` with
+           * `405 Method Not Allowed`. The distinction is not pedantry: a client
+           * that gets `404` here concludes there is no endpoint at this URL and
+           * falls back to the deprecated HTTP+SSE transport, which this server
+           * does not speak either.
+           */
+          if (req.method === 'GET' && route !== undefined && route.path === MCP_PATH) {
+            // `Allow` is required on a 405 (RFC 9110) and is the point here:
+            // this branch exists so a client can tell "wrong method" from "no
+            // endpoint", and the header is what names the right one.
+            res.writeHead(405, { allow: 'POST' }).end();
+            return;
+          }
+
           if (req.method !== 'POST' || route === undefined) {
             res.writeHead(404).end();
             return;
@@ -1372,6 +1617,9 @@ export function createReceiver(options: ReceiverOptions): Receiver {
         server = null;
         url = null;
         origin = null;
+        // The stdio host's cursor dies with its process; this one dies with the
+        // socket that served it, so a restart starts every caller fresh.
+        mcpCursors.clear();
         running.close(() => resolve());
         /**
          * Keep-alive sockets would otherwise hold the close open past app quit.

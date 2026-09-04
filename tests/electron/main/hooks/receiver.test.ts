@@ -11,6 +11,7 @@ import {
   type AgentsDirectory,
 } from '../../../../electron/shared/agent-contract';
 import {
+  HOOK_HEADER_RUN,
   HOOK_HEADER_SESSION,
   HOOK_HEADER_TOKEN,
   HOOK_MAX_BODY_BYTES,
@@ -24,6 +25,11 @@ import {
   LEDGER_READ_PATH,
   type LedgerSnapshot,
 } from '../../../../electron/shared/ledger-contract';
+import {
+  MCP_PATH,
+  MCP_PROTOCOL_VERSION,
+  MCP_SERVER_NAME,
+} from '../../../../electron/shared/mcp-contract';
 import {
   METRICS_PATH,
   type SessionMetrics,
@@ -2534,4 +2540,305 @@ describe('the agents route', () => {
 
     expect(response.status).toBe(404);
   });
+});
+
+/**
+ * `POST /mcp` — the MCP endpoint a containerised session speaks to (HIVE-130).
+ *
+ * The tools behind it are already proven in `tests/electron/shared/mcp-tools.test.ts`;
+ * what is new here is the **transport**, so that is what these assert: the
+ * JSON-RPC envelope, the auth every route on this server has to opt into for
+ * itself, and the four places the Streamable HTTP spec is prescriptive
+ * (single-JSON reply, 202 for a notification, 405 for GET, 403 for a bad
+ * Origin).
+ *
+ * Kept in its own `describe` with its own receiver rather than folded into the
+ * ledger block above, because the interesting cases are about what a *tool
+ * call* reaches — and a fake `onLedgerPost` that records is a sharper witness
+ * to "the caller's identity was stamped, not the body's" than a real ledger
+ * whose own rules could absorb the difference.
+ */
+describe('the MCP route', () => {
+  let receiver: Receiver;
+  let url: string;
+  let dir: string;
+  let ledger: Ledger;
+  let posted: { caller: string; request: unknown }[];
+
+  const CALLER = 'sess-mcp';
+
+  beforeEach(async () => {
+    posted = [];
+    dir = mkdtempSync(join(tmpdir(), 'hive-receiver-mcp-'));
+    ledger = createLedger({ dir, knowsParty: () => true });
+    receiver = createReceiver({
+      onCleared: () => {},
+      onEvent: () => {},
+      onTicketIntent: () => {},
+      onPromptName: () => {},
+      onDone: () => {},
+      onReady: () => {},
+      onMetrics: () => {},
+      knowsSession: () => true,
+      knowsAgent: () => false,
+      onAgentEvent: () => {},
+      onAgentsList: async () => ({ agents: [] }) as AgentsDirectory,
+      onLedgerRead: (_caller, query) => ledger.read(query),
+      onLedgerPost: (caller, request) => {
+        posted.push({ caller, request });
+        return ledger.append({ ...request, from: caller });
+      },
+    });
+    const started = await receiver.start();
+    expect(started).not.toBeNull();
+    url = started as string;
+  });
+
+  afterEach(async () => {
+    await receiver.stop();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const origin = () => new URL(url).origin;
+
+  const rpc = async (
+    message: unknown,
+    headers: Record<string, string> = { [HOOK_HEADER_SESSION]: CALLER },
+  ) =>
+    fetch(`${origin()}${MCP_PATH}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [HOOK_HEADER_TOKEN]: receiver.tokenFor(headers[HOOK_HEADER_SESSION] ?? ''),
+        ...headers,
+      },
+      body: JSON.stringify(message),
+    });
+
+  it('answers initialize with the pinned protocol version and the hive server name', async () => {
+    const response = await rpc({ jsonrpc: '2.0', id: 1, method: 'initialize' });
+    const body = (await response.json()) as {
+      result: { protocolVersion: string; serverInfo: { name: string } };
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.result.protocolVersion).toBe(MCP_PROTOCOL_VERSION);
+    expect(body.result.serverInfo.name).toBe(MCP_SERVER_NAME);
+  });
+
+  /**
+   * The spec permits either a single JSON object or an SSE stream, and requires
+   * the client to support both. We answer JSON, so this pins the content type —
+   * an accidental `text/event-stream` would be a body no client parses as one
+   * message.
+   */
+  it('replies as a single JSON object, not an event stream', async () => {
+    const response = await rpc({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
+
+    expect(response.headers.get('content-type')).toContain('application/json');
+  });
+
+  it('lists the ledger tools, the agents tool and approve', async () => {
+    const response = await rpc({ jsonrpc: '2.0', id: 3, method: 'tools/list' });
+    const body = (await response.json()) as { result: { tools: { name: string }[] } };
+    const names = body.result.tools.map((tool) => tool.name);
+
+    expect(names).toContain('ledger_post');
+    expect(names).toContain('ledger_read');
+    expect(names).toContain('agents');
+  });
+
+  /**
+   * The point of the whole story: a tool call over HTTP reaches the same
+   * handler the stdio host's HTTP client reaches, so `from` is the
+   * authenticated header and never anything the body offered.
+   */
+  it('stamps the caller from the header, not from the tool arguments', async () => {
+    const response = await rpc({
+      jsonrpc: '2.0',
+      id: 4,
+      method: 'tools/call',
+      params: {
+        name: 'ledger_post',
+        arguments: { body: 'from a container', from: 'sess-impostor' },
+      },
+    });
+    const body = (await response.json()) as { result: { isError: boolean } };
+
+    expect(body.result.isError).toBe(false);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]?.caller).toBe(CALLER);
+    expect(posted[0]?.request).not.toHaveProperty('from');
+  });
+
+  it('refuses a call with no token', async () => {
+    const response = await fetch(`${origin()}${MCP_PATH}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', [HOOK_HEADER_SESSION]: CALLER },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 5, method: 'tools/list' }),
+    });
+
+    expect(response.status).toBe(403);
+  });
+
+  it('refuses a call whose token belongs to another session', async () => {
+    const response = await rpc(
+      { jsonrpc: '2.0', id: 6, method: 'tools/list' },
+      {
+        [HOOK_HEADER_SESSION]: CALLER,
+        [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-someone-else'),
+      },
+    );
+
+    expect(response.status).toBe(403);
+  });
+
+  /**
+   * Spec: "If the input is a JSON-RPC response or notification … the server
+   * MUST return HTTP status code 202 Accepted with no body."
+   */
+  it('answers a notification 202 with no body', async () => {
+    const response = await rpc({ jsonrpc: '2.0', method: 'notifications/initialized' });
+
+    expect(response.status).toBe(202);
+    expect(await response.text()).toBe('');
+  });
+
+  /**
+   * Spec: the MCP endpoint must serve POST and GET, and a server offering no
+   * SSE stream answers GET with 405 — not the bare 404 every other route on
+   * this server gives a non-POST, which a client would read as "no endpoint
+   * here" and fall back to the deprecated transport.
+   */
+  it('answers GET 405 rather than 404, so a client does not fall back', async () => {
+    const response = await fetch(`${origin()}${MCP_PATH}`, { method: 'GET' });
+
+    expect(response.status).toBe(405);
+    // Required on a 405 (RFC 9110), and the point of the branch: it names the
+    // method that would have worked, which is what "wrong method" means.
+    expect(response.headers.get('allow')).toBe('POST');
+  });
+
+  /**
+   * `meta.run` over HTTP (HIVE-130).
+   *
+   * The stdio host reads the run from its own environment and stamps it before
+   * the body leaves the process. A caller with no process for us to read has to
+   * send it, and it has to be stamped the same way — over anything the model
+   * put there, because it is the only thing that tells one run's asks from a
+   * concurrent neighbour's.
+   */
+  it('stamps meta.run from the header, over whatever the model supplied', async () => {
+    await rpc(
+      {
+        jsonrpc: '2.0',
+        id: 8,
+        method: 'tools/call',
+        params: {
+          name: 'ledger_post',
+          arguments: { body: 'in a run', meta: { run: 'run-the-model-chose' } },
+        },
+      },
+      { [HOOK_HEADER_SESSION]: CALLER, [HOOK_HEADER_RUN]: 'run-real' },
+    );
+
+    expect(posted).toHaveLength(1);
+    expect((posted[0]?.request as { meta?: { run?: string } }).meta?.run).toBe('run-real');
+  });
+
+  it('leaves meta.run alone when no run header is sent', async () => {
+    await rpc({
+      jsonrpc: '2.0',
+      id: 9,
+      method: 'tools/call',
+      params: { name: 'ledger_post', arguments: { body: 'no run' } },
+    });
+
+    expect(posted).toHaveLength(1);
+    expect((posted[0]?.request as { meta?: { run?: string } }).meta?.run).toBeUndefined();
+  });
+
+  /**
+   * The cursor is per **caller**, not per request (HIVE-130).
+   *
+   * `createToolHandlers` keeps a read cursor whose whole purpose is the
+   * undirected drain's high-water mark, and over stdio it lives as long as the
+   * host process does. A request is not a process, so this route supplies that
+   * lifetime — without it every drain re-reads the newest page and an agent
+   * re-answers asks it already handled.
+   */
+  it('advances a read cursor across separate requests from the same caller', async () => {
+    const drain = async () => {
+      const response = await rpc({
+        jsonrpc: '2.0',
+        id: 10,
+        method: 'tools/call',
+        params: { name: 'ledger_read', arguments: {} },
+      });
+      return (await response.json()) as { result: { content: { text: string }[] } };
+    };
+
+    // Something to find, posted as the overmind so the caller can see it.
+    ledger.append({ from: CALLER, kind: 'post', body: 'first entry' });
+    const first = await drain();
+    expect(first.result.content[0]?.text).toContain('first entry');
+
+    // A second undirected drain, with nothing new, must not re-deliver it.
+    const second = await drain();
+    expect(second.result.content[0]?.text).not.toContain('first entry');
+  });
+
+  /**
+   * Spec: "Servers MUST validate the Origin header … If the Origin header is
+   * present and invalid, servers MUST respond with HTTP 403 Forbidden." The
+   * configurable allowlist is HIVE-131's; what this story owes is that a
+   * browser-supplied Origin cannot reach the endpoint at all.
+   */
+  it('refuses a request carrying a browser Origin', async () => {
+    const response = await rpc(
+      { jsonrpc: '2.0', id: 7, method: 'tools/list' },
+      { [HOOK_HEADER_SESSION]: CALLER, origin: 'http://evil.example' },
+    );
+
+    expect(response.status).toBe(403);
+  });
+
+  it('answers an unparseable body 400, not a crash', async () => {
+    const response = await fetch(`${origin()}${MCP_PATH}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [HOOK_HEADER_SESSION]: CALLER,
+        [HOOK_HEADER_TOKEN]: receiver.tokenFor(CALLER),
+      },
+      body: '{ not json',
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  /**
+   * Valid JSON that is not a JSON-RPC message.
+   *
+   * Each of these used to take a wrong path: `null` threw on the destructure
+   * inside `handleMessage` and surfaced as a bare 500, and the other three
+   * destructured to all-`undefined`, landed on the notification branch and were
+   * swallowed as a silent 202. A malformed request has to say so.
+   */
+  it.each(['null', '5', '"a string"', '[]'])(
+    'answers 400 for a body that parses but is not a message: %s',
+    async (body) => {
+      const response = await fetch(`${origin()}${MCP_PATH}`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          [HOOK_HEADER_SESSION]: CALLER,
+          [HOOK_HEADER_TOKEN]: receiver.tokenFor(CALLER),
+        },
+        body,
+      });
+
+      expect(response.status).toBe(400);
+    },
+  );
 });

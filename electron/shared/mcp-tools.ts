@@ -1,19 +1,19 @@
-import type { LedgerKind, LedgerReadQuery } from '@shared/ledger-contract';
-import { AGENTS_TOOL, APPROVE_TOOL, LEDGER_TOOLS } from '@shared/ledger-tools';
+import type { LedgerKind, LedgerReadQuery } from './ledger-contract';
+import { AGENTS_TOOL, APPROVE_TOOL, LEDGER_TOOLS } from './ledger-tools';
 import {
   LEDGER_READ_DEFAULT_LIMIT,
+  ReceiverError,
   type CallToolResult,
   type McpToolDefinition,
-} from '@shared/mcp-contract';
+  type ReceiverClient,
+} from './mcp-contract';
+import type { RpcHandlers } from './mcp-protocol';
 import {
   isToolName,
   matches,
   PERMISSION_DENY_MESSAGE,
   type PermissionDecision,
-} from '@shared/permission-rules';
-
-import { ReceiverError, type ReceiverClient } from './client';
-import type { RpcHandlers } from './rpc';
+} from './permission-rules';
 
 /**
  * The nine ledger tools, as behaviour (HIVE-112, `ledger_handoff` added by
@@ -56,19 +56,55 @@ const metaArg = (args: Record<string, unknown>): Record<string, unknown> | undef
     : undefined;
 };
 
+/**
+ * Where the read cursor lives, so its lifetime can outlive one handler set.
+ *
+ * Over stdio the two are the same thing — `claude` starts one host per session
+ * and keeps it — so the default store below is closure-local and nothing has to
+ * think about it. Over `POST /mcp` they are not: a request is not a process, so
+ * a handler set built per request would carry a cursor that is `undefined` on
+ * arrival and discarded on reply, turning every undirected drain into a re-read
+ * of the newest page (HIVE-130).
+ *
+ * The fix is to inject the *cursor* rather than to reuse the handlers, and that
+ * is deliberate. Memoising a whole handler set per session would capture the
+ * first request's headers in its client, and `handleMessage` awaits — so a
+ * second request from the same session could interleave and be answered against
+ * the first one's identity. A cursor is the only thing that should outlive the
+ * request; everything else is rebuilt from the headers actually presented.
+ */
+export interface CursorStore {
+  get(): string | undefined;
+  set(id: string): void;
+}
+
+/** A store with the stdio host's lifetime: this closure, and no longer. */
+export const createCursorStore = (): CursorStore => {
+  /**
+   * Deliberately **not** persisted: a cursor that survived a restart would mean
+   * a session that came back after a crash silently skipped whatever arrived
+   * while it was down.
+   */
+  let cursor: string | undefined;
+  return {
+    get: () => cursor,
+    set: (id: string) => {
+      cursor = id;
+    },
+  };
+};
+
 export function createToolHandlers(
   client: ReceiverClient,
   grants: readonly string[] = [],
-): RpcHandlers {
   /**
-   * The read cursor: the id of the last entry this process was given.
+   * The read cursor: the id of the last entry this caller was given.
    *
-   * Per process, which is per session — `claude` starts one host per session
-   * and keeps it for that session's life. It is deliberately **not** persisted:
-   * a cursor that survived a restart would mean a session that came back after
-   * a crash silently skipped whatever arrived while it was down.
+   * Defaulted, so the stdio host and every existing test get exactly the
+   * per-process cursor they had before. `POST /mcp` passes one keyed by session.
    */
-  let cursor: string | undefined;
+  cursorStore: CursorStore = createCursorStore(),
+): RpcHandlers {
 
   /** One write, with the refusal turned into text the model can read. */
   const write = async (
@@ -135,6 +171,7 @@ export function createToolHandlers(
       without it, a session opened against a months-old ledger would be handed
       all of it at once.
     */
+    const cursor = cursorStore.get();
     if (since !== undefined) query.since = since;
     else if (cursor !== undefined) query.since = cursor;
     if (limit !== undefined) query.limit = limit;
@@ -151,7 +188,7 @@ export function createToolHandlers(
     */
     if (!isTargetedLookup) {
       const newest = snapshot.entries.at(-1);
-      if (newest !== undefined) cursor = newest.id;
+      if (newest !== undefined) cursorStore.set(newest.id);
     }
 
     /*

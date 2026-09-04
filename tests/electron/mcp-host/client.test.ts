@@ -8,10 +8,9 @@ import {
   type LedgerPostRequest,
 } from '@shared/ledger-contract';
 
-import {
-  createReceiverClient,
-  ReceiverError,
-} from '../../../electron/mcp-host/client';
+import { ReceiverError } from '@shared/mcp-contract';
+
+import { createReceiverClient } from '../../../electron/mcp-host/client';
 
 const jsonResponse = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), {
