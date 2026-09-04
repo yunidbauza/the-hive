@@ -544,6 +544,96 @@ describe('a pinned name outranks the agent', () => {
     expect(sessionAt(id).name).toBe('HIVE-73-back-key-interception');
   });
 
+  /**
+   * The reported defect: `/rename` on a pinned row was swallowed
+   * without trace.
+   *
+   * A session pinned to `HIVE-133` was renamed to `hive-131` in Claude. The
+   * rename was delivered correctly — the transcript carries `custom-title`, so
+   * `title-origin.ts` classified it `rename` — and then `hiveNameFromTitle`
+   * read `hive-131` as a key, discarded it in favour of the pinned prefix,
+   * found no words left to hoist it in front of, and answered `HIVE-133`. The
+   * name it produced equalled the name already on the row, so `renameSession`
+   * returned the state untouched: no write, no re-render, and nothing anywhere
+   * to say the rename had been refused.
+   *
+   * Renaming a session to *nothing but* a key now says which ticket it is for,
+   * which is the only thing such a rename can mean.
+   */
+  it('re-points a pinned session when the rename is nothing but a key', () => {
+    const id = spawn();
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-133');
+
+    useHiveStore.getState().renameSession(id, 'hive-131', 'rename');
+
+    expect(sessionAt(id).name).toBe('HIVE-131');
+    expect(sessionAt(id).ticket).toBe('HIVE-131');
+    // Still defended: moving the pin is not spending it.
+    expect(sessionAt(id).namePinned).toBe(true);
+  });
+
+  it('leaves the row alone when the key it names is the one it already has', () => {
+    // Claude repaints its title several times a second, so the *second* frame
+    // of a rename is this call. It must be a no-op rather than a re-link.
+    const id = spawn();
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-133');
+
+    useHiveStore.getState().renameSession(id, 'HIVE-133', 'rename');
+
+    expect(sessionAt(id).name).toBe('HIVE-133');
+    expect(sessionAt(id).ticket).toBe('HIVE-133');
+  });
+
+  it('does not let the agent’s own title move a session to another ticket', () => {
+    /*
+      The whole reason the re-point is gated on origin. Claude writes one
+      `ai-title` per conversation from whatever it had drifted to, and a
+      session that spent three hundred turns discussing HIVE-99 can title
+      itself with that key. Re-pointing on a guess would silently refile the
+      work — the one error `session-history-contract.ts` names as having no
+      obvious way to be noticed.
+    */
+    const id = spawn();
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-133');
+
+    useHiveStore.getState().renameSession(id, 'hive-131', 'agent');
+
+    expect(sessionAt(id).name).toBe('HIVE-133');
+    expect(sessionAt(id).ticket).toBe('HIVE-133');
+  });
+
+  it('never re-points to a session id, which the key grammar accepts', () => {
+    /*
+      `sess-01` parses as the key `SESS-01` — the collision `hiveNameFromTitle`
+      already guards for naming. Here the cost is higher than a shouty label: it
+      would file the session under an imaginary project. Refused in the store
+      because the fleet's `SESSION_ID_PREFIX_PATTERN` lives in
+      `agent-contract.ts`, which imports the contract this key was parsed by.
+    */
+    const id = spawn();
+    useHiveStore.getState().setSessionTicket(id, 'HIVE-133');
+
+    useHiveStore.getState().renameSession(id, 'sess-01', 'rename');
+
+    expect(sessionAt(id).ticket).toBe('HIVE-133');
+    expect(sessionAt(id).name).toBe('HIVE-133');
+  });
+
+  it('invents no ticket for a session that was never pinned', () => {
+    /*
+      A rename is not an association. The pin is the user having named an issue
+      the renderer confirmed against Jira (`use-session-status.ts`); a key typed
+      into a terminal title has been through no such check, so it may move a
+      link that exists and may not conjure one that does not.
+    */
+    const id = spawn();
+
+    useHiveStore.getState().renameSession(id, 'hive-131', 'rename');
+
+    expect(sessionAt(id).name).toBe('hive-131');
+    expect(sessionAt(id).ticket).toBeUndefined();
+  });
+
   it('keeps the pinned key even when the title names a different ticket', () => {
     // A session routinely discusses another issue; the pin is what the user
     // said this session is *for*.

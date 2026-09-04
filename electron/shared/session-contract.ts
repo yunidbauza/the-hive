@@ -380,6 +380,47 @@ export function hiveNameFromTitle(title: string, prefix?: string): string | unde
 }
 
 /**
+ * The ticket key a title consists of — or `undefined` if it says anything else.
+ *
+ * The question `renameSession` asks to decide whether a rename is a *label* or
+ * a statement about **which issue this session is for**. `/rename hive-131` on
+ * a session pinned to `HIVE-133` can only mean the latter: there is nothing
+ * else in it to mean.
+ *
+ * ## Why this is not a flag on {@link hiveNameFromTitle}
+ *
+ * That function takes the first key it meets *anywhere* in a title, and that
+ * looseness is right for naming — `fixing hive-99 regression` should still
+ * produce a readable name. It is wrong for re-pointing, where the same rule
+ * would move a session onto another ticket's card because its title mentioned
+ * another issue in passing, which sessions routinely do. The two questions
+ * need different answers from the same grammar, so they get different
+ * functions rather than one function with a mode.
+ *
+ * Tokenised exactly as {@link hiveNameFromTitle} tokenises, punctuation edges
+ * included, so the two can never disagree about what a key looks like.
+ *
+ * **The grammar is all this answers.** `sess-01` parses, because it satisfies
+ * {@link TITLE_TICKET_KEY} the same way `HIVE-73` does. Refusing it here would
+ * need the fleet's `SESSION_ID_PREFIX_PATTERN`, which lives in
+ * `agent-contract.ts` — and that module imports this one, so the dependency
+ * would be a cycle. Whether a key that parses is one worth acting on is the
+ * caller's question, and `renameSession` is where it is asked.
+ */
+export function soleTicketKeyIn(title: string): string | undefined {
+  const tokens = title
+    .trim()
+    .split(/\s+/)
+    .map((raw) => raw.replace(TOKEN_EDGES, ''))
+    .filter((token) => token !== '');
+
+  if (tokens.length !== 1) return undefined;
+
+  const key = TITLE_TICKET_KEY.exec(tokens[0]);
+  return key === null ? undefined : `${key[1].toUpperCase()}-${key[2]}`;
+}
+
+/**
  * Words that say nothing about what a session is *for*, dropped before a first
  * prompt is slugged.
  *

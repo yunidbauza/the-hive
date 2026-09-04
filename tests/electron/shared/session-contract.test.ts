@@ -4,6 +4,7 @@ import {
   hiveNameFromTitle,
   isSendableSessionName,
   sessionNameFromPrompt,
+  soleTicketKeyIn,
   SESSION_NAME_MAX,
 } from '../../../electron/shared/session-contract';
 
@@ -134,6 +135,58 @@ describe('hiveNameFromTitle', () => {
     it('answers with the pin alone when the title carries no words', () => {
       expect(hiveNameFromTitle('HIVE-73', 'HIVE-73')).toBe('HIVE-73');
     });
+  });
+});
+
+/**
+ * The predicate behind "a rename that is *only* a key moves the session".
+ *
+ * Deliberately narrower than the key-finding inside `hiveNameFromTitle`, which
+ * takes the first key it meets anywhere in the title. That looseness is right
+ * for naming — `fixing hive-99 regression` should still read as a name — and
+ * wrong for re-pointing, where it would move a session to another card because
+ * its title mentioned another issue in passing. The two must not share a rule,
+ * which is why this is its own function rather than a flag on that one.
+ */
+describe('soleTicketKeyIn', () => {
+  it('reads a title that is nothing but a key, in the canonical case', () => {
+    expect(soleTicketKeyIn('hive-131')).toBe('HIVE-131');
+    expect(soleTicketKeyIn('HIVE-131')).toBe('HIVE-131');
+    expect(soleTicketKeyIn('  incorp-507  ')).toBe('INCORP-507');
+  });
+
+  it('reads through the punctuation a title may wear', () => {
+    // `TOKEN_EDGES` already lets `(hive-53)` name a key; the same must hold
+    // here, or the two disagree about what a bare key looks like.
+    expect(soleTicketKeyIn('[HIVE-131]')).toBe('HIVE-131');
+  });
+
+  it('refuses a key with anything else beside it', () => {
+    expect(soleTicketKeyIn('fixing hive-99 regression')).toBeUndefined();
+    expect(soleTicketKeyIn('HIVE-131 rename')).toBeUndefined();
+  });
+
+  it('refuses what is not a key at all', () => {
+    expect(soleTicketKeyIn('')).toBeUndefined();
+    // A date has no leading letter, which is what keeps it out of the grammar.
+    expect(soleTicketKeyIn('2026-08-27')).toBeUndefined();
+    expect(soleTicketKeyIn('back-key-interception')).toBeUndefined();
+  });
+
+  /**
+   * A minted session id satisfies this grammar, and that is left alone here.
+   *
+   * `sess-01` matches `TITLE_TICKET_KEY` exactly as `HIVE-73` does — the
+   * collision `hiveNameFromTitle`'s idempotence branch already reports, in the
+   * comment about a row that came back shouting `SESS-01`. Refusing it *here*
+   * would mean importing the fleet's `SESSION_ID_PREFIX_PATTERN`, and
+   * `agent-contract.ts` imports this module, so the dependency would be a
+   * cycle. This function answers a question about grammar; whether a key that
+   * parses is one worth acting on belongs to the caller, and `renameSession`
+   * is where that guard lives.
+   */
+  it('reads a session id as a key, leaving the fleet’s vocabulary to the fleet', () => {
+    expect(soleTicketKeyIn('sess-01')).toBe('SESS-01');
   });
 
   describe('what it refuses to restyle', () => {
