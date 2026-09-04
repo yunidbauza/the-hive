@@ -202,6 +202,48 @@ export interface NotificationHub {
    */
   dismiss(id: string): void;
   /**
+   * Drop the rows of these kinds about the session **the user is now looking
+   * at** — the inbox's half of the foreground gate.
+   *
+   * The gate's other half, {@link NotificationHub.promote}, answers "the user
+   * looked away, chase them". This answers the opposite question, and the two
+   * are asked from the same place: a row that says *your session is free* has
+   * said everything it exists to say the moment its terminal is on screen, so
+   * arriving is the act that finishes it. Leaving it behind is what turns the
+   * inbox into a list of things already dealt with — the state `promote`'s own
+   * toast handler already refuses to create.
+   *
+   * Takes the kinds rather than sweeping every row about the session, because
+   * arriving does not finish every kind: a `session.blocked` is finished by an
+   * *answer*, and walking over to look at it is not one. The caller decides
+   * which kinds arriving answers; the hub decides which rows are in front of
+   * the user, because `isForeground` is the hub's to hold.
+   *
+   * A hub built without `isForeground` sweeps nothing. It has no foreground to
+   * ask about and must not invent one.
+   *
+   * Swept ids stay in the dedup set, exactly as {@link NotificationHub.dismiss}
+   * leaves its own behind.
+   */
+  dismissForeground(kinds: readonly NotificationKind[]): void;
+  /**
+   * Drop the rows of these kinds about one named session.
+   *
+   * For the fact that resolves without the user ever opening the inbox: a
+   * permission approved in the terminal, an `AskUserQuestion` answered, a
+   * refusal typed. The notifier watches the status stream and knows the moment
+   * a session stops being blocked; it does not know which rows are in the
+   * buffer, and does not keep their ids. So it names the session and the kinds,
+   * and the hub finds them.
+   *
+   * Keyed on the **action**, like `supersedeKey` and `isForeground` before it:
+   * a `session` action names a terminal and can be compared, and every other
+   * action type answers no by construction. That is what keeps `pr.*`,
+   * `clone.done` and `app.update_*` unreachable from here without a list of
+   * kinds to keep in step with the registry.
+   */
+  dismissForSession(entityId: string, kinds: readonly NotificationKind[]): void;
+  /**
    * Drop **every** notification from the buffer — the Inbox's Clear all.
    *
    * Its own method rather than `dismiss(null)`, for the reason recorded on
@@ -546,6 +588,51 @@ export function createNotificationHub(
   };
 
   /**
+   * The sweeps, and the one place either of them touches the buffer.
+   *
+   * `announceDismissed` per row rather than the single `null` `clearInbox`
+   * uses: `null` means *the whole inbox went*, and the renderer's handler
+   * empties its list on it. A sweep removes some rows and leaves others, so
+   * saying `null` would erase a PR notification because a session went idle.
+   * The counts involved are one or two rows on a foreground change, not the
+   * fifty `clearInbox` was arguing about.
+   *
+   * Silent when it matched nothing — no announcement, no badge push — so the
+   * foreground change that happens on every tab switch costs nothing at all in
+   * the ordinary case where there was never a row to sweep.
+   */
+  const sweep = (matches: (entry: HiveNotification) => boolean): void => {
+    const doomed = buffer.filter(matches);
+    if (doomed.length === 0) return;
+    const gone = new Set(doomed.map((entry) => entry.id));
+    buffer = buffer.filter((entry) => !gone.has(entry.id));
+    // `seen` is deliberately untouched, exactly as in `dismiss`.
+    for (const id of gone) announceDismissed(id);
+    announce();
+  };
+
+  const dismissForeground = (kinds: readonly NotificationKind[]): void => {
+    // `isForeground` is optional, and its absence means "no foreground is
+    // observable here" rather than "everything is foreground" — see the
+    // interface. `?? false` is what makes a hub without it sweep nothing.
+    const wanted = new Set(kinds);
+    sweep((entry) => wanted.has(entry.kind) && (isForeground?.(entry.action) ?? false));
+  };
+
+  const dismissForSession = (
+    entityId: string,
+    kinds: readonly NotificationKind[],
+  ): void => {
+    const wanted = new Set(kinds);
+    sweep(
+      (entry) =>
+        wanted.has(entry.kind) &&
+        entry.action.type === 'session' &&
+        entry.action.entityId === entityId,
+    );
+  };
+
+  /**
    * The bulk gesture. Same two follow-ups as `dismiss`, once.
    *
    * `announceDismissed(null)` rather than one call per row: the renderer's
@@ -747,6 +834,10 @@ export function createNotificationHub(
     promote,
 
     dismiss,
+
+    dismissForeground,
+
+    dismissForSession,
 
     clearInbox,
 

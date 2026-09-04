@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -37,9 +37,11 @@ import type { SessionStatusEvent } from '../../electron/shared/session-contract'
  * built on the same belief would have passed happily on the broken build.
  *
  * So this one asks Claude. It spawns the real binary in a real pty with the
- * app's own settings file, waits for the sixty-second idle prompt, and asserts
- * on what came out the far end of the receiver, the notifier and the hub — the
- * same wiring `ipc/index.ts` and `sessions/index.ts` build.
+ * app's own settings file, waits out the idle prompt — sixty seconds by default,
+ * or whatever `messageIdleNotifThresholdMs` makes it on this machine, see
+ * {@link IDLE_PROMPT_AFTER} — and asserts on what came out the far end of the
+ * receiver, the notifier and the hub — the same wiring `ipc/index.ts` and
+ * `sessions/index.ts` build.
  *
  * ## Why it is opt-in
  *
@@ -72,7 +74,9 @@ import type { SessionStatusEvent } from '../../electron/shared/session-contract'
  *                   -> PostToolUse       working                    (the fix)
  *                   -> Stop              idle      => row: session.idle
  *                   => 2 rows: session.blocked, session.idle — both presented,
- *                      badge 2 (and not a second blocked row)
+ *                      badge **1**: answering the question is what retires the
+ *                      blocked row, so it is raised, toasted and then swept
+ *                      (see `expectedBadge`). Still not a second blocked row.
  * ```
  *
  * ## The fifth row (HIVE-89)
@@ -107,7 +111,7 @@ import type { SessionStatusEvent } from '../../electron/shared/session-contract'
  *
  * So the driver presses Enter on the question after the `Notification` that
  * follows it has had time to arrive, and the scenario's own deadline is short
- * enough that the `idle_prompt` sixty seconds after the resulting `Stop` lands
+ * enough that the `idle_prompt` after the resulting `Stop` lands
  * well outside the run — otherwise this scenario would race a second inbox row
  * and the exactly-one assertion would flake. That is why `deadline` and
  * `answerAt` are per-scenario rather than one shared budget.
@@ -265,6 +269,75 @@ interface TestStatusEvent extends SessionStatusEvent {
   runInBackground?: boolean;
 }
 
+/**
+ * How long the real binary waits before `idle_prompt`, in seconds.
+ *
+ * Sixty was hard-coded across this file as though it were a constant of Claude
+ * Code. It is a **default**: `messageIdleNotifThresholdMs` in the user's global
+ * config (`~/.claude.json`), read by the binary at the moment it arms the
+ * timer. It is not a `settings.json` key, so the `--settings` file this file
+ * hands the child cannot pin it and there is no env var to override — the
+ * machine's value is the value, and a run on a machine whose owner has raised
+ * it sat out the whole window and reported the row missing.
+ *
+ * So it is measured rather than assumed, exactly like everything else here.
+ * Unreadable or absent means the default, which is what the binary itself
+ * falls back to.
+ */
+function idleNotifThresholdSeconds(): number {
+  try {
+    const raw = readFileSync(join(homedir(), '.claude.json'), 'utf8');
+    const value: unknown = JSON.parse(raw)?.messageIdleNotifThresholdMs;
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0)
+      return Math.ceil(value / 1000);
+  } catch {
+    // Fall through — a missing or malformed file means the binary's default.
+  }
+  return 60;
+}
+
+const IDLE_PROMPT_AFTER = idleNotifThresholdSeconds();
+
+/**
+ * The one scenario that **waits for** the idle prompt, budgeted from the real
+ * threshold rather than from the sixty seconds it used to assume: the turn
+ * itself, then the wait, then room for the row to land and be asserted.
+ */
+const IDLE_PROMPT_DEADLINE = IDLE_PROMPT_AFTER + 45;
+
+/**
+ * Every other scenario relies on the opposite: its run must end *before* the
+ * idle prompt could fire, or a second inbox row races the exactly-one
+ * assertions. That was safe while the threshold was sixty and the longest of
+ * those deadlines was ninety — the prompt lands after the turn's `Stop`, not
+ * after the run starts, so the margin is larger than it looks — and it stays
+ * safe as the threshold rises. A threshold *lowered* below them is the case
+ * that would flake, so it fails loudly here instead of intermittently there.
+ */
+const RACY_BELOW = 60;
+
+/**
+ * What the dock badge should read at the end of a run.
+ *
+ * Not simply `kinds.length` any more, and the difference is the point: the
+ * badge counts rows **still in the inbox**, while `kinds` is every row the run
+ * *raised*. A `session.blocked` whose question the driver answered is retired
+ * on the spot — the notifier asks the hub to sweep it the moment the session
+ * stops being `waiting`, which is exactly the `PostToolUse` these scenarios
+ * already assert on — so the row is raised, toasted, and then gone.
+ *
+ * `completesTool` is the discriminator because it is precisely "the block was
+ * answered inside the run". The scenario that never answers keeps its row, and
+ * the three that never block have none to lose.
+ *
+ * The live run is what caught this file's belief going stale, which is what it
+ * is for: `presented` still counts two toasts, because a toast already on
+ * screen is not retracted by the row behind it being cleared.
+ */
+const expectedBadge = (kinds: NotificationKind[], completesTool: boolean): number =>
+  kinds.length -
+  (completesTool ? kinds.filter((kind) => kind === 'session.blocked').length : 0);
+
 const scenarios: Scenario[] = [
   {
     scenario: 'a turn that ended with nobody typing',
@@ -286,8 +359,11 @@ const scenarios: Scenario[] = [
     kinds: ['session.idle', 'session.input_needed'],
     /** `session.idle` toasts; `session.input_needed` is `inbox` only — see `Scenario.presentedCount`. */
     presentedCount: 1,
-    /** Long enough for `Stop`, then the idle prompt sixty seconds later. */
-    deadline: 105,
+    /**
+     * Long enough for `Stop`, then the idle prompt — however long this machine
+     * makes the app wait for it. See {@link IDLE_PROMPT_DEADLINE}.
+     */
+    deadline: IDLE_PROMPT_DEADLINE,
     /** Nothing to answer — no tool ever runs in this one. */
     answerAt: null,
     /** No block to leave, so no `PostToolUse` to expect. */
@@ -469,6 +545,21 @@ const scenarios: Scenario[] = [
 ];
 
 describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
+  /**
+   * The assumption every other scenario's deadline rests on, checked once
+   * rather than discovered as a flake.
+   *
+   * Those runs are budgeted to end *before* the idle prompt could fire, so a
+   * threshold lowered under them would let a second inbox row arrive mid-run
+   * and break the exactly-one assertions — intermittently, and nowhere near
+   * the config that caused it. Raising the threshold is always safe: it only
+   * widens their margin, and the one scenario that waits for the prompt reads
+   * the real value (see {@link IDLE_PROMPT_DEADLINE}).
+   */
+  it('is budgeted for this machine’s idle-prompt threshold', () => {
+    expect(IDLE_PROMPT_AFTER).toBeGreaterThanOrEqual(RACY_BELOW);
+  });
+
   it.each(scenarios)(
     '$scenario: reports $status',
     { timeout: 300_000 },
@@ -735,7 +826,7 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
          */
         expect(raised.map((n) => n.kind)).toEqual(expectedKinds);
         expect(presented).toHaveLength(presentedCount);
-        expect(badge).toBe(expectedKinds.length);
+        expect(badge).toBe(expectedBadge(expectedKinds, completesTool));
       } else {
         /**
          * The subagent and background-shell scenarios (HIVE-83). Neither ever
@@ -745,7 +836,7 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
          */
         expect(raised.map((n) => n.kind)).toEqual(expectedKinds);
         expect(presented).toHaveLength(presentedCount);
-        expect(badge).toBe(expectedKinds.length);
+        expect(badge).toBe(expectedBadge(expectedKinds, completesTool));
 
         // The main agent's own `Stop`, while the subagent or the background
         // shell is still running.

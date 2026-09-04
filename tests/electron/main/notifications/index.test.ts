@@ -23,6 +23,8 @@ beforeEach(() => {
     list: () => [],
     markRead: () => undefined,
     clear: () => undefined,
+    dismissForeground: () => undefined,
+    dismissForSession: () => undefined,
   } as unknown as NotificationHub;
 });
 
@@ -543,6 +545,8 @@ describe('foreground re-arm', () => {
       list: () => [],
       markRead: () => undefined,
       clear: () => undefined,
+      dismissForeground: () => undefined,
+      dismissForSession: () => undefined,
       promote,
     } as unknown as NotificationHub;
   });
@@ -648,14 +652,31 @@ describe('foreground re-arm', () => {
     expect(promote).toHaveBeenCalledWith('raised-1');
   });
 
-  it('raises one row for a repeating idle prompt, and promotes that one row', () => {
+  /**
+   * The half of this that the arrival sweep changed, and deliberately.
+   *
+   * It used to end by promoting the gated row when the user looked away. That
+   * was right while a gated row was only ever *deferred*: the user had not
+   * acted, so the announcement was still owed. Now that being at the session
+   * is itself the answer for an `input_needed`, a re-evaluation that finds the
+   * session **still in front of the user** sweeps the row instead of banking
+   * it — so looking away later has nothing left to promote.
+   *
+   * What is unchanged, and is the other half of the assertion: a repeat raises
+   * no second row. That rule is `announcedInputNeeded`'s and is untouched.
+   *
+   * The ordinary "raised while watching, then walked away" path still toasts,
+   * and is covered below — the sweep runs first in `reevaluateForeground`, and
+   * by then the session is no longer foreground, so it takes nothing.
+   */
+  it('raises one row for a repeating idle prompt, and clears it on arrival', () => {
     raise.mockReturnValue({ id: 'raised-1', unread: false });
     isForeground.mockReturnValue(true);
     const n = makeNotifier();
 
     n.observe(CH.sessionStatus, idlePrompt('sess-04'));
-    // Still watching: nothing to promote, and the repeat must not raise a
-    // second row on top of the one already sitting read in the inbox.
+    // Still watching: the row is swept rather than promoted, and the repeat
+    // must not raise a second one on top of the one already dealt with.
     n.reevaluateForeground();
     n.observe(CH.sessionStatus, idlePrompt('sess-04'));
 
@@ -665,7 +686,25 @@ describe('foreground re-arm', () => {
     isForeground.mockReturnValue(false);
     n.reevaluateForeground();
 
-    expect(promote).toHaveBeenCalledTimes(1);
+    expect(promote).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The path the sweep must not eat: gated because the user was watching, then
+   * they leave without the session having been answered. `reevaluateForeground`
+   * sweeps first, but the session is background by then, so the promotion
+   * stands and the toast fires. This is HIVE-81's whole purpose.
+   */
+  it('still promotes a gated row when the user leaves without coming back', () => {
+    raise.mockReturnValue({ id: 'raised-1', unread: false });
+    isForeground.mockReturnValue(true);
+    const n = makeNotifier();
+
+    n.observe(CH.sessionStatus, idlePrompt('sess-04'));
+
+    isForeground.mockReturnValue(false);
+    n.reevaluateForeground();
+
     expect(promote).toHaveBeenCalledWith('raised-1');
   });
 
@@ -1092,6 +1131,8 @@ describe('session.idle foreground gating', () => {
       list: () => [],
       markRead: () => undefined,
       clear: () => undefined,
+      dismissForeground: () => undefined,
+      dismissForSession: () => undefined,
       promote,
     } as unknown as NotificationHub;
     return promote;
@@ -1146,6 +1187,8 @@ describe('session.idle foreground gating', () => {
       list: () => [],
       markRead: () => undefined,
       clear: () => undefined,
+      dismissForeground: () => undefined,
+      dismissForSession: () => undefined,
       promote,
     } as unknown as NotificationHub;
     const n = createNotifier({ hub, isForeground: () => false });
@@ -1167,5 +1210,267 @@ describe('session.idle foreground gating', () => {
     });
     n.reevaluateForeground();
     expect(promote).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Rows that dismiss themselves, each on the signal that finishes its job.
+ *
+ * The inbox exists to route attention, and a row that has already been acted
+ * on routes nothing — it is a chore. Two kinds of chore, and they are finished
+ * by two different acts, which is why this is not one rule:
+ *
+ * - `session.idle` and `session.input_needed` both say *the session is yours,
+ *   come back*. **Arriving is the answer.** The moment that terminal is on the
+ *   user's screen the row has told them everything it exists to tell them, and
+ *   `isForeground` is exactly "this terminal, in front of this user".
+ * - `session.blocked` says *the session is stopped until you act*, and walking
+ *   over to look at it does not act. It is finished by an **answer**, which is
+ *   observable: the tracker holds `waiting` while `blocked` is non-empty
+ *   (`tracker.ts`'s `derive`) and drops it when the tool's `PostToolUse`
+ *   arrives with the same `tool_use_id` — an approved permission, an answered
+ *   `AskUserQuestion` — or when the user types, which is a typed refusal. So
+ *   "the session stopped being `waiting`" is the answer, and `stillRelevant`
+ *   already spells it that way for the gated case.
+ *
+ * ## What this knowingly does not catch
+ *
+ * Two ways out of a block emit no hook at all, so neither can be observed here
+ * and both leave the row until the next prompt:
+ *
+ * - **Escape.** Measured and recorded in `tracker.ts`: dismissing a permission
+ *   prompt with Escape "emits no event whatsoever", which is why `blocked` is
+ *   cleared wholesale by `UserPromptSubmit` in the first place.
+ * - **An answered `Elicitation`.** Its block is held under the `UNPAIRED`
+ *   sentinel with no tool name, so no `PostToolUse` can pair with it. The
+ *   contract records that elicitation effectively never fires, so this costs
+ *   nothing today.
+ *
+ * Inferring an answer from silence is the alternative, and it is worse: it
+ * would clear rows about sessions that are genuinely still stopped, which is
+ * the one failure that makes the inbox lie rather than merely nag.
+ */
+describe('a row dismisses itself once it has been acted on', () => {
+  let dismissForeground: Mock<(kinds: readonly string[]) => void>;
+  let dismissForSession: Mock<(entityId: string, kinds: readonly string[]) => void>;
+  let foreground: string | null;
+
+  const withSweeps = () => {
+    dismissForeground = vi.fn();
+    dismissForSession = vi.fn();
+    hub = {
+      raise: raise.mockReturnValue({ id: 'raised', unread: true }),
+      list: () => [],
+      markRead: () => undefined,
+      clear: () => undefined,
+      promote: vi.fn(() => true),
+      dismissForeground,
+      dismissForSession,
+    } as unknown as NotificationHub;
+    return createNotifier({
+      hub,
+      isForeground: (entityId) => entityId === foreground,
+    });
+  };
+
+  beforeEach(() => {
+    foreground = null;
+  });
+
+  describe('entering the session', () => {
+    it('sweeps the two kinds that arriving answers, and only those', () => {
+      const n = withSweeps();
+
+      foreground = 'sess-05';
+      n.reevaluateForeground();
+
+      expect(dismissForeground).toHaveBeenCalledWith([
+        'session.idle',
+        'session.input_needed',
+      ]);
+    });
+
+    /**
+     * The hub is asked on every foreground change, not only when the notifier
+     * happens to be holding a pending row: a row raised while the session was
+     * in the background is live in the buffer and the notifier keeps no id for
+     * it. Only the hub can see it, so only the hub can be asked.
+     */
+    it('asks even when the notifier is holding nothing pending', () => {
+      const n = withSweeps();
+
+      n.reevaluateForeground();
+
+      expect(dismissForeground).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * The pending entry is the promotion's half of HIVE-81, and a promotion of
+     * a row that has just been swept would be a toast about a session the user
+     * is standing in. Dropped here, so looking away later promotes nothing.
+     */
+    it('forgets a pending idle row it has just had swept', () => {
+      const promote = vi.fn(() => true);
+      dismissForeground = vi.fn();
+      dismissForSession = vi.fn();
+      hub = {
+        raise: raise.mockReturnValue({ id: 'raised-idle', unread: false }),
+        list: () => [],
+        markRead: () => undefined,
+        clear: () => undefined,
+        promote,
+        dismissForeground,
+        dismissForSession,
+      } as unknown as NotificationHub;
+      const n = createNotifier({
+        hub,
+        isForeground: (entityId) => entityId === foreground,
+      });
+
+      foreground = 'sess-05';
+      n.observe(CH.sessionStatus, {
+        entityId: 'sess-05',
+        status: 'working',
+        event: 'UserPromptSubmit',
+      });
+      n.observe(CH.sessionStatus, {
+        entityId: 'sess-05',
+        status: 'idle',
+        event: 'Stop',
+      });
+      n.reevaluateForeground();
+
+      foreground = null;
+      n.reevaluateForeground();
+
+      expect(promote).not.toHaveBeenCalled();
+    });
+
+    /** A pending block is not swept by arriving, so it must still promote. */
+    it('keeps a pending blocked row, which arriving does not answer', () => {
+      const promote = vi.fn(() => true);
+      dismissForeground = vi.fn();
+      dismissForSession = vi.fn();
+      hub = {
+        raise: raise.mockReturnValue({ id: 'raised-block', unread: false }),
+        list: () => [],
+        markRead: () => undefined,
+        clear: () => undefined,
+        promote,
+        dismissForeground,
+        dismissForSession,
+      } as unknown as NotificationHub;
+      const n = createNotifier({
+        hub,
+        isForeground: (entityId) => entityId === foreground,
+      });
+
+      foreground = 'sess-05';
+      n.observe(CH.sessionStatus, {
+        entityId: 'sess-05',
+        status: 'waiting',
+        event: 'PermissionRequest',
+      });
+      n.reevaluateForeground();
+
+      foreground = null;
+      n.reevaluateForeground();
+
+      expect(promote).toHaveBeenCalledWith('raised-block');
+    });
+  });
+
+  describe('answering the question', () => {
+    const block = (entityId: string) => ({
+      entityId,
+      status: 'waiting',
+      event: 'PermissionRequest',
+    });
+
+    /** An approved tool runs, and its `PostToolUse` lands `working`. */
+    it('sweeps the blocked row when the tool the user approved completes', () => {
+      const n = withSweeps();
+
+      n.observe(CH.sessionStatus, block('sess-05'));
+      n.observe(CH.sessionStatus, {
+        entityId: 'sess-05',
+        status: 'working',
+        event: 'PostToolUse',
+      });
+
+      expect(dismissForSession).toHaveBeenCalledWith('sess-05', ['session.blocked']);
+    });
+
+    /** A typed refusal is a `UserPromptSubmit`, which clears `blocked` too. */
+    it('sweeps the blocked row when the user types instead of approving', () => {
+      const n = withSweeps();
+
+      n.observe(CH.sessionStatus, block('sess-05'));
+      n.observe(CH.sessionStatus, {
+        entityId: 'sess-05',
+        status: 'working',
+        event: 'UserPromptSubmit',
+      });
+
+      expect(dismissForSession).toHaveBeenCalledWith('sess-05', ['session.blocked']);
+    });
+
+    it('sweeps a blocked row about a session that has ended', () => {
+      const n = withSweeps();
+
+      n.observe(CH.sessionStatus, block('sess-05'));
+      n.observe(CH.sessionFinished, { entityId: 'sess-05' });
+
+      expect(dismissForSession).toHaveBeenCalledWith('sess-05', ['session.blocked']);
+    });
+
+    it('sweeps nothing while the session is still blocked', () => {
+      const n = withSweeps();
+
+      n.observe(CH.sessionStatus, block('sess-05'));
+      n.observe(CH.sessionStatus, block('sess-05'));
+
+      expect(dismissForSession).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The mark is spent, not merely tested: a session that blocks, resolves,
+     * and then reports a hundred more `working` events must ask the hub once.
+     */
+    it('asks once per block, not once per event after it', () => {
+      const n = withSweeps();
+
+      n.observe(CH.sessionStatus, block('sess-05'));
+      n.observe(CH.sessionStatus, {
+        entityId: 'sess-05',
+        status: 'working',
+        event: 'PostToolUse',
+      });
+      n.observe(CH.sessionStatus, {
+        entityId: 'sess-05',
+        status: 'idle',
+        event: 'Stop',
+      });
+
+      expect(dismissForSession).toHaveBeenCalledTimes(1);
+    });
+
+    /** Nothing blocked, nothing to sweep — the buffer is never scanned. */
+    it('never asks about a session that has not blocked', () => {
+      const n = withSweeps();
+
+      n.observe(CH.sessionStatus, {
+        entityId: 'sess-05',
+        status: 'working',
+        event: 'UserPromptSubmit',
+      });
+      n.observe(CH.sessionStatus, {
+        entityId: 'sess-05',
+        status: 'idle',
+        event: 'Stop',
+      });
+
+      expect(dismissForSession).not.toHaveBeenCalled();
+    });
   });
 });

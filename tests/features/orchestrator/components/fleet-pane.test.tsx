@@ -123,6 +123,25 @@ describe('FleetPane', () => {
     expect(useAppearanceStore.getState().consoleSplitRatio).toBe(CONSOLE_SPLIT_DEFAULT);
   });
 
+  /*
+    The same seam the agent run log draws, and for the same reason: the fleet
+    table and the overmind console sit on one terminal black, so a 1px rule in
+    `border-soft` is indistinguishable from the row rules a few pixels above it
+    and the divider between two regions read as one more ended session. A band
+    of the panel ground is the one thing a rule sharing that black cannot be.
+  */
+  it('draws the seam as a gutter with a grip, not as another table row', () => {
+    renderPane();
+
+    const divider = screen.getByRole('slider', { name: 'Resize the fleet table' });
+
+    expect(divider).toHaveClass('h-3', 'bg-bg');
+    expect(divider).not.toHaveClass('bg-border-soft');
+    // Scoped to the handle rather than the tree: `renderPane`'s own `container`
+    // is the pane's ref, and the dots are the handle's own children anyway.
+    expect(divider.querySelectorAll('.rounded-full')).toHaveLength(3);
+  });
+
   it('hands the divider the unmeasured bounds under happy-dom', () => {
     // The observer stub never reports a size, so the bounds are the constants
     // — which is also the first frame in a browser.

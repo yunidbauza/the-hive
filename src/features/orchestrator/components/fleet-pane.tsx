@@ -161,8 +161,30 @@ export function FleetPane({ containerRef, floored }: FleetPaneProps) {
       >
         <SessionTable />
       </div>
+      {/*
+        A gutter, not a hairline — the same seam the agent run log draws, and
+        for the same reason.
+
+        Both sides of this divider are one terminal black: the fleet table
+        above, the overmind console below. A 1px rule in `border-soft` is
+        exactly what separates one ended session from the next a few pixels
+        above it, so the divider between two whole regions read as one more row
+        of the table. A 12px band of the **panel** ground cuts that black in
+        two, which is the one thing a rule sharing it cannot do, and `grip`
+        puts the dots in the band — the handle has been draggable all along and
+        never looked it.
+
+        No negative margin, unlike the run log's `-mx-2.5`. That one escapes
+        the log's own padding; this handle is a direct child of the stage's
+        unpadded split column and already spans edge to edge.
+
+        The band is 12px against the hairline's 11px hit area, so the bounds
+        arithmetic above is unmoved by it.
+      */}
       <SplitHandle
         axis="horizontal"
+        grip
+        className="h-3 bg-bg"
         containerRef={containerRef}
         label="Resize the fleet table"
         value={painted}

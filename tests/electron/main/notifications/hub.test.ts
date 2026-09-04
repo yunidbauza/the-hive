@@ -1096,3 +1096,189 @@ describe('the toast’s name for a subject', () => {
     expect(present.mock.calls[0][0].title).toBe('Clone finished');
   });
 });
+
+/**
+ * The sweeps a finished row is removed by.
+ *
+ * The inbox's two nuisances are the same defect seen from opposite ends: a row
+ * that has done its job and cannot leave without a click. `dismiss` was
+ * reachable only from a gesture — the renderer's swipe, or a clicked toast —
+ * so a user who answered the question in the terminal, or walked back to the
+ * session the row was chasing them about, was left tidying up after a fact
+ * that had already resolved itself.
+ *
+ * Two methods rather than one with an optional subject, because the two
+ * questions are asked by different callers about different things: one means
+ * "whatever the user is looking at", which only the hub can answer because only
+ * the hub holds `isForeground`; the other names a session that has stopped
+ * being blocked, which only the notifier knows because only it sees the status
+ * stream. Neither caller can answer the other's question.
+ */
+describe('dismissForeground', () => {
+  const sessionRow = (kind: HiveNotification['kind'], entityId: string) => ({
+    kind,
+    title: 't',
+    action: { type: 'session' as const, entityId },
+  });
+
+  it('drops rows of the named kinds about the session on screen', () => {
+    const hub = makeHub({
+      isForeground: (action) =>
+        action.type === 'session' && action.entityId === 'term-3',
+    });
+    hub.raise(sessionRow('session.idle', 'term-3'));
+    hub.raise(sessionRow('session.input_needed', 'term-3'));
+
+    hub.dismissForeground(['session.idle', 'session.input_needed']);
+
+    expect(hub.list()).toHaveLength(0);
+  });
+
+  it('leaves a kind it was not asked for, however foreground it is', () => {
+    const hub = makeHub({ isForeground: () => true });
+    hub.raise(sessionRow('session.blocked', 'term-3'));
+
+    hub.dismissForeground(['session.idle', 'session.input_needed']);
+
+    expect(hub.list()).toHaveLength(1);
+  });
+
+  /** The whole point of asking `isForeground` rather than sweeping by kind. */
+  it('leaves the same kind about a session the user is not looking at', () => {
+    const hub = makeHub({
+      isForeground: (action) =>
+        action.type === 'session' && action.entityId === 'term-3',
+    });
+    hub.raise(sessionRow('session.idle', 'term-3'));
+    hub.raise(sessionRow('session.idle', 'term-9'));
+
+    hub.dismissForeground(['session.idle']);
+
+    expect(hub.list()).toHaveLength(1);
+    expect(hub.list()[0].action).toEqual({ type: 'session', entityId: 'term-9' });
+  });
+
+  /**
+   * A hub with no `isForeground` — the browser target, and every test that
+   * builds one without it — has no foreground to sweep and must not guess one.
+   */
+  it('sweeps nothing when the hub was built without the predicate', () => {
+    const hub = makeHub();
+    hub.raise(sessionRow('session.idle', 'term-3'));
+
+    hub.dismissForeground(['session.idle']);
+
+    expect(hub.list()).toHaveLength(1);
+  });
+
+  it('tells the renderer about each row it removed, and re-counts the badge', () => {
+    const announceDismissed = vi.fn();
+    const announceUnread = vi.fn();
+    const hub = makeHub({
+      announceDismissed,
+      announceUnread,
+      isForeground: () => true,
+    });
+    // Raised while the session is foreground, so both arrive already-read and
+    // the badge is 0 before the sweep. Un-gate the second by hand instead: a
+    // sweep that failed to re-announce would leave a badge counting a row
+    // nobody can see.
+    const gated = hub.raise(sessionRow('session.idle', 'term-3'))!;
+    hub.promote(gated.id);
+    announceUnread.mockClear();
+    announceDismissed.mockClear();
+
+    hub.dismissForeground(['session.idle']);
+
+    expect(announceDismissed).toHaveBeenCalledWith(gated.id);
+    expect(announceUnread).toHaveBeenLastCalledWith(0);
+  });
+
+  it('says nothing at all when it matched nothing', () => {
+    const announceDismissed = vi.fn();
+    const announceUnread = vi.fn();
+    const hub = makeHub({ announceDismissed, announceUnread, isForeground: () => true });
+    announceUnread.mockClear();
+
+    hub.dismissForeground(['session.idle']);
+
+    expect(announceDismissed).not.toHaveBeenCalled();
+    expect(announceUnread).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The same rule `dismiss` states for itself: a swept id stays in the dedup
+   * set, so the next duplicate event cannot re-raise what has just been
+   * resolved.
+   */
+  it('keeps a swept id remembered, so a duplicate cannot re-raise it', () => {
+    const hub = makeHub({ isForeground: () => true });
+    const input = { ...sessionRow('session.idle', 'term-3'), id: 'fixed' };
+    expect(hub.raise(input)).not.toBeNull();
+
+    hub.dismissForeground(['session.idle']);
+
+    expect(hub.raise(input)).toBeNull();
+  });
+});
+
+describe('dismissForSession', () => {
+  const blocked = (entityId: string) => ({
+    kind: 'session.blocked' as const,
+    title: 't',
+    action: { type: 'session' as const, entityId },
+  });
+
+  it('drops the named session’s rows of the named kinds', () => {
+    hub.raise(blocked('term-3'));
+
+    hub.dismissForSession('term-3', ['session.blocked']);
+
+    expect(hub.list()).toHaveLength(0);
+  });
+
+  it('leaves every other session alone', () => {
+    hub.raise(blocked('term-3'));
+    hub.raise(blocked('term-9'));
+
+    hub.dismissForSession('term-3', ['session.blocked']);
+
+    expect(hub.list()).toHaveLength(1);
+    expect(hub.list()[0].action).toEqual({ type: 'session', entityId: 'term-9' });
+  });
+
+  it('leaves a kind it was not asked for', () => {
+    hub.raise({
+      kind: 'session.idle',
+      title: 't',
+      action: { type: 'session', entityId: 'term-3' },
+    });
+
+    hub.dismissForSession('term-3', ['session.blocked']);
+
+    expect(hub.list()).toHaveLength(1);
+  });
+
+  /**
+   * `pr.*`, `clone.done` and `app.update_*` carry an action that names no
+   * session, so an entity id can never match one — the same "false by
+   * construction" the foreground gate relies on, arrived at without a list of
+   * kinds to keep in step with the registry.
+   */
+  it('cannot reach a row that is about no session', () => {
+    hub.raise({ kind: 'clone.done', title: 'Clone finished' });
+
+    hub.dismissForSession('term-3', ['clone.done']);
+
+    expect(hub.list()).toHaveLength(1);
+  });
+
+  it('says nothing at all when it matched nothing', () => {
+    announceUnread.mockClear();
+
+    hub.dismissForSession('term-3', ['session.blocked']);
+
+    expect(announceDismissed).not.toHaveBeenCalled();
+    expect(announceUnread).not.toHaveBeenCalled();
+  });
+});
