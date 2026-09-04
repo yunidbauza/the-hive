@@ -165,6 +165,36 @@ export interface CommandDiagnostic {
   /** The `PATH` that was searched — the merged env's, never `process.env`'s. */
   path: string;
   probes: PathProbe[];
+  /** Present only for a container project (HIVE-133). */
+  container?: ContainerDiagnostic;
+}
+
+/**
+ * Whether a container project could actually start a session (HIVE-133).
+ *
+ * Two independent preconditions, because they fail differently. A stopped
+ * container is transient and the user fixes it outside this app; a command with
+ * no `{env}` is a configuration error that would start a session which can
+ * never authenticate.
+ */
+export interface ContainerDiagnostic {
+  /** The probe that ran, or `null` when the block configures none. */
+  probe: string | null;
+  ok: boolean;
+  /** `null` when the probe was killed by a signal or timed out. */
+  exitCode: number | null;
+  /**
+   * The probe's stderr, trimmed.
+   *
+   * Reported verbatim because it is the only thing that can name the container:
+   * nothing in the config does, by design.
+   */
+  stderr: string;
+  /**
+   * `claudeCommand` has no `{env}`, so no `HIVE_*` variable would reach the
+   * container and every hook, ledger and `/done` call would 403.
+   */
+  missingEnvPlaceholder: boolean;
 }
 
 /**

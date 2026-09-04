@@ -54,9 +54,10 @@ export function RuntimeSection() {
    *
    * The env diagnostic spawns a real login shell and waits for it — typically
    * a second or more with oh-my-zsh or nvm, and up to the probe's own timeout
-   * in the worst case — unlike the command diagnostic, which only stats
-   * files. A button with no feedback for that long reads as broken rather
-   * than working.
+   * in the worst case. That is *always* true; the command diagnostic is slow
+   * only for a container project that configures a probe (HIVE-133), and even
+   * then is bounded well under the env probe's worst case. A button with no
+   * feedback for that long reads as broken rather than working.
    */
   const [envDiagnosticPending, setEnvDiagnosticPending] = useState(false);
   /**

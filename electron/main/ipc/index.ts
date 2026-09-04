@@ -2130,7 +2130,7 @@ export function registerIpcHandlers(): void {
           ? null
           : (snapshot.projects.find((entry) => entry.id === request.id) ?? null);
 
-      return diagnoseCommand(
+      return await diagnoseCommand(
         effectiveRuntime(snapshot, project),
         project?.id ?? null,
       );

@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   DEFAULT_CLAUDE_COMMAND,
@@ -12,6 +12,7 @@ import {
   DEFAULT_NOTIFICATIONS,
   DEFAULT_SHELL,
   type ConfigSnapshot,
+  type EffectiveRuntime,
   type ProjectConfig,
 } from '../../../../electron/shared/config-contract';
 import {
@@ -43,6 +44,23 @@ const snapshot = (over: Partial<ConfigSnapshot> = {}): ConfigSnapshot => ({
   sessionMetrics: true,
   importLoginEnv: true,
   errors: [],
+  ...over,
+});
+
+/**
+ * An `EffectiveRuntime` built directly, for the container-precondition tests.
+ *
+ * Those tests are about `diagnoseCommand`'s reaction to `runtime.container`,
+ * not about how a snapshot and a project resolve into one — going through
+ * `effectiveRuntime` would make every case carry an unrelated snapshot/project
+ * pair just to reach the field under test.
+ */
+const runtime = (over: Partial<EffectiveRuntime> = {}): EffectiveRuntime => ({
+  shell: DEFAULT_SHELL,
+  claudeCommand: DEFAULT_CLAUDE_COMMAND,
+  env: {},
+  shellFromProject: false,
+  commandFromProject: false,
   ...over,
 });
 
@@ -160,11 +178,11 @@ describe('effectiveRuntime env layering', () => {
 });
 
 describe('diagnoseCommand — searching PATH', () => {
-  it('finds an executable and reports where', () => {
+  it('finds an executable and reports where', async () => {
     const bin = join(dir, 'bin');
     const claude = executable(bin, 'claude');
 
-    const result = diagnoseCommand(
+    const result = await diagnoseCommand(
       effectiveRuntime(snapshot(), null),
       null,
       { PATH: bin },
@@ -175,13 +193,13 @@ describe('diagnoseCommand — searching PATH', () => {
     expect(result.probes).toEqual([{ directory: bin, found: true }]);
   });
 
-  it('reports the first match when several directories have one', () => {
+  it('reports the first match when several directories have one', async () => {
     const first = join(dir, 'first');
     const second = join(dir, 'second');
     const winner = executable(first, 'claude');
     executable(second, 'claude');
 
-    const result = diagnoseCommand(effectiveRuntime(snapshot(), null), null, {
+    const result = await diagnoseCommand(effectiveRuntime(snapshot(), null), null, {
       PATH: [first, second].join(delimiter),
     });
 
@@ -190,11 +208,11 @@ describe('diagnoseCommand — searching PATH', () => {
     expect(result.probes).toHaveLength(2);
   });
 
-  it('flags a candidate that exists but is not executable', () => {
+  it('flags a candidate that exists but is not executable', async () => {
     const bin = join(dir, 'bin');
     plainFile(bin, 'claude');
 
-    const result = diagnoseCommand(effectiveRuntime(snapshot(), null), null, {
+    const result = await diagnoseCommand(effectiveRuntime(snapshot(), null), null, {
       PATH: bin,
     });
 
@@ -206,13 +224,13 @@ describe('diagnoseCommand — searching PATH', () => {
     ]);
   });
 
-  it('reports every directory searched when nothing is found', () => {
+  it('reports every directory searched when nothing is found', async () => {
     const a = join(dir, 'a');
     const b = join(dir, 'b');
     mkdirSync(a);
     mkdirSync(b);
 
-    const result = diagnoseCommand(effectiveRuntime(snapshot(), null), null, {
+    const result = await diagnoseCommand(effectiveRuntime(snapshot(), null), null, {
       PATH: [a, b].join(delimiter),
     });
 
@@ -221,11 +239,11 @@ describe('diagnoseCommand — searching PATH', () => {
     expect(result.probes.every((probe) => !probe.found)).toBe(true);
   });
 
-  it('skips empty PATH entries rather than probing the cwd', () => {
+  it('skips empty PATH entries rather than probing the cwd', async () => {
     const bin = join(dir, 'bin');
     executable(bin, 'claude');
 
-    const result = diagnoseCommand(effectiveRuntime(snapshot(), null), null, {
+    const result = await diagnoseCommand(effectiveRuntime(snapshot(), null), null, {
       PATH: `${bin}${delimiter}${delimiter}`,
     });
 
@@ -234,11 +252,11 @@ describe('diagnoseCommand — searching PATH', () => {
     expect(result.probes).toHaveLength(1);
   });
 
-  it('searches the project’s own PATH, not the process one', () => {
+  it('searches the project’s own PATH, not the process one', async () => {
     const bin = join(dir, 'bin');
     const claude = executable(bin, 'claude');
 
-    const result = diagnoseCommand(
+    const result = await diagnoseCommand(
       effectiveRuntime(snapshot(), project({ env: { PATH: bin } })),
       'nova-web',
       { PATH: '/nowhere' },
@@ -251,8 +269,8 @@ describe('diagnoseCommand — searching PATH', () => {
     expect(result.projectId).toBe('nova-web');
   });
 
-  it('reports an empty PATH rather than throwing', () => {
-    const result = diagnoseCommand(effectiveRuntime(snapshot(), null), null, {});
+  it('reports an empty PATH rather than throwing', async () => {
+    const result = await diagnoseCommand(effectiveRuntime(snapshot(), null), null, {});
 
     expect(result.path).toBe('');
     expect(result.probes).toEqual([]);
@@ -261,10 +279,10 @@ describe('diagnoseCommand — searching PATH', () => {
 });
 
 describe('diagnoseCommand — a command used as a path', () => {
-  it('does not consult PATH for an absolute command', () => {
+  it('does not consult PATH for an absolute command', async () => {
     const claude = executable(join(dir, 'opt'), 'claude');
 
-    const result = diagnoseCommand(
+    const result = await diagnoseCommand(
       effectiveRuntime(snapshot({ claudeCommand: claude }), null),
       null,
       { PATH: '/nowhere' },
@@ -277,8 +295,8 @@ describe('diagnoseCommand — a command used as a path', () => {
     expect(result.probes).toEqual([]);
   });
 
-  it('reports an absolute command that is missing', () => {
-    const result = diagnoseCommand(
+  it('reports an absolute command that is missing', async () => {
+    const result = await diagnoseCommand(
       effectiveRuntime(snapshot({ claudeCommand: join(dir, 'absent') }), null),
       null,
       { PATH: '/nowhere' },
@@ -288,8 +306,8 @@ describe('diagnoseCommand — a command used as a path', () => {
     expect(result.resolved).toBeNull();
   });
 
-  it('leaves a relative path unresolved rather than guessing a cwd', () => {
-    const result = diagnoseCommand(
+  it('leaves a relative path unresolved rather than guessing a cwd', async () => {
+    const result = await diagnoseCommand(
       effectiveRuntime(snapshot({ claudeCommand: './bin/claude' }), null),
       null,
       { PATH: '/nowhere' },
@@ -368,5 +386,93 @@ describe('effectiveRuntime container (HIVE-133)', () => {
     );
     expect(runtime.env).toEqual({ A: '1' });
     expect(runtime.container?.workspace).toBe('/workspace');
+  });
+});
+
+describe('diagnoseCommand container precondition', () => {
+  const container = {
+    workspace: '/workspace',
+    hiveDir: '/hive',
+    envArg: '-e {name}={value}',
+    freshness: 'exec-env' as const,
+    hostAlias: 'host.docker.internal',
+  };
+
+  it('is absent for a host project', async () => {
+    const result = await diagnoseCommand(runtime({ claudeCommand: 'claude' }), null);
+    expect(result.container).toBeUndefined();
+  });
+
+  /* Injected, never executed — a test that shelled out would assert the machine
+     it runs on. Same reason `login-env.ts` injects `RunLoginShell`. */
+  const fakeRun = (code: number | null, stderr = '') =>
+    vi.fn(async () => ({ code, stderr }));
+
+  it('reports a passing probe', async () => {
+    const run = fakeRun(0);
+    const result = await diagnoseCommand(
+      runtime({
+        claudeCommand: 'docker exec {env} devbox claude',
+        container: { ...container, probe: 'docker exec devbox true' },
+      }),
+      'p',
+      process.env,
+      run,
+    );
+
+    expect(result.container).toMatchObject({ ok: true, exitCode: 0 });
+    expect(run).toHaveBeenCalledWith('docker exec devbox true', expect.anything());
+  });
+
+  it("reports a failing probe with the runtime's own stderr", async () => {
+    const result = await diagnoseCommand(
+      runtime({
+        claudeCommand: 'docker exec {env} devbox claude',
+        container: { ...container, probe: 'docker exec devbox true' },
+      }),
+      'p',
+      process.env,
+      fakeRun(1, 'Error response from daemon: container devbox is not running\n'),
+    );
+
+    expect(result.container).toMatchObject({ ok: false, exitCode: 1 });
+    // Verbatim, because nothing in the config knows the container's name.
+    expect(result.container?.stderr).toBe(
+      'Error response from daemon: container devbox is not running',
+    );
+  });
+
+  it('runs no probe at all for a host project', async () => {
+    const run = fakeRun(0);
+    await diagnoseCommand(runtime({ claudeCommand: 'claude' }), null, process.env, run);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('runs no probe when the block sets none', async () => {
+    const run = fakeRun(0);
+    const result = await diagnoseCommand(
+      runtime({ claudeCommand: 'docker exec {env} devbox claude', container }),
+      'p',
+      process.env,
+      run,
+    );
+    expect(result.container).toMatchObject({ probe: null, ok: true });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('reports a command with no {env} placeholder, which could never authenticate', async () => {
+    const result = await diagnoseCommand(
+      runtime({ claudeCommand: 'docker exec -it devbox claude', container }),
+      'p',
+    );
+    expect(result.container?.missingEnvPlaceholder).toBe(true);
+  });
+
+  it('does not flag the placeholder when it is present', async () => {
+    const result = await diagnoseCommand(
+      runtime({ claudeCommand: 'docker exec -it {env} devbox claude', container }),
+      'p',
+    );
+    expect(result.container?.missingEnvPlaceholder).toBe(false);
   });
 });
