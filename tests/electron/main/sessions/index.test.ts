@@ -2720,6 +2720,43 @@ describe('container spawn (HIVE-133)', () => {
     expect(command).not.toContain('127.0.0.1');
   });
 
+  /**
+   * HIVE-133's post-review fix. Before it, `exec-env` always launched from the
+   * shared set at `/hive/container`, written once with the *global* alias —
+   * so a project overriding `hostAlias` got its `HIVE_RECEIVER_URL` re-addressed
+   * (the test above) while its hooks kept POSTing to the global alias. This is
+   * the other half: the `--settings`/`--mcp-config` paths must follow the same
+   * project alias into their own directory, `/hive/container/aliases/<alias>`.
+   */
+  it('launches an exec-env project with a custom alias from that alias set', () => {
+    const { command } = spawnFixture({
+      container: { freshness: 'exec-env', hostAlias: 'gateway' },
+    });
+
+    expect(command).toContain(
+      `--settings '/hive/container/aliases/gateway/${CONTAINER_SETTINGS_FILE}'`,
+    );
+    expect(command).toContain(
+      `--mcp-config '/hive/container/aliases/gateway/${CONTAINER_MCP_FILE}'`,
+    );
+  });
+
+  /**
+   * The other side of the same fix, and the one that matters most to get
+   * right: every `exec-env` project that has never touched `hostAlias` — the
+   * overwhelming majority — must keep reading the shared set byte-identically.
+   * A naive fix that routed *every* `exec-env` project through an alias
+   * directory (even the default one) would pass the test above but fail this
+   * one, because the default alias would then never resolve to the shared
+   * path at all.
+   */
+  it('leaves a project on the default alias using the shared set', () => {
+    const { command } = spawnFixture({ container: { freshness: 'exec-env' } });
+
+    expect(command).toContain(`--settings '/hive/container/${CONTAINER_SETTINGS_FILE}'`);
+    expect(command).not.toContain('/aliases/');
+  });
+
   it('writes HIVE_ variables after project env, so a project cannot spoof one', () => {
     const { command } = spawnFixture({
       container: { freshness: 'exec-env' },

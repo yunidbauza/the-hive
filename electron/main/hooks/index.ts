@@ -13,8 +13,10 @@ import {
 import type { SessionMetrics } from '@shared/metrics-contract';
 
 import {
+  CONTAINER_ALIASES_DIR,
   containerOrigins,
   sweepSessionContainerFiles,
+  writeAliasContainerFiles,
   writeSessionContainerFiles,
   writeSharedContainerFiles,
 } from '../container/generated';
@@ -231,11 +233,16 @@ export interface HookRuntime {
    */
   containerOrigin(): string | null;
   /**
-   * Write one session's resolved container set, for a `rewrite` project.
+   * Write one session's resolved container set, for a `rewrite` project — or,
+   * since HIVE-133's post-review fix, one shared alias set for an `exec-env`
+   * project whose `hostAlias` diverges from the global one. The shared set at
+   * `CONTAINER_DIR` bakes one resolved origin, built from *the global* alias
+   * at `start()`; a project configured for a different runtime cannot read it
+   * without its hooks POSTing to the wrong place.
    *
    * Returns the host directory written, or `null` when there was nothing to
-   * write — a host project, an `exec-env` project, or a receiver that never
-   * bound. The caller does not branch on why.
+   * write — a host project, an `exec-env` project on the default alias, or a
+   * receiver that never bound. The caller does not branch on why.
    */
   writeContainerSession(
     entityId: string,
@@ -513,52 +520,80 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       */
       const config = containerFor?.(projectId);
 
-      /*
-        `exec-env` writes nothing per session: every per-session value in that
-        set is a `${VAR}`, resolved by the runtime at each exec. Only `rewrite`
-        bakes a live token, which is the trade that mode exists to make.
-      */
-      if (config === undefined || config.freshness !== 'rewrite') return null;
+      if (config === undefined) return null;
 
-      return writeSessionContainerFiles(
-        userDataPath,
-        /*
-          The **entity id**, never the registry's `entityId.gN`. `tokenFor` is
-          HMAC(launchSecret, entityId) and the receiver compares against
-          `tokenFor(entityId)` for the id in `x-hive-session`, so a directory
-          named after the generation would carry a token refused on every call.
-        */
-        entityId,
-        containerOrigins(
-          {
-            url: running.url,
-            origin: running.origin,
-            /*
-              Gated on `sessionMetrics()`, matching its two neighbours — the
-              host set (`writeHookSettings`, above) and the shared `exec-env`
-              set (`writeSharedContainerFiles`, above). Without the gate, a
-              user who turned session metrics off still got a status line
-              baked into every `rewrite` container session: the dot never
-              renders anything, but Claude Code drops its footer key hints for
-              any *configured* status line, rendering or not.
-            */
-            ...(sessionMetrics() && running.metricsUrl !== null
-              ? { metricsUrl: running.metricsUrl }
-              : {}),
-            ...(running.readyUrl === null ? {} : { readyUrl: running.readyUrl }),
-          },
-          config.hostAlias,
-        ),
-        { session: entityId, token: running.tokenFor(entityId) },
-        {
+      /*
+        Gated on `sessionMetrics()`, matching its two neighbours — the host
+        set (`writeHookSettings`, above) and the shared `exec-env` set
+        (`writeSharedContainerFiles`, above). Without the gate, a user who
+        turned session metrics off still got a status line baked into every
+        container session: the dot never renders anything, but Claude Code
+        drops its footer key hints for any *configured* status line, rendering
+        or not. Computed once here, ahead of the branch below, because both a
+        `rewrite` set and an alias `exec-env` set build it identically.
+      */
+      const origins = {
+        url: running.url,
+        origin: running.origin,
+        ...(sessionMetrics() && running.metricsUrl !== null
+          ? { metricsUrl: running.metricsUrl }
+          : {}),
+        ...(running.readyUrl === null ? {} : { readyUrl: running.readyUrl }),
+      };
+
+      if (config.freshness === 'rewrite') {
+        return writeSessionContainerFiles(
+          userDataPath,
           /*
-            Where this set will be visible *inside* the container. The status
-            line script is the one value in the set naming a path rather than a
-            URL, so it is the only thing that needs it.
+            The **entity id**, never the registry's `entityId.gN`. `tokenFor` is
+            HMAC(launchSecret, entityId) and the receiver compares against
+            `tokenFor(entityId)` for the id in `x-hive-session`, so a directory
+            named after the generation would carry a token refused on every call.
           */
-          containerRoot: join(config.hiveDir, 'container', 'sessions', entityId),
+          entityId,
+          containerOrigins(origins, config.hostAlias),
+          { session: entityId, token: running.tokenFor(entityId) },
+          {
+            /*
+              Where this set will be visible *inside* the container. The status
+              line script is the one value in the set naming a path rather than a
+              URL, so it is the only thing that needs it.
+            */
+            containerRoot: join(config.hiveDir, 'container', 'sessions', entityId),
+          },
+        );
+      }
+
+      /*
+        `exec-env` writes nothing per session in the ordinary case: every
+        per-session value in that set is a `${VAR}`, resolved by the runtime at
+        each exec, and the shared set `writeSharedContainerFiles` wrote at
+        `start()` already addresses the global alias correctly.
+
+        The exception is HIVE-133's post-review fix: a project whose
+        `hostAlias` diverges from the global one cannot read that shared set —
+        it bakes one resolved origin, built from *the global* alias — without
+        its hooks POSTing to the wrong runtime. `writeAliasContainerFiles`
+        writes that alias's own copy, still secret-free and still cheap, and
+        this returns the directory it wrote so `sessions/index.ts` can compute
+        the very same path independently (its own `containerSet`, compared
+        against `snapshot.receiver.hostAlias` the way this compares against
+        `hostAlias()`) before this write has necessarily finished.
+      */
+      if (config.hostAlias === hostAlias()) return null;
+
+      const aliasDir = join(userDataPath, CONTAINER_ALIASES_DIR, config.hostAlias);
+
+      await writeAliasContainerFiles(
+        userDataPath,
+        config.hostAlias,
+        containerOrigins(origins, config.hostAlias),
+        {
+          containerRoot: join(config.hiveDir, 'container', 'aliases', config.hostAlias),
         },
       );
+
+      return aliasDir;
     },
 
     envFor(entityId): Record<string, string> {

@@ -7,10 +7,12 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  CONTAINER_ALIASES_DIR,
   CONTAINER_SESSIONS_DIR,
   containerOrigins,
   removeSessionContainerFiles,
   sweepSessionContainerFiles,
+  writeAliasContainerFiles,
   writeSessionContainerFiles,
   writeSharedContainerFiles,
 } from '../../../../electron/main/container/generated';
@@ -114,6 +116,25 @@ describe('writeSharedContainerFiles', () => {
     const hive = await readdir(join(dir, 'hive'));
 
     expect(hive).toEqual(['container']);
+  });
+});
+
+describe('writeAliasContainerFiles', () => {
+  it('writes a secret-free set per alias, addressed by that alias', async () => {
+    await writeAliasContainerFiles(dir, 'gateway', containerOrigins(ORIGINS, 'gateway'));
+
+    const settings = await readFile(
+      join(dir, CONTAINER_ALIASES_DIR, 'gateway', 'claude-hooks.settings.json'),
+      'utf8',
+    );
+
+    expect(settings).toContain('gateway');
+    // exec-env keeps every per-session value a `${VAR}` — no resolved token on disk.
+    expect(settings).toContain('$HIVE_HOOK_TOKEN');
+    expect(settings).not.toContain('deadbeef');
+    await expect(
+      stat(join(dir, CONTAINER_ALIASES_DIR, 'gateway')),
+    ).resolves.toBeDefined();
   });
 });
 

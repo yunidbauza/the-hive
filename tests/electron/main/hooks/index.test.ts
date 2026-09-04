@@ -55,6 +55,7 @@ vi.mock('../../../../electron/main/container/generated', async (importOriginal) 
     sweepSessionContainerFiles: vi.fn(actual.sweepSessionContainerFiles),
     writeSharedContainerFiles: vi.fn(actual.writeSharedContainerFiles),
     writeSessionContainerFiles: vi.fn(actual.writeSessionContainerFiles),
+    writeAliasContainerFiles: vi.fn(actual.writeAliasContainerFiles),
   };
 });
 
@@ -63,6 +64,9 @@ const sweepSpy = vi.mocked(
 );
 const writeSessionSpy = vi.mocked(
   (await import('../../../../electron/main/container/generated')).writeSessionContainerFiles,
+);
+const writeAliasSpy = vi.mocked(
+  (await import('../../../../electron/main/container/generated')).writeAliasContainerFiles,
 );
 const realSweep = sweepSpy.getMockImplementation()!;
 
@@ -347,6 +351,7 @@ describe('createHookRuntime — writeContainerSession (HIVE-133)', () => {
     dir = mkdtempSync(join(tmpdir(), 'hive-hooks-write-session-'));
     ledger = createLedger({ dir, knowsParty: () => true });
     writeSessionSpy.mockClear();
+    writeAliasSpy.mockClear();
   });
 
   afterEach(async () => {
@@ -383,7 +388,11 @@ describe('createHookRuntime — writeContainerSession (HIVE-133)', () => {
     expect(writeSessionSpy).not.toHaveBeenCalled();
   });
 
-  it('writes nothing for an exec-env project', async () => {
+  it('writes nothing for an exec-env project on the default alias', async () => {
+    // `container.hostAlias` here equals `hostAlias()`'s own default
+    // (`DEFAULT_RECEIVER.hostAlias`, since no override is passed) — the
+    // shared set `writeSharedContainerFiles` wrote at `start()` already
+    // addresses this alias, so there is nothing this session needs of its own.
     runtime = createHookRuntime({
       userDataPath: dir,
       sessionMetrics: () => false,
@@ -394,6 +403,35 @@ describe('createHookRuntime — writeContainerSession (HIVE-133)', () => {
 
     await expect(runtime.writeContainerSession('hero-refresh', 'p')).resolves.toBe(null);
     expect(writeSessionSpy).not.toHaveBeenCalled();
+    expect(writeAliasSpy).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The gap this task closes (HIVE-133, post-review fix). Before it,
+   * `exec-env` never wrote a per-project set at all, so a project whose
+   * `hostAlias` diverged from the global one still launched from the shared
+   * set — which bakes the *global* alias's origin — while its environment
+   * (`sessions/index.ts`'s `HIVE_RECEIVER_URL` substitution) said otherwise.
+   */
+  it('writes an alias set for an exec-env project whose alias diverges from the global one', async () => {
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      ledger,
+      containerFor: () => ({ ...container, freshness: 'exec-env', hostAlias: 'gateway' }),
+    });
+    await runtime.start(noopHandlers);
+
+    const written = await runtime.writeContainerSession('hero-refresh', 'p');
+
+    expect(written).toBe(join(dir, 'hive', 'container', 'aliases', 'gateway'));
+    expect(writeSessionSpy).not.toHaveBeenCalled();
+    expect(writeAliasSpy).toHaveBeenCalledWith(
+      dir,
+      'gateway',
+      expect.objectContaining({ origin: expect.stringContaining('gateway') }),
+      expect.objectContaining({ containerRoot: '/hive/container/aliases/gateway' }),
+    );
   });
 
   it('addresses the set by the project alias and keys it by entity id', async () => {

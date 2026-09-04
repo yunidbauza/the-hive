@@ -36,6 +36,7 @@ import {
 
 import { effectiveRuntime } from '../config/runtime';
 import {
+  CONTAINER_ALIASES_DIR,
   CONTAINER_DIR,
   CONTAINER_MCP_FILE,
   CONTAINER_SESSIONS_DIR,
@@ -1982,13 +1983,29 @@ export function createSessions(options: SessionsOptions): Sessions {
       `containerSpawn` — checked against `container` directly rather than
       `containerSpawn` so the compiler, not just the reader, knows `container`
       is defined in the branch that dereferences `container.freshness`.
+
+      A third case, beside `rewrite`'s per-session directory and the shared
+      set every other `exec-env` project reads (HIVE-133, post-review fix):
+      an `exec-env` project whose `hostAlias` diverges from the global one
+      gets its own alias directory instead. The shared set at `CONTAINER_DIR`
+      bakes one resolved origin, built from *the global* alias — reading it
+      from a project configured for a different runtime would mean the
+      environment above says one alias while the hooks POST to another. The
+      comparison mirrors `writeContainerSession`'s own
+      `config.hostAlias !== hostAlias()` in `hooks/index.ts`, which is what
+      actually writes this directory before this spawn reads from it — using
+      `snapshot.receiver.hostAlias` here rather than a second getter, because
+      `snapshot` is already this function's one read of the config for this
+      spawn.
     */
     const containerSet =
       container === undefined || containerSpawn === undefined
         ? null
         : container.freshness === 'rewrite'
           ? join(userDataPath, CONTAINER_SESSIONS_DIR, request.entityId)
-          : join(userDataPath, CONTAINER_DIR);
+          : container.hostAlias !== snapshot.receiver.hostAlias
+            ? join(userDataPath, CONTAINER_ALIASES_DIR, container.hostAlias)
+            : join(userDataPath, CONTAINER_DIR);
 
     /*
       The three flags this session's command line actually gets (HIVE-133).

@@ -46,6 +46,41 @@ export const CONTAINER_DIR = join('hive', 'container');
 export const CONTAINER_SESSIONS_DIR = join(CONTAINER_DIR, 'sessions');
 
 /**
+ * `<userData>/hive/container/aliases/<alias>` — one `exec-env` set per distinct
+ * host alias (HIVE-133).
+ *
+ * The shared set at {@link CONTAINER_DIR} bakes a resolved origin, and that
+ * origin is built from *an* alias. One machine can run two runtimes — the
+ * reason `container.hostAlias` is a per-project field at all — so one baked
+ * origin cannot serve every project.
+ *
+ * Cheap and safe to duplicate: an `exec-env` set is secret-free by
+ * construction, every per-session value in it being a `${VAR}`, so a second
+ * copy carries no token and stays world-readable.
+ *
+ * Not swept at launch, unlike the session directories, and deliberately: these
+ * hold nothing secret, they are bounded by the number of distinct aliases a
+ * user has ever configured, and an orphan is four small files rather than a
+ * live credential.
+ */
+export const CONTAINER_ALIASES_DIR = join(CONTAINER_DIR, 'aliases');
+
+/** The shared `exec-env` set, addressed by one alias rather than the default. */
+export const writeAliasContainerFiles = (
+  userDataPath: string,
+  alias: string,
+  origins: ContainerOrigins,
+  options?: ContainerSetOptions,
+): Promise<void> =>
+  writeSet(
+    join(userDataPath, CONTAINER_ALIASES_DIR, alias),
+    origins,
+    'exec-env',
+    undefined,
+    options,
+  );
+
+/**
  * Exported, unlike {@link AGENT_FILE} and {@link SCRIPT_FILE} (HIVE-133,
  * post-review fix): `sessions/index.ts` has to name these same two files when
  * it selects `--settings` and `--mcp-config` for a container spawn, and it
