@@ -35,12 +35,6 @@ export const aliases = {
    */
   '@shared': fileURLToPath(new URL('./electron/shared', import.meta.url)),
   /**
-   * The main process itself (HIVE-133), for the same reason `@` exists for
-   * `src/`: an absolute import that survives a file moving, instead of a
-   * relative one whose `../` count depends on where in the tree it starts.
-   */
-  '@main': fileURLToPath(new URL('./electron/main', import.meta.url)),
-  /**
    * Shared test scaffolding — `tests/support/`, and nothing the app ships.
    *
    * It exists because the suite now has to build its own preconditions. The

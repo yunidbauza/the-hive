@@ -1,4 +1,3 @@
-import { shellQuote } from '@main/sessions/shell-quote';
 import { AUTH_ENV_KEYS } from '@shared/config-contract';
 import {
   BOOTSTRAP_DEBOUNCE_MS,
@@ -8,6 +7,8 @@ import {
   type SessionEffort,
   type SessionModel,
 } from '@shared/session-contract';
+
+import { shellQuote } from './shell-quote';
 
 /**
  * `--session-id` takes a uuid and rejects anything else.

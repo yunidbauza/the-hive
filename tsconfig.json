@@ -45,10 +45,6 @@
       /* Types only. A value import from here would pull main-process code into
          the renderer bundle and trip the ESLint zone (story 083). */
       "@shared/*": ["./electron/shared/*"],
-      /* The main process itself (HIVE-133). Test files under `tests/` import
-         main-process modules directly (they run in Node, not the renderer),
-         so this needs to resolve here too, not only in tsconfig.electron.json. */
-      "@main/*": ["./electron/main/*"],
       /* Shared test scaffolding. Test code only — an import from `src/` or
          `electron/` through this trips the ESLint zone. */
       "@tests/*": ["./tests/*"]

@@ -1,5 +1,6 @@
-import { shellQuote } from '@main/sessions/shell-quote';
 import { ENV_PLACEHOLDER } from '@shared/config-contract';
+
+import { shellQuote } from './shell-quote';
 
 /**
  * Where a container project's expanded environment goes in its command.

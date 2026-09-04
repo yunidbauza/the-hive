@@ -4,7 +4,7 @@ import {
   ENV_PLACEHOLDER,
   expandEnvArgs,
   substituteEnv,
-} from '@main/sessions/container-command';
+} from '../../../../electron/main/sessions/container-command';
 
 describe('expandEnvArgs', () => {
   it('expands one argument per variable, in insertion order', () => {
