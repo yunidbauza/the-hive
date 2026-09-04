@@ -39,6 +39,7 @@ import type {
   SetNotificationsRequest,
   SetProjectKeyRequest,
   SetProjectRuntimeRequest,
+  SetReceiverRequest,
   SetRuntimeRequest,
 } from '@shared/config-contract';
 import type {
@@ -231,6 +232,9 @@ const bridge: HiveBridge = {
     // and is deliberately on its own namespace below.
     setJira: (request: SetJiraRequest): Promise<ConfigSnapshot> =>
       ipcRenderer.invoke(CH.configSetJira, request),
+    // HIVE-131. The name a container resolves to reach this host.
+    setReceiver: (request: SetReceiverRequest): Promise<ConfigSnapshot> =>
+      ipcRenderer.invoke(CH.configSetReceiver, request),
     /*
       Story 107. Neither takes an argument — see the contract for why that is
       the security design and not an oversight. Written with no parameter list

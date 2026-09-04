@@ -1165,6 +1165,19 @@ export interface SetJiraRequest {
   jql?: string | null;
 }
 
+/** Payload of `config:set-receiver` (HIVE-131). */
+export interface SetReceiverRequest {
+  /**
+   * The container host alias. Absent leaves it untouched.
+   *
+   * There is no `null` arm, unlike {@link SetJiraRequest}: an unset alias is not
+   * a meaningful state — the substitution always needs a name, and `""` would
+   * produce `http://:63999` — so emptying the field in the UI restores
+   * {@link DEFAULT_RECEIVER}'s value rather than removing the key.
+   */
+  hostAlias?: string;
+}
+
 /** Payload of `jira:set-token` (HIVE-67). The one payload carrying a secret. */
 export interface SetJiraTokenRequest {
   token: string;

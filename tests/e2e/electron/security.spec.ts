@@ -653,6 +653,25 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
      */
     'setProjectKey',
     'setProjectRuntime',
+    /**
+     * HIVE-131's `setReceiver` — a capability, and among the narrowest here.
+     *
+     * Its payload is one field with a closed alphabet: `assertHostAlias` accepts
+     * a bounded string with no whitespace, no `/` and no `:`, so nothing it
+     * carries can name a destination, a scheme, a port, or a path. It takes no
+     * destination and goes through the same single guarded write path as
+     * everything above it, so the file the bridge can write is still exactly one
+     * and is still not named by the caller.
+     *
+     * What it does **not** grant is the point. It sets a *name* a container
+     * resolves — it opens no socket, changes no bind, and adds no listening
+     * surface. The receiver still binds `127.0.0.1` and nothing on this bridge
+     * can widen that; the opt-in non-loopback bind was deliberately left out of
+     * the story precisely so this verb could stay this narrow. The worst a
+     * compromised renderer achieves is a container-flavoured generated file
+     * addressed to a host that answers nothing.
+     */
+    'setReceiver',
     'setRuntime',
     'startClone',
   ]);

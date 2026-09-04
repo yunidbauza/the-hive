@@ -78,6 +78,7 @@ import {
   parseJiraTransitionsRequest,
   parseSetJiraRequest,
   parseSetJiraTokenRequest,
+  parseSetReceiverRequest,
   parseDismissRequest,
   parseMarkReadRequest,
   parseNotificationAction,
@@ -156,6 +157,7 @@ import {
   setNotifications,
   setProjectKey,
   setProjectRuntime,
+  setReceiver,
   setRuntime,
 } from '../config';
 import { diagnoseEnv } from '../config/env-diagnostic';
@@ -2372,6 +2374,10 @@ export function registerIpcHandlers(): void {
   );
   handle(CH.configSetJira, (_event, payload): ConfigSnapshot =>
     setJira(parseSetJiraRequest(payload)),
+  );
+  // HIVE-131. The container host alias — an ordinary settings write.
+  handle(CH.configSetReceiver, (_event, payload): ConfigSnapshot =>
+    setReceiver(parseSetReceiverRequest(payload)),
   );
 
   /**

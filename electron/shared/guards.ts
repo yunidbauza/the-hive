@@ -27,6 +27,7 @@ import type {
   SetJiraTokenRequest,
   SetNotificationsRequest,
   SetProjectKeyRequest,
+  SetReceiverRequest,
   SetProjectRuntimeRequest,
   SetRuntimeRequest,
 } from './config-contract';
@@ -1059,6 +1060,41 @@ export function parseSetJiraRequest(input: unknown): SetJiraRequest {
 
   if (Object.keys(request).length === 0) {
     return fail('setJira: nothing to change');
+  }
+  return request;
+}
+
+/**
+ * A container host alias: a hostname with no scheme, path, port or whitespace.
+ *
+ * Deliberately not {@link assertJiraSite}, which requires two or more labels — a
+ * single-label host on a custom bridge, and a literal IP, are both legitimate
+ * here. Rejecting `:` is what stops `host.docker.internal:1234` from becoming
+ * `http://host.docker.internal:1234:63999/hook`; an IPv6 literal is therefore
+ * unsupported, matching `config/parse.ts`'s rule for the same field.
+ */
+export function assertHostAlias(value: unknown, label: string): string {
+  const raw = assertString(value, label).trim();
+  if (raw.length === 0) return fail(`${label}: must not be empty`);
+  if (raw.length > MAX_HOST) return fail(`${label}: expected a hostname`);
+  if (/[\s/:]/.test(raw)) {
+    return fail(`${label}: expected a hostname — no scheme, path or port`);
+  }
+  return raw;
+}
+
+/** Payload of `config:set-receiver` (HIVE-131). */
+export function parseSetReceiverRequest(input: unknown): SetReceiverRequest {
+  const raw = assertShape(input, [], 'setReceiver', ['hostAlias']);
+
+  const request: SetReceiverRequest = {
+    ...(raw.hostAlias !== undefined
+      ? { hostAlias: assertHostAlias(raw.hostAlias, 'setReceiver.hostAlias') }
+      : {}),
+  };
+
+  if (Object.keys(request).length === 0) {
+    return fail('setReceiver: nothing to change');
   }
   return request;
 }

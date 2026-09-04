@@ -18,6 +18,7 @@ import {
   parseResizeRequest,
   parseSessionPrRequest,
   parseSetProjectKeyRequest,
+  parseSetReceiverRequest,
   parseSpawnRequest,
   parseWriteRequest,
 } from '../../../electron/shared/guards';
@@ -939,5 +940,56 @@ describe('parseLedgerAnswerRequest', () => {
 
   it('refuses a missing thread', () => {
     expect(() => parseLedgerAnswerRequest({ body: 'yes' })).toThrow();
+  });
+});
+
+/**
+ * The container host alias (HIVE-131).
+ *
+ * Not `assertJiraSite`'s rule, which demands two or more labels: a single-label
+ * host on a custom bridge and a literal IP are both legitimate here. A `:` is
+ * refused because the port belongs to the receiver — `host.docker.internal:1234`
+ * would otherwise become `http://host.docker.internal:1234:63999/hook`.
+ */
+describe('parseSetReceiverRequest (HIVE-131)', () => {
+  it('accepts a hostname', () => {
+    expect(
+      parseSetReceiverRequest({ hostAlias: 'host.containers.internal' }),
+    ).toEqual({ hostAlias: 'host.containers.internal' });
+  });
+
+  it('trims surrounding whitespace', () => {
+    expect(parseSetReceiverRequest({ hostAlias: '  alias  ' })).toEqual({
+      hostAlias: 'alias',
+    });
+  });
+
+  it('accepts a single label and a literal IP', () => {
+    expect(parseSetReceiverRequest({ hostAlias: 'gateway' })).toEqual({
+      hostAlias: 'gateway',
+    });
+    expect(parseSetReceiverRequest({ hostAlias: '192.168.4.125' })).toEqual({
+      hostAlias: '192.168.4.125',
+    });
+  });
+
+  it.each([
+    ['a port', 'a:1234'],
+    ['a scheme', 'http://a'],
+    ['a path', 'a/b'],
+    ['whitespace inside', 'a b'],
+    ['empty', ''],
+    ['only whitespace', '   '],
+    ['a non-string', 7],
+  ])('rejects %s', (_label, hostAlias) => {
+    expect(() => parseSetReceiverRequest({ hostAlias })).toThrow();
+  });
+
+  it('rejects an unknown key', () => {
+    expect(() => parseSetReceiverRequest({ bind: {} })).toThrow();
+  });
+
+  it('rejects a request that changes nothing', () => {
+    expect(() => parseSetReceiverRequest({})).toThrow(/nothing to change/);
   });
 });

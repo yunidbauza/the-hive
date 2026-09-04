@@ -55,6 +55,7 @@ import type {
   SetJiraTokenRequest,
   SetNotificationsRequest,
   SetProjectKeyRequest,
+  SetReceiverRequest,
   SetProjectRuntimeRequest,
   SetRuntimeRequest,
 } from './config-contract';
@@ -223,6 +224,14 @@ export const CH = {
    * one part that does not live in that file.
    */
   configSetJira: 'config:set-jira',
+  /**
+   * The container host alias (HIVE-131).
+   *
+   * A `config:` channel because it writes the config file and returns the fresh
+   * snapshot, like every other settings verb. What it sets is a *name*, never an
+   * address with a port — the port is the receiver's, assigned at bind time.
+   */
+  configSetReceiver: 'config:set-receiver',
   /**
    * The Jira credential and the connection test (HIVE-67).
    *
@@ -1273,6 +1282,14 @@ export interface HiveBridge {
      * file the product invites the user to hand-edit.
      */
     setJira(request: SetJiraRequest): Promise<ConfigSnapshot>;
+    /**
+     * Change the container host alias (HIVE-131).
+     *
+     * An absent field is untouched. There is no clearing arm — the substitution
+     * always needs a name, so emptying the field in Settings sends the default
+     * rather than removing the key.
+     */
+    setReceiver(request: SetReceiverRequest): Promise<ConfigSnapshot>;
     /**
      * Show the config file in the OS file manager (story 107).
      *
@@ -2427,6 +2444,16 @@ export const BRIDGE_CONFIG_KEYS = [
    * its own namespace because it is not config.
    */
   'setJira',
+  /**
+   * HIVE-131. The container host alias — a *name*, never an address.
+   *
+   * `assertHostAlias` gives its one field a closed alphabet: bounded, no
+   * whitespace, no `/`, no `:`. So it can carry no scheme, port or path, and
+   * like every verb above it names no destination — the one file the bridge can
+   * write is still chosen by main. It opens no socket and changes no bind: the
+   * receiver still binds `127.0.0.1`, and nothing here can widen that.
+   */
+  'setReceiver',
 ] as const;
 
 /** The exact key set of `window.hive.pty`. */
