@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createReceiver } from '../../electron/main/hooks/receiver';
 import { createLedger } from '../../electron/main/ledger';
+import { containerMcpConfig } from '../../electron/main/mcp/container-config';
 import {
   HOOK_ENV_RECEIVER_URL,
   HOOK_ENV_RUN,
@@ -50,6 +51,57 @@ import { MCP_PATH, MCP_SERVER_NAME } from '../../electron/shared/mcp-contract';
 
 const RUN = process.env['HIVE_LIVE_MCP_HTTP_PROOF'] === '1';
 
+/**
+ * The container-flavoured config, spelled out by hand.
+ *
+ * Deliberately **not** built from the emitter: this is an independent statement
+ * of the shape, so the equality below cannot pass by agreeing with itself. It
+ * was written before HIVE-132 had an emitter to compare against, as the fixture
+ * that emitter had to match; it now guards it in the other direction.
+ *
+ * Note what is *not* here: no token, no session id, no port. Every one of them
+ * is a `${VAR}` the CLI resolves from the environment at launch, which is the
+ * whole reason the container flavour can be mounted read-only.
+ */
+const EXPECTED_CONFIG = `${JSON.stringify(
+  {
+    mcpServers: {
+      [MCP_SERVER_NAME]: {
+        type: 'http',
+        url: `\${${HOOK_ENV_RECEIVER_URL}}${MCP_PATH}`,
+        headers: {
+          [HOOK_HEADER_SESSION]: `\${${HOOK_ENV_SESSION}}`,
+          [HOOK_HEADER_TOKEN]: `\${${HOOK_ENV_TOKEN}}`,
+          /*
+            Present with a default, and that is the whole trick. A pty session
+            has no run, and `${VAR}` with no value left would be sent as the
+            literal text `${HIVE_RUN_ID}`; `:-` collapses that to empty, which
+            the route treats as absent. Without this line an agent run in a
+            container would lose `meta.run` and its asks would be
+            indistinguishable from a concurrent neighbour's.
+          */
+          [HOOK_HEADER_RUN]: `\${${HOOK_ENV_RUN}:-}`,
+        },
+      },
+    },
+  },
+  null,
+  2,
+)}\n`;
+
+/**
+ * Runs whether or not the live half does.
+ *
+ * The suite below needs a real `claude` and is skipped without it, but the
+ * bytes it would write are checked here on every `pnpm test` — a drift in the
+ * emitter should not wait for someone to run the live proof.
+ */
+describe('the container-flavoured config the live suite writes', () => {
+  it('is exactly what the emitter produces', () => {
+    expect(containerMcpConfig('exec-env')).toBe(EXPECTED_CONFIG);
+  });
+});
+
 describe.skipIf(!RUN)('the hive MCP endpoint over HTTP, against a real claude', () => {
   const SESSION = 'sess-live-mcp-http';
   let dir: string;
@@ -91,46 +143,14 @@ describe.skipIf(!RUN)('the hive MCP endpoint over HTTP, against a real claude', 
     expect(origin).not.toBeNull();
 
     /*
-      Written by hand rather than through a builder, and deliberately: the
-      emitter that produces this for a container is HIVE-132's, and a test that
-      called it would pass by agreeing with itself. Spelling the shape out here
-      means HIVE-132 has a fixture to match rather than a function to trust.
-
-      Note what is *not* in this file: no token, no session id, no port. Every
-      one of them is a `${VAR}` the CLI resolves from the environment at launch,
-      which is the whole reason the container flavour can be mounted read-only.
+      HIVE-132 closed the loop this fixture was written for. What reaches disk
+      is the emitter's own bytes, so this suite proves the file the app actually
+      generates works against a real `claude` — not a hand-built twin of it.
+      `EXPECTED_CONFIG` below still pins the shape independently, and does so
+      whether or not the live half runs.
     */
     configFile = join(dir, 'hive.mcp.json');
-    await writeFile(
-      configFile,
-      `${JSON.stringify(
-        {
-          mcpServers: {
-            [MCP_SERVER_NAME]: {
-              type: 'http',
-              url: `\${${HOOK_ENV_RECEIVER_URL}}${MCP_PATH}`,
-              headers: {
-                [HOOK_HEADER_SESSION]: `\${${HOOK_ENV_SESSION}}`,
-                [HOOK_HEADER_TOKEN]: `\${${HOOK_ENV_TOKEN}}`,
-                /*
-                  Present with a default, and that is the whole trick. A pty
-                  session has no run, and `${VAR}` with no value left would be
-                  sent as the literal text `${HIVE_RUN_ID}`; `:-` collapses that
-                  to empty, which the route treats as absent. Without this line
-                  an agent run in a container would lose `meta.run` and its asks
-                  would be indistinguishable from a concurrent neighbour's —
-                  and HIVE-132's emitter is built to match this fixture.
-                */
-                [HOOK_HEADER_RUN]: `\${${HOOK_ENV_RUN}:-}`,
-              },
-            },
-          },
-        },
-        null,
-        2,
-      )}\n`,
-      'utf8',
-    );
+    await writeFile(configFile, containerMcpConfig('exec-env'), 'utf8');
   }, 60_000);
 
   afterAll(async () => {
