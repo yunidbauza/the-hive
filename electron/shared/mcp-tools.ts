@@ -313,14 +313,22 @@ export function createToolHandlers(
     const options = args['options'];
     const quote = args['quote'];
     /*
-      Validated as it is written, not trusted as it is read. `asInbound` is
-      the one reader of this shape, so the card and the toast render exactly
-      what passed here — and a half-filled message is dropped at the door
-      rather than drawn with a blank where the author goes.
+      Validated as it is written, not merely as it is read, so a half-filled
+      message is dropped at the door rather than drawn with a blank where the
+      author goes.
+
+      `inbound` is taken out of the `meta` passthrough first, and that order
+      is the whole point. `metaArg` is spread ahead of the named arguments, so
+      a caller writing `meta: { inbound: <anything> }` slipped its own shape
+      past this line untouched — the conditional spread below only overwrites
+      when `args.inbound` was *also* present. The card revalidates and so the
+      damage was nil, but a guarantee that holds only because somebody
+      downstream repeats the work is not the guarantee this comment claimed.
     */
+    const { inbound: _passthrough, ...rest } = metaArg(args) ?? {};
     const inbound = asInbound(args['inbound']);
     const meta = {
-      ...metaArg(args),
+      ...rest,
       ...(Array.isArray(options) ? { options } : {}),
       ...(typeof quote === 'string' ? { quote } : {}),
       ...(inbound === undefined ? {} : { inbound }),

@@ -20,9 +20,22 @@ const party = {
   description: 'A party id: a session id, an agent name, or "overmind".',
 } as const;
 
+/*
+  The first-line rule is stated *here* because this is the only text both
+  audiences read.
+
+  A background agent is told it in `AGENT_PREAMBLE`, but that reaches headless
+  runs alone — `mcp/config.ts` is "the `--mcp-config` file every Hive session
+  is launched with", so a terminal session calling `ledger_ask` has never seen
+  the preamble and this schema is all the guidance it gets. Without the rule
+  here, such a session writes one long paragraph as its body and the card sets
+  the whole thing in 12.5px semibold with an empty detail, while `notify.ts`
+  raises the same paragraph as an OS toast title.
+*/
 const body = {
   type: 'string',
-  description: 'Markdown. What you want the other party to read.',
+  description:
+    'Markdown. What you want the other party to read. The FIRST LINE is used as the title wherever this is shown to a person — an inbox card, an OS notification — so make it a short line naming the thing being decided or reported, and put the detail on the lines after it. A whole paragraph on line one becomes a title the width of a phone.',
 } as const;
 
 /**

@@ -50,6 +50,23 @@ describe('AGENT_PREAMBLE', () => {
   });
 
   /*
+    The producer side of the card's presentation contract, and the only place
+    an agent is told about it.
+
+    `ask-card.tsx` and `notify.ts` both take an ask's first line as the title
+    and the rest as the detail, with no fallback text of their own — that
+    fallback used to exist, said "Send this reply?", and cost a drafting agent
+    every word of its context. Removing it made this paragraph load-bearing:
+    without it a wake writes one long paragraph and the rail sets the whole
+    thing in semibold. A prompt edit that drops the rule would otherwise be
+    silent, which is what every other assertion in this file exists to stop.
+  */
+  it('tells an agent its first line is the title, and to pass what it replies to', () => {
+    expect(AGENT_PREAMBLE).toMatch(/first line\s+names the decision/i);
+    expect(AGENT_PREAMBLE).toContain('inbound');
+  });
+
+  /*
     The rule is `overmind` versus everyone else, and NOT "a person versus an
     agent" — which is what this said first, and it was wrong in a way that
     reproduced the original bug one party over.

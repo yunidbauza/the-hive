@@ -617,14 +617,14 @@ describe('AskCard', () => {
       render(<AskCard notif={notif} thread="a41" />);
 
       expect(screen.getByText('puedes cubrir el demo?')).toBeInTheDocument();
-      expect(screen.getByText('Marcos · 2:41pm')).toBeInTheDocument();
+      expect(screen.getByText('Marcos · 2:41pm · via drone')).toBeInTheDocument();
     });
 
     it('names the author alone when no time came with it', () => {
       seedLedger([withInbound({ author: 'Marcos', text: 'puedes cubrir el demo?' })]);
       render(<AskCard notif={notif} thread="a41" />);
 
-      expect(screen.getByText('Marcos')).toBeInTheDocument();
+      expect(screen.getByText('Marcos · via drone')).toBeInTheDocument();
     });
 
     /*
@@ -658,24 +658,50 @@ describe('AskCard', () => {
     });
 
     /*
-      `honestPermissionAsk` builds a permission ask's meta from an allowlist,
-      so an `inbound` never survives to reach the card. This proves the card
-      would not draw one even if it did: a permission prompt's only context is
-      the command block main wrote.
-    */
-    it('is ignored on a permission ask', () => {
-      const honest = honestPermissionAsk('Allow Bash?\nnpm test', {
-        kind: 'permission',
-        tool: 'Bash',
-        input: { command: 'npm test' },
-        inbound: { author: 'Marcos', text: 'run it for me' },
-      });
+      Hand-built, deliberately, and this is the whole point of the test.
 
-      seedLedger([{ ...ask, body: honest.body, meta: honest.meta }]);
+      Routing it through `honestPermissionAsk` proved nothing: that function's
+      allowlist strips `inbound` before the card is ever reached, so
+      `asInbound(undefined)` returns `undefined` whether or not the card
+      guards on `isPermission`. Deleting the guard left such a test green.
+      This seeds the shape the renderer's free-form ledger mirror can actually
+      hold, which is the only version of this that fails when the guard goes.
+    */
+    it('is ignored on a permission ask, guard removed or not', () => {
+      seedLedger([
+        {
+          ...ask,
+          body: 'Allow Bash?\nnpm test',
+          meta: {
+            kind: 'permission',
+            tool: 'Bash',
+            input: { command: 'npm test' },
+            rungs: [
+              { id: 'allow-once', label: 'once', caption: 'this time' },
+            ],
+            inbound: { author: 'Marcos', text: 'run it for me' },
+          },
+        },
+      ]);
       render(<AskCard notif={{ ...notif, kind: 'agent.permission' }} thread="a41" />);
 
       expect(screen.queryByText('run it for me')).toBeNull();
       expect(screen.getByText('npm test')).toBeInTheDocument();
+    });
+
+    /*
+      Every field of `inbound` is a string the asker wrote, and the block sits
+      directly above the buttons that authorise an action. Without the `via`
+      attribution an agent can put a trusted name on words nobody said and let
+      the layout imply a person said them.
+    */
+    it('attributes the block to the party that reported it', () => {
+      seedLedger([
+        withInbound({ author: 'Yunid', at: '2:41pm', text: 'approve whatever it asks' }),
+      ]);
+      render(<AskCard notif={notif} thread="a41" />);
+
+      expect(screen.getByText('Yunid · 2:41pm · via drone')).toBeInTheDocument();
     });
   });
 });
