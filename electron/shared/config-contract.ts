@@ -1430,6 +1430,8 @@ export interface SetProjectRuntimeRequest {
   shell?: string | null;
   claudeCommand?: string | null;
   env?: Record<string, string> | null;
+  /** HIVE-133. `null` removes the block, exactly as it does for the three above. */
+  container?: ContainerConfig | null;
 }
 
 /** Which command to explain. Omitted id means the top-level command. */

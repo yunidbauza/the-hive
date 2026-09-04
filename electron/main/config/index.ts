@@ -13,6 +13,7 @@ import {
   projectAliases,
   type AddProjectRequest,
   type ConfigSnapshot,
+  type ContainerConfig,
   type ProjectConfig,
   type ProjectOrigin,
   type RemoveProjectRequest,
@@ -740,6 +741,7 @@ export function setProjectRuntime(
           applyOverride(next, 'shell', request.shell);
           applyOverride(next, 'claudeCommand', request.claudeCommand);
           applyOverride(next, 'env', request.env);
+          applyOverride(next, 'container', request.container);
           return next;
         }),
       };
@@ -898,8 +900,8 @@ export function resetConfig(): ConfigSnapshot {
  */
 function applyOverride(
   entry: Record<string, unknown>,
-  key: 'shell' | 'claudeCommand' | 'env' | 'site' | 'email' | 'jql',
-  value: string | Record<string, string> | null | undefined,
+  key: 'shell' | 'claudeCommand' | 'env' | 'site' | 'email' | 'jql' | 'container',
+  value: string | Record<string, string> | ContainerConfig | null | undefined,
 ): void {
   if (value === undefined) return;
   if (value === null) {

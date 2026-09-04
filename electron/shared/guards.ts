@@ -8,9 +8,20 @@ import type {
   AgentRunRequest,
   AgentWriteRequest,
 } from './agent-contract';
+import {
+  NOTIFICATION_KEYS,
+  PROJECT_KEY_HINT,
+  isAbsoluteContainerPath,
+  isContainerFreshness,
+  isEnvArgTemplate,
+  isHostAlias,
+  isProjectKey,
+  unsafeEnvReason,
+} from './config-contract';
 import type {
   AddProjectRequest,
   CloneRequest,
+  ContainerConfig,
   DiagnoseCommandRequest,
   DiagnoseEnvRequest,
   RemoveProjectRequest,
@@ -30,13 +41,6 @@ import type {
   SetProjectRuntimeRequest,
   SetReceiverRequest,
   SetRuntimeRequest,
-} from './config-contract';
-import {
-  NOTIFICATION_KEYS,
-  PROJECT_KEY_HINT,
-  isHostAlias,
-  isProjectKey,
-  unsafeEnvReason,
 } from './config-contract';
 import type {
   ReadDirRequest,
@@ -740,6 +744,66 @@ function assertEnv(value: unknown, label: string): Record<string, string> {
 }
 
 /**
+ * HIVE-133's container block, over the bridge.
+ *
+ * The rules are `config/parse.ts`'s, deliberately: a value the settings pane
+ * stores must be a value the file reader accepts on the next load, or the UI
+ * saves something that silently disappears. `isHostAlias` is already shared for
+ * that reason; this extends the same discipline to the rest of the block.
+ *
+ * Unlike the reader, this **throws** rather than reporting and dropping. A
+ * hand-edited file is salvaged field by field because the user is mid-edit; an
+ * IPC payload is either what the pane built or something that has no business
+ * being written.
+ */
+export function assertContainer(value: unknown, label: string): ContainerConfig {
+  const raw = assertShape(value, ['workspace', 'hiveDir'], label, [
+    'envArg',
+    'probe',
+    'freshness',
+    'hostAlias',
+  ]);
+
+  const absolute = (key: 'workspace' | 'hiveDir'): string => {
+    if (!isAbsoluteContainerPath(raw[key])) {
+      throw new IpcValidationError(`${label}.${key} must be an absolute path`);
+    }
+    return raw[key];
+  };
+
+  const workspace = absolute('workspace');
+  const hiveDir = absolute('hiveDir');
+
+  if (raw.envArg !== undefined && !isEnvArgTemplate(raw.envArg)) {
+    throw new IpcValidationError(`${label}.envArg must contain {name} and {value}`);
+  }
+  if (raw.freshness !== undefined && !isContainerFreshness(raw.freshness)) {
+    throw new IpcValidationError(`${label}.freshness must be "exec-env" or "rewrite"`);
+  }
+  if (raw.hostAlias !== undefined && !isHostAlias(raw.hostAlias)) {
+    throw new IpcValidationError(`${label}.hostAlias is not a valid hostname`);
+  }
+
+  /*
+    Validated, never defaulted — the file shape in, the file shape out. An
+    absent field is how the pane says "inherit", and materialising a default
+    here would freeze today's value into the user's config file forever. That
+    is the same argument `setNotifications` makes for writing only the classes
+    the request names.
+  */
+  return {
+    workspace,
+    hiveDir,
+    ...(raw.envArg === undefined ? {} : { envArg: raw.envArg as string }),
+    ...(raw.probe === undefined ? {} : { probe: assertText(raw.probe, `${label}.probe`) }),
+    ...(raw.freshness === undefined
+      ? {}
+      : { freshness: raw.freshness as ContainerConfig['freshness'] }),
+    ...(raw.hostAlias === undefined ? {} : { hostAlias: raw.hostAlias as string }),
+  };
+}
+
+/**
  * Top-level runtime settings (story 104, extended by 108 for `env`).
  *
  * All three keys are optional so one can be saved without restating the
@@ -1300,6 +1364,7 @@ export function parseSetProjectRuntimeRequest(
     'shell',
     'claudeCommand',
     'env',
+    'container',
   ]);
 
   const optionalText = (value: unknown, label: string): string | null =>
@@ -1324,6 +1389,14 @@ export function parseSetProjectRuntimeRequest(
             raw.env === null
               ? null
               : assertEnv(raw.env, 'setProjectRuntime.env'),
+        }
+      : {}),
+    ...(raw.container !== undefined
+      ? {
+          container:
+            raw.container === null
+              ? null
+              : assertContainer(raw.container, 'setProjectRuntime.container'),
         }
       : {}),
   };

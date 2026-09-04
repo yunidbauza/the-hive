@@ -18,6 +18,7 @@ import {
   parseResizeRequest,
   parseSessionPrRequest,
   parseSetProjectKeyRequest,
+  parseSetProjectRuntimeRequest,
   parseSetReceiverRequest,
   parseSpawnRequest,
   parseWriteRequest,
@@ -1023,5 +1024,60 @@ describe('parseSetReceiverRequest (HIVE-131)', () => {
 
   it('rejects a request that changes nothing', () => {
     expect(() => parseSetReceiverRequest({})).toThrow(/nothing to change/);
+  });
+});
+
+describe('parseSetProjectRuntimeRequest container', () => {
+  const container = {
+    workspace: '/workspace',
+    hiveDir: '/hive',
+    envArg: '-e {name}={value}',
+    freshness: 'exec-env',
+    hostAlias: 'host.docker.internal',
+  };
+
+  it('accepts a full block', () => {
+    expect(parseSetProjectRuntimeRequest({ id: 'p', container })).toEqual({
+      id: 'p',
+      container,
+    });
+  });
+
+  it('accepts a minimal block and defaults nothing', () => {
+    // Absent means inherit. Materialising a default here would freeze today's
+    // value into the user's config file.
+    const minimal = { workspace: '/workspace', hiveDir: '/hive' };
+    expect(parseSetProjectRuntimeRequest({ id: 'p', container: minimal })).toEqual({
+      id: 'p',
+      container: minimal,
+    });
+  });
+
+  it('accepts null, which removes the override', () => {
+    expect(parseSetProjectRuntimeRequest({ id: 'p', container: null })).toEqual({
+      id: 'p',
+      container: null,
+    });
+  });
+
+  it('leaves the block alone when the key is absent', () => {
+    expect(parseSetProjectRuntimeRequest({ id: 'p', shell: '/bin/zsh' })).toEqual({
+      id: 'p',
+      shell: '/bin/zsh',
+    });
+  });
+
+  it.each([
+    [{ ...container, workspace: 'relative' }],
+    [{ ...container, hiveDir: '' }],
+    [{ ...container, envArg: '-e {name}' }],
+    [{ ...container, freshness: 'stale' }],
+    // The alias names a network destination; the guard is not looser than the reader.
+    [{ ...container, hostAlias: 'bad host' }],
+    [{ ...container, hostAlias: '10.0.0.5?' }],
+  ])('refuses %j', (bad) => {
+    expect(() => parseSetProjectRuntimeRequest({ id: 'p', container: bad })).toThrow(
+      IpcValidationError,
+    );
   });
 });

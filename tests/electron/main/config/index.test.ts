@@ -1252,6 +1252,65 @@ describe('setProjectRuntime (story 104)', () => {
     expect(written['// note']).toBe('hi');
     expect(written.shell).toBe('/bin/bash');
   });
+
+  it('writes and removes the container block, spreading the entry (HIVE-133)', async () => {
+    const repo = join(sandbox, 'repo');
+    mkdirSync(repo);
+    const path = writeConfig({
+      version: 2,
+      projects: [
+        // Carries a key this build does not understand — it must survive.
+        { id: 'repo', path: repo, somethingNewer: { keep: true } },
+      ],
+    });
+    const module = await mutable();
+
+    const container = { workspace: '/workspace', hiveDir: '/hive' };
+    const set = module.setProjectRuntime({ id: 'repo', container });
+
+    /*
+      Not `toEqual([])`: `somethingNewer` is not one of `PROJECT_KEYS`
+      (`config/parse.ts`), so the reparse-after-write that produces this
+      snapshot advises about it — the same advisory an unknown top-level key
+      gets, and orthogonal to this test. What matters here is that *writing
+      the container* introduced no error of its own.
+    */
+    expect(set.errors.some((message) => message.includes('container'))).toBe(false);
+    expect(set.projects[0]?.container).toMatchObject(container);
+
+    const written = JSON.parse(readFileSync(path, 'utf8'));
+    expect(written.projects[0].container).toEqual(container);
+    // The entry is spread, never rebuilt.
+    expect(written.projects[0].somethingNewer).toEqual({ keep: true });
+
+    module.setProjectRuntime({ id: 'repo', container: null });
+
+    const after = JSON.parse(readFileSync(path, 'utf8'));
+    expect(after.projects[0]).not.toHaveProperty('container');
+    expect(after.projects[0].somethingNewer).toEqual({ keep: true });
+  });
+
+  it('stores only what was set, so a later default change still reaches the user', async () => {
+    const repo = join(sandbox, 'repo');
+    mkdirSync(repo);
+    const path = writeConfig({
+      version: 2,
+      projects: [{ id: 'repo', path: repo }],
+    });
+    const module = await mutable();
+
+    module.setProjectRuntime({
+      id: 'repo',
+      container: { workspace: '/workspace', hiveDir: '/hive' },
+    });
+
+    // No envArg, freshness or hostAlias materialised into the file — the same
+    // argument `setNotifications` makes for writing only the classes named.
+    expect(JSON.parse(readFileSync(path, 'utf8')).projects[0].container).toEqual({
+      workspace: '/workspace',
+      hiveDir: '/hive',
+    });
+  });
 });
 
 /**
