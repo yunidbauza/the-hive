@@ -51,14 +51,14 @@ export function SkillDiscardConfirm({
    * `project-remove-confirm.tsx` listens on its two buttons instead, and that
    * is sound *there*: it replaces the row it was launched from, so focus is
    * always one of those two. This confirm is different. It appears **beside a
-   * live `<textarea>`**, and the caret usually stays in it — the user was
+   * live editor**, and the caret usually stays in it — the user was
    * typing when they clicked another row. Escape pressed there reached neither
    * button, and `data-escape-scope` below had already told the settings overlay
    * to decline (`escapeIsClaimed` falls back to a document query, so any target
    * counts). The key did nothing at all: the overlay would not close and the
    * confirm would not cancel.
    *
-   * Capture, so it runs before the textarea or anything else; `preventDefault`
+   * Capture, so it runs before CodeMirror or anything else; `preventDefault`
    * and `stopPropagation` so the keystroke ends here rather than reaching Radix
    * and closing the whole overlay behind the question.
    */

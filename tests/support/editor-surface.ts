@@ -58,3 +58,21 @@ export function setSurfaceText(name: string, text: string): void {
     });
   });
 }
+
+/**
+ * Type at the end of the document, as a click into the text and typing would.
+ *
+ * The distinction matters, and it caught two tests. A `<textarea>` puts the
+ * caret at the end when `userEvent` types into it; a fresh CodeMirror view
+ * holds its caret at **position 0**, so the same call inserts *above* the
+ * frontmatter fence and turns a valid SKILL.md into one with no name. Tests
+ * that mean "add a line to the body" say so with this.
+ */
+export function appendSurfaceText(name: string, text: string): void {
+  const view = surfaceView(name);
+
+  act(() => {
+    const end = view.state.doc.length;
+    view.dispatch({ changes: { from: end, to: end, insert: text } });
+  });
+}

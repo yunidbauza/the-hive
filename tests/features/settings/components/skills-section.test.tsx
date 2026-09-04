@@ -1,8 +1,13 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SkillsSection } from '@features/settings/components/skills-section';
+import {
+  appendSurfaceText,
+  setSurfaceText,
+  surfaceText,
+} from '@tests/support/editor-surface';
 import { resetSkills, setSkillsForTest } from '@lib/skills';
 
 import type { SkillsSnapshot } from '@shared/skills-contract';
@@ -142,9 +147,8 @@ describe('SkillsSection', () => {
     await userEvent.click(screen.getByRole('button', { name: '/standup' }));
 
     expect(readSkill).toHaveBeenCalledWith('standup');
-    expect(await screen.findByLabelText('Skill source')).toHaveValue(
-      file('standup'),
-    );
+    await screen.findByLabelText('Skill source');
+    expect(surfaceText('Skill source')).toBe(file('standup'));
   });
 
   it('starts a new skill from a template with a blank name', async () => {
@@ -155,9 +159,9 @@ describe('SkillsSection', () => {
 
     // Blank on purpose: the folder is named from this field, and a default
     // would invite a tree full of `new-skill`.
-    const box = screen.getByLabelText<HTMLTextAreaElement>('Skill source');
-    expect(box.value).toContain('name:\n');
-    expect(box.value).toMatch(/^---\n/);
+    const source = surfaceText('Skill source');
+    expect(source).toContain('name:\n');
+    expect(source).toMatch(/^---\n/);
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     expect(screen.getByText(/give the skill a name/i)).toBeInTheDocument();
   });
@@ -167,9 +171,7 @@ describe('SkillsSection', () => {
 
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '+ New skill' }));
-    const box = screen.getByLabelText('Skill source');
-    await userEvent.clear(box);
-    await userEvent.type(box, '---{enter}name: done{enter}---{enter}Body.');
+    setSurfaceText('Skill source', '---\nname: done\n---\nBody.');
 
     expect(screen.getByText(/reserved/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
@@ -180,9 +182,7 @@ describe('SkillsSection', () => {
 
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '+ New skill' }));
-    const box = screen.getByLabelText('Skill source');
-    await userEvent.clear(box);
-    await userEvent.type(box, '---{enter}name: Stand Up{enter}---{enter}Body.');
+    setSurfaceText('Skill source', '---\nname: Stand Up\n---\nBody.');
 
     expect(screen.getByText(/lowercase letters/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
@@ -193,9 +193,7 @@ describe('SkillsSection', () => {
 
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '+ New skill' }));
-    const box = screen.getByLabelText('Skill source');
-    await userEvent.clear(box);
-    await userEvent.type(box, '---{enter}name: standup{enter}---{enter}Body.');
+    setSurfaceText('Skill source', '---\nname: standup\n---\nBody.');
 
     expect(screen.getByText(/already have a skill/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
@@ -206,9 +204,7 @@ describe('SkillsSection', () => {
 
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '+ New skill' }));
-    const box = screen.getByLabelText('Skill source');
-    await userEvent.clear(box);
-    await userEvent.type(box, '---{enter}name: triage{enter}---{enter}Body.');
+    setSurfaceText('Skill source', '---\nname: triage\n---\nBody.');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(saveSkill).toHaveBeenCalledWith(
@@ -222,7 +218,7 @@ describe('SkillsSection', () => {
 
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '/standup' }));
-    await userEvent.type(await screen.findByLabelText('Skill source'), ' more');
+    appendSurfaceText('Skill source', ' more');
 
     expect(screen.getByText('edited')).toBeInTheDocument();
     expect(screen.getByText('unsaved')).toBeInTheDocument();
@@ -233,7 +229,7 @@ describe('SkillsSection', () => {
 
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '/standup' }));
-    await userEvent.type(await screen.findByLabelText('Skill source'), ' more');
+    appendSurfaceText('Skill source', ' more');
     readSkill.mockClear();
     await userEvent.click(screen.getByRole('button', { name: '/triage' }));
 
@@ -254,7 +250,7 @@ describe('SkillsSection', () => {
 
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '/standup' }));
-    await userEvent.type(await screen.findByLabelText('Skill source'), ' more');
+    appendSurfaceText('Skill source', ' more');
     readSkill.mockClear();
     await userEvent.click(screen.getByRole('button', { name: '/triage' }));
     await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
@@ -284,7 +280,7 @@ describe('SkillsSection', () => {
 
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '/standup' }));
-    await userEvent.type(await screen.findByLabelText('Skill source'), ' more');
+    appendSurfaceText('Skill source', ' more');
     await userEvent.click(screen.getByRole('button', { name: '/triage' }));
 
     expect(screen.getByRole('alertdialog')).toHaveAttribute('data-escape-scope');
@@ -352,9 +348,7 @@ describe('SkillsSection', () => {
 
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '+ New skill' }));
-    const box = screen.getByLabelText('Skill source');
-    await userEvent.clear(box);
-    await userEvent.type(box, '---{enter}name: standup{enter}---{enter}Body.');
+    setSurfaceText('Skill source', '---\nname: standup\n---\nBody.');
 
     expect(screen.getByText(/already have a skill/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
@@ -366,9 +360,7 @@ describe('SkillsSection', () => {
 
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '+ New skill' }));
-    const box = screen.getByLabelText('Skill source');
-    await userEvent.clear(box);
-    await userEvent.type(box, '---{enter}name: triage{enter}---{enter}Body.');
+    setSurfaceText('Skill source', '---\nname: triage\n---\nBody.');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
@@ -419,7 +411,8 @@ describe('SkillsSection', () => {
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '/standup' }));
     await userEvent.click(screen.getByRole('button', { name: '/triage' }));
-    expect(await screen.findByLabelText('Skill source')).toHaveValue(file('triage'));
+    await screen.findByLabelText('Skill source');
+    expect(surfaceText('Skill source')).toBe(file('triage'));
 
     // The stale response lands last and must be dropped on the floor.
     resolveFirst({
@@ -429,7 +422,7 @@ describe('SkillsSection', () => {
     });
 
     await expect
-      .poll(() => screen.getByLabelText<HTMLTextAreaElement>('Skill source').value)
+      .poll(() => surfaceText('Skill source'))
       .toBe(file('triage'));
   });
 
@@ -440,7 +433,7 @@ describe('SkillsSection', () => {
 
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '+ New skill' }));
-    await userEvent.type(screen.getByLabelText('Skill source'), 'more');
+    appendSurfaceText('Skill source', 'more');
     await userEvent.click(screen.getByRole('button', { name: '+ New skill' }));
 
     expect(
@@ -448,7 +441,7 @@ describe('SkillsSection', () => {
     ).toBeInTheDocument();
   });
 
-  it('cancels the confirm on Escape from the textarea', async () => {
+  it('cancels the confirm on Escape from the editor', async () => {
     /*
       The caret is normally still in the editor when the confirm appears. Escape
       there reached neither button, and `data-escape-scope` had already told the
@@ -459,14 +452,78 @@ describe('SkillsSection', () => {
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '/standup' }));
     const box = await screen.findByLabelText('Skill source');
-    await userEvent.type(box, ' more');
+    appendSurfaceText('Skill source', ' more');
     await userEvent.click(screen.getByRole('button', { name: '/triage' }));
     expect(screen.getByRole('alertdialog')).toBeInTheDocument();
 
+    // The caret is in CodeMirror's content, which is where it really is when
+    // the confirm appears — the whole point of the test.
     box.focus();
     await userEvent.keyboard('{Escape}');
 
     expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  /*
+    The pane is the explorer's own editor now, not a textarea. Three things
+    that buys: a gutter under a footer that explains refusals about a *line*,
+    the floating find panel, and ⌘S bound inside the view — the only place a
+    save shortcut fires while CodeMirror holds focus.
+  */
+  describe('the editor', () => {
+    it('numbers the lines', async () => {
+      setSkillsForTest(withSkills('standup'));
+
+      const { container } = render(<SkillsSection />);
+      await userEvent.click(screen.getByRole('button', { name: '/standup' }));
+      await screen.findByLabelText('Skill source');
+
+      expect(container.querySelector('.cm-lineNumbers')).not.toBeNull();
+    });
+
+    it('saves on ⌘S, once, while the editor holds focus', async () => {
+      setSkillsForTest(withSkills('standup'));
+
+      render(<SkillsSection />);
+      await userEvent.click(screen.getByRole('button', { name: '/standup' }));
+      const box = await screen.findByLabelText('Skill source');
+      appendSurfaceText('Skill source', ' more');
+
+      fireEvent.keyDown(box, { key: 's', metaKey: true });
+
+      /*
+        Once, not twice. CodeMirror prevents the default when it handles the key
+        and the event still bubbles to the frame's own listener — and a second
+        save is not harmless here, because a renamed skill goes through
+        `renameSkill` rather than `saveSkill`.
+      */
+      expect(saveSkill).toHaveBeenCalledTimes(1);
+    });
+
+    /*
+      Save carries a literal `disabled` while the name is refused, so a shortcut
+      that wrote anyway would be a louder route past the rule the visible
+      control enforces. Doing nothing is not silence — the footer is showing the
+      reason in red the whole time.
+    */
+    it('refuses ⌘S exactly where the Save button refuses', async () => {
+      setSkillsForTest(withSkills('standup', 'ship-it'));
+
+      render(<SkillsSection />);
+      await userEvent.click(screen.getByRole('button', { name: '/standup' }));
+      await screen.findByLabelText('Skill source');
+      setSurfaceText('Skill source', '---\nname: ship-it\n---\nBody.');
+
+      expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+
+      fireEvent.keyDown(screen.getByLabelText('Skill source'), {
+        key: 's',
+        metaKey: true,
+      });
+
+      expect(saveSkill).not.toHaveBeenCalled();
+      expect(renameSkill).not.toHaveBeenCalled();
+    });
   });
 
   it('shows where the files live', () => {
@@ -494,9 +551,8 @@ describe('SkillsSection renaming', () => {
   const retype = async (name: string, next: string): Promise<void> => {
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: `/${name}` }));
-    const box = await screen.findByLabelText('Skill source');
-    await userEvent.clear(box);
-    await userEvent.type(box, `---{enter}name: ${next}{enter}---{enter}Body.`);
+    await screen.findByLabelText('Skill source');
+    setSurfaceText('Skill source', `---\nname: ${next}\n---\nBody.`);
   };
 
   const renamed = (next: string): string =>
@@ -571,10 +627,7 @@ describe('SkillsSection renaming', () => {
 
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '/standup' }));
-    await userEvent.type(
-      await screen.findByLabelText('Skill source'),
-      'One more line.',
-    );
+    appendSurfaceText('Skill source', 'One more line.');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(screen.queryByRole('alertdialog')).toBeNull();
@@ -589,9 +642,7 @@ describe('SkillsSection renaming', () => {
 
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '+ New skill' }));
-    const box = screen.getByLabelText('Skill source');
-    await userEvent.clear(box);
-    await userEvent.type(box, '---{enter}name: triage{enter}---{enter}Body.');
+    setSurfaceText('Skill source', '---\nname: triage\n---\nBody.');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(screen.queryByRole('alertdialog')).toBeNull();
@@ -713,7 +764,7 @@ describe('SkillsSection renaming', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(screen.getByRole('alertdialog')).toBeInTheDocument();
 
-    await userEvent.type(screen.getByLabelText('Skill source'), ' Extra.');
+    appendSurfaceText('Skill source', ' Extra.');
 
     expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(renameSkill).not.toHaveBeenCalled();
@@ -737,13 +788,13 @@ describe('SkillsSection renaming', () => {
 
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '/standup' }));
-    await userEvent.type(await screen.findByLabelText('Skill source'), ' more');
+    appendSurfaceText('Skill source', ' more');
     await userEvent.click(screen.getByRole('button', { name: '/triage' }));
     expect(
       screen.getByRole('alertdialog', { name: /Discard changes/ }),
     ).toBeInTheDocument();
 
-    await userEvent.type(screen.getByLabelText('Skill source'), ' and more');
+    appendSurfaceText('Skill source', ' and more');
 
     expect(
       screen.getByRole('alertdialog', { name: /Discard changes/ }),
