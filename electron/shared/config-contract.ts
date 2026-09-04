@@ -122,6 +122,17 @@ export interface EffectiveRuntime {
   /** Which of the two scalars came from the project rather than the top level. */
   shellFromProject: boolean;
   commandFromProject: boolean;
+  /**
+   * The project's container block with defaults applied, or absent for a host
+   * project (HIVE-133).
+   *
+   * Unlike {@link env} there is **no merge**: a project either is containerised
+   * or is not, and there is no top-level container block to layer under it. The
+   * one field that inherits is `hostAlias`, which falls back to
+   * `receiver.hostAlias` — and this is the only layer that can do it, because
+   * `resolveProject` sees a raw entry and never the receiver.
+   */
+  container?: ResolvedContainer;
 }
 
 /** One `PATH` entry the diagnostic looked in, and what it found. */

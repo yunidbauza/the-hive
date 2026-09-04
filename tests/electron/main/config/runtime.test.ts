@@ -301,3 +301,72 @@ describe('diagnoseCommand — a command used as a path', () => {
     expect(result.resolved).toBeNull();
   });
 });
+
+describe('effectiveRuntime container (HIVE-133)', () => {
+  const minimal = { workspace: '/workspace', hiveDir: '/hive' };
+
+  it('is absent for a host project', () => {
+    expect(effectiveRuntime(snapshot(), project({ id: 'p' })).container).toBeUndefined();
+  });
+
+  it('is absent when no project is selected', () => {
+    expect(effectiveRuntime(snapshot(), null).container).toBeUndefined();
+  });
+
+  it('applies every default the file left out', () => {
+    const runtime = effectiveRuntime(snapshot(), project({ id: 'p', container: minimal }));
+
+    expect(runtime.container).toEqual({
+      workspace: '/workspace',
+      hiveDir: '/hive',
+      envArg: '-e {name}={value}',
+      freshness: 'exec-env',
+      hostAlias: 'host.docker.internal',
+    });
+  });
+
+  it('inherits hostAlias from the receiver, which is the only layer that can', () => {
+    const runtime = effectiveRuntime(
+      snapshot({ receiver: { hostAlias: 'gateway' } }),
+      project({ id: 'p', container: minimal }),
+    );
+    expect(runtime.container?.hostAlias).toBe('gateway');
+  });
+
+  it('lets the project override the receiver alias', () => {
+    const runtime = effectiveRuntime(
+      snapshot({ receiver: { hostAlias: 'gateway' } }),
+      project({ id: 'p', container: { ...minimal, hostAlias: 'bridge' } }),
+    );
+    expect(runtime.container?.hostAlias).toBe('bridge');
+  });
+
+  it('keeps the fields the file did set', () => {
+    const runtime = effectiveRuntime(
+      snapshot(),
+      project({
+        id: 'p',
+        container: { ...minimal, envArg: '--env {name}={value}', freshness: 'rewrite' },
+      }),
+    );
+    expect(runtime.container).toMatchObject({
+      envArg: '--env {name}={value}',
+      freshness: 'rewrite',
+    });
+  });
+
+  it('omits probe rather than defaulting it — absent means no precondition', () => {
+    const runtime = effectiveRuntime(snapshot(), project({ id: 'p', container: minimal }));
+    expect(runtime.container).not.toHaveProperty('probe');
+  });
+
+  it('does not merge with the top level, because there is no top-level block', () => {
+    // A project either is containerised or is not — unlike `env`, which layers.
+    const runtime = effectiveRuntime(
+      snapshot({ env: { A: '1' } }),
+      project({ id: 'p', container: minimal }),
+    );
+    expect(runtime.env).toEqual({ A: '1' });
+    expect(runtime.container?.workspace).toBe('/workspace');
+  });
+});

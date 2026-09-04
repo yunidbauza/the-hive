@@ -1,8 +1,14 @@
 import type {
   CommandDiagnostic,
   ConfigSnapshot,
+  ContainerConfig,
   EffectiveRuntime,
   ProjectConfig,
+  ResolvedContainer,
+} from '../../shared/config-contract';
+import {
+  DEFAULT_ENV_ARG,
+  DEFAULT_FRESHNESS,
 } from '../../shared/config-contract';
 
 import { probeCommand } from './probe';
@@ -22,6 +28,31 @@ import { probeCommand } from './probe';
  * pairing above: choosing the command and the `PATH` — the part that must match
  * the spawn path — still happens here.
  */
+
+/**
+ * Finish a file's container block into the one a spawn can use.
+ *
+ * The parser reports what the file said and defaults nothing — the same
+ * division {@link ConfigSnapshot.shell} and `subscriptionAuth` already use. So
+ * every default in the block is applied here, in one place, against a snapshot
+ * that has `receiver.hostAlias` already resolved.
+ *
+ * `probe` is the one field with no default: absent means no precondition, and
+ * inventing one would run a command the user never configured.
+ */
+function resolveContainer(
+  container: ContainerConfig,
+  snapshot: ConfigSnapshot,
+): ResolvedContainer {
+  return {
+    workspace: container.workspace,
+    hiveDir: container.hiveDir,
+    envArg: container.envArg ?? DEFAULT_ENV_ARG,
+    ...(container.probe === undefined ? {} : { probe: container.probe }),
+    freshness: container.freshness ?? DEFAULT_FRESHNESS,
+    hostAlias: container.hostAlias ?? snapshot.receiver.hostAlias,
+  };
+}
 
 /**
  * Resolve one project's runtime against the snapshot's top-level values.
@@ -55,6 +86,9 @@ export function effectiveRuntime(
     env: { ...snapshot.env, ...(project?.env ?? {}) },
     shellFromProject,
     commandFromProject,
+    ...(project?.container === undefined
+      ? {}
+      : { container: resolveContainer(project.container, snapshot) }),
   };
 }
 
