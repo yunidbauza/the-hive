@@ -1,4 +1,5 @@
 import type { LedgerKind, LedgerReadQuery } from './ledger-contract';
+import { asInbound } from './ledger-derive';
 import { AGENTS_TOOL, APPROVE_TOOL, LEDGER_TOOLS } from './ledger-tools';
 import {
   LEDGER_READ_DEFAULT_LIMIT,
@@ -311,10 +312,18 @@ export function createToolHandlers(
   const ask = async (args: Record<string, unknown>): Promise<CallToolResult> => {
     const options = args['options'];
     const quote = args['quote'];
+    /*
+      Validated as it is written, not trusted as it is read. `asInbound` is
+      the one reader of this shape, so the card and the toast render exactly
+      what passed here — and a half-filled message is dropped at the door
+      rather than drawn with a blank where the author goes.
+    */
+    const inbound = asInbound(args['inbound']);
     const meta = {
       ...metaArg(args),
       ...(Array.isArray(options) ? { options } : {}),
       ...(typeof quote === 'string' ? { quote } : {}),
+      ...(inbound === undefined ? {} : { inbound }),
     };
 
     const body = stringArg(args, 'body');

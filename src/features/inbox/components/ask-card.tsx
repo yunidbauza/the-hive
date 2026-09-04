@@ -5,6 +5,7 @@ import type { HiveNotification } from '@/types/notification';
 
 import { Button } from '@components/ui/button';
 import { useRelativeTime } from '@hooks/use-relative-time';
+import { asInbound } from '@shared/ledger-derive';
 import type { Rung, RungId } from '@shared/permission-rules';
 import {
   useAnswerAsk,
@@ -176,6 +177,23 @@ export function AskCard({ notif, thread }: AskCardProps) {
   const isPermission = ask?.meta?.kind === 'permission';
   const rungs = isPermission ? rungsOf(ask?.meta?.rungs) : [];
   /**
+   * The message being replied to (`meta.inbound`).
+   *
+   * `asInbound` rather than a fourth local validator: `@shared` ships pure
+   * logic both processes run, and this rider has three readers — this card,
+   * `notify.ts`, and `mcp-tools.ts` as it writes one. The alternative is the
+   * bug documented directly above: three predicates for one question
+   * disagreed, and a card drew a grant ladder whose clicks granted nothing.
+   *
+   * Suppressed on a permission ask, which has no conversation behind it. Its
+   * context is the command block main wrote, and a second block above that
+   * one would be words chosen by whoever is being fenced, sitting above the
+   * command they want run. `honestPermissionAsk` builds permission meta from
+   * an allowlist and so already drops the key on the way in; this is the belt
+   * to that braces, and it is cheap.
+   */
+  const inbound = isPermission ? undefined : asInbound(ask?.meta?.['inbound']);
+  /**
    * The scope preselected on open. `meta.default` names one of `rungs` by
    * id, computed once alongside them (`rungsFor`/`defaultRungFor` in
    * `@shared/permission-rules`) — this reads it back rather than
@@ -341,6 +359,21 @@ export function AskCard({ notif, thread }: AskCardProps) {
     );
   }
 
+  /**
+   * The asker's own words, for every ask including a quoted one.
+   *
+   * A `meta.quote` used to replace this title with the literal "Send this
+   * reply?" and suppress `detail` outright, so an ask carrying a draft could
+   * say nothing else. That cost exactly what the quote is for: an agent
+   * drafting a Slack reply names the channel, the person and the message in
+   * its body, and the rail drew four words of draft above three buttons. The
+   * only way to answer was to go and read Slack — the errand the agent was
+   * woken to save.
+   *
+   * The literal is gone from `notify.ts` in the same change, because the two
+   * are one presentation and HIVE-118 finding 7 is what a disagreement
+   * between them looks like.
+   */
   const [title, ...rest] = ask.body.split('\n');
   const detail = rest.join('\n').trim();
 
@@ -353,10 +386,8 @@ export function AskCard({ notif, thread }: AskCardProps) {
           <span>ask {ask.id.slice(-4)}</span>
         </>,
       )}
-      <span className="text-[12.5px] font-semibold text-ink">
-        {quote === undefined ? title : 'Send this reply?'}
-      </span>
-      {detail === '' || quote !== undefined ? null : isPermission ? (
+      <span className="text-[12.5px] font-semibold text-ink">{title}</span>
+      {detail === '' ? null : isPermission ? (
         /*
           The command, as a mono block (spec §3.6). It is the actual risk
           surface — the one thing the user is being asked to decide on — and
@@ -372,6 +403,32 @@ export function AskCard({ notif, thread }: AskCardProps) {
         </pre>
       ) : (
         <span className="text-[11.5px] leading-[1.4] text-muted">{detail}</span>
+      )}
+
+      {/*
+        What provoked the ask, above what the ask proposes to send.
+
+        Filled, and deliberately without the draft's left stripe: read down,
+        the card is a two-beat thread, and the stripe is left to mean the one
+        thing on the card you are actually deciding on. It survives the switch
+        into edit mode below, which is when it matters most — the draft has
+        become a textarea and the message being answered is no longer legible
+        anywhere else on screen.
+
+        `max-h-40` because `meta` is free-form and `LEDGER_BODY_MAX` is 16KB:
+        a long thread scrolls in its own box rather than pushing the buttons
+        out of a 316px rail. `whitespace-pre-wrap` keeps the newlines a chat
+        message arrives with.
+      */}
+      {inbound === undefined ? null : (
+        <div className="mt-1 max-h-40 overflow-y-auto rounded-md bg-panel-2 px-2 py-1.5">
+          <span className="block text-[10px] text-subtle">
+            {inbound.at === undefined ? inbound.author : `${inbound.author} · ${inbound.at}`}
+          </span>
+          <span className="block text-[11px] leading-[1.45] whitespace-pre-wrap text-muted">
+            {inbound.text}
+          </span>
+        </div>
       )}
 
       {draft === null ? (

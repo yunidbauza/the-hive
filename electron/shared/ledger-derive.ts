@@ -11,6 +11,7 @@ import {
   LEDGER_ASK_TTL_MS,
   LEDGER_REF_PREFIX,
   OVERMIND,
+  type AskInbound,
   type LedgerEntry,
   type LedgerReadQuery,
   type OpenAsk,
@@ -28,6 +29,43 @@ export const taskOf = (entry: Pick<LedgerEntry, 'meta'>): string | undefined => 
   const task = entry.meta?.task;
   return typeof task === 'string' && task !== '' ? task : undefined;
 };
+
+/**
+ * `meta.inbound`, when it is a message worth drawing.
+ *
+ * Exported for the same reason {@link taskOf} is: three consumers read this
+ * rider — the card, `notify.ts` and `mcp-tools.ts` as it writes one — and
+ * `ask-card.tsx` has already paid for the alternative. Three predicates for
+ * "is this a permission ask" disagreed there, and the disagreement was
+ * reachable: an ask drew a grant ladder whose clicks granted nothing.
+ *
+ * Built from nothing rather than filtered, which is {@link
+ * honestPermissionAsk}'s argument applied one rider along: spreading the
+ * caller's object through and blanking the keys we know about would carry
+ * every key we do not onto a value the card then renders. An allowlist makes
+ * the next invented key a non-event.
+ *
+ * A partial message is dropped whole. A card that names who wrote to you is
+ * worth drawing; one with a blank where the name goes is furniture.
+ */
+export function asInbound(value: unknown): AskInbound | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const shape = value as Record<string, unknown>;
+  const str = (key: string): string | undefined => {
+    const found = shape[key];
+    return typeof found === 'string' && found.trim() !== '' ? found : undefined;
+  };
+
+  const author = str('author');
+  const text = str('text');
+  if (author === undefined || text === undefined) return undefined;
+
+  const at = str('at');
+  return { author, text, ...(at === undefined ? {} : { at }) };
+}
 
 /**
  * The kinds that close a thread they name.

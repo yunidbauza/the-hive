@@ -142,24 +142,24 @@ export function createLedgerNotifier(
 
     if (entry.kind === 'ask' && entry.to === OVERMIND) {
       const permission = meta.kind === 'permission';
-      const [first, rest] = split(entry.body);
       /*
-        `str`, not `!== undefined` — the same "non-empty string" guard the card
-        applies (`ask-card.tsx`), and it has to be the same one.
+        Split the same way for every ask, quoted or not.
 
-        `mcp-host/tools.ts` admits `quote: ''` (`typeof quote === 'string'`),
-        and any non-string can reach `meta` through the passthrough. Under the
-        looser test one ask got two presentations: this notification titled
-        itself "Send this reply?" and offered a body that was the whole entry,
-        while the card next to it drew the ordinary title, the ordinary detail
-        and no quote block at all.
+        A `meta.quote` used to retitle this "Send this reply?" and push the
+        asker's own first line down into the body, mirroring a special case
+        the card made too. Both are gone. It was already the expensive kind of
+        coupling — HIVE-118 finding 7 is what these two disagreeing about
+        `quote` looked like, and `mcp-host/tools.ts` can still produce a
+        `quote: ''` or a non-string that only one of them would notice — and
+        it bought nothing: a drafting agent writes a first line naming who it
+        is replying to, and both presentations threw it away.
       */
-      const quote = str(meta.quote);
+      const [first, rest] = split(entry.body);
       deps.raise({
         kind: permission ? 'agent.permission' : 'agent.ask',
         id: entry.id,
-        title: quote === undefined ? first : 'Send this reply?',
-        body: quote === undefined ? rest : entry.body,
+        title: first,
+        body: rest,
         /*
           The asker, so three agents asking at once give three distinguishable
           toasts rather than three reading "Send this reply?" (HIVE-118).

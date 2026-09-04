@@ -111,6 +111,23 @@ export const LEDGER_TOOLS: readonly McpToolDefinition[] = [
           description:
             'A draft you want approved before you act on it — the text of the message you would send. The overmind sees it quoted above the buttons and can edit it before approving.',
         },
+        inbound: {
+          type: 'object',
+          description:
+            'The message you are proposing to reply TO, when your quote is a reply. Shown above the draft so the person answering can see what provoked it without opening the app it came from. Send all of it or none: a partial one is dropped.',
+          properties: {
+            author: {
+              type: 'string',
+              description: 'Who wrote it, by the name the reader would recognise.',
+            },
+            text: { type: 'string', description: 'What they said.' },
+            at: {
+              type: 'string',
+              description: 'When they said it, already formatted for a person to read.',
+            },
+          },
+          required: ['author', 'text'],
+        },
         meta,
       },
       required: ['to', 'body'],

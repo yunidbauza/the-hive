@@ -49,32 +49,44 @@ describe('createLedgerNotifier', () => {
     });
   });
 
-  it('titles a quoted ask Send this reply?', () => {
-    const { raise, onEntry } = harness();
-    onEntry(
-      entry({ to: OVERMIND, kind: 'ask', body: 'ok?', meta: { quote: 'hello' } }),
-    );
-    expect(raise.mock.calls[0][0].title).toBe('Send this reply?');
-  });
-
   /**
-   * HIVE-118 self-review, finding 7. `meta.quote === undefined` and the card's
-   * own `text()` helper disagreed about two values `mcp-host/tools.ts` can
-   * actually produce: it admits `quote: ''` outright, and any non-string
-   * reaches `meta` through the passthrough. One ask then had two
-   * presentations — this notification titled "Send this reply?" with the whole
-   * body under it, and a card next to it drawing the ordinary title and no
-   * quote block at all.
+   * A quoted ask splits like every other ask, and the presentation the card
+   * gives it is the same one.
+   *
+   * It used to be a special case here and in `ask-card.tsx`: the title became
+   * the literal "Send this reply?" and the asker's own first line was pushed
+   * down into the body. Two consumers keying off `meta.quote` is what HIVE-118
+   * finding 7 already found expensive, and the case bought nothing — the
+   * toast and the card both had a first line written for them and both threw
+   * it away, so a drafting agent's context reached neither.
    */
   it.each([
+    ['a draft', 'hello'],
     ['an empty string', ''],
     ['a non-string', 42],
-  ])('treats %s quote as no quote, exactly as the card does', (_label, quote) => {
+  ])('splits an ask carrying %s the same as any other', (_label, quote) => {
     const { raise, onEntry } = harness();
     onEntry(
       entry({ to: OVERMIND, kind: 'ask', body: 'ok?\nwhy not', meta: { quote } }),
     );
     expect(raise.mock.calls[0][0]).toMatchObject({ title: 'ok?', body: 'why not' });
+  });
+
+  it('carries a drafting agent context into the toast', () => {
+    const { raise, onEntry } = harness();
+    onEntry(
+      entry({
+        to: OVERMIND,
+        kind: 'ask',
+        body: 'Reply to Marcos in #incorp-dev\nHe wants the 3pm demo covered.',
+        meta: { quote: 'dale, ahi voy' },
+      }),
+    );
+
+    expect(raise.mock.calls[0][0]).toMatchObject({
+      title: 'Reply to Marcos in #incorp-dev',
+      body: 'He wants the 3pm demo covered.',
+    });
   });
 
   /**
