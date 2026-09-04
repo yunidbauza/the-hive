@@ -5,6 +5,7 @@ import {
   createBootstrap,
   sessionCommand,
 } from '../../../../electron/main/sessions/bootstrap';
+import { createPathMap } from '../../../../electron/main/sessions/path-map';
 import { SUBMIT_DELAY_MS } from '../../../../electron/shared/session-contract';
 
 /**
@@ -834,5 +835,85 @@ describe('sessionCommand', () => {
       expect(command).toContain('--plugin-dir');
       expect(command).toContain('--mcp-config');
     });
+  });
+});
+
+describe('sessionCommand container projects', () => {
+  const config = {
+    workspace: '/workspace',
+    hiveDir: '/hive',
+    envArg: '-e {name}={value}',
+    freshness: 'exec-env' as const,
+    hostAlias: 'host.docker.internal',
+  };
+
+  const map = createPathMap({
+    projectPath: '/Users/dev/Projects/the-hive',
+    userDataPath: '/Users/dev/Library/Application Support/The Hive',
+    workspace: '/workspace',
+    hiveDir: '/hive',
+  });
+
+  const container = {
+    config,
+    map,
+    env: { FOO: 'bar', HIVE_SESSION_ID: 'hero-refresh', HIVE_HOOK_TOKEN: 'a3f' },
+  };
+
+  const paths = {
+    settingsPath:
+      '/Users/dev/Library/Application Support/The Hive/hive/container/claude-hooks.settings.json',
+    mcpConfig:
+      '/Users/dev/Library/Application Support/The Hive/hive/container/hive.mcp.json',
+    pluginDir: '/Users/dev/Library/Application Support/The Hive/hive/plugin',
+  };
+
+  it('expands the environment at the placeholder and rewrites every path', () => {
+    const command = sessionCommand('docker exec -it {env} devbox claude', {
+      ...paths,
+      container,
+    });
+
+    expect(command).toContain(
+      "-e FOO='bar' -e HIVE_SESSION_ID='hero-refresh' -e HIVE_HOOK_TOKEN='a3f' devbox claude",
+    );
+    expect(command).toContain(
+      "--settings '/hive/container/claude-hooks.settings.json'",
+    );
+    expect(command).toContain("--mcp-config '/hive/container/hive.mcp.json'");
+    expect(command).toContain("--plugin-dir '/hive/plugin'");
+    // No host path survives into the container's argv.
+    expect(command).not.toContain('Application Support');
+  });
+
+  it('rewrites the per-session directory in rewrite mode', () => {
+    const command = sessionCommand('docker exec -it {env} devbox claude', {
+      settingsPath:
+        '/Users/dev/Library/Application Support/The Hive/hive/container/sessions/hero-refresh/claude-hooks.settings.json',
+      container: { ...container, config: { ...config, freshness: 'rewrite' } },
+    });
+
+    expect(command).toContain(
+      "--settings '/hive/container/sessions/hero-refresh/claude-hooks.settings.json'",
+    );
+  });
+
+  it('leaves the command alone when it has no placeholder', () => {
+    // Task 9's diagnostic is what refuses this; a half-built command is worse.
+    const command = sessionCommand('docker exec -it devbox claude', {
+      ...paths,
+      container,
+    });
+    expect(command).toContain('docker exec -it devbox claude');
+    expect(command).not.toContain('-e HIVE_SESSION_ID');
+  });
+
+  it('is byte-identical to today for a project with no container block', () => {
+    const before = sessionCommand('claude', {
+      settingsPath: '/Users/dev/Library/Application Support/The Hive/hive/x.json',
+    });
+    expect(before).toBe(
+      "claude --settings '/Users/dev/Library/Application Support/The Hive/hive/x.json' && exit",
+    );
   });
 });

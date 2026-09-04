@@ -1,4 +1,4 @@
-import { AUTH_ENV_KEYS } from '@shared/config-contract';
+import { AUTH_ENV_KEYS, type ResolvedContainer } from '@shared/config-contract';
 import {
   BOOTSTRAP_DEBOUNCE_MS,
   BOOTSTRAP_FALLBACK_MS,
@@ -8,7 +8,29 @@ import {
   type SessionModel,
 } from '@shared/session-contract';
 
+import { expandEnvArgs, substituteEnv } from './container-command';
+import type { PathMap } from './path-map';
 import { shellQuote } from './shell-quote';
+
+/**
+ * What a container project's session needs beyond the host shape (HIVE-133).
+ *
+ * `docker exec` carries nothing across the boundary it crosses, so a spawn
+ * needs both halves of the fix: {@link PathMap} to rewrite the three flag
+ * paths, and `env` — already fully assembled, `HIVE_*` written last — to
+ * expand at `claudeCommand`'s `{env}` placeholder.
+ *
+ * `config` is {@link ResolvedContainer}, not the raw `ContainerConfig` a file
+ * or the IPC guard produces: `envArg` is read here unconditionally, and only
+ * the resolved shape guarantees it is a `string` rather than `string | undefined`.
+ * `effectiveRuntime` is the one place that turns one into the other.
+ */
+export interface ContainerSpawn {
+  config: ResolvedContainer;
+  map: PathMap;
+  /** Everything that must reach the container, HIVE_* written last. */
+  env: Record<string, string>;
+}
 
 /**
  * `--session-id` takes a uuid and rejects anything else.
@@ -165,6 +187,21 @@ export interface SessionOptions {
    * `settingsPath` does and a much more obvious one.
    */
   task?: string;
+  /**
+   * The project runs inside a container (HIVE-133).
+   *
+   * Two things happen when this is present, and both are about a boundary
+   * `docker exec` does not carry anything across:
+   *
+   * - **Environment moves onto the command line.** `docker exec` does not
+   *   inherit the pty's environment, so `envFor`'s three variables — which
+   *   reach a host session through the spawn env — would never arrive. They are
+   *   expanded through `config.envArg` and substituted at `{env}`.
+   * - **Paths are rewritten.** `--settings`, `--plugin-dir` and `--mcp-config`
+   *   all name host paths under `<userData>/hive`, which mean nothing inside
+   *   the container.
+   */
+  container?: ContainerSpawn;
 }
 
 /**
@@ -277,8 +314,28 @@ export const sessionCommand = (
     mcpConfig,
     subscriptionAuth = false,
     task,
+    container,
   }: SessionOptions = {},
 ): string => {
+  /*
+    Through the map, or dropped. A path under neither mapped root has no
+    container-side spelling, and passing the host one would name a file the
+    container cannot open — an error at `claude` startup about a file, which is
+    further from the cause than no flag at all. Task 9's diagnostic reports the
+    unmappable case before a session is ever spawned.
+  */
+  const mapped = (value: string | undefined): string | undefined => {
+    if (value === undefined) return undefined;
+    if (container === undefined) return value;
+    return container.map.toContainer(value) ?? undefined;
+  };
+
+  /* Each mapped once, into a local: the map is a lookup, and calling it twice
+     per flag to test then use it is how the two answers drift. */
+  const settings = mapped(settingsPath);
+  const plugin = mapped(pluginDir);
+  const mcp = mapped(mcpConfig);
+
   const flags = [
     ...(model === undefined ? [] : ['--model', model]),
     ...(effort === undefined ? [] : ['--effort', effort]),
@@ -292,9 +349,9 @@ export const sessionCommand = (
     ...(sessionUuid !== undefined && UUID_PATTERN.test(sessionUuid)
       ? [resume ? '--resume' : '--session-id', sessionUuid]
       : []),
-    ...(settingsPath === undefined ? [] : ['--settings', shellQuote(settingsPath)]),
-    ...(pluginDir === undefined ? [] : ['--plugin-dir', shellQuote(pluginDir)]),
-    ...(mcpConfig === undefined ? [] : ['--mcp-config', shellQuote(mcpConfig)]),
+    ...(settings === undefined ? [] : ['--settings', shellQuote(settings)]),
+    ...(plugin === undefined ? [] : ['--plugin-dir', shellQuote(plugin)]),
+    ...(mcp === undefined ? [] : ['--mcp-config', shellQuote(mcp)]),
   ];
   /**
    * Unset the API credentials **here**, not only in the spawned environment
@@ -340,7 +397,19 @@ export const sessionCommand = (
       ? []
       : [shellQuote(task.replaceAll(/[\r\n]+/g, ' ').trim())];
 
-  return `${prefix}${[claudeCommand, ...flags, ...initialPrompt].join(' ')} && exit`;
+  const line = [claudeCommand, ...flags, ...initialPrompt].join(' ');
+
+  /*
+    Substituted **after** the flags are joined, so the expansion lands where the
+    command asks for it rather than at a position this module guessed. `null`
+    means no `{env}`: the command is emitted unchanged rather than half-built,
+    because a string with the placeholder still in it would be typed into a
+    shell verbatim.
+  */
+  if (container === undefined) return `${prefix}${line} && exit`;
+
+  const args = expandEnvArgs(container.env, container.config.envArg);
+  return `${prefix}${substituteEnv(line, args) ?? line} && exit`;
 };
 
 export interface BootstrapOptions {
