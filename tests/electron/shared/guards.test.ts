@@ -973,6 +973,13 @@ describe('parseSetReceiverRequest (HIVE-131)', () => {
     });
   });
 
+  /**
+   * `?`, `#`, `@` and `\` each end the URL authority, so an alias carrying one
+   * redirects the address instead of naming a host — `10.0.0.5?` yields
+   * `http://10.0.0.5?:63999/hook`, which is port 80 of `10.0.0.5`. That is why
+   * the rule is an allowlist of hostname characters rather than a blocklist of
+   * the delimiters someone happened to think of.
+   */
   it.each([
     ['a port', 'a:1234'],
     ['a scheme', 'http://a'],
@@ -981,8 +988,33 @@ describe('parseSetReceiverRequest (HIVE-131)', () => {
     ['empty', ''],
     ['only whitespace', '   '],
     ['a non-string', 7],
+    ['a query delimiter', '10.0.0.5?'],
+    ['a fragment delimiter', 'evil.com#'],
+    ['credentials', 'user@evil.com'],
+    ['a backslash', 'evil.com\\x'],
+    ['an empty label', 'a..b'],
+    ['a trailing dot', 'a.'],
+    ['a leading hyphen', '-a'],
+    ['over 253 characters', 'a'.repeat(254)],
   ])('rejects %s', (_label, hostAlias) => {
     expect(() => parseSetReceiverRequest({ hostAlias })).toThrow();
+  });
+
+  /**
+   * The reader and this guard share one predicate (`isHostAlias`), so the set of
+   * values the file accepts and the set this channel accepts cannot drift. An
+   * earlier pair of separate spellings disagreed on the length bound.
+   */
+  it('agrees with the file reader on the length bound', () => {
+    const at253 = `${'a'.repeat(250)}.io`;
+    expect(at253).toHaveLength(253);
+    expect(parseSetReceiverRequest({ hostAlias: at253 })).toEqual({
+      hostAlias: at253,
+    });
+
+    const at254 = `${'a'.repeat(251)}.io`;
+    expect(at254).toHaveLength(254);
+    expect(() => parseSetReceiverRequest({ hostAlias: at254 })).toThrow();
   });
 
   it('rejects an unknown key', () => {

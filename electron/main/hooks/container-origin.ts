@@ -24,8 +24,14 @@
  * path" exactly.
  */
 
-/** `scheme://`, authority, then everything else — path, query and fragment. */
-const AUTHORITY = /^(https?:\/\/)([^/?#]+)(.*)$/;
+/**
+ * `scheme://`, authority, then everything else — path, query and fragment.
+ *
+ * Case-insensitive because `HTTP://…` is a legal URL: without the flag it fails
+ * to match and `withHostAlias` silently returns the loopback address, which a
+ * container cannot reach and which no error would announce.
+ */
+const AUTHORITY = /^(https?:\/\/)([^/?#]+)(.*)$/i;
 
 /**
  * Rewrite `url` to address the host by `alias` instead.

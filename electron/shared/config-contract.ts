@@ -493,6 +493,47 @@ export const DEFAULT_RECEIVER: ReceiverConfig = {
 /** The block's keys, for the parser's exact-key check. */
 export const RECEIVER_KEYS: readonly (keyof ReceiverConfig)[] = ['hostAlias'];
 
+/** One DNS label: alphanumeric, inner hyphens allowed, no leading or trailing one. */
+const HOST_ALIAS_LABEL = /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/;
+
+/** The DNS ceiling, and the same bound `assertJiraSite` applies to a site. */
+const MAX_HOST_ALIAS = 253;
+
+/**
+ * Whether a value is usable as {@link ReceiverConfig.hostAlias}.
+ *
+ * **One predicate, deliberately shared** by the file reader
+ * (`config/parse.ts`) and the IPC guard (`guards.ts`). Two independent
+ * spellings of "looks like a hostname" drift, and the drift is not cosmetic:
+ * the set the reader accepts and the set the writer accepts have to be the same
+ * one, or a value the UI stores is refused on the next load, or worse, a value
+ * hand-written into the file is one the guard would have refused.
+ *
+ * ## Why per-label, and not a blocklist
+ *
+ * The first spelling of this rule rejected `[\s/:]` and nothing else, which let
+ * every other URL delimiter through — and each one *ends the authority*.
+ * `hostAlias = '10.0.0.5?'` turned `http://127.0.0.1:63999/hook` into
+ * `http://10.0.0.5?:63999/hook`: a request to **port 80 of 10.0.0.5**, with the
+ * real port and path demoted into a query string. `#`, `@` and `\` do the same
+ * thing by other routes. A blocklist here is a list of the delimiters someone
+ * thought of; an allowlist is the set of characters a hostname may contain.
+ *
+ * So this validates each dot-separated label the way {@link assertJiraSite}
+ * validates a site's, with two deliberate differences: a **single label is
+ * allowed** (`gateway` on a custom bridge is legitimate, and a site is not),
+ * and so is a dotted-quad IP literal, which falls out of the same rule.
+ *
+ * An IPv6 literal is not accepted. It would need brackets, and brackets are not
+ * hostname characters — a documented limit rather than an oversight, and the
+ * reason `withHostAlias` documents its input as an address this app produced.
+ */
+export function isHostAlias(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  if (value.length === 0 || value.length > MAX_HOST_ALIAS) return false;
+  return value.split('.').every((label) => HOST_ALIAS_LABEL.test(label));
+}
+
 /**
  * What `window.hive.config.get()` answers with.
  *

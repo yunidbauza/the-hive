@@ -530,6 +530,15 @@ describe('parseConfig — the receiver block (HIVE-131)', () => {
     ]);
   });
 
+  /**
+   * The delimiter cases are the reason this rule is an allowlist.
+   *
+   * Each of `?`, `#`, `@` and `\` **ends the URL authority**, so an alias
+   * carrying one redirects the address rather than naming a host:
+   * `10.0.0.5?` turns `http://127.0.0.1:63999/hook` into
+   * `http://10.0.0.5?:63999/hook` — port 80 of `10.0.0.5`, with the real port
+   * and path demoted into a query string.
+   */
   it.each([
     ['an empty string', ''],
     ['whitespace inside', 'a b'],
@@ -537,6 +546,16 @@ describe('parseConfig — the receiver block (HIVE-131)', () => {
     ['a path', 'a/b'],
     ['a port', 'a:1234'],
     ['a scheme', 'http://a'],
+    ['a query delimiter', '10.0.0.5?'],
+    ['a fragment delimiter', 'evil.com#'],
+    ['credentials', 'user@evil.com'],
+    ['a backslash', 'evil.com\\x'],
+    ['an empty label', 'a..b'],
+    ['a leading dot', '.a'],
+    ['a trailing dot', 'a.'],
+    ['a leading hyphen', '-a'],
+    ['a trailing hyphen', 'a-'],
+    ['over 253 characters', `${'a'.repeat(254)}`],
   ])('rejects %s advisorily and leaves the field unset', (_label, value) => {
     const parsed = parseConfig(
       doc({ receiver: { hostAlias: value } }),
@@ -559,8 +578,13 @@ describe('parseConfig — the receiver block (HIVE-131)', () => {
     ]);
   });
 
-  it('accepts a bare single-label host and a literal IP', () => {
-    for (const hostAlias of ['gateway', '192.168.4.125']) {
+  it('accepts a bare single-label host, a literal IP and an inner hyphen', () => {
+    for (const hostAlias of [
+      'gateway',
+      '192.168.4.125',
+      'host-1.internal',
+      'host.containers.internal',
+    ]) {
       const parsed = parseConfig(doc({ receiver: { hostAlias } }), 'config');
       expect(parsed.receiver).toEqual({ hostAlias });
       expect(parsed.errors).toEqual([]);

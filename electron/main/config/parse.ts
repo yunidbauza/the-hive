@@ -3,6 +3,7 @@ import {
   NOTIFICATION_KEYS,
   RECEIVER_KEYS,
   SUPPORTED_CONFIG_VERSIONS,
+  isHostAlias,
   unsafeEnvReason,
   type JiraConfig,
   type NotificationPrefs,
@@ -527,26 +528,6 @@ function optionalJira(
     jira[key] = raw;
   }
   return jira;
-}
-
-/**
- * A hostname with no scheme, path, port or whitespace.
- *
- * Deliberately **not** `assertJiraSite`'s rule, which demands at least two
- * labels: `host.docker.internal` has three, but a user on a custom bridge may
- * legitimately name a single-label host, and a literal IP must pass too.
- *
- * Rejecting `:` is what stops `host.docker.internal:1234` from becoming
- * `http://host.docker.internal:1234:63999/hook`. An IPv6 literal is therefore
- * unsupported — a documented limit, not an oversight.
- */
-function isHostAlias(value: unknown): value is string {
-  return (
-    typeof value === 'string' &&
-    value.length > 0 &&
-    value.trim() === value &&
-    !/[\s/:]/.test(value)
-  );
 }
 
 /**

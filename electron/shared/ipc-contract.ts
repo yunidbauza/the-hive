@@ -55,8 +55,8 @@ import type {
   SetJiraTokenRequest,
   SetNotificationsRequest,
   SetProjectKeyRequest,
-  SetReceiverRequest,
   SetProjectRuntimeRequest,
+  SetReceiverRequest,
   SetRuntimeRequest,
 } from './config-contract';
 import type {
@@ -2445,13 +2445,16 @@ export const BRIDGE_CONFIG_KEYS = [
    */
   'setJira',
   /**
-   * HIVE-131. The container host alias — a *name*, never an address.
+   * HIVE-131. The container host alias — and it **does name a network
+   * destination**, the first verb here that does.
    *
-   * `assertHostAlias` gives its one field a closed alphabet: bounded, no
-   * whitespace, no `/`, no `:`. So it can carry no scheme, port or path, and
-   * like every verb above it names no destination — the one file the bridge can
-   * write is still chosen by main. It opens no socket and changes no bind: the
-   * receiver still binds `127.0.0.1`, and nothing here can widen that.
+   * From HIVE-132 onward this hostname is the host in `HIVE_RECEIVER_URL` for a
+   * containerised session, and a session is handed `HIVE_HOOK_TOKEN` alongside
+   * it, so the alias decides where authenticated hook traffic is addressed.
+   * `assertHostAlias` bounds it to a hostname — per-label allowlist, shared with
+   * the file reader, no scheme, port, path, credentials or delimiter — and it
+   * names no *file*, opens no socket and changes no bind. See the fuller
+   * justification beside `'setReceiver'` in `tests/e2e/electron/security.spec.ts`.
    */
   'setReceiver',
 ] as const;

@@ -27,13 +27,14 @@ import type {
   SetJiraTokenRequest,
   SetNotificationsRequest,
   SetProjectKeyRequest,
-  SetReceiverRequest,
   SetProjectRuntimeRequest,
+  SetReceiverRequest,
   SetRuntimeRequest,
 } from './config-contract';
 import {
   NOTIFICATION_KEYS,
   PROJECT_KEY_HINT,
+  isHostAlias,
   isProjectKey,
   unsafeEnvReason,
 } from './config-contract';
@@ -1065,20 +1066,24 @@ export function parseSetJiraRequest(input: unknown): SetJiraRequest {
 }
 
 /**
- * A container host alias: a hostname with no scheme, path, port or whitespace.
+ * A container host alias.
  *
- * Deliberately not {@link assertJiraSite}, which requires two or more labels — a
- * single-label host on a custom bridge, and a literal IP, are both legitimate
- * here. Rejecting `:` is what stops `host.docker.internal:1234` from becoming
- * `http://host.docker.internal:1234:63999/hook`; an IPv6 literal is therefore
- * unsupported, matching `config/parse.ts`'s rule for the same field.
+ * The rule itself is {@link isHostAlias}, in `config-contract.ts`, **shared with
+ * the file reader** rather than restated here: the set this verb accepts and the
+ * set `config/parse.ts` accepts have to be the same set, and two spellings of
+ * "looks like a hostname" drift. An earlier pair of spellings disagreed on a
+ * length bound, so a 300-character alias hand-written into the file parsed
+ * cleanly while the identical string over this channel was refused.
+ *
+ * Trimming is this side's own courtesy — a user pastes with padding, and the
+ * *stored* value is trimmed, so the two sides still agree on every value that
+ * reaches the file.
  */
 export function assertHostAlias(value: unknown, label: string): string {
   const raw = assertString(value, label).trim();
   if (raw.length === 0) return fail(`${label}: must not be empty`);
-  if (raw.length > MAX_HOST) return fail(`${label}: expected a hostname`);
-  if (/[\s/:]/.test(raw)) {
-    return fail(`${label}: expected a hostname — no scheme, path or port`);
+  if (!isHostAlias(raw)) {
+    return fail(`${label}: expected a hostname — no scheme, port, path or credentials`);
   }
   return raw;
 }
