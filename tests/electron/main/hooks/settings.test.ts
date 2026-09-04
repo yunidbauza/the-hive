@@ -471,6 +471,34 @@ describe('hookSettings — freshness (HIVE-132)', () => {
 });
 
 describe('metricsScript — freshness (HIVE-132)', () => {
+  /*
+    The exact bytes a host session's script had before HIVE-132, transcribed by
+    hand rather than built from the emitter — which is what makes it a check
+    rather than a restatement. HIVE-132 added a freshness parameter to this
+    function, and the acceptance criterion it was added under is that a host
+    session's generated files do not move. This is that criterion, as bytes.
+  */
+  it('is byte-for-byte what it was before the freshness parameter', () => {
+    expect(metricsScript('http://127.0.0.1:63999/statusline')).toBe(
+      `#!/bin/sh
+# The Hive — session usage reporter. Written per launch; do not edit.
+# Reads Claude Code's status line payload on stdin, forwards it to the app, and
+# prints nothing so no status line is rendered. See electron/main/hooks/settings.ts.
+[ -n "$HIVE_SESSION_ID" ] || exit 0
+[ -n "$HIVE_HOOK_TOKEN" ] || exit 0
+
+curl -s -m 5 -o /dev/null \\
+  -X POST 'http://127.0.0.1:63999/statusline' \\
+  -H 'content-type: application/json' \\
+  -H "x-hive-session: $HIVE_SESSION_ID" \\
+  -H "x-hive-token: $HIVE_HOOK_TOKEN" \\
+  --data-binary @- 2>/dev/null
+
+exit 0
+`,
+    );
+  });
+
   it('guards on the environment when no identity is given', () => {
     const script = metricsScript('http://127.0.0.1:63999/statusline');
 
