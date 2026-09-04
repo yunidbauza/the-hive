@@ -39,6 +39,12 @@ function writeFixtureRepo(root: string): void {
   writeFileSync(join(root, 'README.md'), '# Fixture\n');
   writeFileSync(join(root, '.gitignore'), 'node_modules\n');
   writeFileSync(join(root, 'src', 'app.ts'), 'export const answer = 42;\n');
+  // Its own file, so the selection spec can drag across lines without moving
+  // the bytes three other tests assert on.
+  writeFileSync(
+    join(root, 'src', 'select.ts'),
+    'const alpha = 1;\nconst beta = 2;\nconst gamma = 3;\n',
+  );
   writeFileSync(join(root, 'node_modules', 'react', 'index.js'), 'module.exports={}\n');
   writeFileSync(join(root, '.git', 'HEAD'), 'ref: refs/heads/main\n');
 }
@@ -53,6 +59,25 @@ function writeFixtureRepo(root: string): void {
  */
 const sessionTerminal = (page: Page) =>
   page.locator('[data-terminal-id^="sess-"] .xterm');
+
+/**
+ * `#2b3768` → `rgb(43, 55, 104)`, the spelling `getComputedStyle` answers in.
+ *
+ * The token is authored as hex and read back resolved, so one side has to be
+ * converted for them to be comparable. Converting the token rather than parsing
+ * the computed value keeps the comparison on the value the stylesheet actually
+ * carries.
+ */
+const toRgb = (hex: string): string => {
+  const value = Number.parseInt(hex.replace('#', ''), 16);
+  return `rgb(${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255})`;
+};
+
+/** The alpha of a computed colour. `rgb(...)` has none, which is alpha 1. */
+const alphaOf = (colour: string): number => {
+  const parts = colour.match(/[\d.]+/g);
+  return parts?.length === 4 ? Number(parts[3]) : 1;
+};
 
 async function launch(outputPath: (name: string) => string, repo: string) {
   writeFixtureRepo(repo);
@@ -103,6 +128,112 @@ test('the tree lists the repository, hiding the noise', async ({}, testInfo) => 
     await expect(tree.getByText('.gitignore')).toBeVisible();
     await expect(tree.getByText('node_modules')).toHaveCount(0);
     await expect(tree.getByText('.git', { exact: true })).toHaveCount(0);
+  } finally {
+    await app.close();
+  }
+});
+
+/**
+ * A selection you can see, in the colour the theme asked for.
+ *
+ * Reported against the Agents and Skills editors and the explorer's, which is
+ * one component: `components/editor/editor-surface.tsx`. Selecting *worked* the
+ * whole time — the double-click set the range, the drag extended it — and
+ * nothing on screen said so, which is indistinguishable from a control that
+ * ignores the mouse. Two independent causes, both in `editor-theme.ts`, and
+ * both only observable in a real browser:
+ *
+ * 1. **The active line covered it.** CodeMirror's `drawSelection` paints into a
+ *    layer at `z-index: -2`, behind the content, and `highlightActiveLine`
+ *    marks the line holding each range's *head* whatever the range is — see
+ *    `activeLineHighlighter` in `@codemirror/view`, which reads `r.head` and
+ *    never asks whether `r` is empty. So an **opaque** `.cm-activeLine`
+ *    background hides the selection on the caret's own line, which is precisely
+ *    the line a double-clicked word and a within-line drag are on. CodeMirror's
+ *    own defaults are `#cceeff44` and `#99eeff33` for this exact reason.
+ * 2. **The theme's colour never applied.** The base theme styles selection at
+ *    `&light.cm-focused > .cm-scroller > .cm-selectionLayer
+ *    .cm-selectionBackground` — five classes — and this theme asked with three,
+ *    so every selection painted in CodeMirror's stock lavender `#d7d4f0`,
+ *    unreadable under dark syntax colours.
+ *
+ * Asserted here rather than in a unit test because both are questions about
+ * *paint*: happy-dom resolves no cascade and performs no layout, so it can say
+ * neither which rule won nor that anything was drawn over anything else.
+ */
+test('a selection is visible on the caret’s own line, in the theme’s colour', async ({}, testInfo) => {
+  const repo = testInfo.outputPath('repo');
+  const { app, page } = await launch((name) => testInfo.outputPath(name), repo);
+
+  try {
+    const tree = page.locator('[data-panel="explorer"]');
+    await tree.getByRole('button', { name: 'src' }).click();
+    await tree.getByRole('button', { name: 'select.ts' }).click();
+    await expect(page.locator('.cm-content')).toContainText('const alpha = 1;');
+
+    /*
+      A double-click on a word: the reported gesture, and the one whose whole
+      selection lands on the line the caret is left on.
+
+      Driven by the mouse at a point rather than by a text locator, because
+      CodeMirror splits a line into one span per token and a locator would be
+      asserting on how the grammar happened to chop it up. `alpha` starts at
+      column 6 of `const alpha = 1;`, so a click 60px into the line lands
+      inside it at any of the font sizes this editor offers.
+    */
+    const line = page.locator('.cm-line').first();
+    const box = (await line.boundingBox())!;
+    await page.mouse.dblclick(box.x + 60, box.y + box.height / 2);
+
+    // The layer is drawn a frame after the gesture, so wait for it rather than
+    // racing it.
+    await page.locator('.cm-selectionBackground').first().waitFor();
+
+    const painted = await page.evaluate(() => {
+      const themed = getComputedStyle(document.body)
+        .getPropertyValue('--cc-code-selection')
+        .trim();
+
+      const rects = [...document.querySelectorAll('.cm-selectionBackground')]
+        .map((rect) => ({
+          width: Math.round(rect.getBoundingClientRect().width),
+          background: getComputedStyle(rect).backgroundColor,
+        }))
+        .filter((rect) => rect.width > 0);
+
+      const activeLine = document.querySelector('.cm-activeLine');
+
+      return {
+        themed,
+        rects,
+        selected: window.getSelection()?.toString() ?? '',
+        activeLineBackground: activeLine
+          ? getComputedStyle(activeLine).backgroundColor
+          : null,
+      };
+    });
+
+    // The gesture did select the word. It always did; this pins which half of
+    // the bug is being fixed, so a regression here reads as a different fault.
+    expect(painted.selected).toBe('alpha');
+
+    /*
+      One drawn rectangle, in the theme's colour rather than CodeMirror's.
+      `--cc-code-selection` is read off the live document instead of written
+      here, so this keeps holding when the palette moves and fails only when
+      the theme stops reaching the selection at all.
+    */
+    expect(painted.rects).toHaveLength(1);
+    expect(toRgb(painted.themed)).toBe(painted.rects[0]?.background);
+
+    /*
+      And nothing opaque is drawn on top of it. The active line is a background
+      on `.cm-line`, which is in the content, which is above the layer — so an
+      alpha of 1 here is exactly the bug, whatever the colour happens to be.
+    */
+    const alpha = alphaOf(painted.activeLineBackground ?? '');
+    expect(alpha, `active line ${painted.activeLineBackground} hides the selection`)
+      .toBeLessThan(1);
   } finally {
     await app.close();
   }
@@ -209,7 +340,14 @@ test('the split placement setting puts the terminal and the editor side by side'
     await expect(sessionTerminal(page)).toBeHidden();
 
     await page.getByRole('button', { name: 'Settings' }).click();
-    await page.getByRole('button', { name: 'Editor' }).click();
+    /*
+      `exact`, because an accessible name matches as a substring by default and
+      the left rail is full of names nobody chose: a session row reads
+      `sess-01 working <branch>`, so this resolved to two elements the moment
+      the work happened on a branch with "editor" in it. The settings nav item
+      is the only control actually called `Editor`.
+    */
+    await page.getByRole('button', { name: 'Editor', exact: true }).click();
     await page.getByRole('radio', { name: 'Split' }).click();
     await page.keyboard.press('Escape');
 

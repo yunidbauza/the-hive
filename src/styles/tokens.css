@@ -172,8 +172,23 @@
   --cc-code-operator: #98a3cc;
   --cc-code-constant: #ff8d85;
   --cc-code-invalid: #ff8d85;
-  /** The active line and the selection, on the editor's own background. */
-  --cc-code-active-line: #171e3c;
+  /**
+   * The active line and the selection, on the editor's own background.
+   *
+   * `--cc-code-active-line` is **never painted at full strength.**
+   * `editor-theme.ts` mixes it down to 35% before use, because an opaque
+   * active line hides the selection underneath it — see the note there, which
+   * has the CodeMirror stacking argument in full. The value is chosen so that
+   * mix composites over `--cc-panel-2` to what this line has always looked
+   * like, which is why it reads lighter here than it does on screen.
+   *
+   * It stays a plain hex, and the transparency stays at the point of use, for
+   * a reason beyond the parser in `tests/support/css-tokens.ts`: a **user
+   * theme** supplies this colour too (`syntax.activeLine`, written straight
+   * into this variable by `lib/theme/apply.ts`), so an alpha baked in here
+   * would protect the built-in themes and nobody else's.
+   */
+  --cc-code-active-line: #202b50;
   --cc-code-selection: #2b3768;
 
   --cc-rail-w-left: 320px;
@@ -299,7 +314,9 @@ body[data-theme='light'] {
   --cc-code-operator: #73767c;
   --cc-code-constant: #b3271f;
   --cc-code-invalid: #d3372f;
-  --cc-code-active-line: #f4f9ff;
+  /* Mixed down at the point of use like the dark one, and chosen to composite
+     over the light `--cc-panel-2` to what it always looked like. */
+  --cc-code-active-line: #eef7ff;
   --cc-code-selection: #cfe3f7;
 }
 
