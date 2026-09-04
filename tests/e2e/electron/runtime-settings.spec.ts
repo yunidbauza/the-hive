@@ -29,7 +29,17 @@ const openRuntime = async (page: Page): Promise<void> => {
 };
 
 /** A config with one real project directory, and a comment the UI must not eat. */
-function seed(outputPath: (name: string) => string, shell = '/bin/sh') {
+function seed(
+  outputPath: (name: string) => string,
+  shell = '/bin/sh',
+  /**
+   * HIVE-133. A plain object rather than an imported `ContainerConfig` — this
+   * spec builds every project entry as a literal already, and this is one
+   * more optional field on the same literal rather than a new dependency on
+   * the renderer's alias map from inside the e2e bundle.
+   */
+  container?: { workspace: string; hiveDir: string },
+) {
   const repoDir = outputPath('scratch-repo');
   mkdirSync(join(repoDir, '.git'), { recursive: true });
 
@@ -43,7 +53,13 @@ function seed(outputPath: (name: string) => string, shell = '/bin/sh') {
         shell,
         claudeCommand: 'claude',
         projects: [
-          { id: 'scratch-repo', name: 'scratch-repo', path: repoDir, icon: 'ph-folder' },
+          {
+            id: 'scratch-repo',
+            name: 'scratch-repo',
+            path: repoDir,
+            icon: 'ph-folder',
+            ...(container === undefined ? {} : { container }),
+          },
         ],
       },
       null,
@@ -324,6 +340,81 @@ test('the diagnostic reports the PATH it actually searched', async ({}, testInfo
     diagnostic's own label, so it says so.
   */
   await expect(page.getByText('Searched', { exact: true })).toBeVisible();
+
+  await app.close();
+});
+
+/**
+ * The Container group (HIVE-133), driven through the real, built app.
+ *
+ * The unit suite renders `ContainerGroup` in isolation and proves its own
+ * markup; none of it proves the nesting actually resolves once the component
+ * is mounted where it really lives — a provider deep in `ProjectOverrides`
+ * inside `RuntimeSection`'s own tree — or that a commit survives a real
+ * whole-file write and comes back out through `config.reload()`'s parser.
+ * Fix round 1, Finding 4.
+ */
+test('renders the nested Container group, switches freshness, and writes an edit to disk', async ({}, testInfo) => {
+  const { configPath } = seed((name) => testInfo.outputPath(name), '/bin/sh', {
+    workspace: '/workspace',
+    hiveDir: '/hive',
+  });
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+  const page = await app.firstWindow();
+  await page.waitForSelector('header');
+
+  await openRuntime(page);
+  await page
+    .getByRole('combobox', { name: 'Project' })
+    .selectOption('scratch-repo');
+
+  // The nesting claim, verified in situ rather than in a standalone render:
+  // `SettingsGroup` only drops to `h4` and suppresses its rule when it reads
+  // `useIsNestedGroup() === true` from context — a wrong or missing provider
+  // anywhere between here and `ContainerGroup` would render `h3` instead.
+  await expect(
+    page.getByRole('heading', { name: 'Container', level: 4 }),
+  ).toBeVisible();
+
+  // The preview scrolls inside itself; the pane must never scroll
+  // horizontally (`container-command-preview.tsx`'s own comment on the
+  // element).
+  const preview = page.locator('pre', { hasText: '--settings' });
+  await expect(preview).toBeVisible();
+  await expect(preview).toHaveCSS('overflow-x', 'auto');
+
+  // The freshness control switches, and its trade-off copy changes with it.
+  await expect(
+    page.getByText(/Nothing secret is written to disk/),
+  ).toBeVisible();
+  await page.getByRole('radio', { name: 'rewrite' }).click();
+  await expect(
+    page.getByText(/resolved HIVE_HOOK_TOKEN/),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/Nothing secret is written to disk/),
+  ).not.toBeVisible();
+
+  // Editing a field reaches the file — the same round-trip the neighbouring
+  // tests in this file make for `shell` and `env`.
+  const workspace = page.getByRole('textbox', { name: 'Workspace path' });
+  await workspace.fill('/srv');
+  await workspace.press('Enter');
+
+  await expect
+    .poll(() => read(configPath).projects[0].container.workspace)
+    .toBe('/srv');
+  // The freshness switch above committed too, through the same write path.
+  await expect
+    .poll(() => read(configPath).projects[0].container.freshness)
+    .toBe('rewrite');
+  // `hiveDir` was never touched and must survive the whole-file write
+  // untouched — same "one write must not restate every field" property the
+  // top-of-file test proves for `shell`/`claudeCommand`.
+  expect(read(configPath).projects[0].container.hiveDir).toBe('/hive');
 
   await app.close();
 });

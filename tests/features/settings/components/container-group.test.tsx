@@ -307,15 +307,20 @@ describe('ContainerGroup', () => {
    * empty string a user just typed over.
    */
   describe('clearing a field restores its default rather than storing ""', () => {
-    it('restores DEFAULT_ENV_ARG when the environment argument is emptied', async () => {
+    /**
+     * Fix round 1, Finding 1: emptying `envArg` must drop the key, not bake
+     * `DEFAULT_ENV_ARG` into the file. The parser and the IPC guard both
+     * validate `container` without defaulting it, exactly so a default is
+     * never frozen into the file — writing `DEFAULT_ENV_ARG` here would look
+     * identical today but silently stop tracking a future change to that
+     * default.
+     */
+    it('drops the envArg key entirely rather than baking in DEFAULT_ENV_ARG', async () => {
       const user = userEvent.setup();
-      // A non-default template, so restoring DEFAULT_ENV_ARG is a real change
-      // and not indistinguishable from "committed the same value again".
-      const customEnvArg = { ...container, envArg: '--env {name} --value {value}' };
       render(
         <ContainerGroup
           projectId="p"
-          container={customEnvArg}
+          container={container}
           command={COMMAND}
           inheritedAlias="host.docker.internal"
         />,
@@ -325,13 +330,20 @@ describe('ContainerGroup', () => {
       await user.clear(field);
       await user.tab();
 
+      const { envArg: _droppedEnvArg, ...expected } = container;
       expect(setProjectRuntimeConfig).toHaveBeenCalledWith({
         id: 'p',
-        container: { ...customEnvArg, envArg: '-e {name}={value}' },
+        container: expected, // no `envArg` key at all
       });
     });
 
-    it('inherits the global alias when the host alias is emptied', async () => {
+    /**
+     * Fix round 1, Finding 1: emptying `hostAlias` must drop the key, not
+     * bake the *current* `receiver.hostAlias` into the file — that would be
+     * user-visible and wrong in a way the user cannot see, since a later
+     * change to the global alias would then never reach this project again.
+     */
+    it('drops the hostAlias key entirely rather than baking in the current global alias', async () => {
       const user = userEvent.setup();
       render(
         <ContainerGroup
@@ -346,10 +358,33 @@ describe('ContainerGroup', () => {
       await user.clear(field);
       await user.tab();
 
+      const { hostAlias: _droppedHostAlias, ...expected } = container;
       expect(setProjectRuntimeConfig).toHaveBeenCalledWith({
         id: 'p',
-        container: { ...container, hostAlias: 'gateway' },
+        container: expected, // no `hostAlias` key at all
       });
+    });
+
+    it('still shows the inherited alias as the field’s placeholder once the override is dropped', async () => {
+      const user = userEvent.setup();
+      render(
+        <ContainerGroup
+          projectId="p"
+          container={container}
+          command={COMMAND}
+          inheritedAlias="gateway"
+        />,
+      );
+      const field = screen.getByLabelText('Host alias');
+
+      await user.clear(field);
+      await user.tab();
+
+      // The write already asserts the key is dropped; this asserts the
+      // *display* consequence — blank now reads as "inherits gateway",
+      // which is `effective.hostAlias`'s job, unaffected by what the write
+      // path stores.
+      expect(field).toHaveAttribute('placeholder', 'gateway');
     });
 
     it('drops the probe key entirely rather than storing "" — the guard refuses an empty probe', async () => {
@@ -397,7 +432,7 @@ describe('ContainerGroup', () => {
       });
     });
 
-    it('defaults envArg and hostAlias when the file never set them, not just when they are emptied', async () => {
+    it('leaves envArg and hostAlias absent when the file never set them, even while committing a different field', async () => {
       const user = userEvent.setup();
       const bare = { workspace: '/workspace', hiveDir: '/hive' };
       render(
@@ -414,14 +449,12 @@ describe('ContainerGroup', () => {
       await user.type(field, '/srv');
       await user.tab();
 
+      // Not `envArg: '-e {name}={value}'` or `hostAlias: 'gateway'` baked
+      // in — committing `workspace` must not manufacture overrides for
+      // fields the user never touched.
       expect(setProjectRuntimeConfig).toHaveBeenCalledWith({
         id: 'p',
-        container: {
-          workspace: '/srv',
-          hiveDir: '/hive',
-          envArg: '-e {name}={value}',
-          hostAlias: 'gateway',
-        },
+        container: { workspace: '/srv', hiveDir: '/hive' },
       });
     });
   });

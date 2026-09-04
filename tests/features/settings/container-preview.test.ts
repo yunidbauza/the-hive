@@ -127,6 +127,21 @@ describe('expandPreview', () => {
     expect(line).toContain("-e HIVE_SESSION_ID='proj1'");
   });
 
+  it("escapes an embedded single quote in a value, mirroring shellQuote's POSIX idiom", () => {
+    // container-command.test.ts's own case for `expandEnvArgs`:
+    // `expandEnvArgs({ FOO: "a b'c" }, '-e {name}={value}')` →
+    // `"-e FOO='a b'\\''c'"`. `projectId` is the one value here that is not
+    // synthetic and not shape-checked, so it stands in for an arbitrary
+    // value the way `FOO` does there.
+    const line = expandPreview(
+      'docker exec -it {env} devbox claude',
+      config(),
+      "a b'c",
+    );
+
+    expect(line).toContain("HIVE_SESSION_ID='a b'\\''c'");
+  });
+
   it('always names the plugin dir under hiveDir', () => {
     const line = expandPreview(
       'docker exec -it {env} devbox claude',

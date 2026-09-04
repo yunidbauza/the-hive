@@ -27,6 +27,33 @@ const FRESHNESS_COPY: Record<ContainerFreshness, string> = {
 
 const ALIAS_INVALID = 'Not a valid hostname.';
 
+/** Every key `ContainerConfig` declares, for {@link sameContainer}. */
+const CONTAINER_KEYS = [
+  'workspace',
+  'hiveDir',
+  'envArg',
+  'probe',
+  'freshness',
+  'hostAlias',
+] as const satisfies readonly (keyof ContainerConfig)[];
+
+/**
+ * Whether two blocks are the same, field by field.
+ *
+ * Not `JSON.stringify(a) === JSON.stringify(b)`: `normalise` below rebuilds
+ * its return value by spreading a `rest` that has had `envArg`/`hostAlias`/
+ * `probe` destructured out and then conditionally re-adding them, which
+ * moves those keys to the end of the object regardless of where they sat in
+ * `container`. `JSON.stringify` is key-order-sensitive, so that reordering
+ * alone made this fire as "changed" — and therefore write — on **every**
+ * commit, even one that touched no field at all. Comparing by key sidesteps
+ * order entirely, and reading a key that is absent from one side as
+ * `undefined` is exactly the semantics "blank means inherit" needs: an
+ * omitted key and an explicit `undefined` must compare equal.
+ */
+const sameContainer = (a: ContainerConfig, b: ContainerConfig): boolean =>
+  CONTAINER_KEYS.every((key) => a[key] === b[key]);
+
 export function ContainerGroup({
   projectId,
   container,
@@ -62,14 +89,19 @@ export function ContainerGroup({
     write is otherwise completely silent, and the field would go on showing a
     value that was never saved. The draft is left alone so the user can correct
     what they typed rather than watch it disappear.
+
+    `next.hostAlias` is `undefined` whenever the field was blank —
+    `normalise` omits it rather than baking in a resolved value (see its own
+    comment) — and an absent override is always valid; `isHostAlias` is only
+    consulted for a value the user actually typed.
   */
   const commit = (next: ContainerConfig) => {
-    if (!isHostAlias(next.hostAlias)) {
+    if (next.hostAlias !== undefined && !isHostAlias(next.hostAlias)) {
       setAliasInvalid(true);
       return;
     }
     setAliasInvalid(false);
-    if (JSON.stringify(next) === JSON.stringify(container)) return;
+    if (sameContainer(next, container)) return;
     void setProjectRuntimeConfig({ id: projectId, container: next });
   };
 
@@ -86,7 +118,7 @@ export function ContainerGroup({
         setDraft({ ...draft, [key]: value });
         if (key === 'hostAlias' && aliasInvalid) setAliasInvalid(false);
       }}
-      onCommit={() => commit(normalise(draft, inheritedAlias))}
+      onCommit={() => commit(normalise(draft))}
       {...(placeholder === undefined ? {} : { placeholder })}
       hint={key === 'hostAlias' && aliasInvalid ? ALIAS_INVALID : hint}
     />
@@ -181,7 +213,7 @@ export function ContainerGroup({
                 onChange={(freshness) => {
                   const next = { ...draft, freshness };
                   setDraft(next);
-                  commit(normalise(next, inheritedAlias));
+                  commit(normalise(next));
                 }}
               />
               <span className="text-[11.5px] text-subtle">
@@ -210,28 +242,47 @@ export function ContainerGroup({
 }
 
 /**
- * Blank means inherit, never store `""` — the same three-state rule the other
- * overrides use.
+ * Blank means inherit, never store a resolved value in its place — the same
+ * three-state rule for all three optional fields, `hostAlias` included.
  *
- * `probe` is dropped from the base spread rather than merely left out of the
- * conditional add-back: once a user has typed into and then cleared the
- * field, `draft.probe` itself is the literal `""`, and spreading `...draft`
- * would bake that empty string into `next` regardless of the conditional
- * below. `isContainerProbe` refuses an empty string
- * (`config-contract.ts:667-669`), so that half-fixed shape would be a payload
- * the guard throws on — silently, since `mutate` only logs a refusal.
+ * Each of `envArg`, `hostAlias` and `probe` is dropped from the base spread
+ * rather than merely left out of its own conditional add-back: once a user
+ * has typed into and then cleared a field, `draft.<field>` itself is already
+ * the literal `""`, and spreading `...draft` would bake that empty string
+ * (or a resolved default written in its place) into `next` regardless of the
+ * conditional below. `isContainerProbe` refuses an empty string
+ * (`config-contract.ts:667-669`), so a half-fixed `probe` shape would be a
+ * payload the guard throws on — silently, since `mutate` only logs a
+ * refusal.
+ *
+ * `hostAlias` (and `envArg`) must become an **absent key**, not a resolved
+ * literal baked into the file — `DEFAULT_ENV_ARG` or `inheritedAlias` written
+ * here would freeze today's value forever. The parser and the IPC guard both
+ * validate `container` without defaulting it, exactly so a default is never
+ * frozen into the file (`config-contract.ts`'s doc comment on
+ * `ContainerConfig`: "an absent field means inherit, never empty"); baking
+ * `inheritedAlias` in at commit time would mean a later change to
+ * `receiver.hostAlias` never reaches a project whose override was "cleared"
+ * this way — the exact silent staleness the three-state contract exists to
+ * prevent. `effective`, in the component above, is where a *resolved* value
+ * belongs — for display, never for what gets written.
  */
-function normalise(draft: ContainerConfig, inheritedAlias: string): ContainerConfig {
+function normalise(draft: ContainerConfig): ContainerConfig {
   const probe = draft.probe?.trim() ?? '';
   const envArg = draft.envArg?.trim() ?? '';
   const hostAlias = draft.hostAlias?.trim() ?? '';
-  const { probe: _droppedProbe, ...rest } = draft;
+  const {
+    probe: _droppedProbe,
+    envArg: _droppedEnvArg,
+    hostAlias: _droppedHostAlias,
+    ...rest
+  } = draft;
   return {
     ...rest,
     workspace: draft.workspace.trim(),
     hiveDir: draft.hiveDir.trim(),
-    envArg: envArg === '' ? DEFAULT_ENV_ARG : envArg,
-    hostAlias: hostAlias === '' ? inheritedAlias : hostAlias,
+    ...(envArg === '' ? {} : { envArg }),
+    ...(hostAlias === '' ? {} : { hostAlias }),
     ...(probe === '' ? {} : { probe }),
   };
 }

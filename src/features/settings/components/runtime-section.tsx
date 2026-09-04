@@ -9,7 +9,6 @@ import { EnvDiagnosticView } from '@features/settings/components/env-diagnostic-
 import { EnvEditor } from '@features/settings/components/env-editor';
 import { PathSourceGroup } from '@features/settings/components/path-source-group';
 import { SettingsGroup } from '@features/settings/components/settings-group';
-import { SettingsNestingContext } from '@features/settings/components/settings-nesting';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
 import { useProjectConfig } from '@hooks/use-project-config';
 import {
@@ -498,21 +497,22 @@ function ProjectOverrides({
 
       {container === undefined ? null : (
         /*
-          The context, not a prop: `SettingsGroup` reads `useIsNestedGroup()` to
-          drop its heading to `h4` and suppress its rule. A rule under every
-          group inside this card would put four lines where the eye needs one.
+          No `SettingsNestingContext` wrap here: `ContainerGroup` establishes
+          it internally, the same way `SettingsProviderGroup` owns nesting for
+          a provider band rather than making every caller remember to wrap it
+          (`container-group.tsx`'s own comment on this). Wrapping again here
+          would be redundant, not wrong, but a redundant wrap invites exactly
+          the stale claim this comment used to make about it.
         */
-        <SettingsNestingContext value={true}>
-          <ContainerGroup
-            projectId={id}
-            container={container}
-            command={claudeCommand ?? inheritedCommand}
-            inheritedAlias={inheritedAlias}
-            {...(diagnostic?.container === undefined
-              ? {}
-              : { diagnostic: diagnostic.container })}
-          />
-        </SettingsNestingContext>
+        <ContainerGroup
+          projectId={id}
+          container={container}
+          command={claudeCommand ?? inheritedCommand}
+          inheritedAlias={inheritedAlias}
+          {...(diagnostic?.container === undefined
+            ? {}
+            : { diagnostic: diagnostic.container })}
+        />
       )}
     </div>
   );
