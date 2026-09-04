@@ -370,6 +370,16 @@ export function createNotifier(options: NotifierOptions): Notifier {
    * minutes about one idle session. Clearing the mark on dismiss would hand
    * that back, with the dismissal itself as the trigger. Recorded here so the
    * next reader does not read it as an oversight and repair it.
+   *
+   * **The arrival sweep does not clear it either, for the same reason and one
+   * more.** A sweep is a dismissal the user performed by walking back to the
+   * session, which is a stronger acknowledgement than swiping a row away, so
+   * the rule above already covers it. The additional reason is that the harm
+   * it looks like it should cause is unreachable: Claude Code arms its idle
+   * timer **once per idle stretch** and re-arms it only when the turn state
+   * changes, so any later `idle_prompt` is necessarily preceded by a
+   * `UserPromptSubmit` — which clears this mark before the prompt can be
+   * suppressed by it. There is no forgotten session hiding behind this set.
    */
   const announcedInputNeeded = new Set<string>();
 
@@ -583,9 +593,12 @@ export function createNotifier(options: NotifierOptions): Notifier {
      * first divergence would leave a row about a session that answered ten
      * minutes ago.
      *
-     * `hasEnded` is inside that predicate too, so a session that was blocked
-     * when it terminated — or was handed to `/done` — takes its row with it
-     * instead of leaving one whose click opens a session that is gone.
+     * A session that was blocked when it **ended** takes its row with it, so no
+     * row is left whose click opens a session that is gone. Not via `hasEnded`,
+     * which `stillRelevant`'s blocked branch does not consult — that branch is
+     * the bare `status === 'waiting'`, and `terminated` and `done` are simply
+     * not `waiting`. The `/done` route reaches it too: `finishedEvent` calls
+     * this function with `status: 'done'`.
      */
     if (blockedRaised.has(entityId) && !stillRelevant('session.blocked', status, event)) {
       blockedRaised.delete(entityId);
@@ -675,12 +688,25 @@ export function createNotifier(options: NotifierOptions): Notifier {
       });
 
       /*
-        No row, so nothing to sweep later. `null` is the hub saying the kind is
-        switched off or the event was a duplicate; leaving the mark set would
-        cost one buffer scan that can never match, on a session whose next
-        block would set it again anyway.
+        No row, so nothing to sweep later.
+
+        **Guarded on the kind**, and it has to be. Unguarded, a `null` raise of
+        *any* kind wiped the block mark — and that is reachable, not
+        theoretical: an answered `Elicitation` leaves its block under `UNPAIRED`
+        with no tool name to pair against, so the tracker keeps reporting
+        `waiting`; the `idle_prompt` that follows raises `session.input_needed`;
+        and if the user has switched that kind off, `raise` answers `null`. The
+        genuinely blocked row would then have lost the mark that sweeps it, and
+        nothing but a hand could clear it.
+
+        `off` is also the *only* way to get `null` here. The dedup path cannot
+        produce one for this producer: session rows pass no
+        `NotificationInput.id`, so the hub mints a unique one every time and
+        `seen` can never match.
       */
-      if (raised === null) blockedRaised.delete(entityId);
+      if (kind === 'session.blocked' && raised === null) {
+        blockedRaised.delete(entityId);
+      }
 
       /*
         Remember it if, and only if, it was gated — `unread: false` off a raise

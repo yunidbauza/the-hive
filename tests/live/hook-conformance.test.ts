@@ -317,6 +317,20 @@ const IDLE_PROMPT_DEADLINE = IDLE_PROMPT_AFTER + 45;
 const RACY_BELOW = 60;
 
 /**
+ * The per-scenario Vitest budget: the longest run this file can ask for, plus
+ * room for the spawn, the assertions and the teardown.
+ *
+ * Derived rather than the flat 300_000 it was, because that number was chosen
+ * when the longest deadline was a hard-coded 105s. Now that the idle-prompt
+ * scenario's deadline follows the machine's own threshold, a fixed timeout
+ * silently caps it: at `messageIdleNotifThresholdMs` of 255s or more the run
+ * would be killed mid-wait and reported as an opaque Vitest timeout — the
+ * *precise* failure mode `RACY_BELOW` exists to keep out of this file, arriving
+ * through the other end of the same range.
+ */
+const SCENARIO_TIMEOUT_MS = (IDLE_PROMPT_DEADLINE + 75) * 1000;
+
+/**
  * What the dock badge should read at the end of a run.
  *
  * Not simply `kinds.length` any more, and the difference is the point: the
@@ -562,7 +576,7 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
 
   it.each(scenarios)(
     '$scenario: reports $status',
-    { timeout: 300_000 },
+    { timeout: SCENARIO_TIMEOUT_MS },
     async ({
       prompt,
       type: expectedType,

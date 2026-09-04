@@ -1455,6 +1455,72 @@ describe('a row dismisses itself once it has been acted on', () => {
       expect(dismissForSession).toHaveBeenCalledTimes(1);
     });
 
+    /**
+     * The un-mark is guarded on the kind, and this is the run that needs it.
+     *
+     * An answered `Elicitation` leaves its block under `UNPAIRED` with no tool
+     * name to pair against, so the tracker keeps reporting `waiting`. The
+     * `idle_prompt` that follows raises `session.input_needed` — and a user who
+     * has switched that kind off gets a `null` back. Unguarded, that `null`
+     * wiped the mark belonging to a block that is still live, and the row
+     * became unsweepable: the `UserPromptSubmit` that should have cleared it
+     * would find nothing marked.
+     */
+    it('keeps the block mark when a different kind is the one refused', () => {
+      dismissForeground = vi.fn();
+      dismissForSession = vi.fn();
+      // `session.blocked` raises a row; the `input_needed` behind it is off.
+      raise.mockImplementation((input: { kind: string }) =>
+        input.kind === 'session.blocked' ? { id: 'raised', unread: true } : null,
+      );
+      hub = {
+        raise,
+        list: () => [],
+        markRead: () => undefined,
+        clear: () => undefined,
+        promote: vi.fn(() => true),
+        dismissForeground,
+        dismissForSession,
+      } as unknown as NotificationHub;
+      const n = createNotifier({ hub, isForeground: () => false });
+
+      n.observe(CH.sessionStatus, block('sess-05'));
+      // Still `waiting` — the elicitation's block was never paired away.
+      n.observe(CH.sessionStatus, {
+        entityId: 'sess-05',
+        status: 'waiting',
+        event: 'Notification',
+        notificationType: 'idle_prompt',
+      });
+      // The user types, which is what clears `blocked` wholesale.
+      n.observe(CH.sessionStatus, {
+        entityId: 'sess-05',
+        status: 'working',
+        event: 'UserPromptSubmit',
+      });
+
+      expect(dismissForSession).toHaveBeenCalledWith('sess-05', ['session.blocked']);
+    });
+
+    /**
+     * `supersedeKey` keeps at most one `session.blocked` row per session, which
+     * is what makes a boolean mark sound rather than a count.
+     */
+    it('sweeps once after a second block replaced the first', () => {
+      const n = withSweeps();
+
+      n.observe(CH.sessionStatus, block('sess-05'));
+      n.observe(CH.sessionStatus, block('sess-05'));
+      n.observe(CH.sessionStatus, {
+        entityId: 'sess-05',
+        status: 'working',
+        event: 'PostToolUse',
+      });
+
+      expect(dismissForSession).toHaveBeenCalledTimes(1);
+      expect(dismissForSession).toHaveBeenCalledWith('sess-05', ['session.blocked']);
+    });
+
     /** Nothing blocked, nothing to sweep — the buffer is never scanned. */
     it('never asks about a session that has not blocked', () => {
       const n = withSweeps();
