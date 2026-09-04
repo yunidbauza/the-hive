@@ -99,6 +99,12 @@ export interface ProjectConfig {
    * overwritten.
    */
   env?: Record<string, string>;
+  /**
+   * Present means every session for this project runs inside the container
+   * `claudeCommand` addresses (HIVE-133). Absent means a host session, whose
+   * spawn is byte-identical to what it was before this key existed.
+   */
+  container?: ContainerConfig;
 }
 
 /**
@@ -518,6 +524,104 @@ export const DEFAULT_FRESHNESS: ContainerFreshness = 'exec-env';
 
 /** Where a container project's expanded environment goes in its command line. */
 export const ENV_PLACEHOLDER = '{env}';
+
+/** The commonest spelling, and the one the settings placeholder shows. */
+export const DEFAULT_ENV_ARG = '-e {name}={value}';
+
+/**
+ * A project whose sessions run inside a container (HIVE-133).
+ *
+ * Its **presence is the switch** — there is no `enabled` flag. Every field is a
+ * string or an enum so a BYO runtime nobody has thought of yet needs
+ * configuration rather than code.
+ *
+ * This is the **file** shape: only `workspace` and `hiveDir` are required, and
+ * an absent field means "inherit", never "empty". `parse.ts` validates it and
+ * deliberately does not default it — `ParsedConfig` reports what the file said
+ * and the caller applies defaults, exactly as it does for `shell` and
+ * `subscriptionAuth`. {@link ResolvedContainer} is what a spawn actually uses,
+ * and `effectiveRuntime` is what turns one into the other.
+ *
+ * Hive never starts, stops or names a container. The name lives only inside
+ * `claudeCommand`, which is why {@link ContainerConfig.probe} exists rather
+ * than a `name` key.
+ */
+export interface ContainerConfig {
+  /**
+   * Container-side path of `project.path`.
+   *
+   * The host side is already known, so this is one field rather than a pair.
+   */
+  workspace: string;
+  /**
+   * Container-side path of `<userData>/hive`.
+   *
+   * Required, and the reason acceptance criterion 2 is reachable at all:
+   * `--settings`, `--mcp-config` and `--plugin-dir` all name paths under this
+   * directory and none is under {@link workspace}. The user mounts it; this
+   * says where it landed.
+   */
+  hiveDir: string;
+  /**
+   * How one variable is spelled, expanded at `{env}` in `claudeCommand`.
+   *
+   * A template so podman, devcontainer, sbx and anything else spell env
+   * injection their own way.
+   */
+  envArg?: string;
+  /**
+   * A command that must exit 0 before a session starts.
+   *
+   * Absent means no precondition. Its failure is reported with the runtime's
+   * own stderr, which names the container in the runtime's words — Hive cannot,
+   * because nothing here knows the name.
+   */
+  probe?: string;
+  /** See {@link ContainerFreshness}. Absent inherits {@link DEFAULT_FRESHNESS}. */
+  freshness?: ContainerFreshness;
+  /** Overrides `receiver.hostAlias`. Absent inherits it. */
+  hostAlias?: string;
+}
+
+/**
+ * The same block with every default applied — what a spawn actually uses.
+ *
+ * Produced by `effectiveRuntime`, which is the only layer that can: `hostAlias`
+ * falls back to `receiver.hostAlias`, and `resolveProject` sees one raw entry
+ * and never the receiver.
+ */
+export interface ResolvedContainer {
+  workspace: string;
+  hiveDir: string;
+  envArg: string;
+  probe?: string;
+  freshness: ContainerFreshness;
+  hostAlias: string;
+}
+
+/**
+ * The rules `config/parse.ts` and `guards.ts` **both** apply to a container block.
+ *
+ * One spelling each, deliberately shared, exactly as {@link isHostAlias} is. The
+ * set the file reader accepts and the set the IPC guard accepts have to be one
+ * set, or the settings pane stores a value that vanishes on the next load.
+ *
+ * The two callers still differ where they should: the reader reports and drops a
+ * bad block because a hand-edited file is a user mid-edit, and the guard throws
+ * because an IPC payload is either what the pane built or has no business being
+ * written. That difference is in the error handling, not in the rules.
+ */
+export const isAbsoluteContainerPath = (value: unknown): value is string =>
+  typeof value === 'string' && value.trim() !== '' && value.startsWith('/');
+
+/** A template is useless without both placeholders — it would inject nothing. */
+export const isEnvArgTemplate = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  value.includes('{name}') &&
+  value.includes('{value}');
+
+export const isContainerFreshness = (value: unknown): value is ContainerFreshness =>
+  value === 'exec-env' || value === 'rewrite';
 
 /** One DNS label: alphanumeric, inner hyphens allowed, no leading or trailing one. */
 const HOST_ALIAS_LABEL = /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/;

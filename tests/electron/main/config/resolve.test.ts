@@ -246,3 +246,11 @@ describe('resolveProjects — keys', () => {
     for (const key of keys) expect(key).toMatch(/^[a-z]{2,4}$/);
   });
 });
+
+describe('resolveProject — container', () => {
+  it('carries a container block onto the resolved project (HIVE-133)', () => {
+    const container = { workspace: '/workspace', hiveDir: '/hive' };
+    const resolved = resolveProject({ id: 'a', path: '~/a', container });
+    expect(resolved.container).toEqual(container);
+  });
+});
