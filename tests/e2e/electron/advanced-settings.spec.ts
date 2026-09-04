@@ -207,3 +207,68 @@ test('cancelling the confirmation leaves the file alone', async ({}, testInfo) =
 
   await app.close();
 });
+
+/**
+ * HIVE-131's Containers group.
+ *
+ * The seed names no `receiver` block, so the value on screen can only have come
+ * from `DEFAULT_RECEIVER` travelling the whole read path — parse, resolve,
+ * `config:get`, snapshot — which no unit test exercises end to end.
+ */
+test('the Containers group shows the resolved host alias', async ({}, testInfo) => {
+  const { configPath } = seed((name) => testInfo.outputPath(name));
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+  const page = await app.firstWindow();
+  await page.waitForSelector('header');
+
+  await openAdvanced(page);
+
+  await expect(
+    page.getByRole('heading', { name: 'Containers', level: 3 }),
+  ).toBeVisible();
+
+  const field = page.getByLabel('Host alias');
+  await expect(field).toBeVisible();
+  await expect(field).toHaveValue('host.docker.internal');
+  await expect(field).toBeEditable();
+
+  await app.close();
+});
+
+/**
+ * The write half, and the only test that drives the whole chain: renderer →
+ * preload → `config:set-receiver` → `assertHostAlias` → `writeConfig` → disk.
+ *
+ * The file's other keys are asserted afterwards because this verb spreads the
+ * document rather than rebuilding it — a comment and a key this build does not
+ * know must both survive a save, which is the promise every settings verb makes.
+ */
+test('typing an alias writes it to the file and preserves the rest', async ({}, testInfo) => {
+  const { configPath } = seed((name) => testInfo.outputPath(name));
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+  const page = await app.firstWindow();
+  await page.waitForSelector('header');
+
+  await openAdvanced(page);
+
+  const field = page.getByLabel('Host alias');
+  await field.fill('host.containers.internal');
+  await field.press('Enter');
+
+  await expect
+    .poll(() => (read(configPath).receiver as Record<string, unknown>)?.hostAlias)
+    .toBe('host.containers.internal');
+
+  const after = read(configPath);
+  expect(after['//mine']).toBe('a comment reset is allowed to eat');
+  expect(after.futureKey).toBe('something this build does not know');
+  expect((after.projects as unknown[]).length).toBe(1);
+
+  await app.close();
+});
