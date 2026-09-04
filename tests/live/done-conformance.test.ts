@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 
 import {
+  HOOK_ENV_RECEIVER_URL,
   HOOK_ENV_SESSION,
   HOOK_ENV_TOKEN,
 } from '../../electron/shared/hook-contract';
@@ -149,6 +150,18 @@ describe.skipIf(!enabled)('/done conformance', () => {
         {
           [HOOK_ENV_SESSION]: ENTITY,
           [HOOK_ENV_TOKEN]: receiver.tokenFor(ENTITY),
+          /*
+            The third variable a real launch hands a session — `envFor` sets all
+            three together — and required since HIVE-132 made `/done` read its
+            origin from the environment rather than baking one.
+
+            Set explicitly rather than left to the ambient environment, which
+            matters more than it looks: this suite spreads `process.env`, so a
+            developer running it *inside* a Hive session would otherwise inherit
+            that app's receiver and POST this test's token to it. The symptom is
+            a 403 that blames the token and says nothing about the URL.
+          */
+          [HOOK_ENV_RECEIVER_URL]: receiver.origin as string,
         },
       );
 
@@ -183,6 +196,13 @@ describe.skipIf(!enabled)('/done conformance', () => {
         {
           [HOOK_ENV_SESSION]: 'sess-not-ours',
           [HOOK_ENV_TOKEN]: receiver.tokenFor('sess-not-ours'),
+          /*
+            Pointed at *this* receiver, which is what makes the assertion below
+            mean anything: without it the request goes wherever the ambient
+            environment says, and an empty `declared` would prove only that the
+            command missed this suite's socket entirely.
+          */
+          [HOOK_ENV_RECEIVER_URL]: receiver.origin as string,
         },
       );
 

@@ -2,6 +2,7 @@ import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
+  type HookIdentity,
   HOOK_ENV_SESSION,
   HOOK_ENV_TOKEN,
   HOOK_EVENTS,
@@ -97,6 +98,8 @@ export const AGENT_SETTINGS_FILE = join(
   'claude-agent.settings.json',
 );
 
+export type { HookIdentity } from '@shared/hook-contract';
+
 export interface HookSettings {
   hooks: Record<string, unknown[]>;
   statusLine?: {
@@ -187,16 +190,31 @@ const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)
  * them — a hook whose headers silently arrive as the literal strings `$VAR` is
  * a receiver that answers 403 to everything, which is a confusing way to
  * discover a missing field.
+ *
+ * `identity` inverts exactly that, and only for `rewrite` freshness — see
+ * {@link HookIdentity}. Omitted, this emits the bytes it always has, which is
+ * what makes a host session's file and an `exec-env` container's file the same
+ * code path differing by their URL alone.
  */
-export function hookSettings(url: string, readyUrl?: string): HookSettings {
+export function hookSettings(
+  url: string,
+  readyUrl?: string,
+  identity?: HookIdentity,
+): HookSettings {
   const handler = {
     type: 'http',
     url,
     headers: {
-      [HOOK_HEADER_SESSION]: `$${HOOK_ENV_SESSION}`,
-      [HOOK_HEADER_TOKEN]: `$${HOOK_ENV_TOKEN}`,
+      [HOOK_HEADER_SESSION]: identity?.session ?? `$${HOOK_ENV_SESSION}`,
+      [HOOK_HEADER_TOKEN]: identity?.token ?? `$${HOOK_ENV_TOKEN}`,
     },
-    allowedEnvVars: [HOOK_ENV_SESSION, HOOK_ENV_TOKEN],
+    /*
+      Only when there is something left to interpolate. With the values already
+      baked, naming them here would claim an interpolation that never happens.
+    */
+    ...(identity === undefined
+      ? { allowedEnvVars: [HOOK_ENV_SESSION, HOOK_ENV_TOKEN] }
+      : {}),
     /**
      * Short, and shorter than the hook system's default.
      *
@@ -225,7 +243,23 @@ export function hookSettings(url: string, readyUrl?: string): HookSettings {
   const ready =
     readyUrl === undefined
       ? []
-      : [{ matcher: '*', hooks: [{ type: 'command', command: readyCommand(readyUrl) }] }];
+      : [
+          {
+            matcher: '*',
+            hooks: [
+              {
+                type: 'command',
+                /*
+                  The identity rides along here too. This is a `command` hook,
+                  so its `$VAR`s are the *shell's* rather than Claude Code's
+                  `allowedEnvVars` — and a stale container environment breaks
+                  `/ready` exactly the way it breaks the http hooks (HIVE-132).
+                */
+                command: readyCommand(readyUrl, identity),
+              },
+            ],
+          },
+        ];
 
   return {
     hooks: Object.fromEntries(
@@ -269,9 +303,10 @@ export function hookSettings(url: string, readyUrl?: string): HookSettings {
 export function agentSettings(
   url: string,
   readyUrl?: string,
+  identity?: HookIdentity,
 ): HookSettings & { permissions: { ask: string[] } } {
   return {
-    ...hookSettings(url, readyUrl),
+    ...hookSettings(url, readyUrl, identity),
     /*
       Measured against claude 2.1.251: `permissions.ask` is the only thing that
       makes a permission check fire under `-p`, and `*` is valid there (it is
@@ -366,19 +401,28 @@ export function statusLineSettings(scriptPath: string): HookSettings['statusLine
  * `-m 5` bounds the whole request. This runs on a 30-second timer per live
  * session; a hung connection must not accumulate.
  */
-export function metricsScript(url: string): string {
+export function metricsScript(url: string, identity?: HookIdentity): string {
+  /*
+    The two guards exist to stop `curl` POSTing an unattributable body the
+    receiver answers 400 to. With the values baked in they can never be empty,
+    so keeping them would leave two dead lines in a generated file (HIVE-132).
+  */
+  const guards =
+    identity === undefined
+      ? `[ -n "$${HOOK_ENV_SESSION}" ] || exit 0\n[ -n "$${HOOK_ENV_TOKEN}" ] || exit 0\n\n`
+      : '';
+  const session = identity?.session ?? `$${HOOK_ENV_SESSION}`;
+  const token = identity?.token ?? `$${HOOK_ENV_TOKEN}`;
+
   return `#!/bin/sh
 # The Hive — session usage reporter. Written per launch; do not edit.
 # Reads Claude Code's status line payload on stdin, forwards it to the app, and
 # prints nothing so no status line is rendered. See electron/main/hooks/settings.ts.
-[ -n "$${HOOK_ENV_SESSION}" ] || exit 0
-[ -n "$${HOOK_ENV_TOKEN}" ] || exit 0
-
-curl -s -m 5 -o /dev/null \\
+${guards}curl -s -m 5 -o /dev/null \\
   -X POST ${shellQuote(url)} \\
   -H 'content-type: application/json' \\
-  -H "${HOOK_HEADER_SESSION}: $${HOOK_ENV_SESSION}" \\
-  -H "${HOOK_HEADER_TOKEN}: $${HOOK_ENV_TOKEN}" \\
+  -H "${HOOK_HEADER_SESSION}: ${session}" \\
+  -H "${HOOK_HEADER_TOKEN}: ${token}" \\
   --data-binary @- 2>/dev/null
 
 exit 0

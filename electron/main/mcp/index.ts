@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import type { McpServerSpec } from './agent-config';
+import type { StdioServerSpec } from './agent-config';
 import { hiveServerSpec, writeMcpConfig } from './config';
 import { MCP_CONFIG_FILE } from './paths';
 
@@ -41,7 +41,7 @@ export interface McpRuntime {
    * file could not be written, this process cannot serve ledger tools at all
    * and a per-agent file naming it would be a lie.
    */
-  hiveServerSpec(): McpServerSpec | null;
+  hiveServerSpec(): StdioServerSpec | null;
 }
 
 export interface McpRuntimeOptions {
@@ -99,7 +99,7 @@ export function createMcpRuntime({
       return written ? path : null;
     },
 
-    hiveServerSpec(): McpServerSpec | null {
+    hiveServerSpec(): StdioServerSpec | null {
       return written ? hiveServerSpec({ execPath, scriptPath }) : null;
     },
   };
@@ -107,4 +107,8 @@ export function createMcpRuntime({
 
 export { mcpConfig, writeMcpConfig } from './config';
 export { MCP_CONFIG_FILE, AGENT_MCP_DIR, agentMcpConfigFile } from './paths';
-export { agentMcpConfig, type McpServerSpec } from './agent-config';
+export {
+  agentMcpConfig,
+  type McpServerSpec,
+  type StdioServerSpec,
+} from './agent-config';

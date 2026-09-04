@@ -1,4 +1,5 @@
 import type { AgentsDirectory } from '@shared/agent-contract';
+import { DEFAULT_RECEIVER } from '@shared/config-contract';
 import {
   HOOK_ENV_RECEIVER_URL,
   HOOK_ENV_SESSION,
@@ -9,8 +10,14 @@ import {
 } from '@shared/hook-contract';
 import type { SessionMetrics } from '@shared/metrics-contract';
 
+import {
+  containerOrigins,
+  sweepSessionContainerFiles,
+  writeSharedContainerFiles,
+} from '../container/generated';
 import type { Ledger } from '../ledger';
 
+import { withHostAlias } from './container-origin';
 import { createReceiver, type Receiver } from './receiver';
 import { writeAgentSettings, writeHookSettings } from './settings';
 
@@ -56,6 +63,25 @@ export interface HookRuntimeOptions {
    * (Claude Code drops its footer key hints) and the hooks have none.
    */
   sessionMetrics?: () => boolean;
+  /**
+   * The hostname a container reaches this machine by (HIVE-132).
+   *
+   * A getter for the same reason {@link HookRuntimeOptions.sessionMetrics} is:
+   * the config can be reloaded, and a value captured at construction would pin
+   * whatever it said at boot. Injected rather than read from `../config`
+   * directly, which is what keeps this runtime's job the receiver's lifecycle
+   * and nothing else.
+   *
+   * **A reload does not rewrite the files already on disk.** This is read once
+   * per `start()` for the generated set, and live by
+   * {@link HookRuntime.containerOrigin}. So after a reload that changes the
+   * alias, a containerised session would reach the receiver over MCP at the new
+   * one while its hook settings still name the old — ledger calls working,
+   * status and inbox events going nowhere. Rewriting the set on
+   * `config:reload` belongs with the story that makes anything read it
+   * (HIVE-133); until then nothing consumes either value in production.
+   */
+  hostAlias?: () => string;
   /** Overridable for tests; `0` asks the OS for a free port. */
   port?: number;
 }
@@ -167,11 +193,28 @@ export interface HookRuntime {
    * that curls an address nobody is listening on.
    */
   doneUrl(): string | null;
+  /**
+   * The receiver's origin as a *container* must address it, or `null` before
+   * the bind (HIVE-132).
+   *
+   * Read by the spawn path HIVE-133 adds, to put in `HIVE_RECEIVER_URL` for a
+   * containerised session. A getter beside {@link HookRuntime.doneUrl} rather
+   * than something folded into {@link HookRuntime.envFor}, because nothing here
+   * knows which sessions are containerised — that is deliberately HIVE-133's
+   * decision, and a host session's environment has to stay exactly what it is.
+   */
+  containerOrigin(): string | null;
   stop(): Promise<void>;
 }
 
 export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
-  const { userDataPath, port, sessionMetrics = () => true, ledger } = options;
+  const {
+    userDataPath,
+    port,
+    sessionMetrics = () => true,
+    hostAlias = () => DEFAULT_RECEIVER.hostAlias,
+    ledger,
+  } = options;
 
   let receiver: Receiver | null = null;
   let settingsPath: string | null = null;
@@ -288,6 +331,78 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
         settingsPath = newSettingsPath;
         agentSettingsPath = newAgentSettingsPath;
         receiver = created;
+
+        /*
+          The container-flavoured set, beside the host one. Written
+          unconditionally and cheaply: nothing here knows whether any session is
+          containerised, and a set that exists costs four small files while a
+          set that does not exist costs a containerised session every route it
+          has — the status dot, the inbox, the gauges and `/done` (HIVE-132).
+
+          Unlike the two writes above, a failure here does *not* take the socket
+          down. Those files are what every host session depends on; these are
+          what no host session touches, so the honest failure is a log and a
+          receiver that still works for everyone it already worked for.
+
+          The sweep runs first and keeps nothing: `start()` is a fresh launch,
+          so every per-session directory under it is an orphan of a previous one
+          — and each holds a resolved token that a new `launchSecret` has
+          already invalidated.
+        */
+        /*
+          Its own `try`, ahead of the write and never blocking it. `rm` with
+          `force` swallows a missing path but not `EPERM` or `EBUSY`, and a
+          single undeletable orphan must not be the reason this launch has no
+          container set at all — that would be a cleanup task blocking the work,
+          reported under a message about the work.
+
+          `[]` keeps nothing, and that is correct *here* rather than in general:
+          `start()` runs once per app launch, before any session is spawned, so
+          every directory under it belongs to a previous launch — and each holds
+          a token that this launch's new `launchSecret` has already invalidated.
+          A caller that ran this with sessions live would have to pass them.
+        */
+        try {
+          await sweepSessionContainerFiles(userDataPath, []);
+        } catch (cause) {
+          console.info(
+            `[hive] stale container session files could not be swept (${String(cause)})`,
+          );
+        }
+
+        try {
+          if (created.origin === null) {
+            /*
+              No origin means no honest container set: every URL in it is built
+              from one. `envFor` handles the same case by omitting
+              `HIVE_RECEIVER_URL` rather than substituting `url`, whose `/hook`
+              suffix would make the MCP endpoint `…/hook/mcp` — a 404 on every
+              call, with nothing anywhere to say why.
+            */
+            throw new Error('the receiver bound without an origin');
+          }
+
+          await writeSharedContainerFiles(
+            userDataPath,
+            containerOrigins(
+              {
+                url,
+                origin: created.origin,
+                ...(sessionMetrics() && created.metricsUrl !== null
+                  ? { metricsUrl: created.metricsUrl }
+                  : {}),
+                ...(created.readyUrl === null
+                  ? {}
+                  : { readyUrl: created.readyUrl }),
+              },
+              hostAlias(),
+            ),
+          );
+        } catch (cause) {
+          console.info(
+            `[hive] the container-flavoured files could not be written — a containerised session would start without them (${String(cause)})`,
+          );
+        }
       } catch (cause) {
         /**
          * A receiver nobody can be told about is worse than none: it holds a
@@ -317,6 +432,20 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       const running = receiver;
       if (running === null || settingsPath === null) return null;
       return running.doneUrl;
+    },
+
+    containerOrigin(): string | null {
+      /*
+        Gated on the receiver alone, not on `settingsPath`: what this answers is
+        "where would a container address this machine", which is true as soon as
+        the socket is bound and independent of whether the *host* set was
+        written. The container set has its own files and its own failure.
+      */
+      const running = receiver;
+
+      if (running === null || running.origin === null) return null;
+
+      return withHostAlias(running.origin, hostAlias());
     },
 
     envFor(entityId): Record<string, string> {

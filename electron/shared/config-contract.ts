@@ -493,6 +493,29 @@ export const DEFAULT_RECEIVER: ReceiverConfig = {
 /** The block's keys, for the parser's exact-key check. */
 export const RECEIVER_KEYS: readonly (keyof ReceiverConfig)[] = ['hostAlias'];
 
+/**
+ * How a containerised session's `${VAR}` references get their values (HIVE-132).
+ *
+ * `exec-env` — `docker exec -e …` and friends. Env is per-exec, so every launch
+ * carries current values, `${VAR}` works as designed, and the generated file
+ * holds no secret: it can be mounted read-only or baked into an image.
+ *
+ * `rewrite` — reattach-model tools whose env is fixed at container creation and
+ * therefore goes stale. `tokenFor` is `HMAC(launchSecret, id)` and
+ * `launchSecret` is minted per receiver, so *every* token changes when the Hive
+ * restarts; a reattached sandbox holding creation-time env 403s on every call.
+ * The host writes resolved files per session instead, which puts a real token
+ * on disk inside the container — the trade this mode exists to make.
+ *
+ * Declared here rather than in `main/` because HIVE-133's per-project
+ * `container.freshness` field is the same enum, and two spellings of one
+ * vocabulary is how they drift.
+ */
+export type ContainerFreshness = 'exec-env' | 'rewrite';
+
+/** Secret-free and correct for every non-reattach runtime. */
+export const DEFAULT_FRESHNESS: ContainerFreshness = 'exec-env';
+
 /** One DNS label: alphanumeric, inner hyphens allowed, no leading or trailing one. */
 const HOST_ALIAS_LABEL = /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/;
 

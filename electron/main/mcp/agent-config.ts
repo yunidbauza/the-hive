@@ -1,6 +1,8 @@
 import { MCP_SERVER_NAME } from '@shared/mcp-contract';
 import { SLACK_SERVER_KEY, slackServerSpec } from '@shared/slack-contract';
 
+import type { HttpServerSpec } from './container-config';
+
 /**
  * The `--mcp-config` file for an agent that names an integration (HIVE-123).
  *
@@ -15,11 +17,20 @@ import { SLACK_SERVER_KEY, slackServerSpec } from '@shared/slack-contract';
  */
 
 /** The stdio descriptor `mcp/config.ts` builds for the hive server. */
-export interface McpServerSpec {
+export interface StdioServerSpec {
   command: string;
   args: string[];
   env: Record<string, string>;
 }
+
+/**
+ * Either transport the hive server is delivered over.
+ *
+ * A union rather than stdio alone because a containerised run reaches the
+ * receiver over HTTP (HIVE-132) — this module serialises whichever descriptor
+ * it is handed and needs to know nothing else about it.
+ */
+export type McpServerSpec = StdioServerSpec | HttpServerSpec;
 
 /**
  * An integration name from `def.mcp` → its server descriptor.

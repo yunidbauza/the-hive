@@ -1,7 +1,11 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 
-import { doneCommand } from '../../../../electron/shared/hook-contract';
+import {
+  DONE_PATH,
+  HOOK_ENV_RECEIVER_URL,
+  doneCommand,
+} from '../../../../electron/shared/hook-contract';
 import { RESERVED_SKILL_NAME } from '../../../../electron/shared/skills-contract';
 
 import { doneSkill } from '../../../../electron/main/skills/done-skill';
@@ -87,7 +91,7 @@ describe('doneSkill', () => {
     });
 
     it('authorises exactly the command it runs, in its own frontmatter', () => {
-      const command = doneCommand(DONE_URL);
+      const command = doneCommand();
 
       /*
         Read back **through** the quoting, so this asserts the value a parser
@@ -147,5 +151,27 @@ describe('doneSkill', () => {
       */
       expect(body).toContain(`name: ${RESERVED_SKILL_NAME}`);
     });
+  });
+});
+
+describe('doneCommand — reaching the receiver from anywhere (HIVE-132)', () => {
+  it('addresses the receiver through the environment, not a baked origin', () => {
+    expect(doneCommand()).toContain(`"$${HOOK_ENV_RECEIVER_URL}${DONE_PATH}"`);
+  });
+
+  it('bakes no host, so the same plugin dir serves a container', () => {
+    expect(doneCommand()).not.toContain('127.0.0.1');
+  });
+
+  it('still grants the exact command it runs, never a prefix', () => {
+    const body = doneSkill('http://127.0.0.1:51234/done');
+
+    expect(body).toContain(`Bash(${doneCommand()})`);
+    expect(body).toContain(doneCommand());
+    expect(body).not.toContain(`Bash(${doneCommand()}:*)`);
+  });
+
+  it('is still inert when there is no receiver', () => {
+    expect(doneSkill(null)).not.toContain('curl');
   });
 });

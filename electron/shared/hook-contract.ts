@@ -310,6 +310,26 @@ export const HOOK_HEADER_TOKEN = 'x-hive-token';
  */
 export const HOOK_HEADER_RUN = 'x-hive-run';
 
+/**
+ * A session's identity, resolved rather than referenced (HIVE-132).
+ *
+ * Every generated artifact normally carries `$HIVE_SESSION_ID` and
+ * `$HIVE_HOOK_TOKEN` and lets the launching process substitute them. That fails
+ * for a container whose environment was fixed at creation time and has since
+ * gone stale — `tokenFor` is keyed on a launch secret minted per receiver, so
+ * *every* token changes when the app restarts. `rewrite` freshness resolves the
+ * two into the files instead, which is why this shape exists.
+ *
+ * Declared here because three separate emitters need it — the hook settings,
+ * the status line script and this file's own command builders — and a type
+ * defined beside one of them would make the other two import across a seam
+ * that does not otherwise exist.
+ */
+export interface HookIdentity {
+  session: string;
+  token: string;
+}
+
 /** The environment variable each session's pty carries its Hive id in. */
 export const HOOK_ENV_SESSION = 'HIVE_SESSION_ID';
 
@@ -386,9 +406,33 @@ export const DONE_PATH = '/done';
  * instead of vanishing. `--fail` makes a 4xx a non-zero exit for the same
  * reason, so a session whose token went stale reports it rather than appearing
  * to succeed and never closing.
+ *
+ * ## Why the URL is a variable and not baked in (HIVE-132)
+ *
+ * A containerised session cannot reach the loopback origin a host session would
+ * bake, and the plugin directory is **one** directory shared by every session —
+ * so a baked URL would force a second plugin root and a second copy of
+ * `writePluginDir`'s regenerate-and-prune machinery, to vary one line of one
+ * file. {@link HOOK_ENV_RECEIVER_URL} is already in every pty for the MCP host,
+ * so reading it here adds nothing to the environment and lets one directory
+ * serve the host and container flavours both.
+ *
+ * Quoted, because the shell substitutes the value and a URL must stay a single
+ * word. The grant and the body still derive from this one builder, so they
+ * cannot drift into a permission prompt inside the app's own built-in.
+ *
+ * **This solves the `exec-env` container and not the `rewrite` one.** Every
+ * other generated artifact can bake a resolved identity for a container whose
+ * environment has gone stale; this one cannot, because the plugin directory is
+ * shared by every session and the body has nowhere per-session to differ. A
+ * reattached `rewrite` container therefore runs `/done` against a creation-time
+ * origin and token, `--fail` makes that a non-zero exit, and the session does
+ * not close. That is a known gap, not an oversight: closing it needs a
+ * per-session plugin directory, which is a cost this story declined to pay for
+ * one line of one file. See `ContainerFreshness`.
  */
-export const doneCommand = (url: string): string =>
-  `curl -sS --fail -m 5 -X POST ${url}` +
+export const doneCommand = (): string =>
+  `curl -sS --fail -m 5 -X POST "$${HOOK_ENV_RECEIVER_URL}${DONE_PATH}"` +
   ` -H "${HOOK_HEADER_SESSION}: $${HOOK_ENV_SESSION}"` +
   ` -H "${HOOK_HEADER_TOKEN}: $${HOOK_ENV_TOKEN}"`;
 
@@ -437,10 +481,10 @@ export const READY_PATH = '/ready';
  * be loud because the session will otherwise never close. Here it should be
  * silent, because the overlay lifts on a timeout regardless.
  */
-export const readyCommand = (url: string): string =>
+export const readyCommand = (url: string, identity?: HookIdentity): string =>
   `curl -s -m 3 -o /dev/null -X POST ${url}` +
-  ` -H "${HOOK_HEADER_SESSION}: $${HOOK_ENV_SESSION}"` +
-  ` -H "${HOOK_HEADER_TOKEN}: $${HOOK_ENV_TOKEN}" 2>/dev/null || true`;
+  ` -H "${HOOK_HEADER_SESSION}: ${identity?.session ?? `$${HOOK_ENV_SESSION}`}"` +
+  ` -H "${HOOK_HEADER_TOKEN}: ${identity?.token ?? `$${HOOK_ENV_TOKEN}`}" 2>/dev/null || true`;
 
 /**
  * The largest body the receiver will read.

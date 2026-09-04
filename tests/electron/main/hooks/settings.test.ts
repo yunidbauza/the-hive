@@ -203,7 +203,7 @@ describe('the settings file grants no permissions', () => {
       `--upload-file` sends one — none needing a shell operator, so none caught
       by Claude Code's `&&`/`;` handling.
     */
-    const command = doneCommand('http://127.0.0.1:51234/done');
+    const command = doneCommand();
     /*
       Quoted, because the rule contains a colon-space inside its `-H` arguments
       and YAML forbids that in a plain scalar. `done-skill.test.ts` is where the
@@ -427,5 +427,127 @@ describe('writeHookSettings', () => {
       disableAgentView?: boolean;
     };
     expect(written.disableAgentView).toBe(true);
+  });
+});
+
+/** The `Stop` handler, which every emitter builds the same way. */
+const stopHandler = (
+  settings: ReturnType<typeof hookSettings>,
+): { headers: Record<string, string>; allowedEnvVars?: string[] } =>
+  (
+    settings.hooks.Stop as {
+      hooks: { headers: Record<string, string>; allowedEnvVars?: string[] }[];
+    }[]
+  )[0]!.hooks[0]!;
+
+describe('hookSettings — freshness (HIVE-132)', () => {
+  const identity = { session: 'sess-1', token: 'deadbeef' };
+
+  it('references the environment when no identity is given', () => {
+    const handler = stopHandler(hookSettings('http://127.0.0.1:63999/hook'));
+
+    expect(handler.headers[HOOK_HEADER_SESSION]).toBe(`$${HOOK_ENV_SESSION}`);
+    expect(handler.allowedEnvVars).toEqual([HOOK_ENV_SESSION, HOOK_ENV_TOKEN]);
+  });
+
+  it('bakes the identity and drops allowedEnvVars when one is given', () => {
+    const handler = stopHandler(
+      hookSettings('http://host.docker.internal:63999/hook', undefined, identity),
+    );
+
+    expect(handler.headers[HOOK_HEADER_SESSION]).toBe('sess-1');
+    expect(handler.headers[HOOK_HEADER_TOKEN]).toBe('deadbeef');
+    expect(handler.allowedEnvVars).toBeUndefined();
+  });
+
+  it('is byte-identical to today when no identity is given', () => {
+    const emitted = JSON.stringify(
+      hookSettings('http://127.0.0.1:63999/hook', 'http://127.0.0.1:63999/ready'),
+    );
+
+    expect(emitted).toContain(`$${HOOK_ENV_TOKEN}`);
+    expect(emitted).not.toContain('deadbeef');
+  });
+
+  /*
+    The bytes, not a substring. `toContain` would survive a reordered key or an
+    `allowedEnvVars` that moved position — and JSON key order is exactly what
+    changed shape here, since that field became a conditional spread. This is
+    the artifact the no-host-change criterion most depends on, so it is pinned
+    the way `metricsScript` is: one hand-written expectation, compared whole.
+  */
+  it('serialises with the key order it had before the freshness parameter', () => {
+    const handler = (
+      hookSettings('http://127.0.0.1:63999/hook').hooks.Stop as {
+        hooks: Record<string, unknown>[];
+      }[]
+    )[0]!.hooks[0]!;
+
+    expect(JSON.stringify(handler)).toBe(
+      '{"type":"http","url":"http://127.0.0.1:63999/hook",' +
+        '"headers":{"x-hive-session":"$HIVE_SESSION_ID","x-hive-token":"$HIVE_HOOK_TOKEN"},' +
+        '"allowedEnvVars":["HIVE_SESSION_ID","HIVE_HOOK_TOKEN"],"timeout":10}',
+    );
+  });
+});
+
+describe('metricsScript — freshness (HIVE-132)', () => {
+  /*
+    The exact bytes a host session's script had before HIVE-132, transcribed by
+    hand rather than built from the emitter — which is what makes it a check
+    rather than a restatement. HIVE-132 added a freshness parameter to this
+    function, and the acceptance criterion it was added under is that a host
+    session's generated files do not move. This is that criterion, as bytes.
+  */
+  it('is byte-for-byte what it was before the freshness parameter', () => {
+    expect(metricsScript('http://127.0.0.1:63999/statusline')).toBe(
+      `#!/bin/sh
+# The Hive — session usage reporter. Written per launch; do not edit.
+# Reads Claude Code's status line payload on stdin, forwards it to the app, and
+# prints nothing so no status line is rendered. See electron/main/hooks/settings.ts.
+[ -n "$HIVE_SESSION_ID" ] || exit 0
+[ -n "$HIVE_HOOK_TOKEN" ] || exit 0
+
+curl -s -m 5 -o /dev/null \\
+  -X POST 'http://127.0.0.1:63999/statusline' \\
+  -H 'content-type: application/json' \\
+  -H "x-hive-session: $HIVE_SESSION_ID" \\
+  -H "x-hive-token: $HIVE_HOOK_TOKEN" \\
+  --data-binary @- 2>/dev/null
+
+exit 0
+`,
+    );
+  });
+
+  it('guards on the environment when no identity is given', () => {
+    const script = metricsScript('http://127.0.0.1:63999/statusline');
+
+    expect(script).toContain(`[ -n "$${HOOK_ENV_SESSION}" ] || exit 0`);
+  });
+
+  it('bakes the identity and drops the guards when one is given', () => {
+    const script = metricsScript(
+      'http://host.docker.internal:63999/statusline',
+      { session: 'sess-1', token: 'deadbeef' },
+    );
+
+    expect(script).toContain(`${HOOK_HEADER_SESSION}: sess-1`);
+    expect(script).toContain(`${HOOK_HEADER_TOKEN}: deadbeef`);
+    expect(script).not.toContain('|| exit 0');
+    expect(script.trimEnd().endsWith('exit 0')).toBe(true);
+  });
+});
+
+describe('agentSettings — freshness (HIVE-132)', () => {
+  it('passes the identity through and keeps the permission fence', () => {
+    const settings = agentSettings(
+      'http://host.docker.internal:63999/hook',
+      undefined,
+      { session: 'sess-1', token: 'deadbeef' },
+    );
+
+    expect(stopHandler(settings).headers[HOOK_HEADER_TOKEN]).toBe('deadbeef');
+    expect(settings.permissions.ask).toEqual(['*']);
   });
 });

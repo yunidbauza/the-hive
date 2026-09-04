@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { containerMcpConfig } from '../../../../electron/main/mcp/container-config';
 import { mcpConfig, writeMcpConfig } from '../../../../electron/main/mcp/config';
 
 describe('mcpConfig', () => {
@@ -58,5 +59,20 @@ describe('writeMcpConfig', () => {
     const parsed = JSON.parse(await readFile(path, 'utf8'));
     expect(parsed.mcpServers.hive.command).toBe('/new/app');
     expect(parsed.mcpServers.hive.args).toEqual(['/new/mcp-host.js']);
+  });
+});
+
+describe('the stdio and container emitters agree on the hive server', () => {
+  it('both name the server `hive` and nothing else', () => {
+    const stdio = JSON.parse(
+      mcpConfig({ execPath: '/app/Electron', scriptPath: '/app/mcp-host.js' }),
+    ) as { mcpServers: Record<string, unknown> };
+    const container = JSON.parse(containerMcpConfig('exec-env')) as {
+      mcpServers: Record<string, unknown>;
+    };
+
+    expect(Object.keys(stdio.mcpServers)).toEqual(
+      Object.keys(container.mcpServers),
+    );
   });
 });

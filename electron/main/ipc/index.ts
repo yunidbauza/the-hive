@@ -1261,6 +1261,8 @@ export function registerIpcHandlers(): void {
     userDataPath: app.getPath('userData'),
     // Read per call, so a config reload is picked up (HIVE-79).
     sessionMetrics: () => getConfig().sessionMetrics,
+    // The same, for the hostname a container reaches this machine by (HIVE-132).
+    hostAlias: () => getConfig().receiver.hostAlias,
     ledger,
   });
 
