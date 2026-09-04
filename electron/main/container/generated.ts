@@ -45,8 +45,18 @@ export const CONTAINER_DIR = join('hive', 'container');
  */
 export const CONTAINER_SESSIONS_DIR = join(CONTAINER_DIR, 'sessions');
 
-const MCP_FILE = 'hive.mcp.json';
-const SETTINGS_FILE = 'claude-hooks.settings.json';
+/**
+ * Exported, unlike {@link AGENT_FILE} and {@link SCRIPT_FILE} (HIVE-133,
+ * post-review fix): `sessions/index.ts` has to name these same two files when
+ * it selects `--settings` and `--mcp-config` for a container spawn, and it
+ * used to do that with its own hardcoded copies of these strings. Nothing
+ * tied the reader's path to the writer's, so a rename here would have drifted
+ * silently past every test. The agent-settings and status-line filenames have
+ * no such second reader — `writeContainerSession`'s caller never names them —
+ * so they stay private.
+ */
+export const CONTAINER_MCP_FILE = 'hive.mcp.json';
+export const CONTAINER_SETTINGS_FILE = 'claude-hooks.settings.json';
 const AGENT_FILE = 'claude-agent.settings.json';
 const SCRIPT_FILE = 'statusline.sh';
 
@@ -157,7 +167,7 @@ const writeSet = async (
   }
 
   await writeFile(
-    join(root, SETTINGS_FILE),
+    join(root, CONTAINER_SETTINGS_FILE),
     `${JSON.stringify(settings, null, 2)}\n`,
     { encoding: 'utf8', mode },
   );
@@ -171,7 +181,7 @@ const writeSet = async (
     { encoding: 'utf8', mode },
   );
   await writeFile(
-    join(root, MCP_FILE),
+    join(root, CONTAINER_MCP_FILE),
     containerMcpConfig(
       freshness,
       identity === undefined
@@ -202,7 +212,7 @@ const writeSet = async (
     token.
   */
   await Promise.all(
-    [SETTINGS_FILE, AGENT_FILE, MCP_FILE].map((file) =>
+    [CONTAINER_SETTINGS_FILE, AGENT_FILE, CONTAINER_MCP_FILE].map((file) =>
       chmod(join(root, file), mode),
     ),
   );

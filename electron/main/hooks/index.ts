@@ -93,7 +93,10 @@ export interface HookRuntimeOptions {
    * {@link HookRuntimeOptions.hostAlias}, and for the same two reasons: the
    * config can be reloaded, and this module imports nothing from `config/`.
    * `ipc/index.ts` supplies it as
-   * `(id) => effectiveRuntime(getConfig(), projectById(id)).container`.
+   * `(id) => effectiveRuntime(getConfig(), getConfig().projects.find((entry)
+   * => entry.id === id) ?? null).container` — there is no `projectById`
+   * helper in this codebase; `configDiagnoseCommand` and `configDiagnoseEnv`
+   * resolve a project id the same inline way.
    */
   containerFor?: (projectId: string | null) => ResolvedContainer | undefined;
   /** Overridable for tests; `0` asks the OS for a free port. */
@@ -208,14 +211,23 @@ export interface HookRuntime {
    */
   doneUrl(): string | null;
   /**
-   * The receiver's origin as a *container* must address it, or `null` before
-   * the bind (HIVE-132).
+   * The receiver's origin as a *container* must address it, addressed by the
+   * **global** alias, or `null` before the bind (HIVE-132).
    *
-   * Read by the spawn path HIVE-133 adds, to put in `HIVE_RECEIVER_URL` for a
-   * containerised session. A getter beside {@link HookRuntime.doneUrl} rather
-   * than something folded into {@link HookRuntime.envFor}, because nothing here
-   * knows which sessions are containerised — that is deliberately HIVE-133's
-   * decision, and a host session's environment has to stay exactly what it is.
+   * **Unused by any spawn path today (post-HIVE-133 review).** This was
+   * written expecting HIVE-133's spawn path to read it for a containerised
+   * session's `HIVE_RECEIVER_URL` — the doc here said so — but that story
+   * ended up needing the *project's own* alias, not the global one this
+   * getter applies, and built the substitution itself out of
+   * {@link HookRuntime.envFor} plus `withHostAlias` instead (see
+   * `sessions/index.ts`'s `containerSpawn`). Left in place — correctly,
+   * genuinely working — as the answer to "what origin would a container using
+   * the *default* alias see", which is still what `writeSharedContainerFiles`
+   * bakes into the `exec-env` set at `start()`. A getter beside
+   * {@link HookRuntime.doneUrl} rather than something folded into
+   * {@link HookRuntime.envFor}, because nothing here knows which sessions are
+   * containerised — that is deliberately a caller's decision, and a host
+   * session's environment has to stay exactly what it is.
    */
   containerOrigin(): string | null;
   /**
@@ -521,7 +533,18 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
           {
             url: running.url,
             origin: running.origin,
-            ...(running.metricsUrl === null ? {} : { metricsUrl: running.metricsUrl }),
+            /*
+              Gated on `sessionMetrics()`, matching its two neighbours — the
+              host set (`writeHookSettings`, above) and the shared `exec-env`
+              set (`writeSharedContainerFiles`, above). Without the gate, a
+              user who turned session metrics off still got a status line
+              baked into every `rewrite` container session: the dot never
+              renders anything, but Claude Code drops its footer key hints for
+              any *configured* status line, rendering or not.
+            */
+            ...(sessionMetrics() && running.metricsUrl !== null
+              ? { metricsUrl: running.metricsUrl }
+              : {}),
             ...(running.readyUrl === null ? {} : { readyUrl: running.readyUrl }),
           },
           config.hostAlias,

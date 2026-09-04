@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ResolvedContainer } from '../../../../electron/shared/config-contract';
+import { HOOK_ENV_TOKEN } from '../../../../electron/shared/hook-contract';
 
 import { createLedger, type Ledger } from '../../../../electron/main/ledger';
 import {
@@ -413,5 +414,70 @@ describe('createHookRuntime — writeContainerSession (HIVE-133)', () => {
       expect.objectContaining({ session: 'hero-refresh' }),
       expect.objectContaining({ containerRoot: '/hive/container/sessions/hero-refresh' }),
     );
+  });
+
+  it('writes the token tokenFor(entityId) actually produces, not a token for anything else', async () => {
+    // `objectContaining({ session })` alone would pass even for a token
+    // minted against the wrong argument — the exact failure mode that 403s
+    // every hook, ledger and `/done` call from the container. The receiver's
+    // own `tokenFor` is the oracle, reached the same way any other caller
+    // reaches it — through `envFor`, which this module already exposes —
+    // rather than reimplementing the HMAC here or reaching into the private
+    // `receiver` closure.
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      ledger,
+      containerFor: () => ({ ...container, freshness: 'rewrite' }),
+    });
+    await runtime.start(noopHandlers);
+
+    await runtime.writeContainerSession('hero-refresh', 'p');
+
+    const identity = writeSessionSpy.mock.calls.at(-1)?.[3];
+    const expectedToken = runtime.envFor('hero-refresh')[HOOK_ENV_TOKEN];
+    expect(identity).toEqual({ session: 'hero-refresh', token: expectedToken });
+    // And not, say, a token minted for the caller's projectId or some other
+    // string that happens to satisfy `objectContaining({ session })`.
+    const otherToken = runtime.envFor('p')[HOOK_ENV_TOKEN];
+    expect((identity as { token: string }).token).not.toBe(otherToken);
+  });
+
+  /**
+   * Property B (HIVE-133 §2) again, from the metrics angle (Finding 2 of the
+   * task-8 review): `sessionMetrics()` gates `metricsUrl` in the *host* set
+   * (`writeHookSettings`) and in the shared `exec-env` set
+   * (`writeSharedContainerFiles`) — this is the third writer of the same
+   * value and it did not gate it, so a user who turned metrics off still got
+   * a status line baked into every `rewrite` container session.
+   */
+  it('omits metricsUrl from the written set when sessionMetrics is off', async () => {
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      ledger,
+      containerFor: () => ({ ...container, freshness: 'rewrite' }),
+    });
+    await runtime.start(noopHandlers);
+
+    await runtime.writeContainerSession('hero-refresh', 'p');
+
+    const origins = writeSessionSpy.mock.calls.at(-1)?.[2];
+    expect(origins).not.toHaveProperty('metricsUrl');
+  });
+
+  it('includes metricsUrl from the written set when sessionMetrics is on', async () => {
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => true,
+      ledger,
+      containerFor: () => ({ ...container, freshness: 'rewrite' }),
+    });
+    await runtime.start(noopHandlers);
+
+    await runtime.writeContainerSession('hero-refresh', 'p');
+
+    const origins = writeSessionSpy.mock.calls.at(-1)?.[2];
+    expect(origins).toHaveProperty('metricsUrl');
   });
 });

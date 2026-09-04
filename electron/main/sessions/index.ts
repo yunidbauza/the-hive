@@ -35,7 +35,13 @@ import {
 } from '@shared/session-contract';
 
 import { effectiveRuntime } from '../config/runtime';
-import { removeSessionContainerFiles } from '../container/generated';
+import {
+  CONTAINER_DIR,
+  CONTAINER_MCP_FILE,
+  CONTAINER_SESSIONS_DIR,
+  CONTAINER_SETTINGS_FILE,
+  removeSessionContainerFiles,
+} from '../container/generated';
 import type { HookRuntime } from '../hooks';
 import { withHostAlias } from '../hooks/container-origin';
 import { ticketKeysFromBranch } from '../hooks/ticket-intent';
@@ -1694,6 +1700,27 @@ export function createSessions(options: SessionsOptions): Sessions {
     }
 
     /**
+     * A `rewrite` container project's per-session files, rewritten here and
+     * not by the `ptyRestart` IPC handler that used to do it (HIVE-133,
+     * post-review fix).
+     *
+     * The handler writes and then calls this function, which tears the old
+     * process down *first* — and `settleExit`, reached through `await exit`
+     * above, unconditionally removes that same entity id's directory on its
+     * way out. A write before teardown is therefore a write a few
+     * milliseconds ahead of its own deletion: four small files lose that race
+     * against `rm -rf` every time, and `spawn()` below would read a
+     * `--settings` path an in-flight removal is still clearing. Writing here,
+     * after `await exit` and before `spawn`, is the only ordering `settleExit`
+     * cannot undo.
+     *
+     * Covers the "no live session" branch too — `sessionId === undefined`
+     * skips the kill/exit above but still reaches `spawn()` below, so the
+     * write has to sit after the `if`, not inside it.
+     */
+    await hooks?.writeContainerSession(request.entityId, request.projectId);
+
+    /**
      * The task is dropped, not replayed (story 097).
      *
      * A restart discards a running agent's context on purpose. Re-delivering
@@ -1960,8 +1987,8 @@ export function createSessions(options: SessionsOptions): Sessions {
       container === undefined || containerSpawn === undefined
         ? null
         : container.freshness === 'rewrite'
-          ? join(userDataPath, 'hive', 'container', 'sessions', request.entityId)
-          : join(userDataPath, 'hive', 'container');
+          ? join(userDataPath, CONTAINER_SESSIONS_DIR, request.entityId)
+          : join(userDataPath, CONTAINER_DIR);
 
     /*
       The three flags this session's command line actually gets (HIVE-133).
@@ -1970,11 +1997,16 @@ export function createSessions(options: SessionsOptions): Sessions {
       and `mcpConfig` swap to the container set; `pluginDir` is untouched,
       because the plugin directory is shared between host and container
       sessions (see the comment on `containerSpawn` above).
+
+      The two filenames are `generated.ts`'s own — `CONTAINER_SETTINGS_FILE`
+      and `CONTAINER_MCP_FILE`, exported for exactly this reader — rather than
+      a second, hardcoded copy of the same two strings (post-review fix): a
+      rename on the writer's side used to drift past every test here silently.
     */
     const spawnSettingsPath =
-      containerSet === null ? settingsPath : join(containerSet, 'claude-hooks.settings.json');
+      containerSet === null ? settingsPath : join(containerSet, CONTAINER_SETTINGS_FILE);
     const spawnMcpConfig =
-      containerSet === null ? mcpConfig : join(containerSet, 'hive.mcp.json');
+      containerSet === null ? mcpConfig : join(containerSet, CONTAINER_MCP_FILE);
 
     /**
      * Hoisted out of the `sessionCommand` call it used to sit inside (HIVE-87).

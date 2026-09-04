@@ -43,14 +43,28 @@ import { createSessionHistory } from '../../../../electron/main/sessions/history
  * is `container/generated.test.ts`'s job), so the honest fake is one that
  * resolves and records its calls, not one that touches a filesystem no test
  * here has a directory for.
+ *
+ * Everything else in the module — `CONTAINER_DIR`, `CONTAINER_SESSIONS_DIR`,
+ * `CONTAINER_SETTINGS_FILE`, `CONTAINER_MCP_FILE` — passes through real,
+ * post-review fix: `sessions/index.ts` imports those same constants (rather
+ * than a second, hardcoded copy of the two filenames), so a mock that
+ * replaced the whole module would hand it `undefined` for every one of them.
  */
-vi.mock('../../../../electron/main/container/generated', () => ({
-  removeSessionContainerFiles: vi.fn(() => Promise.resolve()),
-}));
+vi.mock('../../../../electron/main/container/generated', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('../../../../electron/main/container/generated')
+  >();
+  return {
+    ...actual,
+    removeSessionContainerFiles: vi.fn(() => Promise.resolve()),
+  };
+});
 
-const { removeSessionContainerFiles } = await import(
-  '../../../../electron/main/container/generated'
-);
+const {
+  removeSessionContainerFiles,
+  CONTAINER_MCP_FILE,
+  CONTAINER_SETTINGS_FILE,
+} = await import('../../../../electron/main/container/generated');
 
 interface Sent {
   channel: string;
@@ -1990,6 +2004,9 @@ describe('/done', () => {
         settingsPathFor: () => undefined,
         envFor: () => ({}),
         doneUrl: () => null,
+        // A host project (HIVE-133) — this harness's `restart()` reaches it,
+        // and the interface's `writeContainerSession` is not optional.
+        writeContainerSession: () => Promise.resolve(null),
         start: (opts: {
           onEvent: (event: HookStatusEvent) => void;
           onDone: (entityId: string) => void;
@@ -2592,11 +2609,19 @@ describe('container spawn (HIVE-133)', () => {
   function spawnFixture(opts: {
     container?: Partial<ResolvedContainer>;
     projectEnv?: Record<string, string>;
+    /**
+     * The receiver never bound (property D's omission half, post-review
+     * fix): `envFor` answers without `HIVE_RECEIVER_URL` at all, the same
+     * shape the real runtime produces in that state. Absent (the default)
+     * matches a bound receiver, which every other test in this block wants.
+     */
+    receiverBound?: boolean;
   }): {
     command: string;
     end: (ending?: 'ptyExit' | 'ptyLost' | 'done') => Promise<void>;
   } {
     const container: ResolvedContainer = { ...CONTAINER_DEFAULTS, ...opts.container };
+    const receiverBound = opts.receiverBound ?? true;
 
     const project = {
       ...CONFIG.projects[0]!,
@@ -2620,11 +2645,11 @@ describe('container spawn (HIVE-133)', () => {
       userDataPath: USER_DATA_PATH,
       newSessionUuid: () => TEST_UUID,
       hooks: {
-        settingsPathFor: () => join(USER_DATA_PATH, 'hive', 'claude-hooks.settings.json'),
+        settingsPathFor: () => join(USER_DATA_PATH, 'hive', CONTAINER_SETTINGS_FILE),
         envFor: (entityId: string) => ({
           HIVE_SESSION_ID: entityId,
           HIVE_HOOK_TOKEN: 'tok-abc123',
-          HIVE_RECEIVER_URL: 'http://127.0.0.1:60123',
+          ...(receiverBound ? { HIVE_RECEIVER_URL: 'http://127.0.0.1:60123' } : {}),
         }),
         writeContainerSession: () => Promise.resolve(null),
         start: (handlers: { onDone: (entityId: string) => void }) => {
@@ -2634,7 +2659,7 @@ describe('container spawn (HIVE-133)', () => {
         stop: () => Promise.resolve(),
       } as unknown as Parameters<typeof createSessions>[0]['hooks'],
       mcp: {
-        configPathFor: () => join(USER_DATA_PATH, 'hive', 'hive.mcp.json'),
+        configPathFor: () => join(USER_DATA_PATH, 'hive', CONTAINER_MCP_FILE),
       } as unknown as Parameters<typeof createSessions>[0]['mcp'],
       skills: {
         sync: () => Promise.resolve({ names: [] }),
@@ -2674,8 +2699,8 @@ describe('container spawn (HIVE-133)', () => {
   it('passes the container-flavoured settings and mcp paths, and the shared plugin dir', () => {
     const { command } = spawnFixture({ container: { freshness: 'exec-env' } });
 
-    expect(command).toContain("--settings '/hive/container/claude-hooks.settings.json'");
-    expect(command).toContain("--mcp-config '/hive/container/hive.mcp.json'");
+    expect(command).toContain(`--settings '/hive/container/${CONTAINER_SETTINGS_FILE}'`);
+    expect(command).toContain(`--mcp-config '/hive/container/${CONTAINER_MCP_FILE}'`);
     // HIVE-132 §3: `/done` reads $HIVE_RECEIVER_URL, so one plugin dir serves both.
     expect(command).toContain("--plugin-dir '/hive/plugin'");
   });
@@ -2683,7 +2708,7 @@ describe('container spawn (HIVE-133)', () => {
   it('names the per-session directory in rewrite mode', () => {
     const { command } = spawnFixture({ container: { freshness: 'rewrite' } });
     expect(command).toContain(
-      "--settings '/hive/container/sessions/hero-refresh/claude-hooks.settings.json'",
+      `--settings '/hive/container/sessions/hero-refresh/${CONTAINER_SETTINGS_FILE}'`,
     );
   });
 
@@ -2704,6 +2729,40 @@ describe('container spawn (HIVE-133)', () => {
     const spoofed = command.indexOf("HIVE_SESSION_ID='someone-else'");
     const real = command.indexOf("HIVE_SESSION_ID='hero-refresh'");
     expect(real).toBeGreaterThan(spoofed);
+  });
+
+  /**
+   * Property D's other half (post-review fix). Every test above the fold
+   * bound a receiver and proved the substitution rewrites its
+   * `HIVE_RECEIVER_URL`; none of them proved what happens when there is
+   * nothing to rewrite. `envFor` omits the key entirely when the receiver
+   * never bound — see `hooks/index.ts`'s own comment on why substituting
+   * `url` instead would be worse, not merely absent — so the command must
+   * carry no `HIVE_RECEIVER_URL` at all, not a stale or loopback one.
+   */
+  it('carries no HIVE_RECEIVER_URL when the receiver never bound', () => {
+    const { command } = spawnFixture({
+      container: { freshness: 'exec-env', hostAlias: 'gateway' },
+      receiverBound: false,
+    });
+
+    expect(command).not.toContain('HIVE_RECEIVER_URL');
+  });
+
+  /**
+   * `--plugin-dir` is the one flag `containerSpawn` deliberately leaves
+   * alone (post-review fix): HIVE-132 made `/done` read `$HIVE_RECEIVER_URL`
+   * rather than baking an origin specifically so one plugin directory could
+   * serve both host and container sessions. `rewrite` is the sharper case to
+   * prove it against — it *does* build a per-session directory for
+   * `--settings` and `--mcp-config` — so this pins that `--plugin-dir` does
+   * not follow them into it.
+   */
+  it('keeps --plugin-dir the shared path in rewrite mode, never a per-session one', () => {
+    const { command } = spawnFixture({ container: { freshness: 'rewrite' } });
+
+    expect(command).toContain("--plugin-dir '/hive/plugin'");
+    expect(command).not.toContain('/hive/plugin/sessions');
   });
 
   it('removes the session directory when the session ends', async () => {
@@ -2731,5 +2790,71 @@ describe('container spawn (HIVE-133)', () => {
       await end(ending);
       expect(removeSessionContainerFiles).toHaveBeenCalledTimes(1);
     }
+  });
+
+  /**
+   * The bug a real review caught (HIVE-133, post-review fix).
+   *
+   * `ptyRestart` used to write the new generation's set *before* calling
+   * `sessions.restart()` — but a restart's own teardown kills the old process
+   * and, once it actually exits, `settleExit` unconditionally removes that
+   * same entity id's directory. A write that lands before the kill is a write
+   * a few milliseconds ahead of its own deletion: `removeSessionContainerFiles`
+   * always wins that race, so every restart of a `rewrite` project launched
+   * with no `--settings` and no `--mcp-config` — the exact "silently cannot
+   * authenticate" failure this task exists to prevent.
+   *
+   * The fix moves the write into `restartOnce`, between `await exit` and
+   * `spawn()` — the one window the teardown cannot reach into and undo. This
+   * test fails against the pre-fix code, where the write is not made from
+   * `sessions/index.ts` at all (a restart calls `hooks.writeContainerSession`
+   * zero times from this layer — `ptyRestart` called it, and this harness,
+   * like the rest of the file, exercises `sessions` directly).
+   */
+  it('writes the restarted generation after teardown, never before', async () => {
+    const container: ResolvedContainer = { ...CONTAINER_DEFAULTS, freshness: 'rewrite' };
+    const project = { ...CONFIG.projects[0]!, container };
+    const localConfig: ConfigSnapshot = { ...CONFIG, projects: [project, CONFIG.projects[1]!] };
+
+    vi.mocked(removeSessionContainerFiles).mockClear();
+    const writeContainerSession = vi.fn(() => Promise.resolve('/some/dir'));
+
+    const instance = createSessions({
+      supervisor,
+      send: (channel, payload) =>
+        sent.push({ channel, payload: payload as Record<string, unknown> }),
+      config: () => localConfig,
+      userDataPath: USER_DATA_PATH,
+      newSessionUuid: () => TEST_UUID,
+      hooks: {
+        settingsPathFor: () => join(USER_DATA_PATH, 'hive', CONTAINER_SETTINGS_FILE),
+        envFor: () => ({}),
+        writeContainerSession,
+        start: () => Promise.resolve(),
+        stop: () => Promise.resolve(),
+      } as unknown as Parameters<typeof createSessions>[0]['hooks'],
+    });
+    created.push(instance);
+
+    instance.open(OPEN);
+    const first = mintedFor('hero-refresh');
+
+    const restart = instance.restart(OPEN);
+    await Promise.resolve();
+    emitExit({ sessionId: first, exitCode: 0 });
+    vi.advanceTimersByTime(8);
+    await restart;
+
+    // Exactly one teardown, one rewrite — for this one restart.
+    expect(removeSessionContainerFiles).toHaveBeenCalledTimes(1);
+    expect(writeContainerSession).toHaveBeenCalledTimes(1);
+
+    // The order the fix exists to guarantee: the old generation's directory
+    // is gone before the new generation's set is written, never the other
+    // way around — a write-then-remove would mean `spawn()` reads a
+    // `--settings` path an in-flight `rm -rf` is still clearing.
+    const removedAt = vi.mocked(removeSessionContainerFiles).mock.invocationCallOrder[0]!;
+    const writtenAt = writeContainerSession.mock.invocationCallOrder[0]!;
+    expect(writtenAt).toBeGreaterThan(removedAt);
   });
 });

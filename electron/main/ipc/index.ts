@@ -3128,10 +3128,17 @@ export function registerIpcHandlers(): void {
     // Same wait as `ptySpawn` above, for the same reason: a restart's `spawn()`
     // reads `mcp.configPathFor()` synchronously too (HIVE-112).
     await mcp.start();
-    // Same per-session container write as `ptySpawn` above, and for the same
-    // reason (HIVE-133): a restart's `spawn()` reads the same synchronous
-    // guard, so the write has to land in this already-asynchronous handler.
-    await hooks?.writeContainerSession(request.sessionId, request.projectId);
+    /**
+     * **Not** written here, unlike `ptySpawn` above (HIVE-133, post-review
+     * fix). A restart's own teardown kills the old process and waits for its
+     * exit before spawning the new one — and that exit unconditionally
+     * removes this same entity id's container directory
+     * (`removeSessionContainerFiles` in `settleExit`). A write landing here
+     * would race that removal and lose: `sessions/index.ts`'s `restartOnce`
+     * writes instead, in the one window between the old process actually
+     * exiting and the new one spawning, which is the only ordering the
+     * teardown cannot undo.
+     */
     /**
      * The task is deliberately **not** forwarded (story 097).
      *
