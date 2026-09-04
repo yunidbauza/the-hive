@@ -4,10 +4,12 @@ import { SelectField } from '@components/ui/select-field';
 import { Switch } from '@components/ui/switch';
 import { TextField } from '@components/ui/text-field';
 import { CommandDiagnosticView } from '@features/settings/components/command-diagnostic-view';
+import { ContainerGroup } from '@features/settings/components/container-group';
 import { EnvDiagnosticView } from '@features/settings/components/env-diagnostic-view';
 import { EnvEditor } from '@features/settings/components/env-editor';
 import { PathSourceGroup } from '@features/settings/components/path-source-group';
 import { SettingsGroup } from '@features/settings/components/settings-group';
+import { SettingsNestingContext } from '@features/settings/components/settings-nesting';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
 import { useProjectConfig } from '@hooks/use-project-config';
 import {
@@ -17,7 +19,11 @@ import {
   setProjectRuntimeConfig,
   setRuntimeConfig,
 } from '@lib/project-config';
-import type { CommandDiagnostic, EnvDiagnostic } from '@shared/config-contract';
+import type {
+  CommandDiagnostic,
+  ContainerConfig,
+  EnvDiagnostic,
+} from '@shared/config-contract';
 import type { LoginEnvStatus } from '@shared/ipc-contract';
 
 /**
@@ -302,8 +308,11 @@ export function RuntimeSection() {
             shell={project.shell}
             claudeCommand={project.claudeCommand}
             env={project.env ?? {}}
+            container={project.container}
             inheritedShell={snapshot.shell}
             inheritedCommand={snapshot.claudeCommand}
+            inheritedAlias={snapshot.receiver.hostAlias}
+            {...(diagnostic === null ? {} : { diagnostic })}
           />
         ) : null}
       </SettingsGroup>
@@ -396,15 +405,28 @@ function ProjectOverrides({
   shell,
   claudeCommand,
   env,
+  container,
   inheritedShell,
   inheritedCommand,
+  inheritedAlias,
+  diagnostic,
 }: {
   id: string;
   shell?: string;
   claudeCommand?: string;
   env: Record<string, string>;
+  /** HIVE-133. The **file** shape — an absent field means inherit. */
+  container?: ContainerConfig;
   inheritedShell: string;
   inheritedCommand: string;
+  /** What a blank `Host alias` field in `ContainerGroup` resolves to. */
+  inheritedAlias: string;
+  /**
+   * Already fetched by this pane for `CommandDiagnosticView`
+   * (`RuntimeSection`'s own `diagnostic` state) — passed down rather than
+   * fetched twice.
+   */
+  diagnostic?: CommandDiagnostic;
 }) {
   const [shellDraft, setShellDraft] = useState(shell ?? '');
   const [commandDraft, setCommandDraft] = useState(claudeCommand ?? '');
@@ -473,6 +495,25 @@ function ProjectOverrides({
           }
         />
       </div>
+
+      {container === undefined ? null : (
+        /*
+          The context, not a prop: `SettingsGroup` reads `useIsNestedGroup()` to
+          drop its heading to `h4` and suppress its rule. A rule under every
+          group inside this card would put four lines where the eye needs one.
+        */
+        <SettingsNestingContext value={true}>
+          <ContainerGroup
+            projectId={id}
+            container={container}
+            command={claudeCommand ?? inheritedCommand}
+            inheritedAlias={inheritedAlias}
+            {...(diagnostic?.container === undefined
+              ? {}
+              : { diagnostic: diagnostic.container })}
+          />
+        </SettingsNestingContext>
+      )}
     </div>
   );
 }

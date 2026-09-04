@@ -6,6 +6,7 @@ import {
   emptySnapshot,
   type CommandDiagnostic,
   type ConfigSnapshot,
+  type ContainerConfig,
   type EnvDiagnostic,
   type ProjectConfig,
 } from '@shared/config-contract';
@@ -389,6 +390,120 @@ describe('RuntimeSection — per-project overrides', () => {
     // Keyed by project id, so switching remounts — a stale override must never
     // render under another project's name.
     expect(screen.getByRole('textbox', { name: 'Shell override' })).toHaveValue('');
+  });
+});
+
+/**
+ * The nested Container group (HIVE-133).
+ *
+ * `ProjectOverrides` mounts `ContainerGroup` only once the selected project's
+ * `container` block is present — a host project renders nothing here, byte-
+ * identical to before this group existed.
+ */
+describe('RuntimeSection — the container group', () => {
+  const containerConfig: ContainerConfig = {
+    workspace: '/workspace',
+    hiveDir: '/hive',
+    hostAlias: 'gateway',
+  };
+
+  it('does not render for a project with no container block', async () => {
+    const user = userEvent.setup();
+    install({ projects: [entry({ id: 'nova-web' })] });
+    render(<RuntimeSection />);
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Project' }),
+      'nova-web',
+    );
+
+    expect(
+      screen.queryByRole('heading', { level: 4, name: 'Container' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('renders nested, with the project’s own container fields, once one is set', async () => {
+    const user = userEvent.setup();
+    install({
+      projects: [entry({ id: 'nova-web', container: containerConfig })],
+    });
+    render(<RuntimeSection />);
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Project' }),
+      'nova-web',
+    );
+
+    // h4, not h3 — the nesting rule this pane relies on `SettingsGroup`
+    // deriving from context, not from anything `RuntimeSection` decides
+    // itself.
+    expect(
+      screen.getByRole('heading', { level: 4, name: 'Container' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Workspace path')).toHaveValue('/workspace');
+  });
+
+  it('offers the receiver’s host alias as the blank field’s placeholder', async () => {
+    const user = userEvent.setup();
+    install({
+      receiver: { hostAlias: 'host.containers.internal' },
+      projects: [
+        entry({
+          id: 'nova-web',
+          container: { workspace: '/workspace', hiveDir: '/hive' },
+        }),
+      ],
+    });
+    render(<RuntimeSection />);
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Project' }),
+      'nova-web',
+    );
+
+    expect(screen.getByLabelText('Host alias')).toHaveAttribute(
+      'placeholder',
+      'host.containers.internal',
+    );
+  });
+
+  it('passes the already-fetched command diagnostic’s container field down, rather than fetching a second one', async () => {
+    const user = userEvent.setup();
+    diagnoseAgentCommand.mockResolvedValue({
+      projectId: 'nova-web',
+      command: 'claude',
+      isPath: false,
+      resolved: '/usr/bin/claude',
+      path: '/usr/bin',
+      probes: [],
+      container: {
+        probe: 'docker exec devbox true',
+        ok: false,
+        exitCode: 1,
+        stderr: 'container devbox is not running',
+        missingEnvPlaceholder: false,
+      },
+    });
+    install({
+      projects: [entry({ id: 'nova-web', container: containerConfig })],
+    });
+    render(<RuntimeSection />);
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Project' }),
+      'nova-web',
+    );
+    await user.click(
+      screen.getByRole('button', { name: /Check this project’s command/ }),
+    );
+
+    // One call altogether — `ContainerGroup` never runs a diagnostic of its
+    // own, it only renders the `container` field of the one this pane already
+    // ran.
+    expect(diagnoseAgentCommand).toHaveBeenCalledTimes(1);
+    expect(
+      await screen.findByText(/container devbox is not running/),
+    ).toBeInTheDocument();
   });
 });
 
