@@ -222,7 +222,7 @@ export const HOOK_STATUS: Record<StatusHookEvent, ObservedStatus> = {
  *
  * ```
  * turn ends            -> Stop
- * +60s, no input       -> Notification  idle_prompt        "Claude is waiting for your input"
+ * +60s, no input       -> Notification  idle_prompt        "Claude is waiting for your input"   (see below)
  * tool needs approval  -> PermissionRequest
  * +6s                  -> Notification  permission_prompt  "Claude needs your permission"
  * ```
@@ -231,8 +231,17 @@ export const HOOK_STATUS: Record<StatusHookEvent, ObservedStatus> = {
  * only signal Claude emits for the most common way a session blocks on a human —
  * the turn ended and nobody typed — which `Stop` cannot express, because `Stop`
  * fires on every turn including the ones the user is sitting and watching. The
- * sixty seconds are Claude's own debounce, and they are exactly the difference
- * between "waiting" and "you walked away".
+ * wait is Claude's own debounce, and it is exactly the difference between
+ * "waiting" and "you walked away".
+ *
+ * **That wait is a default, not a constant, and nothing in this codebase may
+ * assume it.** Claude Code reads `messageIdleNotifThresholdMs` from the user's
+ * global config (`~/.claude.json`, default `60000`) when it arms the timer, so
+ * the trace above is what a machine whose owner has never set it does. It is
+ * not a `settings.json` key, so the app's own `--settings` file cannot pin it,
+ * and there is no env var to override it: the machine's value is the value.
+ * `tests/live/hook-conformance.test.ts` reads it for exactly that reason, and
+ * every other comment about this wait points here rather than naming a number.
  */
 export const NOTIFICATION_TYPES = ['idle_prompt', 'permission_prompt'] as const;
 
@@ -252,10 +261,10 @@ export const isHookNotificationType = (
  * yes and nothing proceeds until it gets one. `waiting` is the honest reading.
  *
  * `idle_prompt` is **not** that, and calling it `waiting` is what made the dot
- * lie. It fires sixty seconds after `Stop`, when the turn is already over and
- * the agent is sitting at an empty prompt — nothing is blocked, and there is no
- * question outstanding. `Stop` set `idle` a minute earlier and `idle` is what
- * the session still is.
+ * lie. It fires once the idle wait elapses after `Stop`, when the turn is
+ * already over and the agent is sitting at an empty prompt — nothing is blocked, and there is no
+ * question outstanding. `Stop` set `idle` when the turn ended and `idle` is
+ * what the session still is.
  *
  * The signal is not lost by this: it moves to where it belongs. The inbox row
  * is raised off the hook *event* in `notifications/index.ts`, independently of

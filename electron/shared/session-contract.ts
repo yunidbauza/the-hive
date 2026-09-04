@@ -85,8 +85,8 @@ export interface SessionStatusEvent {
    * The third hook that can produce `waiting`, and the one that needed a second
    * field: `Notification` fires both for a permission prompt — six seconds
    * behind the `PermissionRequest` that already announced it — and for
-   * "Claude is waiting for your input", sixty seconds after a turn ended with
-   * nobody typing. One raises a row, the other must not raise a second, and the
+   * "Claude is waiting for your input", once the idle wait elapses after a turn
+   * ended with nobody typing. One raises a row, the other must not raise a second, and the
    * status alone cannot tell them apart.
    */
   notificationType?: HookNotificationType;

@@ -149,7 +149,7 @@ describe('session status', () => {
  * The gap the `Notification` subscription closes.
  *
  * Measured against Claude Code 2.1.227 in a real pty: a turn ends with `Stop`,
- * and sixty seconds later — if nobody has typed — `Notification` arrives with
+ * and once the idle wait elapses — if nobody has typed — `Notification` arrives with
  * `notification_type: "idle_prompt"`. Nothing else reports it, and before this
  * the app raised nothing at all for the commonest way a session waits on a
  * human.
@@ -1084,7 +1084,7 @@ describe('session.idle', () => {
 
 /**
  * HIVE-89: `session.input_needed` is gated on `idleDetail`. It keeps its
- * meaning — sixty seconds passed and nothing was typed — and stops firing
+ * meaning — the idle wait passed and nothing was typed — and stops firing
  * while a background agent or script is still working, which was a false
  * positive regardless of `session.idle`.
  */
