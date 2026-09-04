@@ -56,6 +56,26 @@ interface SegmentedControlProps<T extends string> {
    * greyed, and keyboard traversal steps over it.
    */
   disabledValues?: readonly T[];
+  /**
+   * Lets the group fall onto a second row rather than clip what will not fit.
+   *
+   * The two ways a group can overrun its column want opposite answers, and
+   * neither is safe as the default.
+   *
+   * A **few options, one of them data** — the permission ladder, whose middle
+   * rung is labelled with a file path — must not wrap: a card whose footprint
+   * changes with the path in it reads as broken, and the long label can give
+   * up width because it is elided at the source anyway. That is the default.
+   *
+   * **Many short options** — the nine wake intervals — must not truncate:
+   * every label is two or three characters, so there is no width to take and
+   * shrinking them yields nine segments reading `1…`. Without a second row
+   * they simply overflowed, and `12h` and `daily` were drawn outside the box:
+   * the two longest intervals the control offers were the two a pointer could
+   * not reach. Nothing shrinks when this is set — an option that will not fit
+   * gets a row, not an ellipsis.
+   */
+  wrap?: boolean;
   className?: string;
 }
 
@@ -66,6 +86,7 @@ export function SegmentedControl<T extends string>({
   onChange,
   disabled = false,
   disabledValues,
+  wrap = false,
   className,
 }: SegmentedControlProps<T>) {
   const groupId = useId();
@@ -87,8 +108,7 @@ export function SegmentedControl<T extends string>({
   const tabStop = isDead(value) ? selectable[0]?.value : value;
 
   /**
-   * The one segment allowed to give up width when the group cannot fit
-   * (HIVE-129).
+   * The one segment allowed to give up width when the group cannot fit.
    *
    * Letting every segment shrink is the CSS default and it is the wrong
    * default here: flex distributes the shortfall in proportion to each item's
@@ -156,10 +176,11 @@ export function SegmentedControl<T extends string>({
           `max-w-full` is what keeps an `inline-flex` honest. Sized to its
           content by default, a group whose options are labelled with data
           rather than with copy — the permission ladder's family rung is a
-          file path (HIVE-129) — grows past whatever contains it, and in the
+          file path — grows past whatever contains it, and in the
           316px rail that is the difference between a control and a bug.
         */
         'inline-flex max-w-full items-center gap-0.5 rounded-[7px] border border-border-soft bg-panel-2 p-0.5',
+        wrap && 'flex-wrap',
         disabled && 'opacity-45',
         className,
       )}
@@ -228,7 +249,7 @@ export function SegmentedControl<T extends string>({
                 the option's accessible name is never the elided one.
               */
               'whitespace-nowrap',
-              option === widest ? 'min-w-0 truncate' : 'shrink-0',
+              !wrap && option === widest ? 'min-w-0 truncate' : 'shrink-0',
               'focus-visible:ring-1 focus-visible:ring-brand',
               selected
                 ? 'bg-active text-ink'

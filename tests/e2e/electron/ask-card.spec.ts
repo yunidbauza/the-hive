@@ -150,7 +150,7 @@ function postDeceptiveAskCommand(statusMarker: string): string {
   );
 }
 
-/** A short directory, and one no rail could ever spell out (HIVE-129). */
+/** A short directory, and one no rail could ever spell out. */
 const SHORT_PATH = '/tmp/a.ts';
 const LONG_DIR = '/tmp/hive-e2e/a-directory-name-far-too-long-for-the-rail';
 
@@ -194,7 +194,7 @@ async function ladderBox(group: Locator): Promise<{
 }
 
 /**
- * The ladder keeps its shape whatever the path is (HIVE-129).
+ * The ladder keeps its shape whatever the path is.
  *
  * A `file_path` is an absolute path on a real machine, and the family rung
  * used to be labelled with the whole directory — 37 characters of it in the

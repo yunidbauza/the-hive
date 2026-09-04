@@ -325,7 +325,7 @@ const isSafeToCompose = (text: string): boolean => COMPOSABLE.test(text);
  * `file_path` is an absolute one, so the family label was routinely 37
  * characters (`/Users/someone/.hive/work/prpd/**`) and ate the whole row:
  * `all Edit` wrapped onto two lines and the group overflowed the rail, which
- * is what HIVE-129 was reported as.
+ * is what was reported.
  *
  * 22 is what measurement leaves once the other two segments and their padding
  * are taken out of the rail's ~290px of card content at 12.5px.
