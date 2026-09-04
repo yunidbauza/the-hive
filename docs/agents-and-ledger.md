@@ -575,15 +575,15 @@ could not (a turn cap, a budget cap, a kill, a stall) — and `asking` is alread
 the ask card raised above; a second notification for the same fact would be
 noise, not news.
 
-`ledger_ask` takes two optional arguments that together turn a bare question
+`ledger_ask` takes three optional arguments that together turn a bare question
 into a draft awaiting approval: `options`, the closed set of answers offered
-as buttons, and `quote` (HIVE-118), the draft itself — the exact text the
-agent wants to send. Both fold into `meta` in the tool handler, guarded the
-same way (`Array.isArray` for `options`, `typeof === 'string'` for `quote`) so
-a malformed argument is dropped rather than written through. The inbox card
+as buttons; `quote` (HIVE-118), the draft itself — the exact text the agent
+wants to send; and `inbound`, the message that draft is a reply *to*. All
+three fold into `meta` in the tool handler, guarded so a malformed argument is
+dropped rather than written through (`Array.isArray` for `options`, `typeof
+=== 'string'` for `quote`, `asInbound` for `inbound`). The inbox card
 (`ask-card.tsx`) reads `meta.quote` to decide whether to render a plain
-question or a quoted block above the buttons, and titles the card "Send this
-reply?" instead of the asker's own title (`notify.ts`). Approving the draft
+question or a quoted block above the buttons. Approving the draft
 unedited answers with the clicked option's own text; clicking the option
 named exactly `edit` (case-insensitive — not merely one that starts with
 those letters, which would hijack a model's own more descriptive copy)
@@ -1390,8 +1390,10 @@ attacker's text; the click authorised the shell command.
 
 Four inputs were model-controlled, not the two that were first obvious: `body`,
 `meta.rungs`, `meta.default` — which rung opens *preselected* — and
-`meta.quote`, which retitled the card "Send this reply?" and suppressed the
-command block entirely.
+`meta.quote`, which at the time retitled the card "Send this reply?" and
+suppressed the command block entirely. That retitle is gone (the card and
+`notify.ts` now split every ask the same way), but `quote` stays off the
+allowlist: a draft has no business on a permission prompt whoever wrote it.
 
 It is closed at **`Ledger.append`**, not at the tool. `hive_approve` only sees
 the asks it wrote itself, and the attack is an agent that never calls it;

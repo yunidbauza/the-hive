@@ -310,6 +310,63 @@ describe('the writing tools', () => {
     expect(call.mock.calls[0][0]).not.toHaveProperty('meta');
   });
 
+  it('ledger_ask folds inbound into meta beside the quote', async () => {
+    const client = stub();
+    await createToolHandlers(client).callTool('ledger_ask', {
+      to: 'overmind',
+      body: 'Reply to Marcos in #incorp-dev',
+      quote: 'dale, ahi voy',
+      inbound: { author: 'Marcos', at: '2:41pm', text: 'puedes cubrir el demo?' },
+      options: ['approve', 'edit', 'reject'],
+    });
+
+    expect(client.post).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'ask',
+        meta: {
+          options: ['approve', 'edit', 'reject'],
+          quote: 'dale, ahi voy',
+          inbound: { author: 'Marcos', at: '2:41pm', text: 'puedes cubrir el demo?' },
+        },
+      }),
+    );
+  });
+
+  /*
+    Validated here rather than passed through, so the shape the card trusts is
+    the shape the tool wrote — the same treatment `quote` gets one test up.
+  */
+  it('drops a malformed inbound rather than writing it through', async () => {
+    const client = stub();
+    await createToolHandlers(client).callTool('ledger_ask', {
+      to: 'overmind',
+      body: 'ok?',
+      inbound: { text: 'no author here' },
+    });
+
+    const call = client.post as ReturnType<typeof vi.fn>;
+    expect(call.mock.calls[0][0]).not.toHaveProperty('meta');
+  });
+
+  /*
+    `metaArg` is spread ahead of the named arguments, so an unvalidated shape
+    written as `meta.inbound` used to reach the ledger untouched — the
+    conditional spread only overwrites when `args.inbound` was also present.
+    The card revalidates, so nothing was ever drawn from it, but a guarantee
+    that holds only because a downstream reader repeats the work is not one.
+  */
+  it('does not let an unvalidated inbound in through the meta passthrough', async () => {
+    const client = stub();
+    await createToolHandlers(client).callTool('ledger_ask', {
+      to: 'overmind',
+      body: 'ok?',
+      meta: { inbound: { author: 42 }, task: 'HIVE-1' },
+    });
+
+    const call = client.post as ReturnType<typeof vi.fn>;
+    expect(call.mock.calls[0][0].meta).toEqual({ task: 'HIVE-1' });
+  });
+
   it('ledger_ask omits ref from structuredContent when the receiver returned none', async () => {
     const client = stub({ post: vi.fn(async () => ({ id: 'id-1' })) });
     const result = await createToolHandlers(client).callTool('ledger_ask', {

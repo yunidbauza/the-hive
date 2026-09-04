@@ -11,6 +11,7 @@ import {
   LEDGER_ASK_TTL_MS,
   LEDGER_REF_PREFIX,
   OVERMIND,
+  type AskInbound,
   type LedgerEntry,
   type LedgerReadQuery,
   type OpenAsk,
@@ -28,6 +29,73 @@ export const taskOf = (entry: Pick<LedgerEntry, 'meta'>): string | undefined => 
   const task = entry.meta?.task;
   return typeof task === 'string' && task !== '' ? task : undefined;
 };
+
+/**
+ * What {@link asInbound} will keep, in characters.
+ *
+ * `meta` is **not** bounded anywhere else. `LEDGER_BODY_MAX` reads like the
+ * answer and is not: `Ledger.append` measures it against `request.body` and
+ * `honest.body` only, so a rider is unbounded all the way to the JSONL, the
+ * renderer's capped mirror, and every IPC ledger payload after it. This is
+ * the write-time validator, so this is where the bound goes — the argument
+ * `keepForTheLedger` and `RUN_MAX_LENGTH` already make in `permission-rules`.
+ *
+ * `text` is truncated rather than refused, with a visible ellipsis, because a
+ * long message is still the context the reader needs and dropping it loses
+ * more than trimming it. A name is not long: an over-long `author` or `at` is
+ * not a name being cut off, it is garbage, and it is cut hard.
+ */
+export const INBOUND_TEXT_MAX = 2000;
+export const INBOUND_NAME_MAX = 80;
+
+/**
+ * `meta.inbound`, when it is a message worth drawing.
+ *
+ * Exported for the same reason {@link taskOf} is: two consumers read this
+ * rider — `ask-card.tsx` as it renders one, `mcp-tools.ts` as it writes one —
+ * and the card has already paid for the alternative. Three predicates for "is
+ * this a permission ask" disagreed there, and the disagreement was reachable:
+ * an ask drew a grant ladder whose clicks granted nothing.
+ *
+ * Built from nothing rather than filtered, which is `honestPermissionAsk`'s
+ * argument applied one rider along: spreading the caller's object through and
+ * blanking the keys we know about would carry every key we do not onto a value
+ * the card then renders. An allowlist makes the next invented key a non-event.
+ *
+ * A partial message is dropped whole. A card that names who wrote to you is
+ * worth drawing; one with a blank where the name goes is furniture.
+ *
+ * **None of this makes `author` true.** It is a string a model wrote, and the
+ * card is what has to say so — see the attribution in `ask-card.tsx`. This
+ * function bounds the shape, not the honesty.
+ */
+export function asInbound(value: unknown): AskInbound | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const shape = value as Record<string, unknown>;
+  /*
+    Trimmed on the way out, not merely measured on the way in. Testing
+    `found.trim() !== ''` and then returning `found` admitted `'\n\n\nhola'`,
+    which under the card's `whitespace-pre-wrap` opens the box with three
+    blank lines.
+  */
+  const str = (key: string, max: number): string | undefined => {
+    const found = shape[key];
+    if (typeof found !== 'string') return undefined;
+    const trimmed = found.trim();
+    if (trimmed === '') return undefined;
+    return trimmed.length > max ? `${trimmed.slice(0, max)}…` : trimmed;
+  };
+
+  const author = str('author', INBOUND_NAME_MAX);
+  const text = str('text', INBOUND_TEXT_MAX);
+  if (author === undefined || text === undefined) return undefined;
+
+  const at = str('at', INBOUND_NAME_MAX);
+  return { author, text, ...(at === undefined ? {} : { at }) };
+}
 
 /**
  * The kinds that close a thread they name.

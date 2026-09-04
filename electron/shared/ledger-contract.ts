@@ -63,6 +63,30 @@ export interface LedgerEntry {
   meta?: Record<string, unknown>;
 }
 
+/**
+ * `meta.inbound`: the message an ask is a reply *to*.
+ *
+ * `meta.quote` is what the asker proposes to send. This is what provoked it,
+ * and without it the card asks a question it has withheld the evidence for —
+ * "Send this reply?" above four words of Spanish, with no way to tell who
+ * wrote to you or what they wanted. Answering meant opening Slack, which is
+ * the errand a drafting agent exists to save.
+ *
+ * Every field is a plain string because this is presentation, not identity:
+ * the card draws `author` and `at` verbatim, so a Slack display name, a time
+ * a person would recognise, and nothing to resolve at render time. Validate
+ * with {@link asInbound} — the value arrives on a free-form rider and is
+ * whatever a model wrote.
+ */
+export interface AskInbound {
+  /** Who wrote it, as the reader would recognise them. */
+  author: string;
+  /** What they said. */
+  text: string;
+  /** When they said it, already formatted. Not every source has one. */
+  at?: string;
+}
+
 export interface OpenAsk extends LedgerEntry {
   kind: 'ask';
   open: true;
