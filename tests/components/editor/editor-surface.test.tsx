@@ -38,6 +38,24 @@ describe('EditorSurface', () => {
     expect(content(container)).toContain('const a = 1;');
   });
 
+  /*
+    CodeMirror gives its content a `textbox` role and nothing to call it, so an
+    unnamed surface announces as "edit text" and nothing more. The explorer
+    leaves it off — the tab strip above it names the open file — but settings'
+    agent Source tab has no such heading and passes its own name.
+  */
+  it('names the content for a screen reader when asked to', () => {
+    const { container, rerender } = render(<EditorSurface {...baseProps} />);
+    expect(
+      container.querySelector('.cm-content')?.getAttribute('aria-label'),
+    ).toBeNull();
+
+    rerender(<EditorSurface {...baseProps} ariaLabel="Agent source" />);
+    expect(
+      container.querySelector('.cm-content')?.getAttribute('aria-label'),
+    ).toBe('Agent source');
+  });
+
   it('renders a gutter when line numbers are on, and none when off', () => {
     const { container, rerender } = render(<EditorSurface {...baseProps} />);
     expect(container.querySelector('.cm-lineNumbers')).not.toBeNull();

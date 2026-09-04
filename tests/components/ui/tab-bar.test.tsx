@@ -133,6 +133,14 @@ describe('TabBar', () => {
     expect(alpha.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
   });
 
+  it('keeps its own tight gap, which the labels already separate', () => {
+    render(
+      <TabBar tabs={TABS} active="alpha" onSelect={vi.fn()} label="Sections" />,
+    );
+
+    expect(screen.getByRole('tablist')).toHaveClass('gap-0.5');
+  });
+
   it('forwards a className onto the tablist', () => {
     render(
       <TabBar
@@ -347,6 +355,29 @@ describe('the status dot in strip orientation', () => {
 });
 
 describe('strip orientation', () => {
+  /*
+    A horizontal tab carries a label, so 2px of gap is already a word's worth of
+    separation. A strip tab is a bare glyph in a 34px tile, and at the same 2px
+    the three icons read as one column of marks rather than as three
+    destinations — which is the whole of what a rail becomes when it collapses.
+  */
+  it('spaces the glyphs further apart than the labelled tabs are', () => {
+    render(
+      <TooltipProvider>
+        <TabBar
+          tabs={TABS}
+          active="alpha"
+          onSelect={vi.fn()}
+          label="Sections"
+          orientation="strip"
+        />
+      </TooltipProvider>,
+    );
+
+    expect(screen.getByRole('tablist')).toHaveClass('gap-4');
+    expect(screen.getByRole('tablist')).not.toHaveClass('gap-0.5');
+  });
+
   it('renders icon-only buttons that still have accessible names', () => {
     render(
       <TooltipProvider>

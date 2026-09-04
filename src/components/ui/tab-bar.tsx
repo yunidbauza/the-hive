@@ -132,9 +132,20 @@ export function TabBar<Id extends string>({
       role="tablist"
       aria-label={label}
       aria-orientation={strip ? 'vertical' : 'horizontal'}
+      /*
+        The two orientations space themselves differently, and the difference is
+        not cosmetic. A horizontal tab carries a label, so 2px of gap is already
+        a word's worth of separation. A strip tab is a bare 20px glyph in a 34px
+        tile: at the same 2px the three icons read as one column of marks rather
+        than as three destinations, which is what a 44px rail is reduced to when
+        it collapses. 16px is what gives each glyph its own airspace while the
+        active tile still reads as a single object.
+      */
       className={cn(
-        'flex gap-0.5',
-        strip ? 'flex-col items-center' : 'border-b border-border-soft',
+        'flex',
+        strip
+          ? 'flex-col items-center gap-4'
+          : 'gap-0.5 border-b border-border-soft',
         className,
       )}
     >

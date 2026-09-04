@@ -3,6 +3,10 @@ import { dirname, join } from 'node:path';
 
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 
+import {
+  expectAgentSource,
+  fillAgentSource,
+} from './fixtures/agent-source';
 import { launchHive } from './fixtures/hive-app';
 
 /**
@@ -94,7 +98,7 @@ test('authors an agent through the pane and writes it to disk', async ({}, testI
 
     await page.getByRole('button', { name: '+ New agent' }).click();
     await page.getByRole('tab', { name: 'Source' }).click();
-    await page.getByLabel('Agent source').fill(DEFINITION);
+    await fillAgentSource(page, DEFINITION);
     await page.getByRole('button', { name: 'Save' }).click();
 
     // The row appears without a reload — the write is followed by a re-list.
@@ -132,7 +136,7 @@ test('adds a schedule time the presets do not offer, and saves it', async ({}, t
     await openAgents(page);
     await page.getByRole('button', { name: '+ New agent' }).click();
     await page.getByRole('tab', { name: 'Source' }).click();
-    await page.getByLabel('Agent source').fill(DEFINITION);
+    await fillAgentSource(page, DEFINITION);
     await page.getByRole('tab', { name: 'Form' }).click();
 
     await page.getByRole('radio', { name: 'on a schedule' }).click();
@@ -179,9 +183,7 @@ test('refuses a sub-minute wake interval and writes nothing', async ({}, testInf
     await openAgents(page);
     await page.getByRole('button', { name: '+ New agent' }).click();
     await page.getByRole('tab', { name: 'Source' }).click();
-    await page
-      .getByLabel('Agent source')
-      .fill(DEFINITION.replace('every: 5m', 'every: 30s'));
+    await fillAgentSource(page, DEFINITION.replace('every: 5m', 'every: 30s'));
     await page.getByRole('button', { name: 'Save' }).click();
 
     await expect(page.getByText(/minutes \(5m\)|faster than 1m/i)).toBeVisible();
@@ -235,7 +237,7 @@ test('an agent authored in the pane survives a restart', async ({}, testInfo) =>
     await openAgents(first.page);
     await first.page.getByRole('button', { name: '+ New agent' }).click();
     await first.page.getByRole('tab', { name: 'Source' }).click();
-    await first.page.getByLabel('Agent source').fill(DEFINITION);
+    await fillAgentSource(first.page, DEFINITION);
     await first.page.getByRole('button', { name: 'Save' }).click();
     await expect(
       first.page.getByRole('button', { name: /slack-watcher/ }),
@@ -407,9 +409,7 @@ test('seeds a new agent with an icon the registry can draw', async ({}, testInfo
     await page.getByRole('button', { name: '+ New agent' }).click();
     await page.getByRole('tab', { name: 'Source' }).click();
 
-    await expect(page.getByLabel('Agent source')).toHaveValue(
-      /icon: ph-[a-z-]+/,
-    );
+    await expectAgentSource(page, /icon: ph-[a-z-]+/);
   } finally {
     await app.close();
   }

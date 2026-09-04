@@ -1,11 +1,24 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { cn } from '@/lib/utils';
 
+import { EditorSurface } from '@components/editor/editor-surface';
 import { AgentForm } from '@features/settings/components/agent-form';
+import { languageFor } from '@lib/explorer/language';
 import type { AgentProblem } from '@shared/agent-contract';
+import { useEditorAppearance } from '@stores/appearance-store';
 
 type Tab = 'form' | 'source';
+
+/**
+ * The markdown grammar, resolved once at module scope.
+ *
+ * `EditorSurface` re-imports the grammar whenever this identity changes, so a
+ * loader built in render would fetch the chunk on every keystroke. An AGENT.md
+ * is always markdown — there is no file name to branch on here as there is in
+ * the explorer — so the loader is a constant rather than a memo.
+ */
+const AGENT_LANGUAGE = languageFor('AGENT.md')?.load ?? null;
 
 interface AgentEditorProps {
   /** The file being edited, or `null` while its contents are still arriving. */
@@ -57,8 +70,8 @@ interface AgentEditorProps {
  * ## Why tabs rather than a form above the source
  *
  * The ticket describes the form as a head *above* the body, and at this pane's
- * real width that does not fit: the editor column is roughly 500–700px after
- * the 150px list, and ten fields stacked over a textarea leave the body prompt
+ * real width that does not fit: the editor column is roughly 450–650px after
+ * the list, and ten fields stacked over a textarea leave the body prompt
  * — the part the user actually writes prose into — the smallest thing on
  * screen. A side-by-side split is worse: each half lands near 300px, where
  * `slack.channel:#incorp-dev` wraps.
@@ -68,11 +81,23 @@ interface AgentEditorProps {
  * because the patch is surgical — there is nothing surprising to watch. See
  * `agent-form.tsx`.
  *
- * ## Why a plain `<textarea>`
+ * ## Why the real editor, and not a `<textarea>`
  *
- * The same argument `skill-editor.tsx` makes, unchanged: the editor seam
- * exists for repo files, and mounting it here would pull the explorer's stack
- * into settings so the user can write a paragraph.
+ * This used to be a plain textarea, on `skill-editor.tsx`'s argument that the
+ * editor seam exists for repo files and mounting it here would pull the
+ * explorer's stack into settings so the user can write a paragraph. That
+ * argument undersold what an AGENT.md is. It is not a paragraph: it is a
+ * frontmatter block with a dozen keys whose problems the footer reports **by
+ * line**, and a body long enough to scroll — so a reader told "unknown key on
+ * line 7" had to count rows with a finger, and could not search the file at
+ * all.
+ *
+ * `EditorSurface` answers all three at once — the gutter, the floating find
+ * panel, and `Mod-s` bound *inside* the view, which is the only place a save
+ * shortcut can be bound and still fire while CodeMirror holds focus. Markdown
+ * highlighting comes with it, so the `---` fences and the keys between them
+ * stop reading as prose. The cost is one CodeMirror mount in settings, which is
+ * lazy-chunked like every other and only built when the Source tab is opened.
  */
 export function AgentEditor({
   path,
@@ -87,6 +112,19 @@ export function AgentEditor({
   notice,
 }: AgentEditorProps) {
   const [tab, setTab] = useState<Tab>('form');
+  const appearance = useEditorAppearance();
+
+  /**
+   * The live `onSave`, for a listener bound once on mount.
+   *
+   * `onSave` is a fresh closure on every render of `agents-section.tsx` — it
+   * reads the buffer — so binding it directly would either re-attach the
+   * listener on every keystroke or, with an empty dependency array, save a
+   * buffer from the first render forever. The same shape `EditorSurface` uses
+   * for its own `Mod-s`, and for the same reason.
+   */
+  const onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
 
   /**
    * Why Run now would refuse, or `null` when it would not.
@@ -168,8 +206,56 @@ export function AgentEditor({
       tab === which ? 'bg-active text-ink' : 'text-subtle hover:text-ink',
     );
 
+  /**
+   * ⌘S from anywhere in the pane, and exactly once.
+   *
+   * The Source tab's own binding lives inside CodeMirror, which is the only
+   * place a shortcut can be bound and still fire while the editor holds focus.
+   * That leaves the Form tab — ten inputs, no editor — where ⌘S reached the
+   * browser and offered to save the page. This listener is for them.
+   *
+   * A native listener on the frame rather than a JSX `onKeyDown`, the way
+   * `editor-pane.tsx` binds Escape: a keyboard handler on a non-interactive
+   * `<div>` is what `jsx-a11y` exists to reject, and the rule is right — the
+   * shortcut must never be the *only* way to save, which is why the Save button
+   * three lines below stays exactly where it is.
+   *
+   * Scoped to the frame, not to `window`: settings is an overlay over a shell
+   * full of live terminals, and a global ⌘S would save whichever agent happened
+   * to be open while the user was typing somewhere else entirely.
+   *
+   * `defaultPrevented` is what keeps the two bindings from doubling up:
+   * CodeMirror's keymap prevents the default when it handles `Mod-s`, and the
+   * event still bubbles out here. Saving twice is not harmless — `save` writes
+   * through the bridge, and a rename writes through a *different* call — so the
+   * guard is the point, not tidiness.
+   */
+  const frame = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const host = frame.current;
+    if (host === null) return undefined;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 's' || !(event.metaKey || event.ctrlKey)) return;
+      if (event.defaultPrevented) return;
+
+      event.preventDefault();
+      onSaveRef.current();
+    };
+
+    host.addEventListener('keydown', onKeyDown);
+
+    return () => {
+      host.removeEventListener('keydown', onKeyDown);
+    };
+  }, []);
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[7px] border border-border">
+    <div
+      ref={frame}
+      className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[7px] border border-border"
+    >
       <div className="flex items-center justify-between gap-3 border-b border-border-soft px-2.5 py-1.5">
         <div role="tablist" aria-label="Agent editor view" className="flex gap-1">
           <button
@@ -240,12 +326,32 @@ export function AgentEditor({
             does, carried out on every wake. Write it as instructions, not as a
             description.
           </p>
-          <textarea
-            aria-label="Agent source"
-            spellCheck={false}
+          {/*
+            `readOnly` is hard-`false`, and deliberately not
+            `!appearance.editable`. That setting is the explorer's guard against
+            editing repo files by accident; this pane exists to write this one
+            file, and a settings editor that silently refused every keystroke
+            because of a preference set three panes away would read as broken.
+
+            The `fileKey` is the path, so the caret and the undo history survive
+            a trip to the Form tab and back — and a *different* agent gets a
+            different key, which is what stops one agent's undo stack reaching
+            into another's file. A never-saved agent has no path, and every
+            never-saved agent is the same draft, so they share one key.
+          */}
+          <EditorSurface
+            ariaLabel="Agent source"
+            fileKey={path ?? 'new-agent'}
             value={source}
-            onChange={(event) => onChange(event.target.value)}
-            className="min-h-0 flex-1 resize-none bg-panel px-2.5 py-2 font-mono text-[12px] leading-relaxed text-ink outline-none"
+            languageLoad={AGENT_LANGUAGE}
+            readOnly={false}
+            fontFamily={appearance.fontFamily}
+            fontSize={appearance.fontSize}
+            wordWrap={appearance.wordWrap}
+            lineNumbers={appearance.lineNumbers}
+            tabWidth={appearance.tabWidth}
+            onChange={onChange}
+            onSave={onSave}
           />
         </>
       )}

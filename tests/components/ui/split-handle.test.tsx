@@ -23,6 +23,7 @@ interface Options {
   onReset?: () => void;
   collapseBelow?: number;
   onCollapse?: () => void;
+  grip?: boolean;
   rect?: { left: number; top: number; width: number; height: number };
 }
 
@@ -38,6 +39,7 @@ function renderHandle(
     onReset,
     collapseBelow,
     onCollapse,
+    grip,
     rect = { left: 100, top: 50, width: 400, height: 200 },
   }: Options = {},
 ) {
@@ -61,6 +63,7 @@ function renderHandle(
       onReset={onReset}
       collapseBelow={collapseBelow}
       onCollapse={onCollapse}
+      grip={grip}
     />,
   );
 
@@ -478,6 +481,52 @@ describe('SplitHandle', () => {
       fireEvent.pointerMove(window, { clientX: 150, clientY: 0 });
 
       expect(onValue).toHaveBeenCalledWith(268);
+    });
+  });
+
+  /*
+    The gutter appearance the agent run log needs (HIVE polish). Both sides of
+    that seam are the same black, so a hairline in `border-soft` is exactly what
+    separates one receipt row from the next — the divider read as one more row.
+    A caller sizes the band itself and gets a grip in it instead of a rule.
+  */
+  describe('grip', () => {
+    it('drops the hairline fill and draws three dots instead', () => {
+      const { handle } = renderHandle('horizontal', vi.fn(), { grip: true });
+
+      expect(handle).not.toHaveClass('bg-border-soft');
+      expect(handle.querySelectorAll('.rounded-full')).toHaveLength(3);
+    });
+
+    it('moves the hover answer off the band and onto the dots', () => {
+      // A 12px band flooding brand-blue is a much louder answer to a pointer
+      // than a hairline doing it — and it would paint over the dots.
+      const { handle } = renderHandle('horizontal', vi.fn(), { grip: true });
+
+      expect(handle).not.toHaveClass('focus-visible:bg-brand');
+      expect(handle.querySelector('.rounded-full')).toHaveClass(
+        'group-hover:bg-muted',
+        'group-focus-visible:bg-brand',
+      );
+    });
+
+    it('leaves the hairline and its enlarged hit area alone by default', () => {
+      const { handle } = renderHandle('horizontal');
+
+      expect(handle).toHaveClass('bg-border-soft', 'focus-visible:bg-brand');
+      expect(handle.querySelectorAll('.rounded-full')).toHaveLength(0);
+      expect(handle.firstElementChild).toHaveClass('group-hover:bg-brand');
+    });
+
+    it('still drags, because the grip is decoration on the same control', () => {
+      const { onValue, handle } = renderHandle('horizontal', vi.fn(), {
+        grip: true,
+      });
+
+      fireEvent.pointerDown(handle);
+      fireEvent.pointerMove(window, { clientX: 0, clientY: 150 });
+
+      expect(onValue).toHaveBeenCalledWith(0.5);
     });
   });
 });
