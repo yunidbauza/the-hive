@@ -53,11 +53,14 @@ export function RuntimeSection() {
    * Whether the env probe is in flight.
    *
    * The env diagnostic spawns a real login shell and waits for it — typically
-   * a second or more with oh-my-zsh or nvm, and up to the probe's own timeout
-   * in the worst case. That is *always* true; the command diagnostic is slow
-   * only for a container project that configures a probe (HIVE-133), and even
-   * then is bounded well under the env probe's worst case. A button with no
-   * feedback for that long reads as broken rather than working.
+   * a second or more with oh-my-zsh or nvm — on *every* run. The command
+   * diagnostic is ordinarily a few filesystem stats, and only pays a
+   * comparable cost when a container project configures a `probe`
+   * (HIVE-133); the two share the same 5s timeout as a ceiling, not as a
+   * typical cost. The asymmetry that justifies a spinner here and not there
+   * is frequency, not magnitude: one is always slow, the other is usually
+   * instant. A button with no feedback for that long reads as broken rather
+   * than working.
    */
   const [envDiagnosticPending, setEnvDiagnosticPending] = useState(false);
   /**

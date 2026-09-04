@@ -475,4 +475,18 @@ describe('diagnoseCommand container precondition', () => {
     );
     expect(result.container?.missingEnvPlaceholder).toBe(false);
   });
+
+  it('flags the placeholder independently of a passing probe — the two preconditions do not interact', async () => {
+    const result = await diagnoseCommand(
+      runtime({
+        claudeCommand: 'docker exec -it devbox claude',
+        container: { ...container, probe: 'docker exec devbox true' },
+      }),
+      'p',
+      process.env,
+      fakeRun(0),
+    );
+
+    expect(result.container).toMatchObject({ ok: true, missingEnvPlaceholder: true });
+  });
 });
