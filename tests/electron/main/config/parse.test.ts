@@ -653,6 +653,8 @@ describe('parseConfig — per-project container block (HIVE-133)', () => {
     [{ workspace: '/w', hiveDir: '/h', freshness: 'stale' }, 'freshness'],
     [{ workspace: '/w', hiveDir: '/h', hostAlias: 'bad host' }, 'hostAlias'],
     [{ workspace: '/w', hiveDir: '/h', hostAlias: '10.0.0.5?' }, 'hostAlias'],
+    [{ workspace: '/w', hiveDir: '/h', probe: '' }, 'probe'],
+    [{ workspace: '/w', hiveDir: '/h', probe: 42 }, 'probe'],
   ])('rejects %j, naming the field', (container, field) => {
     const parsed = parse(container);
 
@@ -662,6 +664,27 @@ describe('parseConfig — per-project container block (HIVE-133)', () => {
     // Advisory, never fatal: one bad block must not make the file unloadable.
     expect(parsed.fatal).toBe(false);
     expect(parsed.errors.join('\n')).toContain(field);
+  });
+
+  // `container: null` gets its own case rather than folding into the table
+  // above: `typeof null === 'object'`, so it is exactly the input a naive
+  // object check would let through.
+  it('rejects container: null', () => {
+    const parsed = parse(null);
+
+    expect(parsed.projects[0]?.container).toBeUndefined();
+    expect(parsed.projects[0]?.id).toBe('the-hive');
+    expect(parsed.fatal).toBe(false);
+    expect(parsed.errors.join('\n')).toContain('expected an object');
+  });
+
+  it('rejects a non-object container', () => {
+    const parsed = parse('x');
+
+    expect(parsed.projects[0]?.container).toBeUndefined();
+    expect(parsed.projects[0]?.id).toBe('the-hive');
+    expect(parsed.fatal).toBe(false);
+    expect(parsed.errors.join('\n')).toContain('expected an object');
   });
 
   it('does not report container as an unknown key', () => {

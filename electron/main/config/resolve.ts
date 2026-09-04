@@ -112,7 +112,7 @@ function decorate(
       ? { claudeCommand: raw.claudeCommand }
       : {}),
     ...(raw.env !== undefined ? { env: raw.env } : {}),
-    ...(raw.container === undefined ? {} : { container: raw.container }),
+    ...(raw.container !== undefined ? { container: raw.container } : {}),
   };
 }
 
