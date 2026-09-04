@@ -42,7 +42,7 @@ Zustand · Tailwind v4 · shadcn/ui · pnpm.
 | `pnpm test:e2e` | Playwright — both the web and electron projects |
 | `pnpm test:e2e:web` · `:electron` | Either half alone — browser specs (070), or the built app (085) |
 | `pnpm test:pty` | PTY conformance — real PTYs, Electron ABI, no UI (098) |
-| `pnpm test:hooks` · `:statusline` · `:skills` · `:done` · `:ready` · `:back` · `:title` · `:ledger` · `:agent` | Live conformance against a **real `claude`** — hooks (~3½ min), the status line, custom skills, `/done`, the boot-ready signal, the bare-`←` claim in the built app, that an unnamed session titles itself (~2½ min), the ledger MCP tools, and the headless agent runs — hooks, `--resume`, the two-wake ledger conversation, the permission fence, the scheduler's own clock, and two task runs live at once with distinct receipts (~3½ min, after a `desktop:build`) |
+| `pnpm test:hooks` · `:statusline` · `:skills` · `:done` · `:ready` · `:back` · `:title` · `:ledger` · `:mcp-http` · `:agent` | Live conformance against a **real `claude`** — hooks (~3½ min), the status line, custom skills, `/done`, the boot-ready signal, the bare-`←` claim in the built app, that an unnamed session titles itself (~2½ min), the ledger MCP tools, the same tools served over `POST /mcp` with the container config's `${VAR}` shape, and the headless agent runs — hooks, `--resume`, the two-wake ledger conversation, the permission fence, the scheduler's own clock, and two task runs live at once with distinct receipts (~3½ min, after a `desktop:build`) |
 | `pnpm verify:boundaries` | Proves every architecture fence still fires |
 
 **`pnpm lint` and `pnpm type-check` must both pass before any task is considered
@@ -88,11 +88,11 @@ one still fires.
 | **`electron/pty-host/**`, `electron/mcp-host/**`** | `src/**`, `electron/main/**`, `electron/preload/**` |
 | `src/**` | `electron/main/**`, `electron/preload/**`, `electron/pty-host/**`, `electron/mcp-host/**` |
 
-`electron/shared/**` is the **only** module both processes may import, and it is types,
-constants, and pure dependency-free logic only — no runtime imports, no Node APIs, no
-DOM APIs. The renderer reaches it through `@shared`; anything with behaviour behind it
-must be imported **type-only**, or main-process code lands in the renderer bundle. That
-is what makes the IPC contract a compile-time artifact rather than a convention.
+`electron/shared/**` is the **only** module both processes may import, and its rule is
+what a module **drags in** — no runtime imports, no Node APIs, no DOM APIs — not "types
+only" (`guards.ts`, `ledger-derive.ts`, `mcp-tools.ts` all ship logic both sides run).
+The renderer reaches it via `@shared`, **type-only** for anything with behaviour behind
+it, or main-process code lands in the renderer bundle — that compile-time contract.
 
 `src/components/layout/` is the **composition root** and is exempt from the
 `features/` ban: the rails and the center stage exist to mount feature panels.

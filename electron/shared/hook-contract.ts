@@ -301,6 +301,12 @@ export const HOOK_HEADER_TOKEN = 'x-hive-token';
  * Unlike the two above it is **not** an authenticated claim — it narrows a
  * write to a run, it never widens what the caller may reach — so it is stamped
  * where the body cannot override it and otherwise left alone.
+ *
+ * Concretely, the bound on forging it is the caller's own identity: `from` is
+ * still taken from {@link HOOK_HEADER_SESSION}, and the readers that key on
+ * `meta.run` — `openAsksFor` and `handoffFor` in `main/ipc/index.ts` — filter on
+ * `from` as well. So a caller can at worst cross-attribute between runs it
+ * already owns, never reach another party's.
  */
 export const HOOK_HEADER_RUN = 'x-hive-run';
 

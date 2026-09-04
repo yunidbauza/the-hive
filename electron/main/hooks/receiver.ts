@@ -38,8 +38,8 @@ import {
   type JsonRpcRequest,
   type ReceiverClient,
 } from '@shared/mcp-contract';
-import { handleMessage } from '@shared/mcp-protocol';
-import { createToolHandlers } from '@shared/mcp-tools';
+import { handleMessage, type RpcHandlers } from '@shared/mcp-protocol';
+import { createCursorStore, createToolHandlers, type CursorStore } from '@shared/mcp-tools';
 import {
   METRICS_MAX_BODY_BYTES,
   METRICS_PATH,
@@ -533,6 +533,25 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   let origin: string | null = null;
 
   /**
+   * One MCP read cursor per caller, for the lifetime of this receiver.
+   *
+   * See {@link handlersFor} for why the cursor is what is kept rather than the
+   * handler set. Cleared with the server, so a restart starts every caller
+   * fresh — matching the stdio host, whose cursor dies with its process.
+   */
+  const mcpCursors = new Map<string, CursorStore>();
+
+  /**
+   * The cap on that map.
+   *
+   * Generous against any real fleet — a machine with this many *distinct*
+   * callers alive at once is not a case this app has — and small enough that a
+   * caller id space that somehow grows without bound cannot turn a cursor into
+   * a leak.
+   */
+  const MCP_CURSOR_MAX = 256;
+
+  /**
    * Pull the event name out of a body too large to have been kept whole.
    *
    * `JSON.parse` cannot help on a truncated prefix, and the field is a fixed,
@@ -920,17 +939,75 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       return { status: 413, json: { reason: `body exceeds ${MCP_MAX_BODY_BYTES} bytes` } };
     }
 
-    let message: JsonRpcRequest;
+    let parsed: unknown;
     try {
-      message = JSON.parse(body) as JsonRpcRequest;
+      parsed = JSON.parse(body);
     } catch (cause) {
       return { status: 400, json: { reason: describeCause(cause) } };
     }
 
-    const reply = await handleMessage(message, createToolHandlers(clientFor(headers), []));
+    /*
+      A shape check, not just a parse. `null`, `5`, `"x"` and `[]` are all valid
+      JSON and none is a JSON-RPC message: `null` would throw on the destructure
+      inside `handleMessage` and surface as a bare 500, and the other three
+      destructure to all-`undefined`, land on the notification branch, and be
+      swallowed as a 202. Both are worse than saying what was wrong.
+    */
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return { status: 400, json: { reason: 'body must be a single JSON-RPC message object' } };
+    }
+
+    const reply = await handleMessage(parsed as JsonRpcRequest, handlersFor(headers));
 
     // `null` is the notification case — see the spec note above.
     return reply === null ? 202 : { status: 200, json: reply };
+  }
+
+  /**
+   * One handler set per request, over a cursor that outlives it (HIVE-130).
+   *
+   * `createToolHandlers` keeps a read cursor whose whole purpose is the
+   * undirected drain's high-water mark, and it is documented as living for the
+   * length of a *session* — true by construction over stdio, where `claude`
+   * starts one host and keeps it. A request is not a process, so this route has
+   * to supply that lifetime itself or the cursor is `undefined` on arrival every
+   * time and every drain re-reads the newest page.
+   *
+   * Only the cursor is kept. Memoising the handler set would capture the first
+   * request's headers in its client, and `handleMessage` awaits — so a second
+   * request from the same session could interleave and be answered against the
+   * first one's identity. Rebuilding from the headers actually presented is what
+   * makes that impossible.
+   *
+   * `grants` is `[]` deliberately, and it is not a stub: the stdio host reads
+   * `HIVE_GRANTS` from its environment, and `envFor` never sets that for a pty
+   * session either — so an empty list is exactly what an interactive session
+   * gets today on both transports, and `approve` fails closed for both. Handing
+   * an agent run its grants over HTTP needs a channel that does not exist yet
+   * and belongs to HIVE-133.
+   */
+  function handlersFor(
+    headers: Record<string, string | string[] | undefined>,
+  ): RpcHandlers {
+    const caller = headers[HOOK_HEADER_SESSION] as string;
+
+    let store = mcpCursors.get(caller);
+    if (store === undefined) {
+      store = createCursorStore();
+      /*
+        Bounded, because the key space is not: an agent name is a legal caller
+        and definitions come and go. Insertion-ordered, so the oldest key is the
+        first one — evicting it costs that caller one re-read of the newest
+        page, which is precisely the cost of never having had a cursor.
+      */
+      if (mcpCursors.size >= MCP_CURSOR_MAX) {
+        const oldest = mcpCursors.keys().next();
+        if (!oldest.done) mcpCursors.delete(oldest.value);
+      }
+      mcpCursors.set(caller, store);
+    }
+
+    return createToolHandlers(clientFor(headers), [], store);
   }
 
   /**
@@ -1404,7 +1481,10 @@ export function createReceiver(options: ReceiverOptions): Receiver {
            * does not speak either.
            */
           if (req.method === 'GET' && route !== undefined && route.path === MCP_PATH) {
-            res.writeHead(405).end();
+            // `Allow` is required on a 405 (RFC 9110) and is the point here:
+            // this branch exists so a client can tell "wrong method" from "no
+            // endpoint", and the header is what names the right one.
+            res.writeHead(405, { allow: 'POST' }).end();
             return;
           }
 
@@ -1537,6 +1617,9 @@ export function createReceiver(options: ReceiverOptions): Receiver {
         server = null;
         url = null;
         origin = null;
+        // The stdio host's cursor dies with its process; this one dies with the
+        // socket that served it, so a restart starts every caller fresh.
+        mcpCursors.clear();
         running.close(() => resolve());
         /**
          * Keep-alive sockets would otherwise hold the close open past app quit.

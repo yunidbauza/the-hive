@@ -11,6 +11,7 @@ import {
   type AgentsDirectory,
 } from '../../../../electron/shared/agent-contract';
 import {
+  HOOK_HEADER_RUN,
   HOOK_HEADER_SESSION,
   HOOK_HEADER_TOKEN,
   HOOK_MAX_BODY_BYTES,
@@ -2659,7 +2660,7 @@ describe('the MCP route', () => {
       method: 'tools/call',
       params: {
         name: 'ledger_post',
-        arguments: { kind: 'note', body: 'from a container', from: 'sess-impostor' },
+        arguments: { body: 'from a container', from: 'sess-impostor' },
       },
     });
     const body = (await response.json()) as { result: { isError: boolean } };
@@ -2713,6 +2714,78 @@ describe('the MCP route', () => {
     const response = await fetch(`${origin()}${MCP_PATH}`, { method: 'GET' });
 
     expect(response.status).toBe(405);
+    // Required on a 405 (RFC 9110), and the point of the branch: it names the
+    // method that would have worked, which is what "wrong method" means.
+    expect(response.headers.get('allow')).toBe('POST');
+  });
+
+  /**
+   * `meta.run` over HTTP (HIVE-130).
+   *
+   * The stdio host reads the run from its own environment and stamps it before
+   * the body leaves the process. A caller with no process for us to read has to
+   * send it, and it has to be stamped the same way — over anything the model
+   * put there, because it is the only thing that tells one run's asks from a
+   * concurrent neighbour's.
+   */
+  it('stamps meta.run from the header, over whatever the model supplied', async () => {
+    await rpc(
+      {
+        jsonrpc: '2.0',
+        id: 8,
+        method: 'tools/call',
+        params: {
+          name: 'ledger_post',
+          arguments: { body: 'in a run', meta: { run: 'run-the-model-chose' } },
+        },
+      },
+      { [HOOK_HEADER_SESSION]: CALLER, [HOOK_HEADER_RUN]: 'run-real' },
+    );
+
+    expect(posted).toHaveLength(1);
+    expect((posted[0]?.request as { meta?: { run?: string } }).meta?.run).toBe('run-real');
+  });
+
+  it('leaves meta.run alone when no run header is sent', async () => {
+    await rpc({
+      jsonrpc: '2.0',
+      id: 9,
+      method: 'tools/call',
+      params: { name: 'ledger_post', arguments: { body: 'no run' } },
+    });
+
+    expect(posted).toHaveLength(1);
+    expect((posted[0]?.request as { meta?: { run?: string } }).meta?.run).toBeUndefined();
+  });
+
+  /**
+   * The cursor is per **caller**, not per request (HIVE-130).
+   *
+   * `createToolHandlers` keeps a read cursor whose whole purpose is the
+   * undirected drain's high-water mark, and over stdio it lives as long as the
+   * host process does. A request is not a process, so this route supplies that
+   * lifetime — without it every drain re-reads the newest page and an agent
+   * re-answers asks it already handled.
+   */
+  it('advances a read cursor across separate requests from the same caller', async () => {
+    const drain = async () => {
+      const response = await rpc({
+        jsonrpc: '2.0',
+        id: 10,
+        method: 'tools/call',
+        params: { name: 'ledger_read', arguments: {} },
+      });
+      return (await response.json()) as { result: { content: { text: string }[] } };
+    };
+
+    // Something to find, posted as the overmind so the caller can see it.
+    ledger.append({ from: CALLER, kind: 'post', body: 'first entry' });
+    const first = await drain();
+    expect(first.result.content[0]?.text).toContain('first entry');
+
+    // A second undirected drain, with nothing new, must not re-deliver it.
+    const second = await drain();
+    expect(second.result.content[0]?.text).not.toContain('first entry');
   });
 
   /**
@@ -2730,7 +2803,7 @@ describe('the MCP route', () => {
     expect(response.status).toBe(403);
   });
 
-  it('answers an unparseable body with a JSON-RPC error, not a crash', async () => {
+  it('answers an unparseable body 400, not a crash', async () => {
     const response = await fetch(`${origin()}${MCP_PATH}`, {
       method: 'POST',
       headers: {
@@ -2743,4 +2816,29 @@ describe('the MCP route', () => {
 
     expect(response.status).toBe(400);
   });
+
+  /**
+   * Valid JSON that is not a JSON-RPC message.
+   *
+   * Each of these used to take a wrong path: `null` threw on the destructure
+   * inside `handleMessage` and surfaced as a bare 500, and the other three
+   * destructured to all-`undefined`, landed on the notification branch and were
+   * swallowed as a silent 202. A malformed request has to say so.
+   */
+  it.each(['null', '5', '"a string"', '[]'])(
+    'answers 400 for a body that parses but is not a message: %s',
+    async (body) => {
+      const response = await fetch(`${origin()}${MCP_PATH}`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          [HOOK_HEADER_SESSION]: CALLER,
+          [HOOK_HEADER_TOKEN]: receiver.tokenFor(CALLER),
+        },
+        body,
+      });
+
+      expect(response.status).toBe(400);
+    },
+  );
 });

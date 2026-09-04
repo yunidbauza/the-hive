@@ -10,8 +10,10 @@ import { createReceiver } from '../../electron/main/hooks/receiver';
 import { createLedger } from '../../electron/main/ledger';
 import {
   HOOK_ENV_RECEIVER_URL,
+  HOOK_ENV_RUN,
   HOOK_ENV_SESSION,
   HOOK_ENV_TOKEN,
+  HOOK_HEADER_RUN,
   HOOK_HEADER_SESSION,
   HOOK_HEADER_TOKEN,
 } from '../../electron/shared/hook-contract';
@@ -110,6 +112,16 @@ describe.skipIf(!RUN)('the hive MCP endpoint over HTTP, against a real claude', 
               headers: {
                 [HOOK_HEADER_SESSION]: `\${${HOOK_ENV_SESSION}}`,
                 [HOOK_HEADER_TOKEN]: `\${${HOOK_ENV_TOKEN}}`,
+                /*
+                  Present with a default, and that is the whole trick. A pty
+                  session has no run, and `${VAR}` with no value left would be
+                  sent as the literal text `${HIVE_RUN_ID}`; `:-` collapses that
+                  to empty, which the route treats as absent. Without this line
+                  an agent run in a container would lose `meta.run` and its asks
+                  would be indistinguishable from a concurrent neighbour's —
+                  and HIVE-132's emitter is built to match this fixture.
+                */
+                [HOOK_HEADER_RUN]: `\${${HOOK_ENV_RUN}:-}`,
               },
             },
           },
@@ -166,9 +178,28 @@ describe.skipIf(!RUN)('the hive MCP endpoint over HTTP, against a real claude', 
       );
 
       let out = '';
+      let err = '';
       child.stdout.on('data', (chunk: Buffer) => (out += chunk.toString()));
+      /*
+        Drained, not merely piped. A `pipe` with no reader fills its ~64 KiB
+        buffer and then blocks the child forever: `close` never fires and the
+        test hangs to its timeout with nothing saying why.
+      */
+      child.stderr.on('data', (chunk: Buffer) => (err += chunk.toString()));
       child.on('error', reject);
-      child.on('close', () => resolve(out));
+      child.on('close', (code) => {
+        /*
+          A non-zero exit is reported as itself. Resolving regardless would hand
+          the assertions an empty string, and a missing `claude` would surface
+          as "expected output to contain mcp__hive__ledger_read" — pointing the
+          reader at the transport instead of at the spawn.
+        */
+        if (code !== 0) {
+          reject(new Error(`claude exited ${String(code)}: ${err.slice(0, 2000)}`));
+          return;
+        }
+        resolve(out);
+      });
     });
 
   it('serves the tools under the same mcp__hive__ name stdio delivery gives them', async () => {
