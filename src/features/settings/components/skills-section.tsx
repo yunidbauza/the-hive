@@ -34,9 +34,16 @@ import { useSkills } from '@hooks/use-skills';
  *
  * ## Layout
  *
- * Master–detail: a 150px list beside the editor, both always visible, so
+ * Master–detail: a 190px list beside the editor, both always visible, so
  * switching between skills is one click and the set stays in view while you
  * type. Chosen over a drill-in on browser-rendered mockups.
+ *
+ * 190 rather than the 150 this pane opened at, and the same 190 the agents
+ * pane took: a row here is `/name` in monospace with an `invalid` or `edited`
+ * flag beside it, and at 150 a name of any length ellipsised while the detail
+ * pane sat on width it was not short of. The two panes are the same shape and
+ * are read one after the other, so a reader switching between them should not
+ * find the list moving under them.
  */
 
 /**
@@ -344,7 +351,7 @@ export function SkillsSection() {
   ];
 
   const description =
-    'Slash commands available only inside sessions The Hive starts. Saved as SKILL.md under ~/.hive/skills. A skill can end with /done to close its session.';
+    'Slash commands available only inside sessions The Hive starts. Saved as SKILL.md under ~/.hive/skills. A skill can end with /done handoff to close its session.';
 
   /*
     No snapshot is the browser demo, which has no bridge to ask and no disk to
@@ -437,7 +444,7 @@ export function SkillsSection() {
         </p>
       )}
 
-      <div className="grid min-h-0 flex-1 grid-cols-[150px_minmax(0,1fr)] gap-3">
+      <div className="grid min-h-0 flex-1 grid-cols-[190px_minmax(0,1fr)] gap-3">
         <div className="flex flex-col overflow-y-auto rounded-[7px] border border-border">
           {rows.map((row) => {
             const active = row.name === open;

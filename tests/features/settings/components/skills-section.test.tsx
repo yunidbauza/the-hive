@@ -526,6 +526,23 @@ describe('SkillsSection', () => {
     });
   });
 
+  /*
+    150px ellipsised a `/name` of any length while the detail pane beside it sat
+    on width it was not short of. 190 is the same number the agents pane took —
+    the two are the same shape and are read one after the other, so the list
+    must not move under a reader switching between them.
+  */
+  it('gives the list room for a command name', async () => {
+    setSkillsForTest(withSkills('standup'));
+
+    render(<SkillsSection />);
+    const target = await screen.findByRole('button', { name: '/standup' });
+
+    expect(target.parentElement?.parentElement).toHaveClass(
+      'grid-cols-[190px_minmax(0,1fr)]',
+    );
+  });
+
   it('shows where the files live', () => {
     setSkillsForTest(withSkills('standup'));
 
