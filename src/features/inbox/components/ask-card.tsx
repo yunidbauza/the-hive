@@ -5,6 +5,7 @@ import type { HiveNotification } from '@/types/notification';
 
 import { Button } from '@components/ui/button';
 import { useRelativeTime } from '@hooks/use-relative-time';
+import { asInbound } from '@shared/ledger-derive';
 import type { Rung, RungId } from '@shared/permission-rules';
 import {
   useAnswerAsk,
@@ -169,12 +170,43 @@ export function AskCard({ notif, thread }: AskCardProps) {
    * that silently does nothing is exactly what the refusal line below exists
    * to prevent.
    *
-   * The import fence stops the three from sharing one validator — `@shared`
-   * crosses into the renderer as types only — so they cannot share code, but
-   * they can and now do share the predicate.
+   * They share the predicate rather than the code. Not because they must:
+   * `@shared` ships pure logic both processes run — `hive-store.ts` value-
+   * imports `matches`/`openAsks`/`thread` from `ledger-derive`, and this file
+   * imports `asInbound` from it eight lines up. This comment used to claim the
+   * fence forbade that, which sent the next reader off to write a fourth local
+   * validator. It does not; a shared *guard* is the better answer wherever one
+   * fits, and `asInbound` is what that looks like.
    */
   const isPermission = ask?.meta?.kind === 'permission';
   const rungs = isPermission ? rungsOf(ask?.meta?.rungs) : [];
+  /**
+   * The message being replied to (`meta.inbound`).
+   *
+   * `asInbound` rather than a third local validator: `@shared` ships pure
+   * logic both processes run, and this rider has two readers — this card, and
+   * `mcp-tools.ts` as it writes one. The alternative is the bug documented
+   * directly above: predicates for one question disagreed, and a card drew a
+   * grant ladder whose clicks granted nothing.
+   *
+   * Suppressed on a permission ask, which has no conversation behind it. Its
+   * context is the command block main wrote, and a second block above that one
+   * would be words chosen by whoever is being fenced, sitting above the command
+   * they want run.
+   *
+   * This is a real guard and not a redundant one, which is worth stating
+   * because the obvious reading is that `honestPermissionAsk` has already
+   * dropped the key. It has, on the path where `isToolName(tool)` holds and
+   * the allowlist rebuilds `meta` from nothing. On the **downgrade** path it
+   * has not: an unrecognised `tool` returns `without(meta, ['kind', 'rungs',
+   * 'default'])`, which keeps `inbound` and strips `kind` — so this very
+   * predicate reads `false` and the block draws anyway. It draws as an
+   * ordinary ask with no permission framing, which is why the impact is the
+   * attribution problem below rather than a spoofed fence, but "the allowlist
+   * handles it" is not true on every path and should not be written as if it
+   * were.
+   */
+  const inbound = isPermission ? undefined : asInbound(ask?.meta?.['inbound']);
   /**
    * The scope preselected on open. `meta.default` names one of `rungs` by
    * id, computed once alongside them (`rungsFor`/`defaultRungFor` in
@@ -341,6 +373,21 @@ export function AskCard({ notif, thread }: AskCardProps) {
     );
   }
 
+  /**
+   * The asker's own words, for every ask including a quoted one.
+   *
+   * A `meta.quote` used to replace this title with the literal "Send this
+   * reply?" and suppress `detail` outright, so an ask carrying a draft could
+   * say nothing else. That cost exactly what the quote is for: an agent
+   * drafting a Slack reply names the channel, the person and the message in
+   * its body, and the rail drew four words of draft above three buttons. The
+   * only way to answer was to go and read Slack — the errand the agent was
+   * woken to save.
+   *
+   * The literal is gone from `notify.ts` in the same change, because the two
+   * are one presentation and HIVE-118 finding 7 is what a disagreement
+   * between them looks like.
+   */
   const [title, ...rest] = ask.body.split('\n');
   const detail = rest.join('\n').trim();
 
@@ -353,10 +400,8 @@ export function AskCard({ notif, thread }: AskCardProps) {
           <span>ask {ask.id.slice(-4)}</span>
         </>,
       )}
-      <span className="text-[12.5px] font-semibold text-ink">
-        {quote === undefined ? title : 'Send this reply?'}
-      </span>
-      {detail === '' || quote !== undefined ? null : isPermission ? (
+      <span className="text-[12.5px] font-semibold text-ink">{title}</span>
+      {detail === '' ? null : isPermission ? (
         /*
           The command, as a mono block (spec §3.6). It is the actual risk
           surface — the one thing the user is being asked to decide on — and
@@ -372,6 +417,43 @@ export function AskCard({ notif, thread }: AskCardProps) {
         </pre>
       ) : (
         <span className="text-[11.5px] leading-[1.4] text-muted">{detail}</span>
+      )}
+
+      {/*
+        What provoked the ask, above what the ask proposes to send.
+
+        Filled, and deliberately without the draft's left stripe: read down,
+        the card is a two-beat thread, and the stripe is left to mean the one
+        thing on the card you are actually deciding on. It survives the switch
+        into edit mode below, which is when it matters most — the draft has
+        become a textarea and the message being answered is no longer legible
+        anywhere else on screen.
+
+        **`via {asker}` is not a courtesy.** Every field here is a string the
+        asker wrote. Nothing received it, nothing verified it, and this block
+        sits directly above the buttons that authorise an action — so an agent
+        that wanted to could put a trusted name on words nobody said and let
+        the layout imply a person said them. Naming the party the claim
+        actually came from is what makes the block a *report* rather than a
+        quotation, and it costs one span. `asker` is already resolved above.
+
+        `max-h-40` bounds the pixels; `asInbound` bounds the data, because
+        nothing else does — `LEDGER_BODY_MAX` measures the body and never a
+        rider. `whitespace-pre-wrap` keeps the newlines a chat message arrives
+        with, `break-words` keeps the long URL that is the commonest long token
+        in one from opening a horizontal scrollbar inside a 316px rail, and
+        `truncate` keeps an over-long name on its own line.
+      */}
+      {inbound === undefined ? null : (
+        <div className="mt-1 max-h-40 overflow-y-auto rounded-md bg-panel-2 px-2 py-1.5">
+          <span className="block truncate text-[10px] text-subtle">
+            {inbound.at === undefined ? inbound.author : `${inbound.author} · ${inbound.at}`}
+            {` · via ${asker}`}
+          </span>
+          <span className="block text-[11px] leading-[1.45] break-words whitespace-pre-wrap text-muted">
+            {inbound.text}
+          </span>
+        </div>
       )}
 
       {draft === null ? (

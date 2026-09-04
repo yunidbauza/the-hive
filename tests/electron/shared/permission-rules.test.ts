@@ -495,9 +495,10 @@ describe('honestPermissionAsk', () => {
   });
 
   /**
-   * `meta.quote` retitles the card "Send this reply?" and suppresses the
-   * command block entirely, so it hides the one thing the user is deciding on.
-   * A permission ask may not carry one.
+   * `meta.quote` no longer retitles the card or suppresses the command block,
+   * but a permission ask still may not carry one: a draft above a command is
+   * the fenced party's own words framing the thing being authorised, and the
+   * allowlist is what keeps the next such key out too.
    */
   it('drops meta.quote from a permission ask', () => {
     const result = honestPermissionAsk('Allow Bash?\nnpm test', {

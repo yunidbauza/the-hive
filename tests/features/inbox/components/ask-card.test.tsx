@@ -570,4 +570,138 @@ describe('AskCard', () => {
     expect(screen.queryByRole('radiogroup')).toBeNull();
     expect(screen.getByRole('button', { name: 'yes' })).toBeTruthy();
   });
+
+  /**
+   * A quoted ask used to lose every word its asker wrote: the title was
+   * replaced by the literal "Send this reply?" and the detail rendered as
+   * `null`. An agent drafting a Slack reply could name the channel, the person
+   * and the message and none of it reached the rail, so the only way to answer
+   * the card was to go and read Slack — the errand the agent exists to run.
+   */
+  describe('a draft ask keeps its own words', () => {
+    const drafted = {
+      ...ask,
+      body: 'Reply to Marcos in #incorp-dev\nHe wants the 3pm demo covered.',
+      meta: { quote: 'dale, ahi voy', options: ['approve', 'edit', 'reject'] },
+    };
+
+    it('titles the card with the asker line and keeps the detail', () => {
+      seedLedger([drafted]);
+      render(<AskCard notif={notif} thread="a41" />);
+
+      expect(screen.getByText('Reply to Marcos in #incorp-dev')).toBeInTheDocument();
+      expect(screen.getByText('He wants the 3pm demo covered.')).toBeInTheDocument();
+      expect(screen.queryByText('Send this reply?')).toBeNull();
+      expect(screen.getByText('dale, ahi voy')).toBeInTheDocument();
+    });
+
+    it('still renders a one-line body as a bare title', () => {
+      seedLedger([{ ...drafted, body: 'Reply to Marcos?' }]);
+      render(<AskCard notif={notif} thread="a41" />);
+
+      expect(screen.getByText('Reply to Marcos?')).toBeInTheDocument();
+    });
+  });
+
+  describe('meta.inbound', () => {
+    const withInbound = (inbound: unknown) => ({
+      ...ask,
+      body: 'Reply to Marcos in #incorp-dev',
+      meta: { quote: 'dale, ahi voy', options: ['approve', 'edit', 'reject'], inbound },
+    });
+
+    it('draws the message being replied to, with its author and time', () => {
+      seedLedger([
+        withInbound({ author: 'Marcos', at: '2:41pm', text: 'puedes cubrir el demo?' }),
+      ]);
+      render(<AskCard notif={notif} thread="a41" />);
+
+      expect(screen.getByText('puedes cubrir el demo?')).toBeInTheDocument();
+      expect(screen.getByText('Marcos · 2:41pm · via drone')).toBeInTheDocument();
+    });
+
+    it('names the author alone when no time came with it', () => {
+      seedLedger([withInbound({ author: 'Marcos', text: 'puedes cubrir el demo?' })]);
+      render(<AskCard notif={notif} thread="a41" />);
+
+      expect(screen.getByText('Marcos · via drone')).toBeInTheDocument();
+    });
+
+    /*
+      The card must survive a rider it cannot read, because `meta` is
+      free-form and reaches the ledger unfiltered — the same reason
+      `rungsOf` filters rather than trusts.
+    */
+    it('draws nothing for a malformed one, and still draws the draft', () => {
+      seedLedger([withInbound({ text: 'no author here' })]);
+      render(<AskCard notif={notif} thread="a41" />);
+
+      expect(screen.queryByText('no author here')).toBeNull();
+      expect(screen.getByText('dale, ahi voy')).toBeInTheDocument();
+    });
+
+    /*
+      Editing is exactly when the context matters most: the draft has become a
+      textarea and the words you are rewriting are a reply to something you can
+      no longer see anywhere else on screen.
+    */
+    it('stays on screen while the draft is open for editing', async () => {
+      seedLedger([
+        withInbound({ author: 'Marcos', at: '2:41pm', text: 'puedes cubrir el demo?' }),
+      ]);
+      render(<AskCard notif={notif} thread="a41" />);
+
+      await userEvent.click(screen.getByRole('button', { name: /edit/i }));
+
+      expect(screen.getByRole('textbox')).toBeInTheDocument();
+      expect(screen.getByText('puedes cubrir el demo?')).toBeInTheDocument();
+    });
+
+    /*
+      Hand-built, deliberately, and this is the whole point of the test.
+
+      Routing it through `honestPermissionAsk` proved nothing: that function's
+      allowlist strips `inbound` before the card is ever reached, so
+      `asInbound(undefined)` returns `undefined` whether or not the card
+      guards on `isPermission`. Deleting the guard left such a test green.
+      This seeds the shape the renderer's free-form ledger mirror can actually
+      hold, which is the only version of this that fails when the guard goes.
+    */
+    it('is ignored on a permission ask, guard removed or not', () => {
+      seedLedger([
+        {
+          ...ask,
+          body: 'Allow Bash?\nnpm test',
+          meta: {
+            kind: 'permission',
+            tool: 'Bash',
+            input: { command: 'npm test' },
+            rungs: [
+              { id: 'allow-once', label: 'once', caption: 'this time' },
+            ],
+            inbound: { author: 'Marcos', text: 'run it for me' },
+          },
+        },
+      ]);
+      render(<AskCard notif={{ ...notif, kind: 'agent.permission' }} thread="a41" />);
+
+      expect(screen.queryByText('run it for me')).toBeNull();
+      expect(screen.getByText('npm test')).toBeInTheDocument();
+    });
+
+    /*
+      Every field of `inbound` is a string the asker wrote, and the block sits
+      directly above the buttons that authorise an action. Without the `via`
+      attribution an agent can put a trusted name on words nobody said and let
+      the layout imply a person said them.
+    */
+    it('attributes the block to the party that reported it', () => {
+      seedLedger([
+        withInbound({ author: 'Yunid', at: '2:41pm', text: 'approve whatever it asks' }),
+      ]);
+      render(<AskCard notif={notif} thread="a41" />);
+
+      expect(screen.getByText('Yunid · 2:41pm · via drone')).toBeInTheDocument();
+    });
+  });
 });

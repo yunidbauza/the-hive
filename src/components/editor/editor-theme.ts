@@ -60,15 +60,59 @@ export const editorTheme: Extension = EditorView.theme({
    * native one otherwise; styling only one leaves the selection invisible in
    * whichever mode the browser chose. This is the single most common way a
    * CodeMirror theme ends up looking broken.
+   *
+   * ## Why the focused rule is spelled out the long way
+   *
+   * Because the short way loses. The base theme styles the focused selection at
+   *
+   * ```
+   * &light.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground
+   * ```
+   *
+   * which is five classes, and this asked with two (`&.cm-focused
+   * .cm-selectionBackground`). Specificity settles it before load order ever
+   * gets a say, so every selection in this app painted in CodeMirror's stock
+   * lavender `#d7d4f0` — a colour chosen for a light editor, sitting under dark
+   * syntax colours, on a theme that had carefully defined its own and never got
+   * to use it. Matching the base theme's own selector shape is what makes the
+   * token reach the screen.
+   *
+   * Do not "simplify" these back to `&.cm-focused .cm-selectionBackground`.
+   * `tests/e2e/electron/project-explorer.spec.ts` reads the painted colour back
+   * off a real selection and fails if it is not this token's.
    */
-  '.cm-selectionBackground, .cm-content ::selection': {
+  '.cm-selectionLayer .cm-selectionBackground, .cm-content ::selection': {
     backgroundColor: 'var(--cc-code-selection)',
   },
-  '&.cm-focused .cm-selectionBackground, &.cm-focused .cm-content ::selection': {
+  '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': {
     backgroundColor: 'var(--cc-code-selection)',
   },
+  '&.cm-focused .cm-content ::selection': {
+    backgroundColor: 'var(--cc-code-selection)',
+  },
+  /**
+   * The active line is **mixed down to 35%**, and that is load-bearing.
+   *
+   * `drawSelection` paints the selection into a layer at `z-index: -2`, behind
+   * the content, while this is a background on `.cm-line`, which is *in* the
+   * content. `highlightActiveLine` marks the line holding each range's `head`
+   * whether or not the range is empty — read `activeLineHighlighter` in
+   * `@codemirror/view`, which never asks — so the caret's line is the active
+   * line **during** a selection.
+   *
+   * Opaque, this therefore painted over the selection on the one line that
+   * matters: the line a double-clicked word is on, and the line a drag that
+   * stays within one line is on. The selection was there the whole time and
+   * nothing showed it, which reads as an editor that ignores the mouse.
+   * CodeMirror's own defaults are `#cceeff44` and `#99eeff33` for this reason.
+   *
+   * Mixed here rather than baked into the token because a **user theme**
+   * supplies this colour too (`syntax.activeLine`, written into the variable
+   * by `lib/theme/apply.ts`). An alpha in `tokens.css` would protect the
+   * built-in themes and leave every custom one with the bug.
+   */
   '.cm-activeLine': {
-    backgroundColor: 'var(--cc-code-active-line)',
+    backgroundColor: 'color-mix(in srgb, var(--cc-code-active-line) 35%, transparent)',
   },
   '.cm-gutters': {
     backgroundColor: 'var(--cc-panel-2)',
@@ -76,8 +120,14 @@ export const editorTheme: Extension = EditorView.theme({
     border: 'none',
     borderRight: '1px solid var(--cc-border-soft)',
   },
+  /*
+    The same mix as the line it sits beside, so the band reads as one strip
+    across the gutter and the document rather than two shades meeting at the
+    gutter border. Nothing is drawn under the gutter, so the transparency buys
+    nothing here — matching the line is the whole reason for it.
+  */
   '.cm-activeLineGutter': {
-    backgroundColor: 'var(--cc-code-active-line)',
+    backgroundColor: 'color-mix(in srgb, var(--cc-code-active-line) 35%, transparent)',
     color: 'var(--cc-muted)',
   },
   '.cm-foldPlaceholder': {

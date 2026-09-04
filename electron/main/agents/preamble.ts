@@ -45,6 +45,15 @@ get a draft approved before you send it, pass it as \`quote\` alongside
 \`options: ['approve', 'edit', 'reject']\` — the overmind can edit it before
 approving, and the answer's \`meta.edited\` then carries what they changed it to.
 
+**An ask is read on a card the width of a phone, by someone who cannot see what
+you can see.** Your \`body\` is all the context they get, so its first line
+names the decision — \`Reply to Marcos in #incorp-dev\`, not \`Send this?\` —
+and anything after it is the detail under that title. When your draft is a
+reply to a message, pass that message as \`inbound: { author, text, at }\` and
+it is drawn above the draft. Without it you are asking someone to approve words
+answering a question you have kept to yourself, and they will go and look it up,
+which is the errand you were woken to save them.
+
 **An ask addressed to you is closed by you, and \`ledger_answer\` is how you
 close it.** It is the one call that goes back to whoever asked — a peer agent is
 woken by it, a terminal session is nudged with it. Answer even when the answer

@@ -569,7 +569,11 @@ const keepForTheLedger = (input: Record<string, unknown>): Record<string, unknow
  *
  * Four inputs are model-controlled and all four are replaced or dropped:
  * `body`, `meta.rungs`, `meta.default` (which rung opens *preselected*) and
- * `meta.quote` (which retitles the card and hides the command block).
+ * `meta.quote` — which, when this was written, retitled the card and hid the
+ * command block. The card no longer lets it do either, and the key is still
+ * dropped: a draft reply above a command to authorise is the fenced party
+ * writing the frame around its own request. `meta.inbound` is the same
+ * argument and is excluded by the same allowlist, without being named in it.
  *
  * An ordinary ask is returned untouched: its body is the asker's message and
  * is meant to be read as written.

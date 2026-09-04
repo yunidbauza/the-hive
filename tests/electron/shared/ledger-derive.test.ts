@@ -7,6 +7,9 @@ import {
   type LedgerEntry,
 } from '../../../electron/shared/ledger-contract';
 import {
+  INBOUND_NAME_MAX,
+  INBOUND_TEXT_MAX,
+  asInbound,
   claims,
   expiredAsks,
   keepNewest,
@@ -343,5 +346,92 @@ describe('expiredAsks', () => {
     });
 
     expect(expiredAsks([ask(), forged], LEDGER_ASK_TTL_MS)).toHaveLength(1);
+  });
+});
+
+describe('asInbound', () => {
+  it('keeps a well-formed message, with and without a time', () => {
+    expect(asInbound({ author: 'Marcos', text: 'puedes cubrir el demo?' })).toEqual({
+      author: 'Marcos',
+      text: 'puedes cubrir el demo?',
+    });
+    expect(asInbound({ author: 'Marcos', text: 'puedes cubrir?', at: '2:41pm' })).toEqual({
+      author: 'Marcos',
+      text: 'puedes cubrir?',
+      at: '2:41pm',
+    });
+  });
+
+  /*
+    `meta` is a free-form rider the model controls, so every shape below is
+    reachable from a hand-written `ledger_ask`. A partial one is dropped whole
+    rather than drawn with a blank author: a card that says who wrote to you is
+    only worth drawing when it actually knows.
+  */
+  it.each([
+    ['not an object', 'Marcos: hola'],
+    ['null', null],
+    ['an array', [{ author: 'Marcos', text: 'hola' }]],
+    ['no author', { text: 'hola' }],
+    ['no text', { author: 'Marcos' }],
+    ['a blank author', { author: '   ', text: 'hola' }],
+    ['a blank text', { author: 'Marcos', text: '' }],
+    ['a non-string author', { author: 42, text: 'hola' }],
+  ])('drops %s', (_label, value) => {
+    expect(asInbound(value)).toBeUndefined();
+  });
+
+  it('drops a time that is not a string, keeping the rest', () => {
+    expect(asInbound({ author: 'Marcos', text: 'hola', at: 42 })).toEqual({
+      author: 'Marcos',
+      text: 'hola',
+    });
+  });
+
+  /*
+    Measuring the trimmed value and returning the untrimmed one admitted
+    leading newlines, which under the card's `whitespace-pre-wrap` open the
+    box with blank lines above the message.
+  */
+  it('returns the trimmed value, not merely a value that trims to something', () => {
+    expect(asInbound({ author: '  Marcos  ', text: '\n\n\nhola\n' })).toEqual({
+      author: 'Marcos',
+      text: 'hola',
+    });
+  });
+
+  /*
+    Nothing else bounds a rider. `LEDGER_BODY_MAX` reads like it would and does
+    not — `Ledger.append` measures it against the body alone — so an unbounded
+    `text` reaches the JSONL, the renderer's capped mirror, and every IPC
+    payload after it.
+  */
+  it('truncates an over-long text, visibly', () => {
+    const kept = asInbound({ author: 'Marcos', text: 'x'.repeat(INBOUND_TEXT_MAX + 500) });
+
+    expect(kept?.text).toHaveLength(INBOUND_TEXT_MAX + 1);
+    expect(kept?.text.endsWith('…')).toBe(true);
+  });
+
+  it('cuts an over-long author and time to a name-sized bound', () => {
+    const kept = asInbound({
+      author: 'a'.repeat(INBOUND_NAME_MAX + 40),
+      text: 'hola',
+      at: 'b'.repeat(INBOUND_NAME_MAX + 40),
+    });
+
+    expect(kept?.author).toHaveLength(INBOUND_NAME_MAX + 1);
+    expect(kept?.at).toHaveLength(INBOUND_NAME_MAX + 1);
+  });
+
+  /*
+    Built from nothing, the way `honestPermissionAsk` builds its own meta: an
+    allowlist is what stops the next model-supplied key riding in on a shape
+    the card has certified.
+  */
+  it('carries no key the caller invented', () => {
+    expect(
+      asInbound({ author: 'Marcos', text: 'hola', permalink: 'https://example.invalid' }),
+    ).toEqual({ author: 'Marcos', text: 'hola' });
   });
 });

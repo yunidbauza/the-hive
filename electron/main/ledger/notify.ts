@@ -110,7 +110,7 @@ const slackLinkFor = (
  *
  * It used to be keyed on `meta.run`, which only `finalizeRun` ever stamps —
  * the run receipt itself. An agent's own `ledger_failed` goes through
- * `mcp-host/tools.ts`, whose schema (`ledger-tools.ts`) has no run field and
+ * `shared/mcp-tools.ts`, whose schema (`ledger-tools.ts`) has no run field and
  * whose `AGENT_PREAMBLE` never tells an agent its own run id, so the
  * agent-posted `failed` this dedup exists to notice never carried one. The
  * dedup could not fire in production, and the old test proved nothing because
@@ -142,27 +142,31 @@ export function createLedgerNotifier(
 
     if (entry.kind === 'ask' && entry.to === OVERMIND) {
       const permission = meta.kind === 'permission';
-      const [first, rest] = split(entry.body);
       /*
-        `str`, not `!== undefined` — the same "non-empty string" guard the card
-        applies (`ask-card.tsx`), and it has to be the same one.
+        Split the same way for every ask, quoted or not.
 
-        `mcp-host/tools.ts` admits `quote: ''` (`typeof quote === 'string'`),
-        and any non-string can reach `meta` through the passthrough. Under the
-        looser test one ask got two presentations: this notification titled
-        itself "Send this reply?" and offered a body that was the whole entry,
-        while the card next to it drew the ordinary title, the ordinary detail
-        and no quote block at all.
+        A `meta.quote` used to retitle this "Send this reply?" and push the
+        asker's own first line down into the body, mirroring a special case
+        the card made too. Both are gone. It was already the expensive kind of
+        coupling — HIVE-118 finding 7 is what these two disagreeing about
+        `quote` looked like, and `shared/mcp-tools.ts` can still produce a
+        `quote: ''` or a non-string that only one of them would notice — and
+        it bought nothing: a drafting agent writes a first line naming who it
+        is replying to, and both presentations threw it away.
       */
-      const quote = str(meta.quote);
+      const [first, rest] = split(entry.body);
       deps.raise({
         kind: permission ? 'agent.permission' : 'agent.ask',
         id: entry.id,
-        title: quote === undefined ? first : 'Send this reply?',
-        body: quote === undefined ? rest : entry.body,
+        title: first,
+        body: rest,
         /*
           The asker, so three agents asking at once give three distinguishable
-          toasts rather than three reading "Send this reply?" (HIVE-118).
+          toasts. HIVE-118 wanted this because a quoted ask was retitled "Send
+          this reply?" and three of them were identical; that retitle is gone
+          now, and the reason survives it — three agents can still open with
+          the same words, and a toast that cannot say who is asking is a toast
+          you have to open the app to act on.
 
           `subject` rather than a name pasted into the title, and the choice
           matters for the commonest asker of all: since HIVE-108 a session

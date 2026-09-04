@@ -53,7 +53,7 @@ and bound to Tailwind via `@theme inline` in `src/styles/tokens.css`.
 | `--cc-code-operator` | `#98a3cc` | `#73767c` | editor: operators, punctuation |
 | `--cc-code-constant` | `#ff8d85` | `#b3271f` | editor: constants |
 | `--cc-code-invalid` | `#ff8d85` | `#d3372f` | editor: parse errors |
-| `--cc-code-active-line` | `#171e3c` | `#f4f9ff` | editor: current line |
+| `--cc-code-active-line` | `#202b50` | `#eef7ff` | editor: current line (painted at 35%) |
 | `--cc-code-selection` | `#2b3768` | `#cfe3f7` | editor: selection |
 
 **The editor and the terminal both follow the theme.** They did not always. The
