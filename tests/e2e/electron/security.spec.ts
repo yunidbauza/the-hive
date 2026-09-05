@@ -639,7 +639,16 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
      * The rest of the block stays confined to the config file the same way
      * `setJira`'s connection settings do — `workspace`/`hiveDir` are paths
      * inside a container that has to be told them, not paths this process
-     * opens, and `envArg`/`freshness`/`probe` are shape, not destinations.
+     * opens, and `envArg`/`freshness` are shape, not destinations.
+     *
+     * `probe` is not that mild, and does not belong in the same clause
+     * (final-review fix, HIVE-134 has been told to lean on this paragraph):
+     * `diagnoseCommand` runs it via `/bin/sh -c` on the **host**, from a
+     * settings handler — this is the first payload on this bridge that main
+     * executes at all outside a session's own terminal, where the user can at
+     * least see what ran. That the value only takes effect when Settings asks
+     * for a diagnostic, and is otherwise inert on disk, is HIVE-134's premise
+     * to weigh, not this test's to assert away.
      */
     /**
       * Story 106's `setNotifications` — a capability, and the mildest one on
