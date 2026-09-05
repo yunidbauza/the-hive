@@ -281,9 +281,10 @@ export function ContainerGroup({
 
           <p className="border-l-2 border-amber pl-2.5 text-[11.5px] text-muted">
             Values above are typed into the terminal, so they are visible in
-            scroll-back and to ps. Credentials belong in the image — this app never
-            forwards them, and what claude authenticates with inside the container
-            is decided by the image.
+            scroll-back and to ps. Credentials belong in the image — while
+            Subscription auth is on, this app strips the API-key variables out of
+            what it forwards, and what claude authenticates with inside the
+            container is decided by the image.
           </p>
         </SettingsGroup>
       </SettingsNestingContext>

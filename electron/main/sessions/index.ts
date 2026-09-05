@@ -359,6 +359,32 @@ export interface Sessions {
    * user under the right filename.
    */
   observedCwd(entityId: string): string | undefined;
+  /**
+   * Settle any in-flight removal of this entity's container session files.
+   *
+   * `restartOnce` awaits the same thing internally, and for the same reason:
+   * every ending funnels through `settleExit`, which starts an `rm -rf` of
+   * `<userData>/hive/container/sessions/<entityId>` and then resolves the exit
+   * waiters **without** waiting for it. Anything that writes that directory
+   * again for the same id — and `hooks.writeContainerSession` is the only
+   * thing that does — must wait for the `rm` to finish, or its four files can
+   * be swept by a deletion that was already running and its `rmdir` can land
+   * between two of them. The session then starts with no `--settings` and no
+   * `--mcp-config`, which is the silent "cannot authenticate" failure this
+   * story exists to prevent.
+   *
+   * Exposed because the *first* spawn of a generation goes through
+   * `ipc/index.ts`'s `ptySpawn` handler rather than `restartOnce`, and that
+   * handler holds no reference to the removal. Re-opening an entity whose
+   * previous generation has just exited is an ordinary flow, so the window is
+   * real even though the handler's own `loginEnvStatus`, `skills.sync` and
+   * `mcp.start` awaits usually cover it. "Usually" is what made the first fix
+   * for this wrong.
+   *
+   * Resolves immediately for a host session, for an id with no removal in
+   * flight, and for one whose removal already settled.
+   */
+  containerRemoval(entityId: string): Promise<void>;
   diagnostics(): PtyDiagnostics[];
   dispose(): void;
 }
@@ -2460,6 +2486,9 @@ export function createSessions(options: SessionsOptions): Sessions {
       lastStatus.get(entityId) === 'idle' &&
       statusTracker.held(entityId).bgShells === 0,
     observedCwd: (entityId) => lastCwd.get(entityId),
+    /* `?? Promise.resolve()` rather than `await undefined` at the call site, so
+       the contract is a promise in every case and a caller cannot forget. */
+    containerRemoval: (entityId) => containerRemovals.get(entityId) ?? Promise.resolve(),
     diagnostics: () => ptyIpc.diagnostics(),
 
     dispose() {

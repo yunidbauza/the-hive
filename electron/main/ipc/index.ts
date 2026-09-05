@@ -3102,6 +3102,21 @@ export function registerIpcHandlers(): void {
      * A no-op for a host project and for `exec-env`, where every per-session
      * value in the set is a `${VAR}` and there is nothing resolved to write.
      */
+    /**
+     * After any in-flight removal for this same id, never beside it.
+     *
+     * `settleExit` starts an `rm -rf` of this entity's session directory on
+     * every ending and resolves its exit waiters without waiting for it, so
+     * re-opening an entity whose previous generation has just exited can put
+     * this write in the path of a deletion that is still running — losing the
+     * four files it just produced, and spawning with no `--settings` and no
+     * `--mcp-config`. `restartOnce` awaits the same promise for the same
+     * reason; this is the other door into the same write.
+     *
+     * Resolves immediately in every ordinary case, this handler's own awaits
+     * above having long since covered the removal.
+     */
+    await sessions?.containerRemoval(request.sessionId);
     await hooks?.writeContainerSession(request.sessionId, request.projectId);
     sessions?.open({
       entityId: request.sessionId,

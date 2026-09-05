@@ -3002,4 +3002,61 @@ describe('container spawn (HIVE-133)', () => {
     vi.advanceTimersByTime(8);
     await restart;
   });
+
+  /**
+   * `restartOnce` is not the only door into `writeContainerSession`.
+   *
+   * The *first* spawn of a generation goes through `ipc/index.ts`'s `ptySpawn`
+   * handler, which holds no reference to the removal `settleExit` started for
+   * the previous generation of the same entity — so re-opening a session that
+   * has just exited could put its write in the path of a deletion still
+   * running. `containerRemoval` is what that handler awaits; this asserts the
+   * accessor really is the removal and not a resolved placeholder, because a
+   * `() => Promise.resolve()` implementation would satisfy the type, satisfy
+   * the call site, and close nothing.
+   */
+  it('exposes the in-flight container removal, unsettled until the removal itself settles', async () => {
+    let resolveRemoval: () => void = () => {
+      throw new Error('resolveRemoval called before removeSessionContainerFiles');
+    };
+    vi.mocked(removeSessionContainerFiles).mockClear();
+    vi.mocked(removeSessionContainerFiles).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRemoval = resolve;
+        }),
+    );
+
+    const instance = createSessions({
+      supervisor,
+      send: (channel, payload) =>
+        sent.push({ channel, payload: payload as Record<string, unknown> }),
+      config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
+      newSessionUuid: () => TEST_UUID,
+    });
+    created.push(instance);
+
+    // Nothing has ended, so there is nothing to wait for.
+    let settledBefore = false;
+    void instance.containerRemoval('hero-refresh').then(() => {
+      settledBefore = true;
+    });
+    await Promise.resolve();
+    expect(settledBefore).toBe(true);
+
+    instance.open(OPEN);
+    emitExit({ sessionId: mintedFor('hero-refresh'), exitCode: 0 });
+
+    let settled = false;
+    void instance.containerRemoval('hero-refresh').then(() => {
+      settled = true;
+    });
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    expect(settled).toBe(false);
+
+    resolveRemoval();
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    expect(settled).toBe(true);
+  });
 });
