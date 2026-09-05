@@ -786,6 +786,15 @@ export function assertContainer(value: unknown, label: string): ContainerConfig 
   const workspace = absolute('workspace');
   const hiveDir = absolute('hiveDir');
 
+  /*
+    `isEnvArgTemplate` first, then `assertText` — the same pairing `workspace`,
+    `hiveDir` and `probe` use, and for a sharper version of the same reason.
+    The shape check only asks that both placeholders are present, so alone it
+    accepts an unbounded template and one carrying control characters. Unlike a
+    *value*, a template's own text is emitted **verbatim** by `expandEnvArgs`,
+    never quoted, because it is the runtime's vocabulary rather than user data
+    — so whatever survives this check is typed into a pty exactly as written.
+  */
   if (raw.envArg !== undefined && !isEnvArgTemplate(raw.envArg)) {
     throw new IpcValidationError(`${label}.envArg must contain {name} and {value}`);
   }
@@ -820,7 +829,7 @@ export function assertContainer(value: unknown, label: string): ContainerConfig 
   return {
     workspace,
     hiveDir,
-    ...(raw.envArg === undefined ? {} : { envArg: raw.envArg as string }),
+    ...(raw.envArg === undefined ? {} : { envArg: assertText(raw.envArg, `${label}.envArg`) }),
     ...(raw.probe === undefined ? {} : { probe: assertText(raw.probe, `${label}.probe`) }),
     ...(raw.freshness === undefined
       ? {}

@@ -225,7 +225,7 @@ export const runProbeCommand: RunProbe = async (command, { env, timeout }) => {
       code becomes `null` here, with the code itself folded into `stderr`
       rather than silently dropped.
     */
-    const error = cause as { code?: number | string | null; stderr?: string };
+    const error = cause as { code?: number | string | null; stderr?: string; killed?: boolean };
     const code = typeof error.code === 'number' ? error.code : null;
     const base = error.stderr === undefined || error.stderr === '' ? String(cause) : error.stderr;
     /*
@@ -233,9 +233,28 @@ export const runProbeCommand: RunProbe = async (command, { env, timeout }) => {
       write — a `maxBuffer` overrun still hands back the truncated buffer it
       collected before giving up, and that partial output is worth keeping
       alongside the reason it stopped, not instead of it.
+
+      A timeout is named rather than left to be inferred. `execFile` reports it
+      as `killed: true` with a `null` code and whatever generic "Command
+      failed" text it builds, which the pane then draws as
+      "Probe failed (exit signal)" — true, and useless. The probe exists to
+      explain why a container is not answering, so the one failure it cannot
+      leave unexplained is its own deadline. Checked *after* the string code,
+      because `maxBuffer` also kills the child and that reason is the more
+      specific of the two.
+
+      The deadline named is `timeout`, this call's own, not `PROBE_TIMEOUT_MS`.
+      They are the same value on the one path that reaches here in production,
+      and a message that says otherwise the moment they diverge is worse than
+      no message.
     */
-    const detail = typeof error.code === 'string' ? `${base} (${error.code})` : base;
-    return { code, stderr: String(detail) };
+    const reason =
+      typeof error.code === 'string'
+        ? `(${error.code})`
+        : error.killed === true
+          ? `(timed out after ${timeout}ms)`
+          : null;
+    return { code, stderr: reason === null ? String(base) : `${String(base)} ${reason}` };
   }
 };
 

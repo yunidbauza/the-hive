@@ -1114,4 +1114,25 @@ describe('parseSetProjectRuntimeRequest container', () => {
       parseSetProjectRuntimeRequest({ id: 'p', container: { ...container, [key]: value } }),
     ).toThrow(IpcValidationError);
   });
+
+  /**
+   * `envArg` is the third string on this bridge that reaches a command line,
+   * and it was the one left out of Minor 7's fix.
+   *
+   * `isEnvArgTemplate` only asks that both placeholders are present, so on its
+   * own it accepts an unbounded template and one carrying control characters —
+   * and unlike a value, a template's own text is emitted **verbatim** by
+   * `expandEnvArgs`, never quoted, because it is the runtime's vocabulary
+   * rather than user data. `workspace`, `hiveDir` and `probe` all pair their
+   * shape check with `assertText` for exactly this reason; this one now does
+   * too.
+   */
+  it.each([
+    [`-e {name}={value} ${'x'.repeat(4096)}`],
+    ['-e {name}={value}\u0007'],
+  ])('refuses an envArg that isEnvArgTemplate alone would accept: %j', (envArg) => {
+    expect(() =>
+      parseSetProjectRuntimeRequest({ id: 'p', container: { ...container, envArg } }),
+    ).toThrow(IpcValidationError);
+  });
 });

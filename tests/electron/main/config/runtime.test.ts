@@ -518,4 +518,20 @@ describe('runProbeCommand', () => {
     const result = await runProbeCommand('exit 3', { env: process.env, timeout: 5000 });
     expect(result.code).toBe(3);
   });
+
+  /**
+   * The one failure the probe cannot leave unexplained is its own deadline.
+   *
+   * `execFile` reports a timeout as `killed: true` with a `null` code and a
+   * generic "Command failed" string, which the pane draws as
+   * "Probe failed (exit signal)" — true, and useless to someone trying to find
+   * out why their container is not answering. Real `execFile` again: the
+   * `killed` flag is exactly what an injected `RunProbe` cannot produce.
+   */
+  it('names the deadline when the probe is killed for exceeding it', async () => {
+    const result = await runProbeCommand('sleep 5', { env: process.env, timeout: 100 });
+
+    expect(result.code).toBeNull();
+    expect(result.stderr).toContain('timed out after 100ms');
+  });
 });
