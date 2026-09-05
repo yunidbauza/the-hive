@@ -1,4 +1,4 @@
-import { AUTH_ENV_KEYS } from '@shared/config-contract';
+import { AUTH_ENV_KEYS, type ResolvedContainer } from '@shared/config-contract';
 import {
   BOOTSTRAP_DEBOUNCE_MS,
   BOOTSTRAP_FALLBACK_MS,
@@ -8,6 +8,30 @@ import {
   type SessionModel,
 } from '@shared/session-contract';
 
+import { expandEnvArgs, substituteEnv } from './container-command';
+import type { PathMap } from './path-map';
+import { shellQuote } from './shell-quote';
+
+/**
+ * What a container project's session needs beyond the host shape (HIVE-133).
+ *
+ * `docker exec` carries nothing across the boundary it crosses, so a spawn
+ * needs both halves of the fix: {@link PathMap} to rewrite the three flag
+ * paths, and `env` — already fully assembled, `HIVE_*` written last — to
+ * expand at `claudeCommand`'s `{env}` placeholder.
+ *
+ * `config` is {@link ResolvedContainer}, not the raw `ContainerConfig` a file
+ * or the IPC guard produces: `envArg` is read here unconditionally, and only
+ * the resolved shape guarantees it is a `string` rather than `string | undefined`.
+ * `effectiveRuntime` is the one place that turns one into the other.
+ */
+export interface ContainerSpawn {
+  config: ResolvedContainer;
+  map: PathMap;
+  /** Everything that must reach the container, HIVE_* written last. */
+  env: Record<string, string>;
+}
+
 /**
  * `--session-id` takes a uuid and rejects anything else.
  *
@@ -15,28 +39,6 @@ import {
  * exit non-zero, which `&&` turns into "the session opened and did nothing".
  */
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/**
- * Single-quote a path for a POSIX shell.
- *
- * The one argument on this command line that genuinely needs it. `--name` and
- * `--session-id` are filtered against closed patterns and `--model`/`--effort`
- * against closed lists, so none of them can carry a metacharacter — but the
- * settings path is `app.getPath('userData')`, and on macOS that is
- * `~/Library/Application Support/the-hive/…`. **It contains a space on every
- * Mac**, which the shell splits, so `claude` received `--settings
- * /Users/…/Application` plus a stray positional argument it read as an initial
- * prompt, and hook status never worked at all.
- *
- * An earlier comment here claimed an app-generated path "has none of them".
- * That was wrong on the most common platform this app runs on, which is why the
- * rule is now enforced in code instead of asserted in prose.
- *
- * Single quotes rather than escaping: inside them a POSIX shell interprets
- * nothing, so the only character needing care is the single quote itself, and
- * `'\''` closes, escapes and reopens.
- */
-const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
 
 /**
  * When to write `claude` into a freshly spawned shell (story 096).
@@ -185,6 +187,21 @@ export interface SessionOptions {
    * `settingsPath` does and a much more obvious one.
    */
   task?: string;
+  /**
+   * The project runs inside a container (HIVE-133).
+   *
+   * Two things happen when this is present, and both are about a boundary
+   * `docker exec` does not carry anything across:
+   *
+   * - **Environment moves onto the command line.** `docker exec` does not
+   *   inherit the pty's environment, so `envFor`'s three variables — which
+   *   reach a host session through the spawn env — would never arrive. They are
+   *   expanded through `config.envArg` and substituted at `{env}`.
+   * - **Paths are rewritten.** `--settings`, `--plugin-dir` and `--mcp-config`
+   *   all name host paths under `<userData>/hive`, which mean nothing inside
+   *   the container.
+   */
+  container?: ContainerSpawn;
 }
 
 /**
@@ -297,8 +314,28 @@ export const sessionCommand = (
     mcpConfig,
     subscriptionAuth = false,
     task,
+    container,
   }: SessionOptions = {},
 ): string => {
+  /*
+    Through the map, or dropped. A path under neither mapped root has no
+    container-side spelling, and passing the host one would name a file the
+    container cannot open — an error at `claude` startup about a file, which is
+    further from the cause than no flag at all. Task 9's diagnostic reports the
+    unmappable case before a session is ever spawned.
+  */
+  const mapped = (value: string | undefined): string | undefined => {
+    if (value === undefined) return undefined;
+    if (container === undefined) return value;
+    return container.map.toContainer(value) ?? undefined;
+  };
+
+  /* Each mapped once, into a local: the map is a lookup, and calling it twice
+     per flag to test then use it is how the two answers drift. */
+  const settings = mapped(settingsPath);
+  const plugin = mapped(pluginDir);
+  const mcp = mapped(mcpConfig);
+
   const flags = [
     ...(model === undefined ? [] : ['--model', model]),
     ...(effort === undefined ? [] : ['--effort', effort]),
@@ -312,9 +349,9 @@ export const sessionCommand = (
     ...(sessionUuid !== undefined && UUID_PATTERN.test(sessionUuid)
       ? [resume ? '--resume' : '--session-id', sessionUuid]
       : []),
-    ...(settingsPath === undefined ? [] : ['--settings', shellQuote(settingsPath)]),
-    ...(pluginDir === undefined ? [] : ['--plugin-dir', shellQuote(pluginDir)]),
-    ...(mcpConfig === undefined ? [] : ['--mcp-config', shellQuote(mcpConfig)]),
+    ...(settings === undefined ? [] : ['--settings', shellQuote(settings)]),
+    ...(plugin === undefined ? [] : ['--plugin-dir', shellQuote(plugin)]),
+    ...(mcp === undefined ? [] : ['--mcp-config', shellQuote(mcp)]),
   ];
   /**
    * Unset the API credentials **here**, not only in the spawned environment
@@ -360,7 +397,45 @@ export const sessionCommand = (
       ? []
       : [shellQuote(task.replaceAll(/[\r\n]+/g, ' ').trim())];
 
-  return `${prefix}${[claudeCommand, ...flags, ...initialPrompt].join(' ')} && exit`;
+  /*
+    Substituted into `claudeCommand` alone, **before** the join — never into
+    the flags or the task (final-review fix).
+
+    The flags are `shellQuote`d closed forms and the task is one too, and
+    `{env}` is not a placeholder either of them promises to leave alone. Doing
+    the substitution on the *joined* line meant a task containing the literal
+    text `{env}` — nothing stops a user typing that — was substituted a second
+    time, **inside its own quoted region**: each expansion is `-e NAME='value'`,
+    an even number of quotes, spliced into an already-open single-quoted
+    string. The first `'` in the splice closes the task's quote early, and
+    everything after it — including any `;`, backtick or `$(…)` a project's
+    `env` value happened to contain — lands unquoted in the host login shell.
+    The expansion belongs to the command the user configured in Settings,
+    never to text they typed into a prompt box, so it can only ever run
+    against `claudeCommand`.
+
+    This also closes the quieter half of the same bug: a `claudeCommand` with
+    no `{env}` but a task that happens to contain the literal text used to
+    make `substituteEnv` find *a* placeholder anyway (in the task) and return
+    non-null, so the container got none of `HIVE_SESSION_ID`, `HIVE_HOOK_TOKEN`
+    or `HIVE_RECEIVER_URL` while `diagnoseCommand` reported the command as
+    fine. Substituting into `claudeCommand` alone means `null` means what it
+    says: no `{env}` in the command the user configured, full stop.
+
+    `null` still means exactly that — the command is emitted unchanged rather
+    than half-built, because a string with the placeholder still in it would
+    be typed into a shell verbatim. Task 9's diagnostic is what actually flags
+    the missing placeholder to the user; this function only refuses to guess.
+  */
+  const command =
+    container === undefined
+      ? claudeCommand
+      : (substituteEnv(claudeCommand, expandEnvArgs(container.env, container.config.envArg)) ??
+        claudeCommand);
+
+  const line = [command, ...flags, ...initialPrompt].join(' ');
+
+  return `${prefix}${line} && exit`;
 };
 
 export interface BootstrapOptions {

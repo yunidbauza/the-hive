@@ -5,6 +5,7 @@ import {
   createBootstrap,
   sessionCommand,
 } from '../../../../electron/main/sessions/bootstrap';
+import { createPathMap } from '../../../../electron/main/sessions/path-map';
 import { SUBMIT_DELAY_MS } from '../../../../electron/shared/session-contract';
 
 /**
@@ -834,5 +835,166 @@ describe('sessionCommand', () => {
       expect(command).toContain('--plugin-dir');
       expect(command).toContain('--mcp-config');
     });
+  });
+});
+
+describe('sessionCommand container projects', () => {
+  const config = {
+    workspace: '/workspace',
+    hiveDir: '/hive',
+    envArg: '-e {name}={value}',
+    freshness: 'exec-env' as const,
+    hostAlias: 'host.docker.internal',
+  };
+
+  const map = createPathMap({
+    projectPath: '/Users/dev/Projects/the-hive',
+    userDataPath: '/Users/dev/Library/Application Support/The Hive',
+    workspace: '/workspace',
+    hiveDir: '/hive',
+  });
+
+  const container = {
+    config,
+    map,
+    env: { FOO: 'bar', HIVE_SESSION_ID: 'hero-refresh', HIVE_HOOK_TOKEN: 'a3f' },
+  };
+
+  const paths = {
+    settingsPath:
+      '/Users/dev/Library/Application Support/The Hive/hive/container/claude-hooks.settings.json',
+    mcpConfig:
+      '/Users/dev/Library/Application Support/The Hive/hive/container/hive.mcp.json',
+    pluginDir: '/Users/dev/Library/Application Support/The Hive/hive/plugin',
+  };
+
+  it('expands the environment at the placeholder and rewrites every path', () => {
+    const command = sessionCommand('docker exec -it {env} devbox claude', {
+      ...paths,
+      container,
+    });
+
+    expect(command).toContain(
+      "-e FOO='bar' -e HIVE_SESSION_ID='hero-refresh' -e HIVE_HOOK_TOKEN='a3f' devbox claude",
+    );
+    expect(command).toContain(
+      "--settings '/hive/container/claude-hooks.settings.json'",
+    );
+    expect(command).toContain("--mcp-config '/hive/container/hive.mcp.json'");
+    expect(command).toContain("--plugin-dir '/hive/plugin'");
+    // No host path survives into the container's argv.
+    expect(command).not.toContain('Application Support');
+  });
+
+  it('maps a nested per-session settings path the same way (freshness is not read here)', () => {
+    // `sessionCommand` never branches on `freshness` — that only decides, one
+    // layer up, which host path `settingsPath` is in the first place. This
+    // exercises a deeper, per-session path shape through the same `mapped()`
+    // logic the first test already covers for a flat one.
+    const command = sessionCommand('docker exec -it {env} devbox claude', {
+      settingsPath:
+        '/Users/dev/Library/Application Support/The Hive/hive/container/sessions/hero-refresh/claude-hooks.settings.json',
+      container: { ...container, config: { ...config, freshness: 'rewrite' } },
+    });
+
+    expect(command).toContain(
+      "--settings '/hive/container/sessions/hero-refresh/claude-hooks.settings.json'",
+    );
+  });
+
+  it('drops an unmappable flag without dropping its neighbours', () => {
+    /**
+     * The property most likely to leak a host path into a container's argv if
+     * `mapped()` ever regresses: `/etc/hive/x.json` is under neither
+     * `projectPath` nor `<userData>/hive`, so `toContainer` returns `null` and
+     * the flag must vanish — not survive as the host path, and not survive as
+     * an empty-quoted argument. The other two flags, which *are* mappable,
+     * must still come through untouched.
+     */
+    const command = sessionCommand('docker exec -it {env} devbox claude', {
+      settingsPath: '/etc/hive/x.json',
+      mcpConfig: paths.mcpConfig,
+      pluginDir: paths.pluginDir,
+      container,
+    });
+
+    expect(command).not.toContain('--settings');
+    expect(command).not.toContain('/etc/hive/x.json');
+    expect(command).not.toContain("--settings ''");
+    expect(command).toContain("--mcp-config '/hive/container/hive.mcp.json'");
+    expect(command).toContain("--plugin-dir '/hive/plugin'");
+  });
+
+  it('leaves the command alone when it has no placeholder', () => {
+    // Task 9's diagnostic is what refuses this; a half-built command is worse.
+    // Pinned with `toBe` rather than `toContain`: dropping the `?? line`
+    // fallback and leaking `substituteEnv`'s `null` in would still satisfy
+    // both a `toContain('docker exec -it devbox claude')` and a
+    // `not.toContain('-e HIVE_SESSION_ID')` on a longer, broken string.
+    const command = sessionCommand('docker exec -it devbox claude', {
+      ...paths,
+      container,
+    });
+    expect(command).toBe(
+      "docker exec -it devbox claude --settings '/hive/container/claude-hooks.settings.json' --plugin-dir '/hive/plugin' --mcp-config '/hive/container/hive.mcp.json' && exit",
+    );
+  });
+
+  /**
+   * The bug a final-review pass caught (HIVE-133, final-review fix,
+   * Critical 1): `substituteEnv` used to run against the *joined* line — every
+   * flag and the quoted task together — rather than against `claudeCommand`
+   * alone. A task containing the literal text `{env}` (nothing stops a user
+   * typing that) was then substituted a **second** time, inside its own
+   * quoted region: each expansion is `-e NAME='value'`, an even number of
+   * quotes, spliced into an already-open single-quoted string. The first `'`
+   * in the splice closes the task's quote early, and everything after it —
+   * a `;`, a backtick, a `$(…)` a project's `env` value happened to contain —
+   * would land unquoted in the host login shell.
+   *
+   * This pins the fix two ways: the task survives quoted and intact, and
+   * there is exactly one expansion — the one `claudeCommand` asked for, not a
+   * second one inside the task.
+   */
+  it('does not substitute {env} written inside the task, only in claudeCommand', () => {
+    const command = sessionCommand('docker exec -it {env} devbox claude', {
+      ...paths,
+      container,
+      task: 'what does {env} do',
+    });
+
+    expect(command).toContain("'what does {env} do'");
+    expect(command.match(/-e FOO=/g)).toHaveLength(1);
+  });
+
+  /**
+   * The quieter half of the same bug: with the substitution run against the
+   * joined line, a `claudeCommand` with **no** `{env}` but a task that happens
+   * to contain the literal text made `substituteEnv` find *a* placeholder
+   * anyway — in the task — and return non-null, so the container got none of
+   * `HIVE_SESSION_ID`, `HIVE_HOOK_TOKEN` or `HIVE_RECEIVER_URL` while
+   * `diagnoseCommand` correctly reported `missingEnvPlaceholder: true`. The
+   * fix means `null` answers "no `{env}` in `claudeCommand`", full stop — so
+   * this must behave exactly like "leaves the command alone when it has no
+   * placeholder" above: nothing substituted, the task's literal text intact.
+   */
+  it('treats a task containing {env} as the no-placeholder case when claudeCommand has none', () => {
+    const command = sessionCommand('docker exec -it devbox claude', {
+      ...paths,
+      container,
+      task: 'what does {env} do',
+    });
+
+    expect(command).toContain("'what does {env} do'");
+    expect(command).not.toContain('-e FOO=');
+  });
+
+  it('is byte-identical to today for a project with no container block', () => {
+    const before = sessionCommand('claude', {
+      settingsPath: '/Users/dev/Library/Application Support/The Hive/hive/x.json',
+    });
+    expect(before).toBe(
+      "claude --settings '/Users/dev/Library/Application Support/The Hive/hive/x.json' && exit",
+    );
   });
 });

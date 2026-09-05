@@ -600,3 +600,114 @@ describe('parseConfig — the receiver block (HIVE-131)', () => {
     expect(parsed.errors).toEqual([]);
   });
 });
+
+const parse = (container: unknown) =>
+  parseConfig(
+    JSON.stringify({
+      version: 2,
+      projects: [{ id: 'the-hive', path: '~/the-hive', container }],
+    }),
+    'config',
+  );
+
+describe('parseConfig — per-project container block (HIVE-133)', () => {
+  it('reads a minimal block and defaults nothing', () => {
+    // Validation lives here; defaulting is `effectiveRuntime`'s, which is the
+    // only layer that can see `receiver.hostAlias`.
+    const parsed = parse({ workspace: '/workspace', hiveDir: '/hive' });
+
+    expect(parsed.fatal).toBe(false);
+    expect(parsed.projects[0]?.container).toEqual({
+      workspace: '/workspace',
+      hiveDir: '/hive',
+    });
+  });
+
+  it('keeps every field the file sets', () => {
+    const container = {
+      workspace: '/w',
+      hiveDir: '/h',
+      envArg: '--env {name}={value}',
+      probe: 'docker exec devbox true',
+      freshness: 'rewrite',
+      hostAlias: 'gateway',
+    };
+
+    expect(parse(container).projects[0]?.container).toEqual(container);
+  });
+
+  it('is absent when the project has no block', () => {
+    const parsed = parseConfig(
+      JSON.stringify({ version: 2, projects: [{ id: 'a', path: '~/a' }] }),
+      'config',
+    );
+    expect(parsed.projects[0]?.container).toBeUndefined();
+  });
+
+  it.each([
+    [{ hiveDir: '/hive' }, 'workspace'],
+    [{ workspace: '/workspace' }, 'hiveDir'],
+    [{ workspace: 'relative', hiveDir: '/hive' }, 'workspace'],
+    [{ workspace: '/w', hiveDir: 'relative' }, 'hiveDir'],
+    [{ workspace: '/w', hiveDir: '/h', envArg: '-e {name}' }, 'envArg'],
+    [{ workspace: '/w', hiveDir: '/h', freshness: 'stale' }, 'freshness'],
+    [{ workspace: '/w', hiveDir: '/h', hostAlias: 'bad host' }, 'hostAlias'],
+    [{ workspace: '/w', hiveDir: '/h', hostAlias: '10.0.0.5?' }, 'hostAlias'],
+    [{ workspace: '/w', hiveDir: '/h', probe: '' }, 'probe'],
+    [{ workspace: '/w', hiveDir: '/h', probe: 42 }, 'probe'],
+  ])('rejects %j, naming the field', (container, field) => {
+    const parsed = parse(container);
+
+    // The whole block is dropped and the project stays usable as a host project.
+    expect(parsed.projects[0]?.container).toBeUndefined();
+    expect(parsed.projects[0]?.id).toBe('the-hive');
+    // Advisory, never fatal: one bad block must not make the file unloadable.
+    expect(parsed.fatal).toBe(false);
+    expect(parsed.errors.join('\n')).toContain(field);
+  });
+
+  // `container: null` gets its own case rather than folding into the table
+  // above: `typeof null === 'object'`, so it is exactly the input a naive
+  // object check would let through.
+  it('rejects container: null', () => {
+    const parsed = parse(null);
+
+    expect(parsed.projects[0]?.container).toBeUndefined();
+    expect(parsed.projects[0]?.id).toBe('the-hive');
+    expect(parsed.fatal).toBe(false);
+    expect(parsed.errors.join('\n')).toContain('expected an object');
+  });
+
+  it('rejects a non-object container', () => {
+    const parsed = parse('x');
+
+    expect(parsed.projects[0]?.container).toBeUndefined();
+    expect(parsed.projects[0]?.id).toBe('the-hive');
+    expect(parsed.fatal).toBe(false);
+    expect(parsed.errors.join('\n')).toContain('expected an object');
+  });
+
+  it('does not report container as an unknown key', () => {
+    const parsed = parse({ workspace: '/w', hiveDir: '/h' });
+    expect(parsed.errors.join('\n')).not.toContain('unknown key');
+  });
+
+  /**
+   * `optionalContainer` used to be the one level of this file that never ran
+   * `checkKeys` over its own block, unlike every sibling — `optionalJira` and
+   * the top-level document both do — so a hand-written `hostalias` (lowercase
+   * `a`) fell through every field check below as simply absent and was
+   * silently ignored (final-review fix, Minor 12). `assertContainer` in
+   * `guards.ts` already rejects that exact typo via `assertShape`, so the
+   * reader was strictly looser than the guard on this one axis.
+   */
+  it('reports an unknown key inside the container block, matching every other block in this file', () => {
+    const parsed = parse({ workspace: '/w', hiveDir: '/h', hostalias: 'gateway' });
+
+    expect(parsed.errors.join('\n')).toContain('unknown key "hostalias"');
+    // Still parses on the fields it does recognise — an unknown key is
+    // reported and skipped, not fatal to the whole block.
+    expect(parsed.projects[0]?.container).toEqual({ workspace: '/w', hiveDir: '/h' });
+    expect(parsed.fatal).toBe(false);
+  });
+});

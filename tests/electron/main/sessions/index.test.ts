@@ -11,6 +11,7 @@ import {
   DEFAULT_RECEIVER,
   DEFAULT_NOTIFICATIONS,
   type ConfigSnapshot,
+  type ResolvedContainer,
 } from '../../../../electron/shared/config-contract';
 import type {
   HookAgentEvent,
@@ -35,6 +36,35 @@ import { createSessionHistory } from '../../../../electron/main/sessions/history
  * ordering rather than by starting processes. Terminal semantics get their own
  * runner under Electron's ABI (story 098).
  */
+
+/**
+ * `removeSessionContainerFiles` (HIVE-133), replaced outright rather than
+ * spied-through: this suite never writes a real container set to disk (that
+ * is `container/generated.test.ts`'s job), so the honest fake is one that
+ * resolves and records its calls, not one that touches a filesystem no test
+ * here has a directory for.
+ *
+ * Everything else in the module — `CONTAINER_DIR`, `CONTAINER_SESSIONS_DIR`,
+ * `CONTAINER_SETTINGS_FILE`, `CONTAINER_MCP_FILE` — passes through real,
+ * post-review fix: `sessions/index.ts` imports those same constants (rather
+ * than a second, hardcoded copy of the two filenames), so a mock that
+ * replaced the whole module would hand it `undefined` for every one of them.
+ */
+vi.mock('../../../../electron/main/container/generated', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('../../../../electron/main/container/generated')
+  >();
+  return {
+    ...actual,
+    removeSessionContainerFiles: vi.fn(() => Promise.resolve()),
+  };
+});
+
+const {
+  removeSessionContainerFiles,
+  CONTAINER_MCP_FILE,
+  CONTAINER_SETTINGS_FILE,
+} = await import('../../../../electron/main/container/generated');
 
 interface Sent {
   channel: string;
@@ -145,6 +175,14 @@ function fakeSupervisor(): PtyHostSupervisor {
 
 const OPEN = { entityId: 'hero-refresh', projectId: 'nova-web', cols: 80, rows: 24 };
 
+/**
+ * `SessionsOptions.userDataPath` (HIVE-133) — every `createSessions` call in
+ * this file passes the same fixed value, so a path built from it (a
+ * container project's generated set, `removeSessionContainerFiles`'s first
+ * argument) is assertable rather than a moving target.
+ */
+const USER_DATA_PATH = '/Users/dev/Library/Application Support/The Hive';
+
 /** Pinned so the command line is a constant rather than a moving target. */
 const TEST_UUID = '00000000-0000-4000-8000-000000000000';
 
@@ -218,6 +256,7 @@ beforeEach(() => {
     supervisor,
     send: (channel, payload) => sent.push({ channel, payload: payload as Record<string, unknown> }),
     config: () => CONFIG,
+    userDataPath: USER_DATA_PATH,
     /**
      * Pinned so the bootstrap command line is assertable (HIVE-61). A real
      * spawn generates a fresh uuid; what matters here is that one is passed,
@@ -287,6 +326,7 @@ describe('what a session runs', () => {
       send: (channel, payload) =>
         sent.push({ channel, payload: payload as Record<string, unknown> }),
       config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
       newSessionUuid: () => TEST_UUID,
       hooks: {
         settingsPathFor: (...args: unknown[]) => {
@@ -697,6 +737,7 @@ function harness(onIdle?: (entityId: string) => void): {
     send: (channel, payload) =>
       localSent.push({ channel, payload: payload as Record<string, unknown> }),
     config: () => CONFIG,
+    userDataPath: USER_DATA_PATH,
     newSessionUuid: () => TEST_UUID,
     ...(onIdle === undefined ? {} : { onIdle }),
     hooks: {
@@ -789,6 +830,7 @@ describe('status', () => {
       send: (channel, payload) =>
         sent.push({ channel, payload: payload as Record<string, unknown> }),
       config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
       newSessionUuid: () => TEST_UUID,
       hooks: {
         settingsPathFor: () => undefined,
@@ -859,6 +901,7 @@ describe('status', () => {
       send: (channel, payload) =>
         sent.push({ channel, payload: payload as Record<string, unknown> }),
       config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
       newSessionUuid: () => TEST_UUID,
       branchReader: {
         run,
@@ -942,6 +985,7 @@ describe('status', () => {
       send: (channel, payload) =>
         sent.push({ channel, payload: payload as Record<string, unknown> }),
       config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
       newSessionUuid: () => TEST_UUID,
       branchReader: { run, gitPath: () => '/usr/bin/git', now: () => clock.t },
       hooks: {
@@ -1163,6 +1207,7 @@ describe('status', () => {
       supervisor,
       send: () => {},
       config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
       newSessionUuid: () => TEST_UUID,
       hooks: {
         settingsPathFor: () => undefined,
@@ -1224,6 +1269,7 @@ describe('spawn preconditions', () => {
       send: (channel, payload) =>
         sent.push({ channel, payload: payload as Record<string, unknown> }),
       config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
       maxSessions: 2,
     });
 
@@ -1492,6 +1538,7 @@ describe('openCommand', () => {
       supervisor,
       send: () => {},
       config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
       maxSessions: 0,
     });
 
@@ -1532,6 +1579,7 @@ describe('session authentication', () => {
       send: (channel, payload) =>
         sent.push({ channel, payload: payload as Record<string, unknown> }),
       config: () => ({ ...CONFIG, subscriptionAuth: false }),
+      userDataPath: USER_DATA_PATH,
       newSessionUuid: () => TEST_UUID,
     });
 
@@ -1581,6 +1629,7 @@ describe('the history', () => {
       send: (channel, payload) =>
         sent.push({ channel, payload: payload as Record<string, unknown> }),
       config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
       newSessionUuid: () => TEST_UUID,
       history: {
         /*
@@ -1703,6 +1752,7 @@ describe('the history', () => {
         send: (channel, payload) =>
           sent.push({ channel, payload: payload as Record<string, unknown> }),
         config: () => CONFIG,
+        userDataPath: USER_DATA_PATH,
         newSessionUuid: () => TEST_UUID,
         history,
       });
@@ -1948,11 +1998,15 @@ describe('/done', () => {
       send: (channel, payload) =>
         local.push({ channel, payload: payload as Record<string, unknown> }),
       config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
       newSessionUuid: () => TEST_UUID,
       hooks: {
         settingsPathFor: () => undefined,
         envFor: () => ({}),
         doneUrl: () => null,
+        // A host project (HIVE-133) — this harness's `restart()` reaches it,
+        // and the interface's `writeContainerSession` is not optional.
+        writeContainerSession: () => Promise.resolve(null),
         start: (opts: {
           onEvent: (event: HookStatusEvent) => void;
           onDone: (entityId: string) => void;
@@ -2383,6 +2437,7 @@ describe('the agent id space (HIVE-115)', () => {
       send: (channel, payload) =>
         localSent.push({ channel, payload: payload as Record<string, unknown> }),
       config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
       newSessionUuid: () => TEST_UUID,
       agentNames: () => names,
       onAgentTurnEnded: turnsEnded,
@@ -2495,5 +2550,513 @@ describe('the agent id space (HIVE-115)', () => {
     ).toEqual(['hero-refresh']);
 
     h.sessions.dispose();
+  });
+});
+
+describe('container spawn (HIVE-133)', () => {
+  /**
+   * Every field {@link ResolvedContainer} has, so a test overriding one — a
+   * `freshness`, a `hostAlias` — never has to restate the rest. `envArg`'s
+   * default is the one `bootstrap.test.ts` already exercises for
+   * `expandEnvArgs`, so a test here that wants the expanded environment on
+   * the command line only has to give `claudeCommand` its `{env}` placeholder.
+   */
+  const CONTAINER_DEFAULTS: ResolvedContainer = {
+    workspace: '/workspace',
+    hiveDir: '/hive',
+    envArg: '-e {name}={value}',
+    freshness: 'exec-env',
+    hostAlias: 'host.docker.internal',
+  };
+
+  /**
+   * Carries {@link ENV_PLACEHOLDER} the way `docker exec` needs it to
+   * (`bootstrap.test.ts`'s own fixture shape). `container.env` — the spread
+   * order the spoofing test exists to prove — never reaches the command line
+   * at all unless the placeholder is there for `substituteEnv` to fill in, so
+   * every fixture below uses this rather than the plain `'claude'` the rest
+   * of the file spawns with.
+   */
+  const CONTAINER_CLAUDE_COMMAND = 'docker exec -it {env} devbox claude';
+
+  /**
+   * Every instance this describe block's tests build, disposed together
+   * (HIVE-133's own tests are the first in this file to build more than one
+   * `createSessions` per test — the "removes on every kind of ending" case
+   * loops three times — so tracking them here is cheaper than repeating a
+   * `.dispose()` at the end of every `it`).
+   */
+  let created: Sessions[];
+
+  beforeEach(() => {
+    created = [];
+  });
+
+  afterEach(() => {
+    for (const instance of created) instance.dispose();
+  });
+
+  /**
+   * One containerised `nova-web`, spawned and captured, the way `themed` and
+   * `hooked` above build a session around one property under test rather than
+   * reusing the module's plain `sessions`.
+   *
+   * `envFor` answers the shape a bound receiver actually produces — all three
+   * `HIVE_*` variables, `HIVE_RECEIVER_URL` still loopback — so the
+   * `withHostAlias` substitution this task adds has something real to rewrite;
+   * a stub that omitted it would make every alias test vacuously true.
+   */
+  function spawnFixture(opts: {
+    container?: Partial<ResolvedContainer>;
+    projectEnv?: Record<string, string>;
+    /**
+     * The receiver never bound (property D's omission half, post-review
+     * fix): `envFor` answers without `HIVE_RECEIVER_URL` at all, the same
+     * shape the real runtime produces in that state. Absent (the default)
+     * matches a bound receiver, which every other test in this block wants.
+     */
+    receiverBound?: boolean;
+    /**
+     * Overrides `CONFIG`'s own `subscriptionAuth: true` (final-review fix,
+     * Important 3) — most tests in this block want the default, but the
+     * auth-forwarding tests need both arms to prove the container's copy of
+     * `runtime.env` reacts to the same flag the host pty env already did.
+     */
+    subscriptionAuth?: boolean;
+    /** Overrides `CONTAINER_CLAUDE_COMMAND`, for the missing-placeholder warning. */
+    claudeCommand?: string;
+  }): {
+    command: string;
+    end: (ending?: 'ptyExit' | 'ptyLost' | 'done') => Promise<void>;
+  } {
+    const container: ResolvedContainer = { ...CONTAINER_DEFAULTS, ...opts.container };
+    const receiverBound = opts.receiverBound ?? true;
+
+    const project = {
+      ...CONFIG.projects[0]!,
+      claudeCommand: opts.claudeCommand ?? CONTAINER_CLAUDE_COMMAND,
+      container,
+      ...(opts.projectEnv === undefined ? {} : { env: opts.projectEnv }),
+    };
+
+    const localConfig: ConfigSnapshot = {
+      ...CONFIG,
+      projects: [project, CONFIG.projects[1]!],
+      ...(opts.subscriptionAuth === undefined ? {} : { subscriptionAuth: opts.subscriptionAuth }),
+    };
+
+    let onDone: ((entityId: string) => void) | undefined;
+
+    const instance = createSessions({
+      supervisor,
+      send: (channel, payload) =>
+        sent.push({ channel, payload: payload as Record<string, unknown> }),
+      config: () => localConfig,
+      userDataPath: USER_DATA_PATH,
+      newSessionUuid: () => TEST_UUID,
+      hooks: {
+        settingsPathFor: () => join(USER_DATA_PATH, 'hive', CONTAINER_SETTINGS_FILE),
+        envFor: (entityId: string) => ({
+          HIVE_SESSION_ID: entityId,
+          HIVE_HOOK_TOKEN: 'tok-abc123',
+          ...(receiverBound ? { HIVE_RECEIVER_URL: 'http://127.0.0.1:60123' } : {}),
+        }),
+        writeContainerSession: () => Promise.resolve(null),
+        start: (handlers: { onDone: (entityId: string) => void }) => {
+          onDone = handlers.onDone;
+          return Promise.resolve();
+        },
+        stop: () => Promise.resolve(),
+      } as unknown as Parameters<typeof createSessions>[0]['hooks'],
+      mcp: {
+        configPathFor: () => join(USER_DATA_PATH, 'hive', CONTAINER_MCP_FILE),
+      } as unknown as Parameters<typeof createSessions>[0]['mcp'],
+      skills: {
+        sync: () => Promise.resolve({ names: [] }),
+        pluginDirPath: () => join(USER_DATA_PATH, 'hive', 'plugin'),
+      } as unknown as Parameters<typeof createSessions>[0]['skills'],
+    });
+    created.push(instance);
+
+    instance.open(OPEN);
+    const sessionId = mintedFor('hero-refresh');
+
+    emitData({ sessionId, chunk: '$ ' });
+    vi.advanceTimersByTime(8); // the batch flush
+    vi.advanceTimersByTime(150); // the settling debounce
+    vi.advanceTimersByTime(SUBMIT);
+
+    const command = vi
+      .mocked(supervisor.write)
+      .mock.calls.find((call) => call[0] === sessionId && call[1] !== '\r')?.[1] as string;
+
+    return {
+      command,
+      end: async (ending: 'ptyExit' | 'ptyLost' | 'done' = 'ptyExit') => {
+        // `/done` arms `finishing` first; the exit that actually reaches
+        // `settleExit` still has to arrive, exactly as a real `&& exit` does.
+        if (ending === 'done') onDone?.('hero-refresh');
+        if (ending === 'ptyLost') {
+          emitLost({ sessionId });
+        } else {
+          emitExit({ sessionId, exitCode: 0 });
+        }
+        await Promise.resolve();
+      },
+    };
+  }
+
+  it('passes the container-flavoured settings and mcp paths, and the shared plugin dir', () => {
+    const { command } = spawnFixture({ container: { freshness: 'exec-env' } });
+
+    expect(command).toContain(`--settings '/hive/container/${CONTAINER_SETTINGS_FILE}'`);
+    expect(command).toContain(`--mcp-config '/hive/container/${CONTAINER_MCP_FILE}'`);
+    // HIVE-132 §3: `/done` reads $HIVE_RECEIVER_URL, so one plugin dir serves both.
+    expect(command).toContain("--plugin-dir '/hive/plugin'");
+  });
+
+  it('names the per-session directory in rewrite mode', () => {
+    const { command } = spawnFixture({ container: { freshness: 'rewrite' } });
+    expect(command).toContain(
+      `--settings '/hive/container/sessions/hero-refresh/${CONTAINER_SETTINGS_FILE}'`,
+    );
+  });
+
+  it('addresses the receiver by the project alias, not loopback', () => {
+    const { command } = spawnFixture({
+      container: { freshness: 'exec-env', hostAlias: 'gateway' },
+    });
+    expect(command).toContain("HIVE_RECEIVER_URL='http://gateway:");
+    expect(command).not.toContain('127.0.0.1');
+  });
+
+  /**
+   * HIVE-133's post-review fix. Before it, `exec-env` always launched from the
+   * shared set at `/hive/container`, written once with the *global* alias —
+   * so a project overriding `hostAlias` got its `HIVE_RECEIVER_URL` re-addressed
+   * (the test above) while its hooks kept POSTing to the global alias. This is
+   * the other half: the `--settings`/`--mcp-config` paths must follow the same
+   * project alias into their own directory, `/hive/container/aliases/<alias>`.
+   */
+  it('launches an exec-env project with a custom alias from that alias set', () => {
+    const { command } = spawnFixture({
+      container: { freshness: 'exec-env', hostAlias: 'gateway' },
+    });
+
+    expect(command).toContain(
+      `--settings '/hive/container/aliases/gateway/${CONTAINER_SETTINGS_FILE}'`,
+    );
+    expect(command).toContain(
+      `--mcp-config '/hive/container/aliases/gateway/${CONTAINER_MCP_FILE}'`,
+    );
+  });
+
+  /**
+   * The other side of the same fix, and the one that matters most to get
+   * right: every `exec-env` project that has never touched `hostAlias` — the
+   * overwhelming majority — must keep reading the shared set byte-identically.
+   * A naive fix that routed *every* `exec-env` project through an alias
+   * directory (even the default one) would pass the test above but fail this
+   * one, because the default alias would then never resolve to the shared
+   * path at all.
+   */
+  it('leaves a project on the default alias using the shared set', () => {
+    const { command } = spawnFixture({ container: { freshness: 'exec-env' } });
+
+    expect(command).toContain(`--settings '/hive/container/${CONTAINER_SETTINGS_FILE}'`);
+    expect(command).not.toContain('/aliases/');
+  });
+
+  it('writes HIVE_ variables after project env, so a project cannot spoof one', () => {
+    const { command } = spawnFixture({
+      container: { freshness: 'exec-env' },
+      projectEnv: { HIVE_SESSION_ID: 'someone-else' },
+    });
+
+    const spoofed = command.indexOf("HIVE_SESSION_ID='someone-else'");
+    const real = command.indexOf("HIVE_SESSION_ID='hero-refresh'");
+    expect(real).toBeGreaterThan(spoofed);
+  });
+
+  /**
+   * The bug a final-review pass caught (HIVE-133, final-review fix,
+   * Important 3): `startProcess`'s host pty env strips `AUTH_ENV_KEYS` when
+   * `subscriptionAuth` is on (`stripEnv: snapshot.subscriptionAuth ?
+   * AUTH_ENV_KEYS : []`, above `containerSpawn` in `sessions/index.ts`), but
+   * the container's own copy of `runtime.env` had no equivalent filter —
+   * `unsafeEnvReason` never refuses `ANTHROPIC_API_KEY` in a project's `env`
+   * block (`AUTH_ENV_KEYS` is deliberately not in that deny list; see its own
+   * comment in `config-contract.ts`), so a key that never reached the host
+   * pty went straight onto the container's typed `-e` flags — in terminal
+   * scroll-back and `ps` — billing the API instead of the plan the host
+   * session was carefully arranged to use.
+   */
+  it("strips AUTH_ENV_KEYS from the container's env when subscriptionAuth is on, matching the host pty", () => {
+    const { command } = spawnFixture({
+      container: { freshness: 'exec-env' },
+      projectEnv: { ANTHROPIC_API_KEY: 'sk-secret', ANTHROPIC_AUTH_TOKEN: 'tok-secret' },
+      subscriptionAuth: true,
+    });
+
+    // The secret values must never appear anywhere on the line.
+    expect(command).not.toContain('sk-secret');
+    expect(command).not.toContain('tok-secret');
+    // Not as a container `-e` flag either — checked by the flag shape,
+    // rather than a bare substring, because `subscriptionAuth: true` also
+    // prepends `unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN;` (HIVE-79),
+    // which legitimately names both keys without leaking either value.
+    expect(command).not.toContain('-e ANTHROPIC_API_KEY=');
+    expect(command).not.toContain('-e ANTHROPIC_AUTH_TOKEN=');
+  });
+
+  it('leaves ANTHROPIC_API_KEY in the container env when subscriptionAuth is off, exactly like the host pty', () => {
+    const { command } = spawnFixture({
+      container: { freshness: 'exec-env' },
+      projectEnv: { ANTHROPIC_API_KEY: 'sk-secret' },
+      subscriptionAuth: false,
+    });
+
+    expect(command).toContain("-e ANTHROPIC_API_KEY='sk-secret'");
+  });
+
+  /**
+   * Important 6 (final-review fix): a container project's `claudeCommand`
+   * with no `{env}` still spawns — refusing outright would be a behaviour
+   * change beyond this fix wave — but nothing on the spawn path used to
+   * consult `missingEnvPlaceholder`, so the only way to learn why a session's
+   * hooks were all 403ing was to open Settings and run the diagnostic by
+   * hand. This names the project and the missing placeholder in main's own
+   * log at the moment it matters.
+   */
+  it('warns on spawn when a container claudeCommand has no {env} placeholder', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      spawnFixture({
+        container: { freshness: 'exec-env' },
+        claudeCommand: 'docker exec -it devbox claude',
+      });
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      const [message] = warn.mock.calls[0]!;
+      expect(String(message)).toContain('nova-web');
+      expect(String(message)).toContain('{env}');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('does not warn when a container claudeCommand has the {env} placeholder', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      spawnFixture({ container: { freshness: 'exec-env' } });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  /**
+   * Property D's other half (post-review fix). Every test above the fold
+   * bound a receiver and proved the substitution rewrites its
+   * `HIVE_RECEIVER_URL`; none of them proved what happens when there is
+   * nothing to rewrite. `envFor` omits the key entirely when the receiver
+   * never bound — see `hooks/index.ts`'s own comment on why substituting
+   * `url` instead would be worse, not merely absent — so the command must
+   * carry no `HIVE_RECEIVER_URL` at all, not a stale or loopback one.
+   */
+  it('carries no HIVE_RECEIVER_URL when the receiver never bound', () => {
+    const { command } = spawnFixture({
+      container: { freshness: 'exec-env', hostAlias: 'gateway' },
+      receiverBound: false,
+    });
+
+    expect(command).not.toContain('HIVE_RECEIVER_URL');
+  });
+
+  /**
+   * `--plugin-dir` is the one flag `containerSpawn` deliberately leaves
+   * alone (post-review fix): HIVE-132 made `/done` read `$HIVE_RECEIVER_URL`
+   * rather than baking an origin specifically so one plugin directory could
+   * serve both host and container sessions. `rewrite` is the sharper case to
+   * prove it against — it *does* build a per-session directory for
+   * `--settings` and `--mcp-config` — so this pins that `--plugin-dir` does
+   * not follow them into it.
+   */
+  it('keeps --plugin-dir the shared path in rewrite mode, never a per-session one', () => {
+    const { command } = spawnFixture({ container: { freshness: 'rewrite' } });
+
+    expect(command).toContain("--plugin-dir '/hive/plugin'");
+    expect(command).not.toContain('/hive/plugin/sessions');
+  });
+
+  it('removes the session directory when the session ends', async () => {
+    const { end } = spawnFixture({ container: { freshness: 'rewrite' } });
+    await end();
+    expect(removeSessionContainerFiles).toHaveBeenCalledWith(USER_DATA_PATH, 'hero-refresh');
+  });
+
+  it('removes by entity id, matching what the write was keyed by', async () => {
+    // `tokenFor` is HMAC(launchSecret, entityId), so the directory the hooks
+    // module wrote is named `hero-refresh`, never `hero-refresh.g3`.
+    const { end } = spawnFixture({ container: { freshness: 'rewrite' } });
+    await end();
+    expect(removeSessionContainerFiles).toHaveBeenCalledWith(USER_DATA_PATH, 'hero-refresh');
+    expect(removeSessionContainerFiles).not.toHaveBeenCalledWith(
+      USER_DATA_PATH,
+      expect.stringContaining('.g'),
+    );
+  });
+
+  it('removes on every kind of ending, including /done', async () => {
+    for (const ending of ['ptyExit', 'ptyLost', 'done'] as const) {
+      vi.mocked(removeSessionContainerFiles).mockClear();
+      const { end } = spawnFixture({ container: { freshness: 'rewrite' } });
+      await end(ending);
+      expect(removeSessionContainerFiles).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  /**
+   * The bug a real review caught (HIVE-133, post-review fix), and then a
+   * second bug a final-review pass caught in the fix itself (final-review
+   * fix, Critical 2).
+   *
+   * `ptyRestart` used to write the new generation's set *before* calling
+   * `sessions.restart()` — but a restart's own teardown kills the old process
+   * and, once it actually exits, `settleExit` unconditionally removes that
+   * same entity id's directory. A write that lands before the kill is a write
+   * a few milliseconds ahead of its own deletion: `removeSessionContainerFiles`
+   * always wins that race, so every restart of a `rewrite` project launched
+   * with no `--settings` and no `--mcp-config` — the exact "silently cannot
+   * authenticate" failure this task exists to prevent.
+   *
+   * The first fix moved the write into `restartOnce`, between `await exit`
+   * and `spawn()`. That premise was wrong: `exit` resolves the instant
+   * `settleExit` resolves its waiters, which happens **before** that same
+   * call's `removeSessionContainerFiles` has actually finished — the removal
+   * is merely *started*, not *settled*, by the time `restartOnce` reached
+   * `writeContainerSession`. A version of this test with a mock that resolves
+   * immediately cannot see that: `invocationCallOrder` only proves the two
+   * calls happened in the right order, never that the second waited for the
+   * first to actually finish. This one drives the removal with a promise the
+   * test controls, so it can tell the difference — and fails against the
+   * `await exit`-only code for exactly that reason, not merely because a call
+   * is missing.
+   */
+  it('awaits the removal to actually settle before writing the restarted generation, not just its call order', async () => {
+    const container: ResolvedContainer = { ...CONTAINER_DEFAULTS, freshness: 'rewrite' };
+    const project = { ...CONFIG.projects[0]!, container };
+    const localConfig: ConfigSnapshot = { ...CONFIG, projects: [project, CONFIG.projects[1]!] };
+
+    let resolveRemoval: () => void = () => {
+      throw new Error('resolveRemoval called before removeSessionContainerFiles');
+    };
+    vi.mocked(removeSessionContainerFiles).mockClear();
+    vi.mocked(removeSessionContainerFiles).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRemoval = resolve;
+        }),
+    );
+
+    const writeContainerSession = vi.fn(() => Promise.resolve('/some/dir'));
+
+    const instance = createSessions({
+      supervisor,
+      send: (channel, payload) =>
+        sent.push({ channel, payload: payload as Record<string, unknown> }),
+      config: () => localConfig,
+      userDataPath: USER_DATA_PATH,
+      newSessionUuid: () => TEST_UUID,
+      hooks: {
+        settingsPathFor: () => join(USER_DATA_PATH, 'hive', CONTAINER_SETTINGS_FILE),
+        envFor: () => ({}),
+        writeContainerSession,
+        start: () => Promise.resolve(),
+        stop: () => Promise.resolve(),
+      } as unknown as Parameters<typeof createSessions>[0]['hooks'],
+    });
+    created.push(instance);
+
+    instance.open(OPEN);
+    const first = mintedFor('hero-refresh');
+
+    const restart = instance.restart(OPEN);
+    await Promise.resolve();
+    emitExit({ sessionId: first, exitCode: 0 });
+
+    // Every microtask that a correct `restartOnce` could possibly need to
+    // reach `writeContainerSession` gets to run here — several turns' worth
+    // — while the removal this exit started is still deliberately unsettled.
+    // A `restartOnce` that only awaits `exit` (the pre-fix shape) has nothing
+    // left blocking it by this point and would already have called through.
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    expect(writeContainerSession).not.toHaveBeenCalled();
+
+    // Only once the removal itself settles does the write go in.
+    resolveRemoval();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(writeContainerSession).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(8);
+    await restart;
+  });
+
+  /**
+   * `restartOnce` is not the only door into `writeContainerSession`.
+   *
+   * The *first* spawn of a generation goes through `ipc/index.ts`'s `ptySpawn`
+   * handler, which holds no reference to the removal `settleExit` started for
+   * the previous generation of the same entity — so re-opening a session that
+   * has just exited could put its write in the path of a deletion still
+   * running. `containerRemoval` is what that handler awaits; this asserts the
+   * accessor really is the removal and not a resolved placeholder, because a
+   * `() => Promise.resolve()` implementation would satisfy the type, satisfy
+   * the call site, and close nothing.
+   */
+  it('exposes the in-flight container removal, unsettled until the removal itself settles', async () => {
+    let resolveRemoval: () => void = () => {
+      throw new Error('resolveRemoval called before removeSessionContainerFiles');
+    };
+    vi.mocked(removeSessionContainerFiles).mockClear();
+    vi.mocked(removeSessionContainerFiles).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRemoval = resolve;
+        }),
+    );
+
+    const instance = createSessions({
+      supervisor,
+      send: (channel, payload) =>
+        sent.push({ channel, payload: payload as Record<string, unknown> }),
+      config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
+      newSessionUuid: () => TEST_UUID,
+    });
+    created.push(instance);
+
+    // Nothing has ended, so there is nothing to wait for.
+    let settledBefore = false;
+    void instance.containerRemoval('hero-refresh').then(() => {
+      settledBefore = true;
+    });
+    await Promise.resolve();
+    expect(settledBefore).toBe(true);
+
+    instance.open(OPEN);
+    emitExit({ sessionId: mintedFor('hero-refresh'), exitCode: 0 });
+
+    let settled = false;
+    void instance.containerRemoval('hero-refresh').then(() => {
+      settled = true;
+    });
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    expect(settled).toBe(false);
+
+    resolveRemoval();
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    expect(settled).toBe(true);
   });
 });

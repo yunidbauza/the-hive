@@ -74,7 +74,15 @@ function decorate(
   real: string | null,
 ): Pick<
   ProjectConfig,
-  'id' | 'key' | 'name' | 'icon' | 'origin' | 'shell' | 'claudeCommand' | 'env'
+  | 'id'
+  | 'key'
+  | 'name'
+  | 'icon'
+  | 'origin'
+  | 'shell'
+  | 'claudeCommand'
+  | 'env'
+  | 'container'
 > {
   return {
     id: raw.id,
@@ -104,6 +112,7 @@ function decorate(
       ? { claudeCommand: raw.claudeCommand }
       : {}),
     ...(raw.env !== undefined ? { env: raw.env } : {}),
+    ...(raw.container !== undefined ? { container: raw.container } : {}),
   };
 }
 

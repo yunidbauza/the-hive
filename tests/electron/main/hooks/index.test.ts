@@ -6,6 +6,9 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { ResolvedContainer } from '../../../../electron/shared/config-contract';
+import { HOOK_ENV_TOKEN } from '../../../../electron/shared/hook-contract';
+
 import { createLedger, type Ledger } from '../../../../electron/main/ledger';
 import {
   createHookRuntime,
@@ -35,6 +38,37 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 
 const writeFileSpy = vi.mocked((await import('node:fs/promises')).writeFile);
 const realWriteFile = writeFileSpy.getMockImplementation()!;
+
+/**
+ * The same pass-through shape, over the sweep and the container-set write
+ * (HIVE-133): everything forwards to the real implementation by default, so
+ * the tests already below that read the container-flavoured set off disk
+ * keep working unchanged. Only the ordering test overrides the sweep's
+ * implementation, and only for the one call it needs to observe.
+ */
+vi.mock('../../../../electron/main/container/generated', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('../../../../electron/main/container/generated')
+  >();
+  return {
+    ...actual,
+    sweepSessionContainerFiles: vi.fn(actual.sweepSessionContainerFiles),
+    writeSharedContainerFiles: vi.fn(actual.writeSharedContainerFiles),
+    writeSessionContainerFiles: vi.fn(actual.writeSessionContainerFiles),
+    writeAliasContainerFiles: vi.fn(actual.writeAliasContainerFiles),
+  };
+});
+
+const sweepSpy = vi.mocked(
+  (await import('../../../../electron/main/container/generated')).sweepSessionContainerFiles,
+);
+const writeSessionSpy = vi.mocked(
+  (await import('../../../../electron/main/container/generated')).writeSessionContainerFiles,
+);
+const writeAliasSpy = vi.mocked(
+  (await import('../../../../electron/main/container/generated')).writeAliasContainerFiles,
+);
+const realSweep = sweepSpy.getMockImplementation()!;
 
 const noopHandlers: HookHandlers = {
   knowsSession: () => true,
@@ -251,5 +285,237 @@ describe('createHookRuntime — the container-flavoured set (HIVE-132)', () => {
     expect(started.envFor('sess-a')['HIVE_RECEIVER_URL']).toMatch(
       /^http:\/\/127\.0\.0\.1:\d+$/,
     );
+  });
+});
+
+describe('createHookRuntime — sweep ordering (HIVE-133)', () => {
+  let dir: string;
+  let ledger: Ledger;
+  let runtime: HookRuntime | undefined;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'hive-hooks-sweep-'));
+    ledger = createLedger({ dir, knowsParty: () => true });
+  });
+
+  afterEach(async () => {
+    sweepSpy.mockImplementation(realSweep);
+    await runtime?.stop();
+    runtime = undefined;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('sweeps orphan container directories before a session can be spawned', async () => {
+    // `containerOrigin()` is gated on `receiver` alone, and that gate is what
+    // makes a containerised spawn viable — so whatever `containerOrigin()`
+    // answers *while the sweep itself is running* is the actual invariant.
+    // If the sweep runs after `receiver` is assigned, this observes a real
+    // origin mid-sweep, which is the 33-line window the finding describes.
+    let originDuringSweep: string | null | undefined;
+
+    sweepSpy.mockImplementation(async (...args) => {
+      originDuringSweep = runtime?.containerOrigin();
+      return realSweep(...args);
+    });
+
+    runtime = createHookRuntime({ userDataPath: dir, sessionMetrics: () => false, ledger });
+    await runtime.start(noopHandlers);
+
+    expect(sweepSpy).toHaveBeenCalled();
+    expect(originDuringSweep).toBeNull();
+  });
+
+  it('still keeps nothing, because no session can exist yet', async () => {
+    runtime = createHookRuntime({ userDataPath: dir, sessionMetrics: () => false, ledger });
+    await runtime.start(noopHandlers);
+
+    expect(sweepSpy).toHaveBeenCalledWith(dir, []);
+  });
+});
+
+describe('createHookRuntime — writeContainerSession (HIVE-133)', () => {
+  let dir: string;
+  let ledger: Ledger;
+  let runtime: HookRuntime | undefined;
+
+  /** Every field {@link ResolvedContainer} has, overridden per test. */
+  const container: ResolvedContainer = {
+    workspace: '/workspace',
+    hiveDir: '/hive',
+    envArg: '-e {name}={value}',
+    freshness: 'exec-env',
+    hostAlias: 'host.docker.internal',
+  };
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'hive-hooks-write-session-'));
+    ledger = createLedger({ dir, knowsParty: () => true });
+    writeSessionSpy.mockClear();
+    writeAliasSpy.mockClear();
+  });
+
+  afterEach(async () => {
+    await runtime?.stop();
+    runtime = undefined;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('answers null before the receiver has bound', async () => {
+    // No `start()` — `containerFor` says `rewrite`, but there is no socket to
+    // address yet, and `writeContainerSession` must not write a set for a
+    // receiver whose URLs it cannot yet know.
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      ledger,
+      containerFor: () => ({ ...container, freshness: 'rewrite' }),
+    });
+
+    await expect(runtime.writeContainerSession('hero-refresh', 'p')).resolves.toBe(null);
+    expect(writeSessionSpy).not.toHaveBeenCalled();
+  });
+
+  it('answers null for a host project — containerFor found nothing', async () => {
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      ledger,
+      containerFor: () => undefined,
+    });
+    await runtime.start(noopHandlers);
+
+    await expect(runtime.writeContainerSession('hero-refresh', 'p')).resolves.toBe(null);
+    expect(writeSessionSpy).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing for an exec-env project on the default alias', async () => {
+    // `container.hostAlias` here equals `hostAlias()`'s own default
+    // (`DEFAULT_RECEIVER.hostAlias`, since no override is passed) — the
+    // shared set `writeSharedContainerFiles` wrote at `start()` already
+    // addresses this alias, so there is nothing this session needs of its own.
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      ledger,
+      containerFor: () => ({ ...container, freshness: 'exec-env' }),
+    });
+    await runtime.start(noopHandlers);
+
+    await expect(runtime.writeContainerSession('hero-refresh', 'p')).resolves.toBe(null);
+    expect(writeSessionSpy).not.toHaveBeenCalled();
+    expect(writeAliasSpy).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The gap this task closes (HIVE-133, post-review fix). Before it,
+   * `exec-env` never wrote a per-project set at all, so a project whose
+   * `hostAlias` diverged from the global one still launched from the shared
+   * set — which bakes the *global* alias's origin — while its environment
+   * (`sessions/index.ts`'s `HIVE_RECEIVER_URL` substitution) said otherwise.
+   */
+  it('writes an alias set for an exec-env project whose alias diverges from the global one', async () => {
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      ledger,
+      containerFor: () => ({ ...container, freshness: 'exec-env', hostAlias: 'gateway' }),
+    });
+    await runtime.start(noopHandlers);
+
+    const written = await runtime.writeContainerSession('hero-refresh', 'p');
+
+    expect(written).toBe(join(dir, 'hive', 'container', 'aliases', 'gateway'));
+    expect(writeSessionSpy).not.toHaveBeenCalled();
+    expect(writeAliasSpy).toHaveBeenCalledWith(
+      dir,
+      'gateway',
+      expect.objectContaining({ origin: expect.stringContaining('gateway') }),
+      expect.objectContaining({ containerRoot: '/hive/container/aliases/gateway' }),
+    );
+  });
+
+  it('addresses the set by the project alias and keys it by entity id', async () => {
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      ledger,
+      containerFor: () => ({ ...container, freshness: 'rewrite', hostAlias: 'gateway' }),
+    });
+    await runtime.start(noopHandlers);
+
+    await runtime.writeContainerSession('hero-refresh', 'p');
+
+    expect(writeSessionSpy).toHaveBeenCalledWith(
+      dir,
+      'hero-refresh',
+      expect.objectContaining({ origin: expect.stringContaining('gateway') }),
+      expect.objectContaining({ session: 'hero-refresh' }),
+      expect.objectContaining({ containerRoot: '/hive/container/sessions/hero-refresh' }),
+    );
+  });
+
+  it('writes the token tokenFor(entityId) actually produces, not a token for anything else', async () => {
+    // `objectContaining({ session })` alone would pass even for a token
+    // minted against the wrong argument — the exact failure mode that 403s
+    // every hook, ledger and `/done` call from the container. The receiver's
+    // own `tokenFor` is the oracle, reached the same way any other caller
+    // reaches it — through `envFor`, which this module already exposes —
+    // rather than reimplementing the HMAC here or reaching into the private
+    // `receiver` closure.
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      ledger,
+      containerFor: () => ({ ...container, freshness: 'rewrite' }),
+    });
+    await runtime.start(noopHandlers);
+
+    await runtime.writeContainerSession('hero-refresh', 'p');
+
+    const identity = writeSessionSpy.mock.calls.at(-1)?.[3];
+    const expectedToken = runtime.envFor('hero-refresh')[HOOK_ENV_TOKEN];
+    expect(identity).toEqual({ session: 'hero-refresh', token: expectedToken });
+    // And not, say, a token minted for the caller's projectId or some other
+    // string that happens to satisfy `objectContaining({ session })`.
+    const otherToken = runtime.envFor('p')[HOOK_ENV_TOKEN];
+    expect((identity as { token: string }).token).not.toBe(otherToken);
+  });
+
+  /**
+   * Property B (HIVE-133 §2) again, from the metrics angle (Finding 2 of the
+   * task-8 review): `sessionMetrics()` gates `metricsUrl` in the *host* set
+   * (`writeHookSettings`) and in the shared `exec-env` set
+   * (`writeSharedContainerFiles`) — this is the third writer of the same
+   * value and it did not gate it, so a user who turned metrics off still got
+   * a status line baked into every `rewrite` container session.
+   */
+  it('omits metricsUrl from the written set when sessionMetrics is off', async () => {
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      ledger,
+      containerFor: () => ({ ...container, freshness: 'rewrite' }),
+    });
+    await runtime.start(noopHandlers);
+
+    await runtime.writeContainerSession('hero-refresh', 'p');
+
+    const origins = writeSessionSpy.mock.calls.at(-1)?.[2];
+    expect(origins).not.toHaveProperty('metricsUrl');
+  });
+
+  it('includes metricsUrl from the written set when sessionMetrics is on', async () => {
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => true,
+      ledger,
+      containerFor: () => ({ ...container, freshness: 'rewrite' }),
+    });
+    await runtime.start(noopHandlers);
+
+    await runtime.writeContainerSession('hero-refresh', 'p');
+
+    const origins = writeSessionSpy.mock.calls.at(-1)?.[2];
+    expect(origins).toHaveProperty('metricsUrl');
   });
 });

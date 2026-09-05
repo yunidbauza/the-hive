@@ -1263,6 +1263,20 @@ export function registerIpcHandlers(): void {
     sessionMetrics: () => getConfig().sessionMetrics,
     // The same, for the hostname a container reaches this machine by (HIVE-132).
     hostAlias: () => getConfig().receiver.hostAlias,
+    /*
+      Resolved through the same `effectiveRuntime` the spawn path uses
+      (HIVE-133), so `writeContainerSession` writes for exactly the project a
+      session would actually launch under — a diagnostic-style helper that
+      resolved its own runtime here would eventually diverge from the one a
+      spawn uses. A `null` or unknown `projectId` finds no project, which
+      `effectiveRuntime` already reads as "no container" for the top-level
+      command.
+    */
+    containerFor: (projectId) =>
+      effectiveRuntime(
+        getConfig(),
+        getConfig().projects.find((entry) => entry.id === projectId) ?? null,
+      ).container,
     ledger,
   });
 
@@ -1689,6 +1703,11 @@ export function registerIpcHandlers(): void {
     supervisor,
     config: getConfig,
     send,
+    // Where the generated sets live (HIVE-133) — the same value `hooks`,
+    // `skills` and `mcp` are each handed below, so a container project's
+    // per-session directory and its host counterpart resolve against the
+    // same root.
+    userDataPath: app.getPath('userData'),
     skills,
     mcp,
     hooks,
@@ -2111,7 +2130,7 @@ export function registerIpcHandlers(): void {
           ? null
           : (snapshot.projects.find((entry) => entry.id === request.id) ?? null);
 
-      return diagnoseCommand(
+      return await diagnoseCommand(
         effectiveRuntime(snapshot, project),
         project?.id ?? null,
       );
@@ -3067,6 +3086,38 @@ export function registerIpcHandlers(): void {
      * the one write already in flight — never a second one.
      */
     await mcp.start();
+    /**
+     * A `rewrite` container project's per-session files (HIVE-133).
+     *
+     * Here rather than inside `spawn` for the reason `skills.sync()` above is:
+     * `spawn` is synchronous on purpose, and its attach-never-respawn guard
+     * must not be separated from the registration that satisfies it by an
+     * await. This handler is already asynchronous.
+     *
+     * Keyed by **entity id**. `tokenFor` is HMAC(launchSecret, entityId) and the
+     * receiver compares against `tokenFor(entityId)` for the id in
+     * `x-hive-session`, so a directory named after the registry's generation id
+     * would carry a token refused on every call.
+     *
+     * A no-op for a host project and for `exec-env`, where every per-session
+     * value in the set is a `${VAR}` and there is nothing resolved to write.
+     */
+    /**
+     * After any in-flight removal for this same id, never beside it.
+     *
+     * `settleExit` starts an `rm -rf` of this entity's session directory on
+     * every ending and resolves its exit waiters without waiting for it, so
+     * re-opening an entity whose previous generation has just exited can put
+     * this write in the path of a deletion that is still running — losing the
+     * four files it just produced, and spawning with no `--settings` and no
+     * `--mcp-config`. `restartOnce` awaits the same promise for the same
+     * reason; this is the other door into the same write.
+     *
+     * Resolves immediately in every ordinary case, this handler's own awaits
+     * above having long since covered the removal.
+     */
+    await sessions?.containerRemoval(request.sessionId);
+    await hooks?.writeContainerSession(request.sessionId, request.projectId);
     sessions?.open({
       entityId: request.sessionId,
       projectId: request.projectId,
@@ -3092,6 +3143,17 @@ export function registerIpcHandlers(): void {
     // Same wait as `ptySpawn` above, for the same reason: a restart's `spawn()`
     // reads `mcp.configPathFor()` synchronously too (HIVE-112).
     await mcp.start();
+    /**
+     * **Not** written here, unlike `ptySpawn` above (HIVE-133, post-review
+     * fix). A restart's own teardown kills the old process and waits for its
+     * exit before spawning the new one — and that exit unconditionally
+     * removes this same entity id's container directory
+     * (`removeSessionContainerFiles` in `settleExit`). A write landing here
+     * would race that removal and lose: `sessions/index.ts`'s `restartOnce`
+     * writes instead, in the one window between the old process actually
+     * exiting and the new one spawning, which is the only ordering the
+     * teardown cannot undo.
+     */
     /**
      * The task is deliberately **not** forwarded (story 097).
      *

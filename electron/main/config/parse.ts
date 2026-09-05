@@ -3,8 +3,13 @@ import {
   NOTIFICATION_KEYS,
   RECEIVER_KEYS,
   SUPPORTED_CONFIG_VERSIONS,
+  isAbsoluteContainerPath,
+  isContainerFreshness,
+  isContainerProbe,
+  isEnvArgTemplate,
   isHostAlias,
   unsafeEnvReason,
+  type ContainerConfig,
   type JiraConfig,
   type NotificationPrefs,
   type ProjectOrigin,
@@ -56,6 +61,8 @@ export interface RawProject {
   shell?: string;
   claudeCommand?: string;
   env?: Record<string, string>;
+  /** HIVE-133's per-project container block. Absent means "inherit". */
+  container?: ContainerConfig;
 }
 
 export interface ParsedConfig {
@@ -181,6 +188,7 @@ const TOP_LEVEL_KEYS = [
 ];
 /**
  * `shell`, `claudeCommand` and `env` are story 104's per-project overrides.
+ * `container` is HIVE-133's per-project container block.
  *
  * They are listed here so a hand-written override is *read* rather than
  * reported as an unknown key. Unlisted keys are still preserved across a write
@@ -197,6 +205,7 @@ const PROJECT_KEYS = [
   'shell',
   'claudeCommand',
   'env',
+  'container',
 ];
 
 /** POSIX-portable environment variable name. */
@@ -282,6 +291,113 @@ function optionalEnv(
     env[key] = raw;
   }
   return env;
+}
+
+/**
+ * HIVE-133's per-project container block.
+ *
+ * **All-or-nothing, like `optionalEnv` above.** A block with one bad field is
+ * dropped entirely rather than half-applied: a container project missing its
+ * `hiveDir` would spawn a session whose `--settings` names a path the container
+ * cannot open, and failing at `claude` startup with an error about a file is
+ * further from the cause than not being containerised at all. The project stays
+ * usable as a host project, and the error names the field.
+ */
+/**
+ * The block's own keys, checked the way every other block in this file is
+ * (final-review fix) — `optionalJira` and `optionalReceiver` both run
+ * `checkKeys` before validating any individual field, and this was the one
+ * level of the file that did not: a hand-written `hostalias` (lowercase `a`)
+ * fell through every check below as simply absent, so the block parsed as
+ * valid with the typo silently ignored. `assertContainer` in `guards.ts`
+ * already rejects that same typo via `assertShape` — closing this makes the
+ * reader as strict as the guard on the one axis where it was looser, not just
+ * as strict as it can afford to be.
+ */
+const CONTAINER_KEYS = ['workspace', 'hiveDir', 'envArg', 'probe', 'freshness', 'hostAlias'];
+
+function optionalContainer(
+  record: Record<string, unknown>,
+  label: string,
+  errors: string[],
+): ContainerConfig | undefined {
+  const value = record.container;
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    errors.push(`${label}.container: expected an object — ignored`);
+    return undefined;
+  }
+
+  const at = `${label}.container`;
+  if (!checkKeys(value, CONTAINER_KEYS, at, errors)) return undefined;
+
+  /* Absolute, because a container path is joined onto, never resolved against a
+     cwd this process does not have inside the container. */
+  const absolute = (key: 'workspace' | 'hiveDir'): string | null => {
+    if (!isAbsoluteContainerPath(value[key])) {
+      errors.push(
+        `${label}.container.${key}: required, and must be an absolute path — container ignored`,
+      );
+      return null;
+    }
+    return value[key];
+  };
+
+  const workspace = absolute('workspace');
+  const hiveDir = absolute('hiveDir');
+  if (workspace === null || hiveDir === null) return undefined;
+
+  /*
+    Validated, never defaulted. Absent stays absent all the way to
+    `effectiveRuntime`, which is the layer that knows what to inherit from —
+    the same division `ParsedConfig.shell` and `subscriptionAuth` already use.
+  */
+  if (value.envArg !== undefined && !isEnvArgTemplate(value.envArg)) {
+    errors.push(
+      `${label}.container.envArg: must contain {name} and {value} — container ignored`,
+    );
+    return undefined;
+  }
+
+  let probe: string | undefined;
+  if (value.probe !== undefined) {
+    if (!isContainerProbe(value.probe)) {
+      errors.push(`${label}.container.probe: expected a non-empty string — container ignored`);
+      return undefined;
+    }
+    probe = value.probe;
+  }
+
+  if (value.freshness !== undefined && !isContainerFreshness(value.freshness)) {
+    errors.push(
+      `${label}.container.freshness: expected "exec-env" or "rewrite" — container ignored`,
+    );
+    return undefined;
+  }
+
+  /*
+    `isHostAlias` rather than a second spelling of "looks like a hostname". The
+    per-project override names a network destination exactly as the global one
+    does — it decides which host receives authenticated hook payloads — so it
+    gets the same rule, not a looser one.
+  */
+  if (value.hostAlias !== undefined && !isHostAlias(value.hostAlias)) {
+    errors.push(`${label}.container.hostAlias: not a valid hostname — container ignored`);
+    return undefined;
+  }
+
+  /*
+    Conditional spread, matching the entry build below: an `undefined`-valued
+    own key would be reported as unknown the next time this file is read.
+  */
+  return {
+    workspace,
+    hiveDir,
+    ...(value.envArg === undefined ? {} : { envArg: value.envArg }),
+    ...(probe === undefined ? {} : { probe }),
+    ...(value.freshness === undefined ? {} : { freshness: value.freshness }),
+    ...(value.hostAlias === undefined ? {} : { hostAlias: value.hostAlias }),
+  };
 }
 
 const ORIGINS: readonly string[] = ['local', 'cloned'];
@@ -763,6 +879,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
     const shellOverride = optionalString(entry, 'shell', at, errors);
     const commandOverride = optionalString(entry, 'claudeCommand', at, errors);
     const env = optionalEnv(entry, at, errors);
+    const container = optionalContainer(entry, at, errors);
 
     // Conditional spread, matching `parseSpawnRequest`: an `undefined`-valued
     // own key would be reported as unknown the next time this file is read.
@@ -776,6 +893,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       ...(shellOverride !== null ? { shell: shellOverride } : {}),
       ...(commandOverride !== null ? { claudeCommand: commandOverride } : {}),
       ...(env !== undefined ? { env } : {}),
+      ...(container !== undefined ? { container } : {}),
     });
   });
 

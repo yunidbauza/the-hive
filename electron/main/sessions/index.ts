@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 
 import type { AgentsDirectory } from '@shared/agent-contract';
-import { AUTH_ENV_KEYS, type ConfigSnapshot } from '@shared/config-contract';
-import type {
-  HookNotificationType,
-  IdleDetail,
-  ObservedStatus,
-  StatusHookEvent,
+import { AUTH_ENV_KEYS, ENV_PLACEHOLDER, type ConfigSnapshot } from '@shared/config-contract';
+import {
+  HOOK_ENV_RECEIVER_URL,
+  type HookNotificationType,
+  type IdleDetail,
+  type ObservedStatus,
+  type StatusHookEvent,
 } from '@shared/hook-contract';
 import {
   CH,
@@ -33,7 +35,16 @@ import {
 } from '@shared/session-contract';
 
 import { effectiveRuntime } from '../config/runtime';
+import {
+  CONTAINER_ALIASES_DIR,
+  CONTAINER_DIR,
+  CONTAINER_MCP_FILE,
+  CONTAINER_SESSIONS_DIR,
+  CONTAINER_SETTINGS_FILE,
+  removeSessionContainerFiles,
+} from '../container/generated';
 import type { HookRuntime } from '../hooks';
+import { withHostAlias } from '../hooks/container-origin';
 import { ticketKeysFromBranch } from '../hooks/ticket-intent';
 import { createStatusTracker } from '../hooks/tracker';
 import { createPtyIpc, type PtyIpc } from '../ipc/pty';
@@ -45,6 +56,7 @@ import { createActivityTracker, type ActivityTracker } from './activity';
 import { createBootstrap, sessionCommand, type Bootstrap } from './bootstrap';
 import { createBranchReader, resolveGit, type BranchReaderOptions } from './git';
 import type { SessionHistory } from './history';
+import { createPathMap } from './path-map';
 import { createSessionRegistry, type SessionRegistry } from './registry';
 import { createTitleReader, type TitleReader } from './title';
 import { createTitleOriginReader } from './title-origin';
@@ -71,6 +83,15 @@ export interface SessionsOptions {
   send: (channel: string, payload: unknown) => void;
   /** The workspace config, read per call so a reload is picked up. */
   config: () => ConfigSnapshot;
+  /**
+   * Electron's `userData`, where the generated sets live (HIVE-133).
+   *
+   * Passed in rather than resolved here for the reason every other consumer
+   * takes it as an option — `hooks`, `skills` and `mcp` are all handed
+   * `app.getPath('userData')` by `ipc/index.ts`. A module that reached for
+   * `app` itself would drag Electron into a unit test that has none.
+   */
+  userDataPath: string;
   maxSessions?: number;
   /**
    * The hook pipeline, when the app has one (HIVE-62).
@@ -338,6 +359,32 @@ export interface Sessions {
    * user under the right filename.
    */
   observedCwd(entityId: string): string | undefined;
+  /**
+   * Settle any in-flight removal of this entity's container session files.
+   *
+   * `restartOnce` awaits the same thing internally, and for the same reason:
+   * every ending funnels through `settleExit`, which starts an `rm -rf` of
+   * `<userData>/hive/container/sessions/<entityId>` and then resolves the exit
+   * waiters **without** waiting for it. Anything that writes that directory
+   * again for the same id — and `hooks.writeContainerSession` is the only
+   * thing that does — must wait for the `rm` to finish, or its four files can
+   * be swept by a deletion that was already running and its `rmdir` can land
+   * between two of them. The session then starts with no `--settings` and no
+   * `--mcp-config`, which is the silent "cannot authenticate" failure this
+   * story exists to prevent.
+   *
+   * Exposed because the *first* spawn of a generation goes through
+   * `ipc/index.ts`'s `ptySpawn` handler rather than `restartOnce`, and that
+   * handler holds no reference to the removal. Re-opening an entity whose
+   * previous generation has just exited is an ordinary flow, so the window is
+   * real even though the handler's own `loginEnvStatus`, `skills.sync` and
+   * `mcp.start` awaits usually cover it. "Usually" is what made the first fix
+   * for this wrong.
+   *
+   * Resolves immediately for a host session, for an id with no removal in
+   * flight, and for one whose removal already settled.
+   */
+  containerRemoval(entityId: string): Promise<void>;
   diagnostics(): PtyDiagnostics[];
   dispose(): void;
 }
@@ -367,6 +414,7 @@ export function createSessions(options: SessionsOptions): Sessions {
     supervisor,
     send,
     config,
+    userDataPath,
     maxSessions = MAX_SESSIONS,
     hooks,
     skills,
@@ -401,6 +449,27 @@ export function createSessions(options: SessionsOptions): Sessions {
   const statusTracker = createStatusTracker();
   /** Resolvers waiting for a specific entity's process to exit. */
   const exitWaiters = new Map<string, (() => void)[]>();
+  /**
+   * The in-flight `removeSessionContainerFiles` for an entity, keyed the same
+   * way `exitWaiters` is (HIVE-133, final-review fix).
+   *
+   * `settleExit` starts the removal and resolves the exit waiters in the same
+   * tick, on purpose — a restart's `await exit` must not itself wait on an
+   * `rm -rf`, or every restart grows a new, unbounded blocking dependency on
+   * disk I/O. But `restartOnce`'s own write, a few lines below, targets the
+   * exact directory the removal is clearing: without a way to find that
+   * promise again, the write and the `rm` run concurrently, and either the
+   * `rm`'s unlink pass can sweep files `writeContainerSession` just wrote, or
+   * its `rmdir` can land between two of that write's own operations. This map
+   * is the seam that lets `restartOnce` await the one removal that matters to
+   * it without making `settleExit` wait on anything.
+   *
+   * Deleted once settled, and only by the entry that set it — a second
+   * `settleExit` for the same entity (which should not happen, but this guard
+   * is cheap) must not delete a newer removal out from under a `restartOnce`
+   * that is about to await it.
+   */
+  const containerRemovals = new Map<string, Promise<void>>();
   /**
    * Input written before the session finished bootstrapping.
    *
@@ -1603,6 +1672,37 @@ export function createSessions(options: SessionsOptions): Sessions {
     */
     forgetFinish(entityId);
 
+    /*
+      The one funnel every ending passes through — `ptyExit`, `ptyLost` and
+      `/done` alike — which is why the removal hangs off it rather than off any
+      one of them (HIVE-133).
+
+      Unconditional and fire-and-forget *as far as this function is
+      concerned*: `removeSessionContainerFiles` is silent when the session
+      never had a directory, which is every host session, so asking the
+      config whether this project was containerised would cost a read to save
+      an `rm` that already handles the answer. A failure here leaves an orphan
+      the launch sweep collects.
+
+      The promise is still kept, in `containerRemovals`, because "fire and
+      forget" here does not mean "nobody may ever wait on it" — `restartOnce`
+      does, below, for exactly the entity id this removal targets (final-review
+      fix). Recorded *before* the exit waiters resolve, so a `restartOnce`
+      released by this same `settleExit` can always find it.
+    */
+    const removal = removeSessionContainerFiles(userDataPath, entityId).catch((cause) => {
+      console.info(
+        `[hive] ${entityId}: container session files could not be removed (${String(cause)})`,
+      );
+    });
+    containerRemovals.set(entityId, removal);
+    void removal.finally(() => {
+      // Only this removal's own entry — a newer removal for a session that
+      // restarted again in the meantime must not be deleted by a slower,
+      // older one settling late.
+      if (containerRemovals.get(entityId) === removal) containerRemovals.delete(entityId);
+    });
+
     const waiters = exitWaiters.get(entityId);
     if (!waiters) return;
     exitWaiters.delete(entityId);
@@ -1660,6 +1760,43 @@ export function createSessions(options: SessionsOptions): Sessions {
       ptyIpc.kill(sessionId);
       await exit;
     }
+
+    /**
+     * A `rewrite` container project's per-session files, rewritten here and
+     * not by the `ptyRestart` IPC handler that used to do it (HIVE-133,
+     * post-review fix).
+     *
+     * The handler writes and then calls this function, which tears the old
+     * process down *first* — and `settleExit`, reached through `await exit`
+     * above, unconditionally removes that same entity id's directory on its
+     * way out. A write before teardown is therefore a write a few
+     * milliseconds ahead of its own deletion: four small files lose that race
+     * against `rm -rf` every time, and `spawn()` below would read a
+     * `--settings` path an in-flight removal is still clearing. Writing here,
+     * after `await exit` and before `spawn`, is the only ordering `settleExit`
+     * cannot undo.
+     *
+     * Covers the "no live session" branch too — `sessionId === undefined`
+     * skips the kill/exit above but still reaches `spawn()` below, so the
+     * write has to sit after the `if`, not inside it.
+     *
+     * **`await exit` alone is not that ordering** (final-review fix). `exit`
+     * resolves the instant `settleExit` resolves its waiters, which happens
+     * *before* that same call has finished its `rm -rf` — the removal is
+     * merely started, not settled, by the time this line runs. Awaiting
+     * `containerRemovals` first closes that: it resolves only once the
+     * directory this write is about to recreate is actually gone, so the
+     * `rm`'s unlink pass can no longer sweep files this write is still
+     * producing, and its `rmdir` can no longer land between two of them.
+     *
+     * Absent from the map for a session that was never containerised, or one
+     * whose removal already settled before this line ran (the ordinary case,
+     * since `settleExit` starts it well before `restartOnce` reaches here) —
+     * both `await undefined` immediately, so this costs nothing on the paths
+     * the bug does not touch.
+     */
+    await containerRemovals.get(request.entityId);
+    await hooks?.writeContainerSession(request.entityId, request.projectId);
 
     /**
      * The task is dropped, not replayed (story 097).
@@ -1849,6 +1986,146 @@ export function createSessions(options: SessionsOptions): Sessions {
     const mcpConfig = mcp?.configPathFor() ?? null;
 
     /**
+     * A container project is launched from HIVE-132's container-flavoured set,
+     * not from the host one with its paths rewritten (HIVE-133).
+     *
+     * The difference is content, not location: the host files bake a loopback
+     * origin and, in `exec-env`, the container set uses `${VAR}` where the host
+     * set uses a resolved value. Rewriting the host file's *path* would name a
+     * container path holding the wrong file.
+     *
+     * `--plugin-dir` is the exception and stays shared. HIVE-132 made
+     * `doneCommand` read `$HIVE_RECEIVER_URL` rather than baking an origin, so
+     * one plugin directory serves host and container both.
+     */
+    const container = runtime.container;
+    /*
+      Read once rather than at each of the two places below that need it — a
+      hook environment is derived, not stored, so a second call would cost
+      nothing but a second `HMAC`. It is still one call rather than two,
+      because the object it returns is what both the merge and the
+      `HIVE_RECEIVER_URL` substitution read from, and reading a second,
+      independently-computed copy for the substitution is how the two would
+      drift.
+    */
+    const hookEnv = hooks?.envFor(request.entityId) ?? {};
+    /*
+      The same filter the host pty env gets via `startProcess`'s `stripEnv`
+      above, applied to the container's copy of `runtime.env` (final-review
+      fix, Important 3).
+
+      `stripEnv` only ever reaches the pty environment. A container project's
+      environment crosses the boundary a different way — spelled out on the
+      command line by `expandEnvArgs`/`substituteEnv` below — and nothing
+      before this filtered *that* copy: a project's `env` block was free to
+      carry `ANTHROPIC_API_KEY` straight into a container's `-e` flags, in
+      terminal scrollback and `ps`, for the exact population `subscriptionAuth`
+      exists to bill through the plan instead of the API. Same condition,
+      same list, so the two copies of one project's environment cannot
+      disagree about whether a credential is allowed to exist in it.
+
+      `runtime.env` only — never `hookEnv`, which is the app's own and never
+      carries a credential a user typed in.
+    */
+    const containerEnv = snapshot.subscriptionAuth
+      ? Object.fromEntries(
+          Object.entries(runtime.env).filter(([key]) => !AUTH_ENV_KEYS.includes(key)),
+        )
+      : runtime.env;
+    const containerSpawn =
+      container === undefined || project?.path == null
+        ? undefined
+        : {
+            config: container,
+            map: createPathMap({
+              projectPath: project.path,
+              userDataPath,
+              workspace: container.workspace,
+              hiveDir: container.hiveDir,
+            }),
+            /*
+              `containerEnv` first, the app's own variables second. Project env
+              is the user's to control and wins everywhere else, but not here:
+              these are how a hook proves which row it speaks for. The spread
+              order is the whole guarantee, exactly as it is for the pty env
+              above — and now that project env crosses the boundary, it has to
+              be restated on the command line as well.
+            */
+            env: {
+              ...containerEnv,
+              ...hookEnv,
+              /*
+                Re-addressed by the *project's* alias, overriding the global one
+                `containerOrigin()` applies. `envFor`'s `HIVE_RECEIVER_URL` is
+                the loopback origin, which is unreachable from inside a
+                container, so this is a substitution rather than an addition —
+                and it must come after the spread that set it.
+
+                Absent when the receiver never bound: `envFor` omits the key
+                entirely in that case rather than substituting `url`, whose
+                `/hook` suffix would make the MCP endpoint `…/hook/mcp`.
+              */
+              ...(hookEnv[HOOK_ENV_RECEIVER_URL] === undefined
+                ? {}
+                : {
+                    [HOOK_ENV_RECEIVER_URL]: withHostAlias(
+                      hookEnv[HOOK_ENV_RECEIVER_URL],
+                      container.hostAlias,
+                    ),
+                  }),
+            },
+          };
+
+    /*
+      Where the container-flavoured *source* files live on the host, before
+      `sessionCommand`'s own `container.map` rewrites the flag into its
+      container-side spelling. `null` for a host project, exactly like
+      `containerSpawn` — checked against `container` directly rather than
+      `containerSpawn` so the compiler, not just the reader, knows `container`
+      is defined in the branch that dereferences `container.freshness`.
+
+      A third case, beside `rewrite`'s per-session directory and the shared
+      set every other `exec-env` project reads (HIVE-133, post-review fix):
+      an `exec-env` project whose `hostAlias` diverges from the global one
+      gets its own alias directory instead. The shared set at `CONTAINER_DIR`
+      bakes one resolved origin, built from *the global* alias — reading it
+      from a project configured for a different runtime would mean the
+      environment above says one alias while the hooks POST to another. The
+      comparison mirrors `writeContainerSession`'s own
+      `config.hostAlias !== hostAlias()` in `hooks/index.ts`, which is what
+      actually writes this directory before this spawn reads from it — using
+      `snapshot.receiver.hostAlias` here rather than a second getter, because
+      `snapshot` is already this function's one read of the config for this
+      spawn.
+    */
+    const containerSet =
+      container === undefined || containerSpawn === undefined
+        ? null
+        : container.freshness === 'rewrite'
+          ? join(userDataPath, CONTAINER_SESSIONS_DIR, request.entityId)
+          : container.hostAlias !== snapshot.receiver.hostAlias
+            ? join(userDataPath, CONTAINER_ALIASES_DIR, container.hostAlias)
+            : join(userDataPath, CONTAINER_DIR);
+
+    /*
+      The three flags this session's command line actually gets (HIVE-133).
+      `sessionCommand` maps whichever host path lands here through
+      `containerSpawn.map` into its container-side spelling — `settingsPath`
+      and `mcpConfig` swap to the container set; `pluginDir` is untouched,
+      because the plugin directory is shared between host and container
+      sessions (see the comment on `containerSpawn` above).
+
+      The two filenames are `generated.ts`'s own — `CONTAINER_SETTINGS_FILE`
+      and `CONTAINER_MCP_FILE`, exported for exactly this reader — rather than
+      a second, hardcoded copy of the same two strings (post-review fix): a
+      rename on the writer's side used to drift past every test here silently.
+    */
+    const spawnSettingsPath =
+      containerSet === null ? settingsPath : join(containerSet, CONTAINER_SETTINGS_FILE);
+    const spawnMcpConfig =
+      containerSet === null ? mcpConfig : join(containerSet, CONTAINER_MCP_FILE);
+
+    /**
      * Hoisted out of the `sessionCommand` call it used to sit inside (HIVE-87).
      *
      * It has to reach two places now — the command line, and the history — and
@@ -1905,6 +2182,28 @@ export function createSessions(options: SessionsOptions): Sessions {
       },
       { resume },
     );
+
+    /**
+     * A container project whose `claudeCommand` has no `{env}` still spawns
+     * (final-review fix, Important 6) — refusing outright is a behaviour
+     * change beyond this fix wave, and `sessionCommand`'s own `?? line`
+     * fallback already keeps a half-built command line off the pty. But
+     * nothing on this path consulted `missingEnvPlaceholder` before, so the
+     * session started with none of `HIVE_SESSION_ID`, `HIVE_HOOK_TOKEN` or
+     * `HIVE_RECEIVER_URL` reaching the container — every hook, ledger and
+     * `/done` call 403ing — and the only way to learn why was to open
+     * Settings and run the diagnostic by hand. This names the project and the
+     * missing placeholder in main's own log at the moment it matters, so the
+     * failure is diagnosable from the one place every other spawn failure
+     * already is.
+     */
+    if (containerSpawn !== undefined && !runtime.claudeCommand.includes(ENV_PLACEHOLDER)) {
+      console.warn(
+        `[hive] ${request.projectId}: claudeCommand has no ${ENV_PLACEHOLDER} placeholder — ` +
+          'this container session will start with none of the HIVE_* variables, ' +
+          'and every hook, ledger and /done call from it will be refused',
+      );
+    }
 
     /**
      * `sessionCommand` wraps the configured binary so a clean `/exit` takes the
@@ -1985,21 +2284,39 @@ export function createSessions(options: SessionsOptions): Sessions {
           One file for every session since HIVE-82: nothing in it varies by
           theme any more, because Claude's is pinned to `dark-ansi` and the
           colours resolve against the terminal's palette at paint time.
+
+          `spawnSettingsPath`, not `settingsPath`: a container project's set
+          lives under `containerSet` (HIVE-133), and `sessionCommand` maps
+          whichever one lands here into its container-side spelling.
         */
-        ...(settingsPath == null ? {} : { settingsPath }),
+        ...(spawnSettingsPath == null ? {} : { settingsPath: spawnSettingsPath }),
         /*
           The generated plugin, when there is one (HIVE-96). Resolved above for
           the same reason `settingsPath` is: it is main's own path, chosen at
           spawn, and it never crosses IPC — `parseSpawnRequest` has no field for
           it and deliberately never will.
+
+          Unlike `settingsPath` and `mcpConfig`, never swapped for a
+          container-flavoured path: `--plugin-dir` is shared between host and
+          container sessions (see the comment on `containerSpawn` above).
         */
         ...(pluginDir == null ? {} : { pluginDir }),
         /*
           The ledger tools (HIVE-112). Resolved here for the same reason
           `pluginDir` is: it is main's own path, chosen at spawn, and it never
           crosses IPC.
+
+          `spawnMcpConfig`, for the reason `spawnSettingsPath` is above.
         */
-        ...(mcpConfig == null ? {} : { mcpConfig }),
+        ...(spawnMcpConfig == null ? {} : { mcpConfig: spawnMcpConfig }),
+        /*
+          The project runs inside a container (HIVE-133). `sessionCommand`
+          reads this to expand `container.env` at the command's `{env}`
+          placeholder and to rewrite the three flag paths above into their
+          container-side spelling — see `ContainerSpawn`'s own comment for
+          what each half does.
+        */
+        ...(containerSpawn === undefined ? {} : { container: containerSpawn }),
         /*
           Belt *and* braces, deliberately. `stripEnv` above covers the ambient
           environment and a project's own `env` block; this covers the login
@@ -2169,6 +2486,9 @@ export function createSessions(options: SessionsOptions): Sessions {
       lastStatus.get(entityId) === 'idle' &&
       statusTracker.held(entityId).bgShells === 0,
     observedCwd: (entityId) => lastCwd.get(entityId),
+    /* `?? Promise.resolve()` rather than `await undefined` at the call site, so
+       the contract is a promise in every case and a caller cannot forget. */
+    containerRemoval: (entityId) => containerRemovals.get(entityId) ?? Promise.resolve(),
     diagnostics: () => ptyIpc.diagnostics(),
 
     dispose() {
@@ -2197,6 +2517,7 @@ export function createSessions(options: SessionsOptions): Sessions {
       registry.clear();
       restarting.clear();
       exitWaiters.clear();
+      containerRemovals.clear();
       commandExit.clear();
       commandEntities.clear();
     },

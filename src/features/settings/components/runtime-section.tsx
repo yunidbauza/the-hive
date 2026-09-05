@@ -4,6 +4,7 @@ import { SelectField } from '@components/ui/select-field';
 import { Switch } from '@components/ui/switch';
 import { TextField } from '@components/ui/text-field';
 import { CommandDiagnosticView } from '@features/settings/components/command-diagnostic-view';
+import { ContainerGroup } from '@features/settings/components/container-group';
 import { EnvDiagnosticView } from '@features/settings/components/env-diagnostic-view';
 import { EnvEditor } from '@features/settings/components/env-editor';
 import { PathSourceGroup } from '@features/settings/components/path-source-group';
@@ -17,7 +18,11 @@ import {
   setProjectRuntimeConfig,
   setRuntimeConfig,
 } from '@lib/project-config';
-import type { CommandDiagnostic, EnvDiagnostic } from '@shared/config-contract';
+import type {
+  CommandDiagnostic,
+  ContainerConfig,
+  EnvDiagnostic,
+} from '@shared/config-contract';
 import type { LoginEnvStatus } from '@shared/ipc-contract';
 
 /**
@@ -53,9 +58,13 @@ export function RuntimeSection() {
    * Whether the env probe is in flight.
    *
    * The env diagnostic spawns a real login shell and waits for it — typically
-   * a second or more with oh-my-zsh or nvm, and up to the probe's own timeout
-   * in the worst case — unlike the command diagnostic, which only stats
-   * files. A button with no feedback for that long reads as broken rather
+   * a second or more with oh-my-zsh or nvm — on *every* run. The command
+   * diagnostic is ordinarily a few filesystem stats, and only pays a
+   * comparable cost when a container project configures a `probe`
+   * (HIVE-133); the two share the same 5s timeout as a ceiling, not as a
+   * typical cost. The asymmetry that justifies a spinner here and not there
+   * is frequency, not magnitude: one is always slow, the other is usually
+   * instant. A button with no feedback for that long reads as broken rather
    * than working.
    */
   const [envDiagnosticPending, setEnvDiagnosticPending] = useState(false);
@@ -298,8 +307,11 @@ export function RuntimeSection() {
             shell={project.shell}
             claudeCommand={project.claudeCommand}
             env={project.env ?? {}}
+            container={project.container}
             inheritedShell={snapshot.shell}
             inheritedCommand={snapshot.claudeCommand}
+            inheritedAlias={snapshot.receiver.hostAlias}
+            {...(diagnostic === null ? {} : { diagnostic })}
           />
         ) : null}
       </SettingsGroup>
@@ -392,15 +404,28 @@ function ProjectOverrides({
   shell,
   claudeCommand,
   env,
+  container,
   inheritedShell,
   inheritedCommand,
+  inheritedAlias,
+  diagnostic,
 }: {
   id: string;
   shell?: string;
   claudeCommand?: string;
   env: Record<string, string>;
+  /** HIVE-133. The **file** shape — an absent field means inherit. */
+  container?: ContainerConfig;
   inheritedShell: string;
   inheritedCommand: string;
+  /** What a blank `Host alias` field in `ContainerGroup` resolves to. */
+  inheritedAlias: string;
+  /**
+   * Already fetched by this pane for `CommandDiagnosticView`
+   * (`RuntimeSection`'s own `diagnostic` state) — passed down rather than
+   * fetched twice.
+   */
+  diagnostic?: CommandDiagnostic;
 }) {
   const [shellDraft, setShellDraft] = useState(shell ?? '');
   const [commandDraft, setCommandDraft] = useState(claudeCommand ?? '');
@@ -469,6 +494,26 @@ function ProjectOverrides({
           }
         />
       </div>
+
+      {container === undefined ? null : (
+        /*
+          No `SettingsNestingContext` wrap here: `ContainerGroup` establishes
+          it internally, the same way `SettingsProviderGroup` owns nesting for
+          a provider band rather than making every caller remember to wrap it
+          (`container-group.tsx`'s own comment on this). Wrapping again here
+          would be redundant, not wrong, but a redundant wrap invites exactly
+          the stale claim this comment used to make about it.
+        */
+        <ContainerGroup
+          projectId={id}
+          container={container}
+          command={claudeCommand ?? inheritedCommand}
+          inheritedAlias={inheritedAlias}
+          {...(diagnostic?.container === undefined
+            ? {}
+            : { diagnostic: diagnostic.container })}
+        />
+      )}
     </div>
   );
 }

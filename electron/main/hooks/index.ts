@@ -1,5 +1,7 @@
+import { join } from 'node:path';
+
 import type { AgentsDirectory } from '@shared/agent-contract';
-import { DEFAULT_RECEIVER } from '@shared/config-contract';
+import { DEFAULT_RECEIVER, type ResolvedContainer } from '@shared/config-contract';
 import {
   HOOK_ENV_RECEIVER_URL,
   HOOK_ENV_SESSION,
@@ -11,8 +13,13 @@ import {
 import type { SessionMetrics } from '@shared/metrics-contract';
 
 import {
+  CONTAINER_ALIASES_DIR,
+  CONTAINER_ALIASES_SUBDIR,
+  CONTAINER_SESSIONS_SUBDIR,
   containerOrigins,
   sweepSessionContainerFiles,
+  writeAliasContainerFiles,
+  writeSessionContainerFiles,
   writeSharedContainerFiles,
 } from '../container/generated';
 import type { Ledger } from '../ledger';
@@ -82,6 +89,20 @@ export interface HookRuntimeOptions {
    * (HIVE-133); until then nothing consumes either value in production.
    */
   hostAlias?: () => string;
+  /**
+   * A project's resolved container block, or `undefined` for a host project
+   * (HIVE-133).
+   *
+   * A getter, like {@link HookRuntimeOptions.sessionMetrics} and
+   * {@link HookRuntimeOptions.hostAlias}, and for the same two reasons: the
+   * config can be reloaded, and this module imports nothing from `config/`.
+   * `ipc/index.ts` supplies it as
+   * `(id) => effectiveRuntime(getConfig(), getConfig().projects.find((entry)
+   * => entry.id === id) ?? null).container` — there is no `projectById`
+   * helper in this codebase; `configDiagnoseCommand` and `configDiagnoseEnv`
+   * resolve a project id the same inline way.
+   */
+  containerFor?: (projectId: string | null) => ResolvedContainer | undefined;
   /** Overridable for tests; `0` asks the OS for a free port. */
   port?: number;
 }
@@ -194,16 +215,41 @@ export interface HookRuntime {
    */
   doneUrl(): string | null;
   /**
-   * The receiver's origin as a *container* must address it, or `null` before
-   * the bind (HIVE-132).
+   * The receiver's origin as a *container* must address it, addressed by the
+   * **global** alias, or `null` before the bind (HIVE-132).
    *
-   * Read by the spawn path HIVE-133 adds, to put in `HIVE_RECEIVER_URL` for a
-   * containerised session. A getter beside {@link HookRuntime.doneUrl} rather
-   * than something folded into {@link HookRuntime.envFor}, because nothing here
-   * knows which sessions are containerised — that is deliberately HIVE-133's
-   * decision, and a host session's environment has to stay exactly what it is.
+   * **Unused by any spawn path today (post-HIVE-133 review).** This was
+   * written expecting HIVE-133's spawn path to read it for a containerised
+   * session's `HIVE_RECEIVER_URL` — the doc here said so — but that story
+   * ended up needing the *project's own* alias, not the global one this
+   * getter applies, and built the substitution itself out of
+   * {@link HookRuntime.envFor} plus `withHostAlias` instead (see
+   * `sessions/index.ts`'s `containerSpawn`). Left in place — correctly,
+   * genuinely working — as the answer to "what origin would a container using
+   * the *default* alias see", which is still what `writeSharedContainerFiles`
+   * bakes into the `exec-env` set at `start()`. A getter beside
+   * {@link HookRuntime.doneUrl} rather than something folded into
+   * {@link HookRuntime.envFor}, because nothing here knows which sessions are
+   * containerised — that is deliberately a caller's decision, and a host
+   * session's environment has to stay exactly what it is.
    */
   containerOrigin(): string | null;
+  /**
+   * Write one session's resolved container set, for a `rewrite` project — or,
+   * since HIVE-133's post-review fix, one shared alias set for an `exec-env`
+   * project whose `hostAlias` diverges from the global one. The shared set at
+   * `CONTAINER_DIR` bakes one resolved origin, built from *the global* alias
+   * at `start()`; a project configured for a different runtime cannot read it
+   * without its hooks POSTing to the wrong place.
+   *
+   * Returns the host directory written, or `null` when there was nothing to
+   * write — a host project, an `exec-env` project on the default alias, or a
+   * receiver that never bound. The caller does not branch on why.
+   */
+  writeContainerSession(
+    entityId: string,
+    projectId: string | null,
+  ): Promise<string | null>;
   stop(): Promise<void>;
 }
 
@@ -213,6 +259,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
     port,
     sessionMetrics = () => true,
     hostAlias = () => DEFAULT_RECEIVER.hostAlias,
+    containerFor,
     ledger,
   } = options;
 
@@ -328,6 +375,38 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
           url,
           created.readyUrl ?? undefined,
         );
+
+        /*
+          Ahead of the three assignments below, and that placement is the whole
+          correctness argument (HIVE-133).
+
+          `writeContainerSession`, below, is gated on `receiver` alone (its own
+          `running === null` check reads the same variable this assigns), so
+          the instant `receiver = created` runs, a containerised session's
+          launch path can call it and write its own directory under this root.
+          With the sweep after that assignment — where it used to be, 33 lines
+          further down — a session opened during app boot wrote its directory
+          and then had it deleted, and every hook and MCP call from that
+          container 403'd with nothing logged.
+
+          Here, `[]` is not an assumption to be defended but a fact: no session
+          can exist yet, because the gate that permits one has not been assigned.
+          The `live` parameter stays in the signature for a mid-run sweep that
+          does not exist today.
+
+          Its own `try`, and never blocking the write below. `rm` with `force`
+          swallows a missing path but not `EPERM` or `EBUSY`, and a single
+          undeletable orphan must not be the reason this launch has no container
+          set at all.
+        */
+        try {
+          await sweepSessionContainerFiles(userDataPath, []);
+        } catch (cause) {
+          console.info(
+            `[hive] stale container session files could not be swept (${String(cause)})`,
+          );
+        }
+
         settingsPath = newSettingsPath;
         agentSettingsPath = newAgentSettingsPath;
         receiver = created;
@@ -343,33 +422,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
           down. Those files are what every host session depends on; these are
           what no host session touches, so the honest failure is a log and a
           receiver that still works for everyone it already worked for.
-
-          The sweep runs first and keeps nothing: `start()` is a fresh launch,
-          so every per-session directory under it is an orphan of a previous one
-          — and each holds a resolved token that a new `launchSecret` has
-          already invalidated.
         */
-        /*
-          Its own `try`, ahead of the write and never blocking it. `rm` with
-          `force` swallows a missing path but not `EPERM` or `EBUSY`, and a
-          single undeletable orphan must not be the reason this launch has no
-          container set at all — that would be a cleanup task blocking the work,
-          reported under a message about the work.
-
-          `[]` keeps nothing, and that is correct *here* rather than in general:
-          `start()` runs once per app launch, before any session is spawned, so
-          every directory under it belongs to a previous launch — and each holds
-          a token that this launch's new `launchSecret` has already invalidated.
-          A caller that ran this with sessions live would have to pass them.
-        */
-        try {
-          await sweepSessionContainerFiles(userDataPath, []);
-        } catch (cause) {
-          console.info(
-            `[hive] stale container session files could not be swept (${String(cause)})`,
-          );
-        }
-
         try {
           if (created.origin === null) {
             /*
@@ -446,6 +499,105 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       if (running === null || running.origin === null) return null;
 
       return withHostAlias(running.origin, hostAlias());
+    },
+
+    async writeContainerSession(entityId, projectId) {
+      const running = receiver;
+      /*
+        `url` and `origin` are set together on a successful bind and cleared
+        together on the way down (`receiver.ts`), so this is one fact checked
+        twice, not two independent ones — but the type of each is `string |
+        null` on its own, and only checking `origin` would leave `url` typed
+        as possibly-`null` below.
+      */
+      if (running === null || running.origin === null || running.url === null) {
+        return null;
+      }
+
+      /*
+        Asked, not read. This module imports nothing from `config/` — see
+        {@link HookRuntimeOptions.ledger}: its only job is the receiver's
+        lifecycle, and `ipc/index.ts` is where a project's runtime is already
+        reachable. A getter rather than a value for the reason `sessionMetrics`
+        and `hostAlias` are getters: the config can be reloaded, and a value
+        captured at construction would pin whatever it said at boot.
+      */
+      const config = containerFor?.(projectId);
+
+      if (config === undefined) return null;
+
+      /*
+        Gated on `sessionMetrics()`, matching its two neighbours — the host
+        set (`writeHookSettings`, above) and the shared `exec-env` set
+        (`writeSharedContainerFiles`, above). Without the gate, a user who
+        turned session metrics off still got a status line baked into every
+        container session: the dot never renders anything, but Claude Code
+        drops its footer key hints for any *configured* status line, rendering
+        or not. Computed once here, ahead of the branch below, because both a
+        `rewrite` set and an alias `exec-env` set build it identically.
+      */
+      const origins = {
+        url: running.url,
+        origin: running.origin,
+        ...(sessionMetrics() && running.metricsUrl !== null
+          ? { metricsUrl: running.metricsUrl }
+          : {}),
+        ...(running.readyUrl === null ? {} : { readyUrl: running.readyUrl }),
+      };
+
+      if (config.freshness === 'rewrite') {
+        return writeSessionContainerFiles(
+          userDataPath,
+          /*
+            The **entity id**, never the registry's `entityId.gN`. `tokenFor` is
+            HMAC(launchSecret, entityId) and the receiver compares against
+            `tokenFor(entityId)` for the id in `x-hive-session`, so a directory
+            named after the generation would carry a token refused on every call.
+          */
+          entityId,
+          containerOrigins(origins, config.hostAlias),
+          { session: entityId, token: running.tokenFor(entityId) },
+          {
+            /*
+              Where this set will be visible *inside* the container. The status
+              line script is the one value in the set naming a path rather than a
+              URL, so it is the only thing that needs it.
+            */
+            containerRoot: join(config.hiveDir, CONTAINER_SESSIONS_SUBDIR, entityId),
+          },
+        );
+      }
+
+      /*
+        `exec-env` writes nothing per session in the ordinary case: every
+        per-session value in that set is a `${VAR}`, resolved by the runtime at
+        each exec, and the shared set `writeSharedContainerFiles` wrote at
+        `start()` already addresses the global alias correctly.
+
+        The exception is HIVE-133's post-review fix: a project whose
+        `hostAlias` diverges from the global one cannot read that shared set —
+        it bakes one resolved origin, built from *the global* alias — without
+        its hooks POSTing to the wrong runtime. `writeAliasContainerFiles`
+        writes that alias's own copy, still secret-free and still cheap, and
+        this returns the directory it wrote so `sessions/index.ts` can compute
+        the very same path independently (its own `containerSet`, compared
+        against `snapshot.receiver.hostAlias` the way this compares against
+        `hostAlias()`) before this write has necessarily finished.
+      */
+      if (config.hostAlias === hostAlias()) return null;
+
+      const aliasDir = join(userDataPath, CONTAINER_ALIASES_DIR, config.hostAlias);
+
+      await writeAliasContainerFiles(
+        userDataPath,
+        config.hostAlias,
+        containerOrigins(origins, config.hostAlias),
+        {
+          containerRoot: join(config.hiveDir, CONTAINER_ALIASES_SUBDIR, config.hostAlias),
+        },
+      );
+
+      return aliasDir;
     },
 
     envFor(entityId): Record<string, string> {

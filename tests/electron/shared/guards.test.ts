@@ -18,6 +18,7 @@ import {
   parseResizeRequest,
   parseSessionPrRequest,
   parseSetProjectKeyRequest,
+  parseSetProjectRuntimeRequest,
   parseSetReceiverRequest,
   parseSpawnRequest,
   parseWriteRequest,
@@ -1023,5 +1024,115 @@ describe('parseSetReceiverRequest (HIVE-131)', () => {
 
   it('rejects a request that changes nothing', () => {
     expect(() => parseSetReceiverRequest({})).toThrow(/nothing to change/);
+  });
+});
+
+describe('parseSetProjectRuntimeRequest container', () => {
+  const container = {
+    workspace: '/workspace',
+    hiveDir: '/hive',
+    envArg: '-e {name}={value}',
+    freshness: 'exec-env',
+    hostAlias: 'host.docker.internal',
+  };
+
+  it('accepts a full block', () => {
+    expect(parseSetProjectRuntimeRequest({ id: 'p', container })).toEqual({
+      id: 'p',
+      container,
+    });
+  });
+
+  it('accepts a minimal block and defaults nothing', () => {
+    // Absent means inherit. Materialising a default here would freeze today's
+    // value into the user's config file.
+    const minimal = { workspace: '/workspace', hiveDir: '/hive' };
+    expect(parseSetProjectRuntimeRequest({ id: 'p', container: minimal })).toEqual({
+      id: 'p',
+      container: minimal,
+    });
+  });
+
+  it('accepts null, which removes the override', () => {
+    expect(parseSetProjectRuntimeRequest({ id: 'p', container: null })).toEqual({
+      id: 'p',
+      container: null,
+    });
+  });
+
+  it('leaves the block alone when the key is absent', () => {
+    expect(parseSetProjectRuntimeRequest({ id: 'p', shell: '/bin/zsh' })).toEqual({
+      id: 'p',
+      shell: '/bin/zsh',
+    });
+  });
+
+  // A real command survives, exactly like every other field in the block.
+  it('accepts a probe', () => {
+    const withProbe = { ...container, probe: 'test -f /workspace/ready' };
+    expect(parseSetProjectRuntimeRequest({ id: 'p', container: withProbe })).toEqual({
+      id: 'p',
+      container: withProbe,
+    });
+  });
+
+  it.each([
+    [{ ...container, workspace: 'relative' }],
+    [{ ...container, hiveDir: '' }],
+    [{ ...container, envArg: '-e {name}' }],
+    [{ ...container, freshness: 'stale' }],
+    // The alias names a network destination; the guard is not looser than the reader.
+    [{ ...container, hostAlias: 'bad host' }],
+    [{ ...container, hostAlias: '10.0.0.5?' }],
+    // Whitespace is not a command — the exact case that would have caught a
+    // guard that trims where the reader's `isContainerProbe` does not.
+    [{ ...container, probe: '   ' }],
+    [{ ...container, probe: '' }],
+    [{ ...container, probe: 42 }],
+    // Not a block at all.
+    ['x'],
+  ])('refuses %j', (bad) => {
+    expect(() => parseSetProjectRuntimeRequest({ id: 'p', container: bad })).toThrow(
+      IpcValidationError,
+    );
+  });
+
+  /**
+   * `workspace`/`hiveDir` used to go through `isAbsoluteContainerPath` alone
+   * — unbounded length, control characters allowed — while every other
+   * string on this bridge is capped (final-review fix, Minor 7). Both end up
+   * on a spawned command line via `sessionCommand`'s `PathMap`, so a control
+   * character or an absurd length is not merely cosmetic.
+   */
+  it.each([
+    ['workspace', `/${'a'.repeat(4096)}`],
+    ['hiveDir', `/${'a'.repeat(4096)}`],
+    ['workspace', '/hive\u0007'],
+    ['hiveDir', '/hive\u0007'],
+  ] as const)('refuses a %s that isAbsoluteContainerPath alone would accept', (key, value) => {
+    expect(() =>
+      parseSetProjectRuntimeRequest({ id: 'p', container: { ...container, [key]: value } }),
+    ).toThrow(IpcValidationError);
+  });
+
+  /**
+   * `envArg` is the third string on this bridge that reaches a command line,
+   * and it was the one left out of Minor 7's fix.
+   *
+   * `isEnvArgTemplate` only asks that both placeholders are present, so on its
+   * own it accepts an unbounded template and one carrying control characters —
+   * and unlike a value, a template's own text is emitted **verbatim** by
+   * `expandEnvArgs`, never quoted, because it is the runtime's vocabulary
+   * rather than user data. `workspace`, `hiveDir` and `probe` all pair their
+   * shape check with `assertText` for exactly this reason; this one now does
+   * too.
+   */
+  it.each([
+    [`-e {name}={value} ${'x'.repeat(4096)}`],
+    ['-e {name}={value}\u0007'],
+  ])('refuses an envArg that isEnvArgTemplate alone would accept: %j', (envArg) => {
+    expect(() =>
+      parseSetProjectRuntimeRequest({ id: 'p', container: { ...container, envArg } }),
+    ).toThrow(IpcValidationError);
   });
 });
