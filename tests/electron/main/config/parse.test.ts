@@ -691,4 +691,23 @@ describe('parseConfig — per-project container block (HIVE-133)', () => {
     const parsed = parse({ workspace: '/w', hiveDir: '/h' });
     expect(parsed.errors.join('\n')).not.toContain('unknown key');
   });
+
+  /**
+   * `optionalContainer` used to be the one level of this file that never ran
+   * `checkKeys` over its own block, unlike every sibling — `optionalJira` and
+   * the top-level document both do — so a hand-written `hostalias` (lowercase
+   * `a`) fell through every field check below as simply absent and was
+   * silently ignored (final-review fix, Minor 12). `assertContainer` in
+   * `guards.ts` already rejects that exact typo via `assertShape`, so the
+   * reader was strictly looser than the guard on this one axis.
+   */
+  it('reports an unknown key inside the container block, matching every other block in this file', () => {
+    const parsed = parse({ workspace: '/w', hiveDir: '/h', hostalias: 'gateway' });
+
+    expect(parsed.errors.join('\n')).toContain('unknown key "hostalias"');
+    // Still parses on the fields it does recognise — an unknown key is
+    // reported and skipped, not fatal to the whole block.
+    expect(parsed.projects[0]?.container).toEqual({ workspace: '/w', hiveDir: '/h' });
+    expect(parsed.fatal).toBe(false);
+  });
 });

@@ -303,6 +303,19 @@ function optionalEnv(
  * further from the cause than not being containerised at all. The project stays
  * usable as a host project, and the error names the field.
  */
+/**
+ * The block's own keys, checked the way every other block in this file is
+ * (final-review fix) — `optionalJira` and `optionalReceiver` both run
+ * `checkKeys` before validating any individual field, and this was the one
+ * level of the file that did not: a hand-written `hostalias` (lowercase `a`)
+ * fell through every check below as simply absent, so the block parsed as
+ * valid with the typo silently ignored. `assertContainer` in `guards.ts`
+ * already rejects that same typo via `assertShape` — closing this makes the
+ * reader as strict as the guard on the one axis where it was looser, not just
+ * as strict as it can afford to be.
+ */
+const CONTAINER_KEYS = ['workspace', 'hiveDir', 'envArg', 'probe', 'freshness', 'hostAlias'];
+
 function optionalContainer(
   record: Record<string, unknown>,
   label: string,
@@ -314,6 +327,9 @@ function optionalContainer(
     errors.push(`${label}.container: expected an object — ignored`);
     return undefined;
   }
+
+  const at = `${label}.container`;
+  if (!checkKeys(value, CONTAINER_KEYS, at, errors)) return undefined;
 
   /* Absolute, because a container path is joined onto, never resolved against a
      cwd this process does not have inside the container. */
