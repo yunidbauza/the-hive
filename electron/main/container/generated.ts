@@ -28,8 +28,26 @@ import { containerMcpConfig } from '../mcp/container-config';
  * is a directory swap rather than a per-file mapping.
  */
 
+/** The path segment every constant below is built from, host or container side. */
+const CONTAINER_SUBDIR = 'container';
+
 /** `<userData>/hive/container` — the shared, secret-free `exec-env` set. */
-export const CONTAINER_DIR = join('hive', 'container');
+export const CONTAINER_DIR = join('hive', CONTAINER_SUBDIR);
+
+/**
+ * `container/sessions`, relative to wherever `hive/` itself is mounted.
+ *
+ * The host reaches the same directory as `<userData>/hive/container/sessions`
+ * ({@link CONTAINER_SESSIONS_DIR}, which bakes that `hive/` prefix in); a
+ * container reaches it as `<config.hiveDir>/container/sessions`, where
+ * `config.hiveDir` **is** the container-side spelling of `<userData>/hive` and
+ * so must not have that prefix added a second time. Exported so
+ * `hooks/index.ts`'s `containerRoot` — the one path in a session's generated
+ * set that names where the container sees it, rather than a URL — builds it
+ * from the same three literals as the host-side constant, not a second
+ * hand-rolled copy that a rename here would leave silently stale.
+ */
+export const CONTAINER_SESSIONS_SUBDIR = join(CONTAINER_SUBDIR, 'sessions');
 
 /**
  * `<userData>/hive/container/sessions` — one directory per session, `rewrite`
@@ -44,6 +62,9 @@ export const CONTAINER_DIR = join('hive', 'container');
  * left behind.
  */
 export const CONTAINER_SESSIONS_DIR = join(CONTAINER_DIR, 'sessions');
+
+/** `container/aliases`, relative — the container-side sibling of {@link CONTAINER_SESSIONS_SUBDIR}. */
+export const CONTAINER_ALIASES_SUBDIR = join(CONTAINER_SUBDIR, 'aliases');
 
 /**
  * `<userData>/hive/container/aliases/<alias>` — one `exec-env` set per distinct

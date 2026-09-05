@@ -14,6 +14,8 @@ import type { SessionMetrics } from '@shared/metrics-contract';
 
 import {
   CONTAINER_ALIASES_DIR,
+  CONTAINER_ALIASES_SUBDIR,
+  CONTAINER_SESSIONS_SUBDIR,
   containerOrigins,
   sweepSessionContainerFiles,
   writeAliasContainerFiles,
@@ -378,12 +380,14 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
           Ahead of the three assignments below, and that placement is the whole
           correctness argument (HIVE-133).
 
-          `containerOrigin()` is gated on `receiver` alone, so the instant
-          `receiver = created` runs, a containerised session is spawnable and
-          can write its own directory under this root. With the sweep after that
-          line — where it used to be, 33 lines further down — a session opened
-          during app boot wrote its directory and then had it deleted, and every
-          hook and MCP call from that container 403'd with nothing logged.
+          `writeContainerSession`, below, is gated on `receiver` alone (its own
+          `running === null` check reads the same variable this assigns), so
+          the instant `receiver = created` runs, a containerised session's
+          launch path can call it and write its own directory under this root.
+          With the sweep after that assignment — where it used to be, 33 lines
+          further down — a session opened during app boot wrote its directory
+          and then had it deleted, and every hook and MCP call from that
+          container 403'd with nothing logged.
 
           Here, `[]` is not an assumption to be defended but a fact: no session
           can exist yet, because the gate that permits one has not been assigned.
@@ -559,7 +563,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
               line script is the one value in the set naming a path rather than a
               URL, so it is the only thing that needs it.
             */
-            containerRoot: join(config.hiveDir, 'container', 'sessions', entityId),
+            containerRoot: join(config.hiveDir, CONTAINER_SESSIONS_SUBDIR, entityId),
           },
         );
       }
@@ -589,7 +593,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
         config.hostAlias,
         containerOrigins(origins, config.hostAlias),
         {
-          containerRoot: join(config.hiveDir, 'container', 'aliases', config.hostAlias),
+          containerRoot: join(config.hiveDir, CONTAINER_ALIASES_SUBDIR, config.hostAlias),
         },
       );
 
