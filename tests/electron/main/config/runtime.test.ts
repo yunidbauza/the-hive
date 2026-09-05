@@ -18,6 +18,7 @@ import {
 import {
   diagnoseCommand,
   effectiveRuntime,
+  runProbeCommand,
 } from '../../../../electron/main/config/runtime';
 
 /**
@@ -488,5 +489,33 @@ describe('diagnoseCommand container precondition', () => {
     );
 
     expect(result.container).toMatchObject({ ok: true, missingEnvPlaceholder: true });
+  });
+});
+
+describe('runProbeCommand', () => {
+  /**
+   * `execFile`'s own error is honest about this even where the old cast was
+   * not (final-review fix, Minor 8): a probe that ran and exited abnormally
+   * reports a *numeric* `code`, but one that never got that far — here, a
+   * `maxBuffer` overrun — reports a *string* one
+   * (`'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'`). The old `error.code ?? null`
+   * cast let that string through unchanged into a field the type checker
+   * believed was `number | null`. Real `execFile`, not a fake — this is
+   * exactly the boundary a fake `RunProbe` cannot see, since every other test
+   * in this file injects one.
+   */
+  it('reports a maxBuffer overrun (a string spawn-failure code) as a null exitCode, folding the code into stderr', async () => {
+    const result = await runProbeCommand('yes x | head -c 200000 >&2', {
+      env: process.env,
+      timeout: 5000,
+    });
+
+    expect(result.code).toBeNull();
+    expect(result.stderr).toContain('ERR_CHILD_PROCESS_STDIO_MAXBUFFER');
+  });
+
+  it('reports a normal, numeric exit code untouched', async () => {
+    const result = await runProbeCommand('exit 3', { env: process.env, timeout: 5000 });
+    expect(result.code).toBe(3);
   });
 });

@@ -212,8 +212,30 @@ export const runProbeCommand: RunProbe = async (command, { env, timeout }) => {
     const { stderr } = await probe;
     return { code: 0, stderr: String(stderr) };
   } catch (cause) {
-    const error = cause as { code?: number | null; stderr?: string };
-    return { code: error.code ?? null, stderr: String(error.stderr ?? cause) };
+    /*
+      `execFile`'s own error is honest about this even where the cast below
+      was not (final-review fix): a probe that ran and exited abnormally
+      reports a *numeric* `code`, but one that never got that far — `/bin/sh`
+      itself missing, or a `maxBuffer` overrun — reports a *string* one
+      (`'ENOENT'`, `'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'`). The old
+      `number | null` cast let a string code through unchanged into a field
+      the type checker believed was numeric, and this diagnostic's own
+      contract — `ContainerDiagnostic.exitCode: number | null` — means "what
+      the probe exited with", which a spawn failure never reached. A string
+      code becomes `null` here, with the code itself folded into `stderr`
+      rather than silently dropped.
+    */
+    const error = cause as { code?: number | string | null; stderr?: string };
+    const code = typeof error.code === 'number' ? error.code : null;
+    const base = error.stderr === undefined || error.stderr === '' ? String(cause) : error.stderr;
+    /*
+      Appended, not substituted for, whatever stderr the probe did manage to
+      write — a `maxBuffer` overrun still hands back the truncated buffer it
+      collected before giving up, and that partial output is worth keeping
+      alongside the reason it stopped, not instead of it.
+    */
+    const detail = typeof error.code === 'string' ? `${base} (${error.code})` : base;
+    return { code, stderr: String(detail) };
   }
 };
 
