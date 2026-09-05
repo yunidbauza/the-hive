@@ -57,8 +57,13 @@ export function expandEnvArgs(
  * is the supported shape; a second repeats the expansion, which the settings
  * preview shows plainly, and is the user's to fix.
  *
- * The trailing space is swallowed when there is nothing to expand, so an empty
- * environment does not leave a gap in the middle of the preview.
+ * The space *after* the placeholder is swallowed when there is nothing to
+ * expand, so an empty environment does not leave a gap in the middle of a
+ * multi-token command. That only covers a placeholder with something after
+ * it to swallow: when `{env}` is the command's *last* token there is no
+ * following space to remove, and the result keeps one trailing space — this
+ * narrows what the middle-of-string case above actually claims, not "never
+ * leaves a gap" in general.
  */
 export function substituteEnv(command: string, args: string): string | null {
   if (!command.includes(ENV_PLACEHOLDER)) return null;

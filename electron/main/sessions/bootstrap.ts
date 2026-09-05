@@ -397,19 +397,45 @@ export const sessionCommand = (
       ? []
       : [shellQuote(task.replaceAll(/[\r\n]+/g, ' ').trim())];
 
-  const line = [claudeCommand, ...flags, ...initialPrompt].join(' ');
-
   /*
-    Substituted **after** the flags are joined, so the expansion lands where the
-    command asks for it rather than at a position this module guessed. `null`
-    means no `{env}`: the command is emitted unchanged rather than half-built,
-    because a string with the placeholder still in it would be typed into a
-    shell verbatim.
-  */
-  if (container === undefined) return `${prefix}${line} && exit`;
+    Substituted into `claudeCommand` alone, **before** the join — never into
+    the flags or the task (final-review fix).
 
-  const args = expandEnvArgs(container.env, container.config.envArg);
-  return `${prefix}${substituteEnv(line, args) ?? line} && exit`;
+    The flags are `shellQuote`d closed forms and the task is one too, and
+    `{env}` is not a placeholder either of them promises to leave alone. Doing
+    the substitution on the *joined* line meant a task containing the literal
+    text `{env}` — nothing stops a user typing that — was substituted a second
+    time, **inside its own quoted region**: each expansion is `-e NAME='value'`,
+    an even number of quotes, spliced into an already-open single-quoted
+    string. The first `'` in the splice closes the task's quote early, and
+    everything after it — including any `;`, backtick or `$(…)` a project's
+    `env` value happened to contain — lands unquoted in the host login shell.
+    The expansion belongs to the command the user configured in Settings,
+    never to text they typed into a prompt box, so it can only ever run
+    against `claudeCommand`.
+
+    This also closes the quieter half of the same bug: a `claudeCommand` with
+    no `{env}` but a task that happens to contain the literal text used to
+    make `substituteEnv` find *a* placeholder anyway (in the task) and return
+    non-null, so the container got none of `HIVE_SESSION_ID`, `HIVE_HOOK_TOKEN`
+    or `HIVE_RECEIVER_URL` while `diagnoseCommand` reported the command as
+    fine. Substituting into `claudeCommand` alone means `null` means what it
+    says: no `{env}` in the command the user configured, full stop.
+
+    `null` still means exactly that — the command is emitted unchanged rather
+    than half-built, because a string with the placeholder still in it would
+    be typed into a shell verbatim. Task 9's diagnostic is what actually flags
+    the missing placeholder to the user; this function only refuses to guess.
+  */
+  const command =
+    container === undefined
+      ? claudeCommand
+      : (substituteEnv(claudeCommand, expandEnvArgs(container.env, container.config.envArg)) ??
+        claudeCommand);
+
+  const line = [command, ...flags, ...initialPrompt].join(' ');
+
+  return `${prefix}${line} && exit`;
 };
 
 export interface BootstrapOptions {

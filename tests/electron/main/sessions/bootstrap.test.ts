@@ -940,6 +940,55 @@ describe('sessionCommand container projects', () => {
     );
   });
 
+  /**
+   * The bug a final-review pass caught (HIVE-133, final-review fix,
+   * Critical 1): `substituteEnv` used to run against the *joined* line — every
+   * flag and the quoted task together — rather than against `claudeCommand`
+   * alone. A task containing the literal text `{env}` (nothing stops a user
+   * typing that) was then substituted a **second** time, inside its own
+   * quoted region: each expansion is `-e NAME='value'`, an even number of
+   * quotes, spliced into an already-open single-quoted string. The first `'`
+   * in the splice closes the task's quote early, and everything after it —
+   * a `;`, a backtick, a `$(…)` a project's `env` value happened to contain —
+   * would land unquoted in the host login shell.
+   *
+   * This pins the fix two ways: the task survives quoted and intact, and
+   * there is exactly one expansion — the one `claudeCommand` asked for, not a
+   * second one inside the task.
+   */
+  it('does not substitute {env} written inside the task, only in claudeCommand', () => {
+    const command = sessionCommand('docker exec -it {env} devbox claude', {
+      ...paths,
+      container,
+      task: 'what does {env} do',
+    });
+
+    expect(command).toContain("'what does {env} do'");
+    expect(command.match(/-e FOO=/g)).toHaveLength(1);
+  });
+
+  /**
+   * The quieter half of the same bug: with the substitution run against the
+   * joined line, a `claudeCommand` with **no** `{env}` but a task that happens
+   * to contain the literal text made `substituteEnv` find *a* placeholder
+   * anyway — in the task — and return non-null, so the container got none of
+   * `HIVE_SESSION_ID`, `HIVE_HOOK_TOKEN` or `HIVE_RECEIVER_URL` while
+   * `diagnoseCommand` correctly reported `missingEnvPlaceholder: true`. The
+   * fix means `null` answers "no `{env}` in `claudeCommand`", full stop — so
+   * this must behave exactly like "leaves the command alone when it has no
+   * placeholder" above: nothing substituted, the task's literal text intact.
+   */
+  it('treats a task containing {env} as the no-placeholder case when claudeCommand has none', () => {
+    const command = sessionCommand('docker exec -it devbox claude', {
+      ...paths,
+      container,
+      task: 'what does {env} do',
+    });
+
+    expect(command).toContain("'what does {env} do'");
+    expect(command).not.toContain('-e FOO=');
+  });
+
   it('is byte-identical to today for a project with no container block', () => {
     const before = sessionCommand('claude', {
       settingsPath: '/Users/dev/Library/Application Support/The Hive/hive/x.json',
