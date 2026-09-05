@@ -765,11 +765,22 @@ export function assertContainer(value: unknown, label: string): ContainerConfig 
     'hostAlias',
   ]);
 
+  /*
+    `isAbsoluteContainerPath` first — the same rule `parse.ts` applies, so a
+    value this guard accepts is a value the file reader accepts too. Then
+    `assertText`, matching how `probe` below is handled and for the same
+    reason (final-review fix): `isAbsoluteContainerPath` only checks for a
+    leading `/` on a non-empty string, so on its own it left `workspace` and
+    `hiveDir` the one pair of strings on this bridge with no length cap and no
+    ban on control characters — both of which end up on a spawned command
+    line via `sessionCommand`'s `PathMap`. `assertText` adds both without
+    touching the leading-`/` guarantee `isAbsoluteContainerPath` already gave.
+  */
   const absolute = (key: 'workspace' | 'hiveDir'): string => {
     if (!isAbsoluteContainerPath(raw[key])) {
       throw new IpcValidationError(`${label}.${key} must be an absolute path`);
     }
-    return raw[key];
+    return assertText(raw[key], `${label}.${key}`);
   };
 
   const workspace = absolute('workspace');

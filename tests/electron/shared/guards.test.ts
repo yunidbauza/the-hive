@@ -1096,4 +1096,22 @@ describe('parseSetProjectRuntimeRequest container', () => {
       IpcValidationError,
     );
   });
+
+  /**
+   * `workspace`/`hiveDir` used to go through `isAbsoluteContainerPath` alone
+   * — unbounded length, control characters allowed — while every other
+   * string on this bridge is capped (final-review fix, Minor 7). Both end up
+   * on a spawned command line via `sessionCommand`'s `PathMap`, so a control
+   * character or an absurd length is not merely cosmetic.
+   */
+  it.each([
+    ['workspace', `/${'a'.repeat(4096)}`],
+    ['hiveDir', `/${'a'.repeat(4096)}`],
+    ['workspace', '/hive\u0007'],
+    ['hiveDir', '/hive\u0007'],
+  ] as const)('refuses a %s that isAbsoluteContainerPath alone would accept', (key, value) => {
+    expect(() =>
+      parseSetProjectRuntimeRequest({ id: 'p', container: { ...container, [key]: value } }),
+    ).toThrow(IpcValidationError);
+  });
 });
