@@ -16,14 +16,23 @@ export function ContainerCommandPreview({
   command,
   config,
   projectId,
+  globalAlias,
   diagnostic,
 }: {
   command: string;
   config: ContainerConfig;
   projectId: string;
+  /**
+   * The receiver's current `hostAlias` (final-review fix, Important 5) —
+   * distinct from `config.hostAlias`, which is already resolved to whatever
+   * this project will use. `expandPreview` needs both to tell an override
+   * from an inherited default, the same distinction `writeContainerSession`
+   * draws in `hooks/index.ts`.
+   */
+  globalAlias: string;
   diagnostic?: ContainerDiagnostic;
 }) {
-  const line = expandPreview(command, config, projectId);
+  const line = expandPreview(command, config, projectId, globalAlias);
 
   return (
     <div className="flex flex-col gap-1.5">

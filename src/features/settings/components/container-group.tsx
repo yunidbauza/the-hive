@@ -11,7 +11,14 @@ import type {
   ContainerDiagnostic,
   ContainerFreshness,
 } from '@shared/config-contract';
-import { DEFAULT_ENV_ARG, DEFAULT_FRESHNESS, isHostAlias } from '@shared/config-contract';
+import {
+  DEFAULT_ENV_ARG,
+  DEFAULT_FRESHNESS,
+  isAbsoluteContainerPath,
+  isContainerProbe,
+  isEnvArgTemplate,
+  isHostAlias,
+} from '@shared/config-contract';
 
 const FRESHNESS: readonly { value: ContainerFreshness; label: string }[] = [
   { value: 'exec-env', label: 'exec-env' },
@@ -25,7 +32,30 @@ const FRESHNESS_COPY: Record<ContainerFreshness, string> = {
     'Writes one settings directory per session with a resolved HIVE_HOOK_TOKEN in it. That puts a live secret on disk inside the container and forfeits the read-only, secret-free property exec-env has. Choose it only for tools whose environment is fixed at creation time.',
 };
 
-const ALIAS_INVALID = 'Not a valid hostname.';
+/**
+ * The rejection every guarded field can hit, and what to say about it
+ * (final-review fix, Important 4).
+ *
+ * `assertContainer` — the guard on the other end of `setProjectRuntimeConfig`
+ * — throws on all five, but `commit` used to check only `hostAlias`. A
+ * dropped leading slash or a placeholder-less `envArg` sent a payload the
+ * guard silently refused (`mutate` only `console.error`s a rejection), and
+ * the field went on showing the unsaved value with nothing to explain why it
+ * never landed. `probe` is included for the same reason its neighbours are —
+ * matching every field the guard validates — even though `normalise` below
+ * already reduces a merely-blank probe to "omitted" before `commit` ever
+ * sees it.
+ */
+const FIELD_INVALID_HINT: Record<
+  'workspace' | 'hiveDir' | 'envArg' | 'probe' | 'hostAlias',
+  string
+> = {
+  workspace: 'Must be an absolute path.',
+  hiveDir: 'Must be an absolute path.',
+  envArg: 'Must contain {name} and {value}.',
+  probe: 'Must be a non-empty command.',
+  hostAlias: 'Not a valid hostname.',
+};
 
 /** Every key `ContainerConfig` declares, for {@link sameContainer}. */
 const CONTAINER_KEYS = [
@@ -68,7 +98,14 @@ export function ContainerGroup({
   diagnostic?: ContainerDiagnostic;
 }) {
   const [draft, setDraft] = useState(container);
-  const [aliasInvalid, setAliasInvalid] = useState(false);
+  /**
+   * Which guarded fields currently hold a value `commit` refused to send
+   * (final-review fix, Important 4). A set rather than one boolean per field
+   * — `hostAlias` was the only one before — because every field `assertContainer`
+   * validates can independently fail, and `field()` below reads this once,
+   * generically, rather than growing a fifth copy of the same three lines.
+   */
+  const [invalid, setInvalid] = useState<ReadonlySet<string>>(new Set());
 
   /*
     Follow the snapshot when it changes underneath us. Adjusting state during
@@ -80,7 +117,7 @@ export function ContainerGroup({
   if (seen !== container) {
     setSeen(container);
     setDraft(container);
-    setAliasInvalid(false);
+    setInvalid(new Set());
   }
 
   /*
@@ -90,17 +127,25 @@ export function ContainerGroup({
     value that was never saved. The draft is left alone so the user can correct
     what they typed rather than watch it disappear.
 
-    `next.hostAlias` is `undefined` whenever the field was blank —
-    `normalise` omits it rather than baking in a resolved value (see its own
-    comment) — and an absent override is always valid; `isHostAlias` is only
-    consulted for a value the user actually typed.
+    Every field `assertContainer` validates, checked here the same way
+    (final-review fix, Important 4) — not just `hostAlias`, which was the only
+    one before this. `workspace` and `hiveDir` are never optional, so they are
+    checked unconditionally; `envArg` and `probe` are `undefined` whenever
+    `normalise` decided the field was blank, and an absent override is always
+    valid — the predicate is only consulted for a value the user actually
+    typed, exactly as it already was for `hostAlias`.
   */
   const commit = (next: ContainerConfig) => {
-    if (next.hostAlias !== undefined && !isHostAlias(next.hostAlias)) {
-      setAliasInvalid(true);
-      return;
-    }
-    setAliasInvalid(false);
+    const invalidNow = new Set<string>();
+    if (!isAbsoluteContainerPath(next.workspace)) invalidNow.add('workspace');
+    if (!isAbsoluteContainerPath(next.hiveDir)) invalidNow.add('hiveDir');
+    if (next.envArg !== undefined && !isEnvArgTemplate(next.envArg)) invalidNow.add('envArg');
+    if (next.probe !== undefined && !isContainerProbe(next.probe)) invalidNow.add('probe');
+    if (next.hostAlias !== undefined && !isHostAlias(next.hostAlias)) invalidNow.add('hostAlias');
+
+    setInvalid(invalidNow);
+    if (invalidNow.size > 0) return;
+
     if (sameContainer(next, container)) return;
     void setProjectRuntimeConfig({ id: projectId, container: next });
   };
@@ -116,11 +161,15 @@ export function ContainerGroup({
       value={draft[key] ?? ''}
       onChange={(value) => {
         setDraft({ ...draft, [key]: value });
-        if (key === 'hostAlias' && aliasInvalid) setAliasInvalid(false);
+        if (invalid.has(key)) {
+          const next = new Set(invalid);
+          next.delete(key);
+          setInvalid(next);
+        }
       }}
       onCommit={() => commit(normalise(draft))}
       {...(placeholder === undefined ? {} : { placeholder })}
-      hint={key === 'hostAlias' && aliasInvalid ? ALIAS_INVALID : hint}
+      hint={invalid.has(key) ? FIELD_INVALID_HINT[key] : hint}
     />
   );
 
@@ -226,6 +275,7 @@ export function ContainerGroup({
             command={command}
             config={effective}
             projectId={projectId}
+            globalAlias={inheritedAlias}
             {...(diagnostic === undefined ? {} : { diagnostic })}
           />
 

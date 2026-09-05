@@ -39,11 +39,22 @@ const quote = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
  * could apply on its own (it inherits `receiver.hostAlias`, which this helper
  * is never given), so the caller resolves it before calling in — see
  * `container-group.tsx`'s `effective`.
+ *
+ * `globalAlias` (final-review fix, Important 5) is the receiver's *current*
+ * `hostAlias` — never `config.hostAlias` itself, which is already resolved
+ * and cannot say on its own whether it came from an override or from that
+ * same default. Needed only to answer the one question `writeContainerSession`
+ * answers with its own `config.hostAlias !== hostAlias()` in `hooks/index.ts`:
+ * whether this `exec-env` project reads the shared set at `<hiveDir>/container`
+ * or its own copy at `<hiveDir>/container/aliases/<alias>`. Without it this
+ * preview always rendered the shared path, which is the wrong one — and 403s
+ * every hook — for a project whose alias diverges.
  */
 export function expandPreview(
   command: string,
   config: ContainerConfig,
   projectId: string,
+  globalAlias: string,
 ): string {
   const envArg = config.envArg ?? DEFAULT_ENV_ARG;
   const env: Record<string, string> = {
@@ -58,12 +69,33 @@ export function expandPreview(
     )
     .join(' ');
 
-  const settings =
+  /*
+    The directory this session's generated set actually lives in — mirroring
+    `sessions/index.ts`'s own `containerSet`, which this preview has to agree
+    with or it explains a command the terminal will not run. `rewrite` is
+    always per-session, alias or no; `exec-env` reads the shared set unless
+    this project's resolved alias diverges from the receiver's current one, in
+    which case it has its own copy (`writeAliasContainerFiles`).
+  */
+  const dir =
     config.freshness === 'rewrite'
-      ? `${config.hiveDir}/container/sessions/${projectId}/claude-hooks.settings.json`
-      : `${config.hiveDir}/container/claude-hooks.settings.json`;
+      ? `${config.hiveDir}/container/sessions/${projectId}`
+      : config.hostAlias !== globalAlias
+        ? `${config.hiveDir}/container/aliases/${config.hostAlias}`
+        : `${config.hiveDir}/container`;
 
-  const flags = `--settings ${quote(settings)} --plugin-dir ${quote(`${config.hiveDir}/plugin`)}`;
+  const settings = `${dir}/claude-hooks.settings.json`;
+  const mcpConfig = `${dir}/hive.mcp.json`;
+
+  /*
+    Same three flags, same order, as `sessionCommand`'s own `flags` array in
+    `bootstrap.ts`: `--settings`, then `--plugin-dir` (shared between host and
+    container, never under `dir`), then `--mcp-config` — added here
+    (final-review fix, Important 5) because the spawn always passes it and a
+    preview that omits a flag the terminal will actually receive is not
+    describing the thing it runs.
+  */
+  const flags = `--settings ${quote(settings)} --plugin-dir ${quote(`${config.hiveDir}/plugin`)} --mcp-config ${quote(mcpConfig)}`;
 
   return command.includes('{env}')
     ? `${command.replaceAll('{env}', args)} ${flags}`

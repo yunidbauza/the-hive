@@ -64,6 +64,61 @@ describe('ContainerGroup', () => {
     expect(screen.getByText(/not a valid hostname/i)).toBeInTheDocument();
   });
 
+  /**
+   * The bug a final-review pass caught (HIVE-133, final-review fix,
+   * Important 4): `commit` validated only `hostAlias` before sending, though
+   * `assertContainer` — the guard on the other end of `setProjectRuntimeConfig`
+   * — also throws on a non-absolute or blank `workspace`/`hiveDir` and on an
+   * `envArg` missing either placeholder. Dropping the leading slash used to
+   * send a payload the guard silently refused (`mutate` only `console.error`s
+   * a rejection), leaving the field showing the unsaved value with no hint
+   * that anything was wrong.
+   */
+  it('refuses a workspace path with no leading slash before sending', async () => {
+    render(<ContainerGroup projectId="p" container={container} command={COMMAND} inheritedAlias="host.docker.internal" />);
+    const field = screen.getByLabelText('Workspace path');
+    await userEvent.clear(field);
+    await userEvent.type(field, 'workspace');
+    await userEvent.tab();
+
+    expect(setProjectRuntimeConfig).not.toHaveBeenCalled();
+    expect(screen.getByText(/must be an absolute path/i)).toBeInTheDocument();
+  });
+
+  it('refuses a hive directory path with no leading slash before sending', async () => {
+    render(<ContainerGroup projectId="p" container={container} command={COMMAND} inheritedAlias="host.docker.internal" />);
+    const field = screen.getByLabelText('Hive directory');
+    await userEvent.clear(field);
+    await userEvent.type(field, 'hive');
+    await userEvent.tab();
+
+    expect(setProjectRuntimeConfig).not.toHaveBeenCalled();
+    expect(screen.getByText(/must be an absolute path/i)).toBeInTheDocument();
+  });
+
+  it('refuses an environment argument missing a placeholder before sending', async () => {
+    render(<ContainerGroup projectId="p" container={container} command={COMMAND} inheritedAlias="host.docker.internal" />);
+    const field = screen.getByLabelText('Environment argument');
+    await userEvent.clear(field);
+    await userEvent.type(field, '-e {name}');
+    await userEvent.tab();
+
+    expect(setProjectRuntimeConfig).not.toHaveBeenCalled();
+    expect(screen.getByText(/must contain \{name\} and \{value\}/i)).toBeInTheDocument();
+  });
+
+  it('clears an invalid workspace hint once the field is edited again', async () => {
+    render(<ContainerGroup projectId="p" container={container} command={COMMAND} inheritedAlias="host.docker.internal" />);
+    const field = screen.getByLabelText('Workspace path');
+    await userEvent.clear(field);
+    await userEvent.type(field, 'workspace');
+    await userEvent.tab();
+    expect(screen.getByText(/must be an absolute path/i)).toBeInTheDocument();
+
+    await userEvent.type(field, '/again');
+    expect(screen.queryByText(/must be an absolute path/i)).not.toBeInTheDocument();
+  });
+
   it("states rewrite's cost rather than hiding it", async () => {
     render(<ContainerGroup projectId="p" container={{ ...container, freshness: 'rewrite' }} command={COMMAND} inheritedAlias="host.docker.internal" />);
     expect(screen.getByText(/resolved HIVE_HOOK_TOKEN/)).toBeInTheDocument();
