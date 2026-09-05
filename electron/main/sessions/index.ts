@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
 import type { AgentsDirectory } from '@shared/agent-contract';
-import { AUTH_ENV_KEYS, type ConfigSnapshot } from '@shared/config-contract';
+import { AUTH_ENV_KEYS, ENV_PLACEHOLDER, type ConfigSnapshot } from '@shared/config-contract';
 import {
   HOOK_ENV_RECEIVER_URL,
   type HookNotificationType,
@@ -423,6 +423,27 @@ export function createSessions(options: SessionsOptions): Sessions {
   const statusTracker = createStatusTracker();
   /** Resolvers waiting for a specific entity's process to exit. */
   const exitWaiters = new Map<string, (() => void)[]>();
+  /**
+   * The in-flight `removeSessionContainerFiles` for an entity, keyed the same
+   * way `exitWaiters` is (HIVE-133, final-review fix).
+   *
+   * `settleExit` starts the removal and resolves the exit waiters in the same
+   * tick, on purpose — a restart's `await exit` must not itself wait on an
+   * `rm -rf`, or every restart grows a new, unbounded blocking dependency on
+   * disk I/O. But `restartOnce`'s own write, a few lines below, targets the
+   * exact directory the removal is clearing: without a way to find that
+   * promise again, the write and the `rm` run concurrently, and either the
+   * `rm`'s unlink pass can sweep files `writeContainerSession` just wrote, or
+   * its `rmdir` can land between two of that write's own operations. This map
+   * is the seam that lets `restartOnce` await the one removal that matters to
+   * it without making `settleExit` wait on anything.
+   *
+   * Deleted once settled, and only by the entry that set it — a second
+   * `settleExit` for the same entity (which should not happen, but this guard
+   * is cheap) must not delete a newer removal out from under a `restartOnce`
+   * that is about to await it.
+   */
+  const containerRemovals = new Map<string, Promise<void>>();
   /**
    * Input written before the session finished bootstrapping.
    *
@@ -1630,16 +1651,30 @@ export function createSessions(options: SessionsOptions): Sessions {
       `/done` alike — which is why the removal hangs off it rather than off any
       one of them (HIVE-133).
 
-      Unconditional and fire-and-forget: `removeSessionContainerFiles` is silent
-      when the session never had a directory, which is every host session, so
-      asking the config whether this project was containerised would cost a read
-      to save an `rm` that already handles the answer. A failure here leaves an
-      orphan the launch sweep collects.
+      Unconditional and fire-and-forget *as far as this function is
+      concerned*: `removeSessionContainerFiles` is silent when the session
+      never had a directory, which is every host session, so asking the
+      config whether this project was containerised would cost a read to save
+      an `rm` that already handles the answer. A failure here leaves an orphan
+      the launch sweep collects.
+
+      The promise is still kept, in `containerRemovals`, because "fire and
+      forget" here does not mean "nobody may ever wait on it" — `restartOnce`
+      does, below, for exactly the entity id this removal targets (final-review
+      fix). Recorded *before* the exit waiters resolve, so a `restartOnce`
+      released by this same `settleExit` can always find it.
     */
-    void removeSessionContainerFiles(userDataPath, entityId).catch((cause) => {
+    const removal = removeSessionContainerFiles(userDataPath, entityId).catch((cause) => {
       console.info(
         `[hive] ${entityId}: container session files could not be removed (${String(cause)})`,
       );
+    });
+    containerRemovals.set(entityId, removal);
+    void removal.finally(() => {
+      // Only this removal's own entry — a newer removal for a session that
+      // restarted again in the meantime must not be deleted by a slower,
+      // older one settling late.
+      if (containerRemovals.get(entityId) === removal) containerRemovals.delete(entityId);
     });
 
     const waiters = exitWaiters.get(entityId);
@@ -1718,7 +1753,23 @@ export function createSessions(options: SessionsOptions): Sessions {
      * Covers the "no live session" branch too — `sessionId === undefined`
      * skips the kill/exit above but still reaches `spawn()` below, so the
      * write has to sit after the `if`, not inside it.
+     *
+     * **`await exit` alone is not that ordering** (final-review fix). `exit`
+     * resolves the instant `settleExit` resolves its waiters, which happens
+     * *before* that same call has finished its `rm -rf` — the removal is
+     * merely started, not settled, by the time this line runs. Awaiting
+     * `containerRemovals` first closes that: it resolves only once the
+     * directory this write is about to recreate is actually gone, so the
+     * `rm`'s unlink pass can no longer sweep files this write is still
+     * producing, and its `rmdir` can no longer land between two of them.
+     *
+     * Absent from the map for a session that was never containerised, or one
+     * whose removal already settled before this line ran (the ordinary case,
+     * since `settleExit` starts it well before `restartOnce` reaches here) —
+     * both `await undefined` immediately, so this costs nothing on the paths
+     * the bug does not touch.
      */
+    await containerRemovals.get(request.entityId);
     await hooks?.writeContainerSession(request.entityId, request.projectId);
 
     /**
@@ -1932,6 +1983,29 @@ export function createSessions(options: SessionsOptions): Sessions {
       drift.
     */
     const hookEnv = hooks?.envFor(request.entityId) ?? {};
+    /*
+      The same filter the host pty env gets via `startProcess`'s `stripEnv`
+      above, applied to the container's copy of `runtime.env` (final-review
+      fix, Important 3).
+
+      `stripEnv` only ever reaches the pty environment. A container project's
+      environment crosses the boundary a different way — spelled out on the
+      command line by `expandEnvArgs`/`substituteEnv` below — and nothing
+      before this filtered *that* copy: a project's `env` block was free to
+      carry `ANTHROPIC_API_KEY` straight into a container's `-e` flags, in
+      terminal scrollback and `ps`, for the exact population `subscriptionAuth`
+      exists to bill through the plan instead of the API. Same condition,
+      same list, so the two copies of one project's environment cannot
+      disagree about whether a credential is allowed to exist in it.
+
+      `runtime.env` only — never `hookEnv`, which is the app's own and never
+      carries a credential a user typed in.
+    */
+    const containerEnv = snapshot.subscriptionAuth
+      ? Object.fromEntries(
+          Object.entries(runtime.env).filter(([key]) => !AUTH_ENV_KEYS.includes(key)),
+        )
+      : runtime.env;
     const containerSpawn =
       container === undefined || project?.path == null
         ? undefined
@@ -1944,7 +2018,7 @@ export function createSessions(options: SessionsOptions): Sessions {
               hiveDir: container.hiveDir,
             }),
             /*
-              `runtime.env` first, the app's own variables second. Project env
+              `containerEnv` first, the app's own variables second. Project env
               is the user's to control and wins everywhere else, but not here:
               these are how a hook proves which row it speaks for. The spread
               order is the whole guarantee, exactly as it is for the pty env
@@ -1952,7 +2026,7 @@ export function createSessions(options: SessionsOptions): Sessions {
               be restated on the command line as well.
             */
             env: {
-              ...runtime.env,
+              ...containerEnv,
               ...hookEnv,
               /*
                 Re-addressed by the *project's* alias, overriding the global one
@@ -2082,6 +2156,28 @@ export function createSessions(options: SessionsOptions): Sessions {
       },
       { resume },
     );
+
+    /**
+     * A container project whose `claudeCommand` has no `{env}` still spawns
+     * (final-review fix, Important 6) — refusing outright is a behaviour
+     * change beyond this fix wave, and `sessionCommand`'s own `?? line`
+     * fallback already keeps a half-built command line off the pty. But
+     * nothing on this path consulted `missingEnvPlaceholder` before, so the
+     * session started with none of `HIVE_SESSION_ID`, `HIVE_HOOK_TOKEN` or
+     * `HIVE_RECEIVER_URL` reaching the container — every hook, ledger and
+     * `/done` call 403ing — and the only way to learn why was to open
+     * Settings and run the diagnostic by hand. This names the project and the
+     * missing placeholder in main's own log at the moment it matters, so the
+     * failure is diagnosable from the one place every other spawn failure
+     * already is.
+     */
+    if (containerSpawn !== undefined && !runtime.claudeCommand.includes(ENV_PLACEHOLDER)) {
+      console.warn(
+        `[hive] ${request.projectId}: claudeCommand has no ${ENV_PLACEHOLDER} placeholder — ` +
+          'this container session will start with none of the HIVE_* variables, ' +
+          'and every hook, ledger and /done call from it will be refused',
+      );
+    }
 
     /**
      * `sessionCommand` wraps the configured binary so a clean `/exit` takes the
@@ -2392,6 +2488,7 @@ export function createSessions(options: SessionsOptions): Sessions {
       registry.clear();
       restarting.clear();
       exitWaiters.clear();
+      containerRemovals.clear();
       commandExit.clear();
       commandEntities.clear();
     },

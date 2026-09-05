@@ -2616,6 +2616,15 @@ describe('container spawn (HIVE-133)', () => {
      * matches a bound receiver, which every other test in this block wants.
      */
     receiverBound?: boolean;
+    /**
+     * Overrides `CONFIG`'s own `subscriptionAuth: true` (final-review fix,
+     * Important 3) — most tests in this block want the default, but the
+     * auth-forwarding tests need both arms to prove the container's copy of
+     * `runtime.env` reacts to the same flag the host pty env already did.
+     */
+    subscriptionAuth?: boolean;
+    /** Overrides `CONTAINER_CLAUDE_COMMAND`, for the missing-placeholder warning. */
+    claudeCommand?: string;
   }): {
     command: string;
     end: (ending?: 'ptyExit' | 'ptyLost' | 'done') => Promise<void>;
@@ -2625,7 +2634,7 @@ describe('container spawn (HIVE-133)', () => {
 
     const project = {
       ...CONFIG.projects[0]!,
-      claudeCommand: CONTAINER_CLAUDE_COMMAND,
+      claudeCommand: opts.claudeCommand ?? CONTAINER_CLAUDE_COMMAND,
       container,
       ...(opts.projectEnv === undefined ? {} : { env: opts.projectEnv }),
     };
@@ -2633,6 +2642,7 @@ describe('container spawn (HIVE-133)', () => {
     const localConfig: ConfigSnapshot = {
       ...CONFIG,
       projects: [project, CONFIG.projects[1]!],
+      ...(opts.subscriptionAuth === undefined ? {} : { subscriptionAuth: opts.subscriptionAuth }),
     };
 
     let onDone: ((entityId: string) => void) | undefined;
@@ -2769,6 +2779,83 @@ describe('container spawn (HIVE-133)', () => {
   });
 
   /**
+   * The bug a final-review pass caught (HIVE-133, final-review fix,
+   * Important 3): `startProcess`'s host pty env strips `AUTH_ENV_KEYS` when
+   * `subscriptionAuth` is on (`stripEnv: snapshot.subscriptionAuth ?
+   * AUTH_ENV_KEYS : []`, above `containerSpawn` in `sessions/index.ts`), but
+   * the container's own copy of `runtime.env` had no equivalent filter —
+   * `unsafeEnvReason` never refuses `ANTHROPIC_API_KEY` in a project's `env`
+   * block (`AUTH_ENV_KEYS` is deliberately not in that deny list; see its own
+   * comment in `config-contract.ts`), so a key that never reached the host
+   * pty went straight onto the container's typed `-e` flags — in terminal
+   * scroll-back and `ps` — billing the API instead of the plan the host
+   * session was carefully arranged to use.
+   */
+  it("strips AUTH_ENV_KEYS from the container's env when subscriptionAuth is on, matching the host pty", () => {
+    const { command } = spawnFixture({
+      container: { freshness: 'exec-env' },
+      projectEnv: { ANTHROPIC_API_KEY: 'sk-secret', ANTHROPIC_AUTH_TOKEN: 'tok-secret' },
+      subscriptionAuth: true,
+    });
+
+    // The secret values must never appear anywhere on the line.
+    expect(command).not.toContain('sk-secret');
+    expect(command).not.toContain('tok-secret');
+    // Not as a container `-e` flag either — checked by the flag shape,
+    // rather than a bare substring, because `subscriptionAuth: true` also
+    // prepends `unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN;` (HIVE-79),
+    // which legitimately names both keys without leaking either value.
+    expect(command).not.toContain('-e ANTHROPIC_API_KEY=');
+    expect(command).not.toContain('-e ANTHROPIC_AUTH_TOKEN=');
+  });
+
+  it('leaves ANTHROPIC_API_KEY in the container env when subscriptionAuth is off, exactly like the host pty', () => {
+    const { command } = spawnFixture({
+      container: { freshness: 'exec-env' },
+      projectEnv: { ANTHROPIC_API_KEY: 'sk-secret' },
+      subscriptionAuth: false,
+    });
+
+    expect(command).toContain("-e ANTHROPIC_API_KEY='sk-secret'");
+  });
+
+  /**
+   * Important 6 (final-review fix): a container project's `claudeCommand`
+   * with no `{env}` still spawns — refusing outright would be a behaviour
+   * change beyond this fix wave — but nothing on the spawn path used to
+   * consult `missingEnvPlaceholder`, so the only way to learn why a session's
+   * hooks were all 403ing was to open Settings and run the diagnostic by
+   * hand. This names the project and the missing placeholder in main's own
+   * log at the moment it matters.
+   */
+  it('warns on spawn when a container claudeCommand has no {env} placeholder', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      spawnFixture({
+        container: { freshness: 'exec-env' },
+        claudeCommand: 'docker exec -it devbox claude',
+      });
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      const [message] = warn.mock.calls[0]!;
+      expect(String(message)).toContain('nova-web');
+      expect(String(message)).toContain('{env}');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('does not warn when a container claudeCommand has the {env} placeholder', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      spawnFixture({ container: { freshness: 'exec-env' } });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  /**
    * Property D's other half (post-review fix). Every test above the fold
    * bound a receiver and proved the substitution rewrites its
    * `HIVE_RECEIVER_URL`; none of them proved what happens when there is
@@ -2830,7 +2917,9 @@ describe('container spawn (HIVE-133)', () => {
   });
 
   /**
-   * The bug a real review caught (HIVE-133, post-review fix).
+   * The bug a real review caught (HIVE-133, post-review fix), and then a
+   * second bug a final-review pass caught in the fix itself (final-review
+   * fix, Critical 2).
    *
    * `ptyRestart` used to write the new generation's set *before* calling
    * `sessions.restart()` — but a restart's own teardown kills the old process
@@ -2841,19 +2930,35 @@ describe('container spawn (HIVE-133)', () => {
    * with no `--settings` and no `--mcp-config` — the exact "silently cannot
    * authenticate" failure this task exists to prevent.
    *
-   * The fix moves the write into `restartOnce`, between `await exit` and
-   * `spawn()` — the one window the teardown cannot reach into and undo. This
-   * test fails against the pre-fix code, where the write is not made from
-   * `sessions/index.ts` at all (a restart calls `hooks.writeContainerSession`
-   * zero times from this layer — `ptyRestart` called it, and this harness,
-   * like the rest of the file, exercises `sessions` directly).
+   * The first fix moved the write into `restartOnce`, between `await exit`
+   * and `spawn()`. That premise was wrong: `exit` resolves the instant
+   * `settleExit` resolves its waiters, which happens **before** that same
+   * call's `removeSessionContainerFiles` has actually finished — the removal
+   * is merely *started*, not *settled*, by the time `restartOnce` reached
+   * `writeContainerSession`. A version of this test with a mock that resolves
+   * immediately cannot see that: `invocationCallOrder` only proves the two
+   * calls happened in the right order, never that the second waited for the
+   * first to actually finish. This one drives the removal with a promise the
+   * test controls, so it can tell the difference — and fails against the
+   * `await exit`-only code for exactly that reason, not merely because a call
+   * is missing.
    */
-  it('writes the restarted generation after teardown, never before', async () => {
+  it('awaits the removal to actually settle before writing the restarted generation, not just its call order', async () => {
     const container: ResolvedContainer = { ...CONTAINER_DEFAULTS, freshness: 'rewrite' };
     const project = { ...CONFIG.projects[0]!, container };
     const localConfig: ConfigSnapshot = { ...CONFIG, projects: [project, CONFIG.projects[1]!] };
 
+    let resolveRemoval: () => void = () => {
+      throw new Error('resolveRemoval called before removeSessionContainerFiles');
+    };
     vi.mocked(removeSessionContainerFiles).mockClear();
+    vi.mocked(removeSessionContainerFiles).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRemoval = resolve;
+        }),
+    );
+
     const writeContainerSession = vi.fn(() => Promise.resolve('/some/dir'));
 
     const instance = createSessions({
@@ -2879,19 +2984,22 @@ describe('container spawn (HIVE-133)', () => {
     const restart = instance.restart(OPEN);
     await Promise.resolve();
     emitExit({ sessionId: first, exitCode: 0 });
-    vi.advanceTimersByTime(8);
-    await restart;
 
-    // Exactly one teardown, one rewrite — for this one restart.
-    expect(removeSessionContainerFiles).toHaveBeenCalledTimes(1);
+    // Every microtask that a correct `restartOnce` could possibly need to
+    // reach `writeContainerSession` gets to run here — several turns' worth
+    // — while the removal this exit started is still deliberately unsettled.
+    // A `restartOnce` that only awaits `exit` (the pre-fix shape) has nothing
+    // left blocking it by this point and would already have called through.
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    expect(writeContainerSession).not.toHaveBeenCalled();
+
+    // Only once the removal itself settles does the write go in.
+    resolveRemoval();
+    await Promise.resolve();
+    await Promise.resolve();
     expect(writeContainerSession).toHaveBeenCalledTimes(1);
 
-    // The order the fix exists to guarantee: the old generation's directory
-    // is gone before the new generation's set is written, never the other
-    // way around — a write-then-remove would mean `spawn()` reads a
-    // `--settings` path an in-flight `rm -rf` is still clearing.
-    const removedAt = vi.mocked(removeSessionContainerFiles).mock.invocationCallOrder[0]!;
-    const writtenAt = writeContainerSession.mock.invocationCallOrder[0]!;
-    expect(writtenAt).toBeGreaterThan(removedAt);
+    vi.advanceTimersByTime(8);
+    await restart;
   });
 });
