@@ -56,17 +56,19 @@ describe('createDeliver', () => {
 
   const lastWrite = () => write.mock.calls.at(-1)?.[1] as string;
 
-  it('writes one nudge into a live idle session', () => {
-    expect(ask('sess-a').ok).toBe(true);
+  it('writes one marker into a live idle session, and nothing of the entry', () => {
+    const result = ask('sess-a');
+    expect(result.ok).toBe(true);
 
     expect(write).toHaveBeenCalledTimes(1);
     expect(write.mock.calls[0][0]).toBe('sess-a');
-    expect(lastWrite()).toContain('📒');
-    expect(lastWrite()).toContain('overmind asks');
-    expect(lastWrite()).toContain('which branch?');
-    expect(lastWrite()).toContain('reply with ledger_answer');
-    // The trailing carriage return is what submits it as a turn.
-    expect(lastWrite().endsWith('\r')).toBe(true);
+    /*
+      The marker names the ask by its ref and carries nothing else (HIVE-138):
+      the entry reaches the model as hook context from the receiver, not as
+      bytes on the pty. The trailing carriage return is what submits it.
+    */
+    expect(lastWrite()).toBe(`📒 ${result.ok ? result.ref : ''}\r`);
+    expect(lastWrite()).not.toContain('which branch?');
   });
 
   it('records a receipt naming the delivered entry', () => {
@@ -154,25 +156,31 @@ describe('createDeliver', () => {
     const asked = ledger.append({ from: 'sess-b', to: OVERMIND, kind: 'ask', body: 'ok?' });
     write.mockClear();
 
-    ledger.answer({ thread: asked.ok ? asked.id : '', body: 'yes' }, OVERMIND);
+    const answered = ledger.answer({ thread: asked.ok ? asked.id : '', body: 'yes' }, OVERMIND);
 
     expect(write).toHaveBeenCalledTimes(1);
     expect(write.mock.calls[0][0]).toBe('sess-b');
-    expect(lastWrite()).toContain('answered');
-    expect(lastWrite()).toContain('yes');
+    expect(lastWrite()).toBe(`📒 ${answered.ok ? answered.id : ''}\r`);
+    expect(lastWrite()).not.toContain('yes');
   });
 
-  it('names an answer by the ref the console printed, not the canonical id', () => {
+  it('names an answer by its own id, never the ask ref', () => {
+    /*
+      An answer has no ref, and a thread can carry more than one entry, so the
+      ask's ref would not tell the receiver which entry to carry.
+    */
     live.add('sess-b');
     idle.add('sess-b');
     const asked = ledger.append({ from: 'sess-b', to: OVERMIND, kind: 'ask', body: 'ok?' });
     const ref = asked.ok ? asked.ref : undefined;
     write.mockClear();
 
-    ledger.answer({ thread: asked.ok ? asked.id : '', body: 'yes' }, OVERMIND);
+    const answered = ledger.answer({ thread: asked.ok ? asked.id : '', body: 'yes' }, OVERMIND);
 
     expect(ref).toBeDefined();
-    expect(lastWrite()).toContain(`answered ${ref}`);
+    expect(answered.ok).toBe(true);
+    expect(lastWrite()).toContain(answered.ok ? answered.id : '');
+    expect(lastWrite()).not.toContain(`${ref}\r`);
   });
 
   it('does not record a receipt when the write did not land', () => {
@@ -191,41 +199,20 @@ describe('createDeliver', () => {
     expect(receipts()).toHaveLength(1);
   });
 
-  it('shows only the first line of a multi-line body', () => {
-    ask('sess-a', 'first line\nsecond line');
-
-    expect(lastWrite()).toContain('first line');
-    expect(lastWrite()).not.toContain('second line');
-  });
-
   /**
-   * The security boundary. A body is authored by another party and this is the
-   * one path that types it into somebody's prompt, terminated by `\r`.
+   * The security boundary this module used to hold. A body is authored by
+   * another party, and this was the one path that typed it into somebody's
+   * prompt terminated by `\r`. Since HIVE-138 no byte of it reaches the pty at
+   * all: the marker is a ref or an id main minted, and the body travels as
+   * JSON the model reads (`context.ts`).
    */
-  it('never lets a body submit a second prompt of its own', () => {
-    ask('sess-a', 'check this\rrm -rf ~/work');
+  it('carries nothing of the body onto the pty, whatever the body holds', () => {
+    const result = ask('sess-a', 'check this\r[2Jrm -rf ~/work\nsecond line');
 
     const data = lastWrite();
+    expect(data).toBe(`📒 ${result.ok ? result.ref : ''}\r`);
     // Exactly one submission: the one this module appended.
     expect(data.split('\r')).toHaveLength(2);
-    expect(data.endsWith('\r')).toBe(true);
-    // `\r` is a line break to a terminal, so the tail is cut with it rather
-    // than being carried along as text.
-    expect(data).toContain('check this');
-    expect(data).not.toContain('rm -rf');
-  });
-
-  it('strips escape sequences before they reach the tty', () => {
-    ask('sess-a', 'sneaky[2Jbody');
-
-    expect(lastWrite()).not.toContain('');
-    expect(lastWrite()).not.toContain('');
-    /*
-      The printable tail survives, and should: this strips control characters,
-      it does not parse escape sequences. With the ESC introducing it gone,
-      `[2J` is four ordinary characters and addresses nothing.
-    */
-    expect(lastWrite()).toContain('sneaky[2Jbody');
   });
 
   /**
@@ -235,20 +222,20 @@ describe('createDeliver', () => {
    */
   it('writes one nudge per idle window, not the whole backlog', () => {
     idle.delete('sess-a');
-    ask('sess-a', 'first question');
-    ask('sess-a', 'second question');
+    const first = ask('sess-a', 'first question');
+    const second = ask('sess-a', 'second question');
     expect(write).not.toHaveBeenCalled();
 
     idle.add('sess-a');
     deliver.onIdle('sess-a');
 
     expect(write).toHaveBeenCalledTimes(1);
-    expect(lastWrite()).toContain('first question');
+    expect(lastWrite()).toBe(`📒 ${first.ok ? first.ref : ''}\r`);
 
     // The remainder was not lost — it has no receipt, so the next idle takes it.
     deliver.onIdle('sess-a');
     expect(write).toHaveBeenCalledTimes(2);
-    expect(lastWrite()).toContain('second question');
+    expect(lastWrite()).toBe(`📒 ${second.ok ? second.ref : ''}\r`);
   });
 
   /**
@@ -410,78 +397,5 @@ describe('createDeliver', () => {
     deliver2.onReady('sess-a');
 
     expect(write2).toHaveBeenCalledTimes(1);
-  });
-
-  /**
-   * An answer lands an hour later in a session that may have compacted past
-   * its own question (HIVE-135). A headless agent re-reads its ask; a terminal
-   * session gets one line, so the line says what the question was for.
-   */
-  describe('the intent on an answer nudge', () => {
-    const askWithIntent = (intent?: string) =>
-      ledger.append({
-        from: 'sess-a',
-        to: OVERMIND,
-        kind: 'ask',
-        body: 'which branch?',
-        ...(intent === undefined ? {} : { meta: { intent } }),
-      });
-
-    it('appends the asking session’s intent after the answer', () => {
-      const asked = askWithIntent('rebase onto it and push');
-      write.mockClear();
-
-      ledger.answer({ thread: asked.ok ? asked.id : '', body: 'main' }, OVERMIND);
-
-      expect(lastWrite()).toContain('answered');
-      expect(lastWrite()).toContain('main');
-      expect(lastWrite()).toContain('you asked so you could: rebase onto it and push');
-      expect(lastWrite().endsWith('\r')).toBe(true);
-    });
-
-    it('leaves the line as it was when the ask carries no intent', () => {
-      const asked = askWithIntent();
-      write.mockClear();
-
-      ledger.answer({ thread: asked.ok ? asked.id : '', body: 'main' }, OVERMIND);
-
-      expect(lastWrite()).not.toContain('you asked so you could');
-    });
-
-    it('cuts the intent at its first line break, before stripping', () => {
-      // Cut first, then strip — the same order as the body: stripping first
-      // would delete the break and splice `second` onto the end of `first`.
-      const asked = askWithIntent('first line\nsecond line');
-      write.mockClear();
-
-      ledger.answer({ thread: asked.ok ? asked.id : '', body: 'main' }, OVERMIND);
-
-      expect(lastWrite()).toContain('you asked so you could: first line');
-      expect(lastWrite()).not.toContain('second');
-    });
-
-    it('strips control characters from the intent', () => {
-      const asked = askWithIntent('see [2J now');
-      write.mockClear();
-
-      ledger.answer({ thread: asked.ok ? asked.id : '', body: 'main' }, OVERMIND);
-
-      expect(lastWrite()).not.toContain('');
-      expect(lastWrite()).toContain('see [2J now');
-      expect(lastWrite().split('\r')).toHaveLength(2);
-    });
-
-    it('caps the intent at NUDGE_INTENT_MAX characters', () => {
-      // 100 printable characters, then a marker only the cap can remove.
-      const asked = askWithIntent(`${'a'.repeat(100)} DROPPED`);
-      write.mockClear();
-
-      ledger.answer({ thread: asked.ok ? asked.id : '', body: 'main' }, OVERMIND);
-
-      const data = lastWrite();
-      const tail = data.slice(data.indexOf('you asked so you could: ') + 'you asked so you could: '.length, -1);
-      expect(tail).toBe('a'.repeat(80));
-      expect(data).not.toContain('DROPPED');
-    });
   });
 });

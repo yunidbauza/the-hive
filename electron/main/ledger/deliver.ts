@@ -1,5 +1,10 @@
 import type { PromptInput } from '../../shared/ipc-contract';
-import { OVERMIND, type LedgerEntry, type LedgerKind } from '../../shared/ledger-contract';
+import {
+  ledgerMarker,
+  OVERMIND,
+  type LedgerEntry,
+  type LedgerKind,
+} from '../../shared/ledger-contract';
 
 import type { Ledger } from './index';
 
@@ -8,48 +13,27 @@ import type { Ledger } from './index';
  *
  * The ledger itself has no opinion about who should be told what — it records.
  * This module is the first rule on top of it: an `ask` or an `answer` addressed
- * to a live session is written into that session's terminal as one line, at a
- * moment when the terminal is actually at an empty prompt.
+ * to a live session is announced in that session's terminal as one marker
+ * line, at a moment when the terminal is actually at an empty prompt.
+ *
+ * The line is a marker, not the entry (HIVE-138). `ledgerMarker` names the
+ * entry and carries nothing else; the receiver recognises the marker on the
+ * `UserPromptSubmit` it produces and answers with the entry whole as hook
+ * context (`electron/main/hooks/receiver.ts`, `context.ts`), untruncated and
+ * labelled as context rather than passing as the user's own words. What this
+ * module decides is only *when* the marker is written and *that* it landed.
+ *
+ * No party-authored byte reaches the pty from here any more. Before HIVE-138
+ * this was the one path that typed another party's body into a prompt
+ * terminated by `\r`, and stripping control characters from it was this
+ * module's security boundary. The marker is built from a ref or an id main
+ * minted, and the body travels as JSON the model reads, not bytes a terminal
+ * interprets, so the boundary moved out of the pty path with the body.
  *
  * Collaborators arrive as narrow functions rather than whole modules, the way
  * `createLedger` takes `knowsParty`: the tests fake them as three closures and
  * load no Electron, no pty and no session layer.
  */
-
-/** How much of a body a nudge carries. One line, and not a long one. */
-const NUDGE_BODY_MAX = 120;
-
-/** How much of an ask's `meta.intent` rides on the answer's nudge (HIVE-135). */
-const NUDGE_INTENT_MAX = 80;
-
-/**
- * Strip every control character from a body before it reaches a pty.
- *
- * **This is the security boundary of this module, not a formatting nicety.** A
- * body arrives from any party over `POST /ledger` or an MCP tool, validated
- * only as a string under a size cap — and this is the one path that writes such
- * a string into *another* session's prompt, terminated by `\r`. Left raw, a
- * body containing its own `\r` submits a second prompt with no `📒` on it,
- * indistinguishable from something the user typed; an `ESC` reaches the TUI's
- * stdin and can address the cursor or switch screens.
- *
- * The rule is the one `assertText` enforces at the IPC boundary
- * (`electron/shared/guards.ts`) and `stripControls` at the renderer's
- * (`src/lib/terminal/text.ts`): C0, DEL and C1 have no business in text that is
- * about to be typed. Restated here rather than imported because neither module
- * exports it, and `electron/main/**` may not import `src/**` regardless.
- *
- * Line breaks go with them — a nudge is one line by construction, so there is
- * nothing to preserve.
- */
-function stripControls(text: string): string {
-  return [...text]
-    .filter((char) => {
-      const code = char.codePointAt(0) ?? 0;
-      return !(code < 0x20 || (code >= 0x7f && code <= 0x9f));
-    })
-    .join('');
-}
 
 /**
  * The only kinds that reach a terminal.
@@ -140,40 +124,6 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
     return askFor(entry)?.ref ?? entry.thread ?? entry.id;
   }
 
-  function nudgeLine(entry: LedgerEntry, handle: string): string {
-    /*
-      Cut at the first line break, *then* strip — in that order.
-
-      Stripping first would delete the break and splice the next line onto the
-      end of this one, turning two sentences into one run-on. Every break form
-      counts, `\r` included: it is not a newline to `split('\n')` but it is very
-      much a line break to a terminal, and it is the byte that would otherwise
-      submit a prompt of its own.
-
-      `from` is sanitised too. It is a party id rather than prose, but it
-      reaches here from a header this module does not own.
-    */
-    const firstLine = entry.body.split(/\r\n|\r|\n/u)[0] ?? '';
-    const body = stripControls(firstLine).slice(0, NUDGE_BODY_MAX);
-    const from = stripControls(entry.from);
-
-    if (entry.kind === 'ask') {
-      return `📒 ${from} asks (${handle}): ${body} — reply with ledger_answer ${handle}`;
-    }
-
-    /*
-      The asker's own words about why it asked (HIVE-135), cut and stripped
-      exactly as the body is — it is authored by a party, and this is the same
-      pty. Absent, the line is what it was before.
-    */
-    const intent = askFor(entry)?.meta?.intent;
-    const tail =
-      typeof intent === 'string' && intent.trim() !== ''
-        ? ` — you asked so you could: ${stripControls(intent.split(/\r\n|\r|\n/u)[0] ?? '').slice(0, NUDGE_INTENT_MAX)}`
-        : '';
-    return `📒 ${from} answered ${handle}: ${body}${tail}`;
-  }
-
   /**
    * What this session has been asked but not told.
    *
@@ -209,7 +159,7 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
   /** Write one nudge, and record it only if it landed. Reports whether it did. */
   function deliverOne(entityId: string, entry: LedgerEntry): boolean {
     const handle = handleFor(entry);
-    if (!write(entityId, `${nudgeLine(entry, handle)}\r`)) return false;
+    if (!write(entityId, `${ledgerMarker(entry)}\r`)) return false;
 
     /*
       `from: OVERMIND` is asserted rather than derived. The party set is
