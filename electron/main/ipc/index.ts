@@ -1542,6 +1542,16 @@ export function registerIpcHandlers(): void {
     parallelFor: (name) => agentParallel.get(name) ?? AGENT_LIMIT_DEFAULTS.parallel,
     state: agentState,
     /*
+      The receiver's per-run grants registry, for `approve` over HTTP
+      (HIVE-137). Read through `hooks` on each call rather than captured,
+      because the receiver binds after this composition runs — a value taken
+      here would be `null` for the life of the app.
+    */
+    grants: {
+      set: (run, grants) => hooks.receiverGrants()?.set(run, grants),
+      delete: (run) => hooks.receiverGrants()?.delete(run),
+    },
+    /*
       A run's own entries are `from` the **agent**: a run is the agent's
       activity and the log is read back by name. That is the same rule
       `ledger:post` enforces from the other direction, where the renderer may
