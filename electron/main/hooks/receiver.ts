@@ -6,6 +6,7 @@ import { AGENTS_PATH, type AgentsDirectory } from '@shared/agent-contract';
 import { parseLedgerPostBody, parseLedgerReadQuery } from '@shared/guards';
 import {
   CLEAR_REASON,
+  hookContextReply,
   HOOK_HEADER_RUN,
   HOOK_HEADER_SESSION,
   HOOK_HEADER_TOKEN,
@@ -25,12 +26,13 @@ import {
 import {
   LEDGER_POST_PATH,
   LEDGER_READ_PATH,
+  parseLedgerMarker,
   type LedgerPostRequest,
   type LedgerReadQuery,
   type LedgerResult,
   type LedgerSnapshot,
 } from '@shared/ledger-contract';
-import { keepNewest } from '@shared/ledger-derive';
+import { keepNewest, resolveRef } from '@shared/ledger-derive';
 import {
   MCP_MAX_BODY_BYTES,
   MCP_PATH,
@@ -46,6 +48,8 @@ import {
   type SessionMetrics,
 } from '@shared/metrics-contract';
 import { sessionNameFromPrompt } from '@shared/session-contract';
+
+import { entryContext } from '../ledger/context';
 
 import { parseMetrics } from './metrics';
 import { ticketKeyFromPrompt } from './ticket-intent';
@@ -695,6 +699,56 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   }
 
   /**
+   * The hook route says 204 where every other route says 4xx (HIVE-138).
+   *
+   * Measured (`hook-contract.ts`, the HIVE-136 note): a non-2xx from a hook is
+   * drawn on the user's screen, on every prompt, and its body discarded. The
+   * refusals {@link reject} computes are still refusals, and nothing behind
+   * them runs; but the one that fires on a healthy session, a hook still in
+   * flight after its session left the registry, is not something the user
+   * should read about in their terminal. So the hook route alone answers 204
+   * and says so here, once per status and identity rather than once per
+   * event, since a stale session posts a burst.
+   */
+  const refusedHooks = new Set<string>();
+  function refusedHook(
+    status: number,
+    headers: Record<string, string | string[] | undefined>,
+  ): number {
+    const who = headers[HOOK_HEADER_SESSION];
+    const name = typeof who === 'string' && who !== '' ? who : '(no session)';
+    const key = `${status}:${name}`;
+    if (!refusedHooks.has(key)) {
+      refusedHooks.add(key);
+      console.warn(`[hooks] hook from ${name} refused (${status}); answered 204`);
+    }
+    return 204;
+  }
+
+  /**
+   * The entry a marker names, rendered for the model, or nothing (HIVE-138).
+   *
+   * Resolved only among entries addressed to the caller and of a kind a nudge
+   * carries. A session typing another party's ref reads nothing, exactly as
+   * {@link visibleTo} keeps the read route honest; a marker for a `post` reads
+   * nothing because no nudge ever named one. The answer's ask is looked up
+   * the way `deliver.ts` does, for the asker's own `meta.intent`.
+   */
+  function markerContext(caller: string, token: string): string | undefined {
+    const mine = onLedgerRead(caller, { to: caller }).entries.filter(
+      (entry) => entry.to === caller && (entry.kind === 'ask' || entry.kind === 'answer'),
+    );
+    const id = resolveRef(mine, token);
+    const entry = mine.find((candidate) => candidate.id === id);
+    if (entry === undefined) return undefined;
+    const ask =
+      entry.kind === 'answer' && entry.thread !== undefined
+        ? onLedgerRead(caller, { thread: entry.thread }).entries.find((e) => e.kind === 'ask')
+        : undefined;
+    return entryContext(entry, ask);
+  }
+
+  /**
    * {@link reject}, and then "and it must be a **session**" (HIVE-115).
    *
    * Three routes here are session-only in a way the hook route and the ledger
@@ -1182,7 +1236,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       try {
         parsed = JSON.parse(body);
       } catch {
-        return 400;
+        return refusedHook(400, { [HOOK_HEADER_SESSION]: entityId });
       }
       const fields =
         typeof parsed === 'object' && parsed !== null
@@ -1222,9 +1276,9 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     headers: Record<string, string | string[] | undefined>,
     body: string,
     truncated = false,
-  ): number {
+  ): Reply {
     const refusal = reject(headers);
-    if (refusal !== null) return refusal;
+    if (refusal !== null) return refusedHook(refusal, headers);
 
     // Narrowed by `reject`, which refused every non-string case above.
     const entityId = headers[HOOK_HEADER_SESSION] as string;
@@ -1291,7 +1345,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       try {
         parsed = JSON.parse(body);
       } catch {
-        return 400;
+        return refusedHook(400, headers);
       }
       const fields =
         typeof parsed === 'object' && parsed !== null
@@ -1358,6 +1412,32 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       return 204;
     }
 
+    /*
+      A `const` copy, because a closure does not keep a `let`'s narrowing: the
+      `SessionEnd` return above is what makes `HOOK_STATUS[event]` well-typed.
+    */
+    const status = HOOK_STATUS[event];
+    const known = event;
+    /** The status event this hook is, published once, from whichever branch ends here. */
+    const publish = (): void =>
+      onEvent({
+        entityId,
+        event: known,
+        status,
+        ...(typeof sessionUuid === 'string' && sessionUuid !== '' ? { sessionUuid } : {}),
+        /**
+         * Absent rather than empty when the payload did not carry one. The
+         * session layer treats absence as "nothing to look at on this tick",
+         * which is the honest reading — an empty string would be a directory.
+         */
+        ...(typeof cwd === 'string' && cwd !== '' ? { cwd } : {}),
+        ...(typeof toolUseId === 'string' ? { toolUseId } : {}),
+        ...(typeof toolName === 'string' ? { toolName } : {}),
+        ...(typeof agentId === 'string' && agentId !== '' ? { agentId } : {}),
+        ...(runInBackground === true ? { runInBackground: true } : {}),
+        ...(backgroundShells === undefined ? {} : { backgroundShells }),
+      });
+
     /**
      * The intent goes out **before** the status (HIVE-78).
      *
@@ -1369,6 +1449,24 @@ export function createReceiver(options: ReceiverOptions): Receiver {
      * caller's try.
      */
     if (event === 'UserPromptSubmit') {
+      /**
+       * A marker is not the user's prompt (HIVE-138).
+       *
+       * It is the line `deliver.ts` wrote, and what it names is answered here
+       * as context, whole, in the body of this very response. Nothing else
+       * about the prompt applies: it carries no ticket, it names nothing
+       * (`sessionNameFromPrompt('📒 a12')` would call the session `a12`), and
+       * it does not spend the first-prompt mark, so the user's own first
+       * prompt still names the session. It does count as the session working,
+       * which is what the turn it starts is.
+       */
+      const marker = typeof prompt === 'string' ? parseLedgerMarker(prompt) : undefined;
+      if (marker !== undefined) {
+        const context = markerContext(entityId, marker);
+        publish();
+        return context === undefined ? 204 : { status: 200, json: hookContextReply(context) };
+      }
+
       if (typeof prompt === 'string') {
         const key = ticketKeyFromPrompt(prompt);
         if (key !== null) onTicketIntent({ entityId, key, source: 'prompt' });
@@ -1425,23 +1523,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       return 204;
     }
 
-    onEvent({
-      entityId,
-      event,
-      status: HOOK_STATUS[event],
-      ...(typeof sessionUuid === 'string' && sessionUuid !== '' ? { sessionUuid } : {}),
-      /**
-       * Absent rather than empty when the payload did not carry one. The
-       * session layer treats absence as "nothing to look at on this tick",
-       * which is the honest reading — an empty string would be a directory.
-       */
-      ...(typeof cwd === 'string' && cwd !== '' ? { cwd } : {}),
-      ...(typeof toolUseId === 'string' ? { toolUseId } : {}),
-      ...(typeof toolName === 'string' ? { toolName } : {}),
-      ...(typeof agentId === 'string' && agentId !== '' ? { agentId } : {}),
-      ...(runInBackground === true ? { runInBackground: true } : {}),
-      ...(backgroundShells === undefined ? {} : { backgroundShells }),
-    });
+    publish();
     return 204;
   }
 
