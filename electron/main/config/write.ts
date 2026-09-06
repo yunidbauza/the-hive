@@ -20,6 +20,7 @@ import {
   DEFAULT_SUBSCRIPTION_AUTH,
   DEFAULT_JIRA,
   DEFAULT_RECEIVER,
+  DEFAULT_SLACK,
   type ConfigSnapshot,
 } from '@shared/config-contract';
 import { resolveNotificationPrefs } from '@shared/notification-contract';
@@ -291,6 +292,14 @@ export function writeConfig(
         answering with a partial `receiver`.
       */
       receiver: { ...DEFAULT_RECEIVER, ...validated.receiver },
+      /*
+        Resolved here as well as in `loadConfig` (HIVE-124), for the same
+        reason `receiver` is: this snapshot is the one every mutating verb
+        returns and becomes the cache, and a block resolved on only the read
+        path would leave every settings write answering with a partial
+        `slack`.
+      */
+      slack: { ...DEFAULT_SLACK, ...validated.slack },
       errors: validated.errors,
     },
   };

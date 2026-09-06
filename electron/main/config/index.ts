@@ -7,6 +7,7 @@ import {
   DEFAULT_JIRA,
   DEFAULT_RECEIVER,
   DEFAULT_SESSION_METRICS,
+  DEFAULT_SLACK,
   DEFAULT_SUBSCRIPTION_AUTH,
   DEFAULT_PROJECT_ICON,
   emptySnapshot,
@@ -26,6 +27,7 @@ import {
   type SetProjectRuntimeRequest,
   type SetReceiverRequest,
   type SetRuntimeRequest,
+  type SetSlackRequest,
 } from '@shared/config-contract';
 import { resolveNotificationPrefs } from '@shared/notification-contract';
 
@@ -142,6 +144,9 @@ export function loadConfig(): ConfigSnapshot {
     // Defaults *under* whatever the file named, exactly as `jira` does above
     // (HIVE-131). A plain spread suffices — there is no legacy shape to migrate.
     receiver: { ...DEFAULT_RECEIVER, ...parsed.receiver },
+    // Defaults *under* whatever the file named, exactly as `jira` and
+    // `receiver` do above (HIVE-124). A plain spread suffices here too.
+    slack: { ...DEFAULT_SLACK, ...parsed.slack },
     errors: parsed.errors,
   };
 
@@ -848,6 +853,40 @@ export function setReceiver(request: SetReceiverRequest): ConfigSnapshot {
       if (request.hostAlias !== undefined) current.hostAlias = request.hostAlias;
 
       return { ...draft, receiver: current };
+    }),
+  );
+}
+
+/**
+ * Change the socket-mode switch and the commander allow-list (HIVE-124).
+ *
+ * The block is spread, never rebuilt, for the same reason every other verb
+ * spreads its target: a key this build has not heard of must survive a save
+ * made by this one.
+ *
+ * `commanders` replaces the stored list wholesale rather than merging into it —
+ * see {@link SetSlackRequest.commanders}. There is no clearing arm for
+ * `socketMode`: it is a plain boolean, and "off" is a value rather than an
+ * absence, the same reasoning `setNotifications` and `setRuntime` state for a
+ * preference.
+ */
+export function setSlack(request: SetSlackRequest): ConfigSnapshot {
+  return commit(
+    writeConfig((draft) => {
+      // A non-object block is replaced rather than merged into. The reader has
+      // already reported it, and merging onto a string would produce something
+      // neither the user nor the parser meant.
+      const current =
+        typeof draft.slack === 'object' &&
+        draft.slack !== null &&
+        !Array.isArray(draft.slack)
+          ? { ...(draft.slack as Record<string, unknown>) }
+          : {};
+
+      if (request.socketMode !== undefined) current.socketMode = request.socketMode;
+      if (request.commanders !== undefined) current.commanders = request.commanders;
+
+      return { ...draft, slack: current };
     }),
   );
 }

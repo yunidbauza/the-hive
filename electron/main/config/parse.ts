@@ -2,6 +2,7 @@ import {
   JIRA_KEYS,
   NOTIFICATION_KEYS,
   RECEIVER_KEYS,
+  SLACK_KEYS,
   SUPPORTED_CONFIG_VERSIONS,
   isAbsoluteContainerPath,
   isContainerFreshness,
@@ -14,6 +15,7 @@ import {
   type NotificationPrefs,
   type ProjectOrigin,
   type ReceiverConfig,
+  type SlackConfig,
 } from '@shared/config-contract';
 import { PROJECT_KEY_HINT, isProjectKey } from '@shared/config-contract';
 import { assertId } from '@shared/guards';
@@ -129,6 +131,17 @@ export interface ParsedConfig {
    * a block it never asked for.
    */
   receiver?: Partial<ReceiverConfig>;
+  /**
+   * HIVE-124's slack block, exactly as the file declared it.
+   *
+   * `undefined` when the file has none — which every config written before
+   * this story does. Partial when it names only one field; the caller merges
+   * `DEFAULT_SLACK` under it. Kept partial here rather than defaulted for the
+   * same reason `jira` and `receiver` are: the write path must be able to tell
+   * "the user chose this" from "the file said nothing", which is what keeps an
+   * untouched file from growing a block it never asked for.
+   */
+  slack?: Partial<SlackConfig>;
   errors: string[];
   /** The version the file declared, or `null` when it was unreadable. */
   version: number | null;
@@ -178,6 +191,10 @@ const TOP_LEVEL_KEYS = [
   // HIVE-131, for the same reason. The container host alias — a name, never an
   // address with a port; the port belongs to the receiver.
   'receiver',
+  // HIVE-124, for the same reason. The socket-mode switch and the commander
+  // allow-list; the two Slack tokens are secrets and are deliberately not in
+  // this file.
+  'slack',
   // HIVE-79. A boolean rather than a block, and the only key in this file that
   // changes how a session *authenticates* — see `AUTH_ENV_KEYS`.
   'subscriptionAuth',
@@ -690,6 +707,70 @@ function optionalReceiver(
   return receiver;
 }
 
+/**
+ * The `slack` block (HIVE-124).
+ *
+ * Structurally a sibling of {@link optionalJira}, with two differences the
+ * shape forces: `socketMode` is a boolean and `commanders` is an array of
+ * strings, so the all-strings loop `optionalJira` uses does not fit.
+ *
+ * A bad entry inside `commanders` costs that entry, not the list. Someone who
+ * typed one id wrong should not lose the other three, and losing the whole
+ * allow-list silently turns the command channel off — a failure that looks
+ * exactly like the feature being broken.
+ */
+function optionalSlack(
+  record: Record<string, unknown>,
+  label: string,
+  errors: string[],
+): Partial<SlackConfig> | undefined {
+  const value = record.slack;
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    errors.push(`${label}.slack: expected an object — ignored`);
+    return undefined;
+  }
+
+  const at = `${label}.slack`;
+
+  for (const key of Object.keys(value)) {
+    if (FORBIDDEN_KEYS.has(key)) {
+      errors.push(`${at}: forbidden key "${key}" — slack ignored`);
+      return undefined;
+    }
+  }
+
+  if (!checkKeys(value, SLACK_KEYS, at, errors)) return undefined;
+
+  const slack: Partial<SlackConfig> = {};
+
+  if (value.socketMode !== undefined) {
+    if (typeof value.socketMode !== 'boolean') {
+      errors.push(`${at}.socketMode: expected a boolean — using the default`);
+    } else {
+      slack.socketMode = value.socketMode;
+    }
+  }
+
+  if (value.commanders !== undefined) {
+    if (!Array.isArray(value.commanders)) {
+      errors.push(`${at}.commanders: expected an array — using the default`);
+    } else {
+      const ids: string[] = [];
+      for (const raw of value.commanders) {
+        if (typeof raw !== 'string' || raw.trim() === '') {
+          errors.push(`${at}.commanders: expected a non-empty string — entry ignored`);
+          continue;
+        }
+        ids.push(raw.trim());
+      }
+      slack.commanders = ids;
+    }
+  }
+
+  return slack;
+}
+
 export function parseConfig(text: string, label: string): ParsedConfig {
   const errors: string[] = [];
   // Every `return empty` below is a wholesale rejection, so `fatal` is set
@@ -741,6 +822,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
   const notifications = optionalNotifications(document, label, errors);
   const jira = optionalJira(document, label, errors);
   const receiver = optionalReceiver(document, label, errors);
+  const slack = optionalSlack(document, label, errors);
   const subscriptionAuth = optionalBoolean(
     document,
     'subscriptionAuth',
@@ -777,6 +859,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       notifications,
       jira,
       receiver,
+      slack,
       projects: [],
       errors,
       version,
@@ -795,6 +878,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       notifications,
       jira,
       receiver,
+      slack,
       projects: [],
       errors,
       version,
@@ -907,6 +991,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
     notifications,
     jira,
     receiver,
+    slack,
     projects,
     errors,
     version,

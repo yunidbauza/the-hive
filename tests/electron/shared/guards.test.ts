@@ -21,6 +21,7 @@ import {
   parseSetProjectKeyRequest,
   parseSetProjectRuntimeRequest,
   parseSetReceiverRequest,
+  parseSetSlackRequest,
   parseSpawnRequest,
   parseWriteRequest,
 } from '../../../electron/shared/guards';
@@ -1056,6 +1057,54 @@ describe('parseSetReceiverRequest (HIVE-131)', () => {
 
   it('rejects a request that changes nothing', () => {
     expect(() => parseSetReceiverRequest({})).toThrow(/nothing to change/);
+  });
+});
+
+/**
+ * The slack switch and its commander allow-list (HIVE-124).
+ */
+describe('parseSetSlackRequest (HIVE-124)', () => {
+  it('accepts the switch alone', () => {
+    expect(parseSetSlackRequest({ socketMode: true })).toEqual({
+      socketMode: true,
+    });
+  });
+
+  it('accepts the allow-list alone, including an empty one', () => {
+    expect(parseSetSlackRequest({ commanders: ['U1', 'U2'] })).toEqual({
+      commanders: ['U1', 'U2'],
+    });
+    expect(parseSetSlackRequest({ commanders: [] })).toEqual({
+      commanders: [],
+    });
+  });
+
+  it('accepts both together', () => {
+    expect(
+      parseSetSlackRequest({ socketMode: false, commanders: ['U1'] }),
+    ).toEqual({ socketMode: false, commanders: ['U1'] });
+  });
+
+  it('rejects a non-boolean switch', () => {
+    expect(() => parseSetSlackRequest({ socketMode: 'true' })).toThrow();
+  });
+
+  it('rejects a commanders value that is not an array', () => {
+    expect(() => parseSetSlackRequest({ commanders: 'U1' })).toThrow();
+  });
+
+  it('rejects a non-string, empty, or whitespace-bearing commander id', () => {
+    expect(() => parseSetSlackRequest({ commanders: [7] })).toThrow();
+    expect(() => parseSetSlackRequest({ commanders: [''] })).toThrow();
+    expect(() => parseSetSlackRequest({ commanders: ['U 1'] })).toThrow();
+  });
+
+  it('rejects an unknown key', () => {
+    expect(() => parseSetSlackRequest({ token: 'xoxb-1' })).toThrow();
+  });
+
+  it('rejects a request that changes nothing', () => {
+    expect(() => parseSetSlackRequest({})).toThrow(/nothing to change/);
   });
 });
 

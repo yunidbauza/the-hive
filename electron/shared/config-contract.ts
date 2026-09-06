@@ -1436,6 +1436,25 @@ export interface SetReceiverRequest {
   hostAlias?: string;
 }
 
+/**
+ * Payload of `config:set-slack` (HIVE-124).
+ *
+ * Partial in the same way {@link SetRuntimeRequest} is: only the fields named
+ * are touched, so flipping the switch never restates the allow-list. There is
+ * no `token` here for the reason {@link SetJiraRequest} states — the two Slack
+ * tokens are secrets and reach `safeStorage` through their own channel, not
+ * this one.
+ */
+export interface SetSlackRequest {
+  socketMode?: boolean;
+  /**
+   * The whole list, replacing what is stored — not a patch, exactly the shape
+   * {@link SetRuntimeRequest.env} is and for the same reason: `[]` is a real,
+   * offered value and is how the last commander is removed.
+   */
+  commanders?: string[];
+}
+
 /** Payload of `jira:set-token` (HIVE-67). The one payload carrying a secret. */
 export interface SetJiraTokenRequest {
   token: string;

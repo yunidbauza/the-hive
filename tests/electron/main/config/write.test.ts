@@ -124,6 +124,31 @@ describe('writeConfig — the round trip', () => {
 
     expect(readFileSync(path, 'utf8').endsWith('\n')).toBe(true);
   });
+
+  /**
+   * The returned snapshot has to resolve `slack` the same way `loadConfig`
+   * does (HIVE-124) — this is the snapshot every mutating verb hands back, and
+   * a block resolved on only the read path would leave every settings write
+   * answering with an undefined one.
+   */
+  it('persists the slack block and resolves it in the returned snapshot', () => {
+    seed({ version: 2, projects: [] });
+
+    const result = writeConfig((draft) => ({
+      ...draft,
+      slack: { socketMode: true, commanders: ['U1'] },
+    }));
+
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.snapshot.slack).toEqual({
+      socketMode: true,
+      commanders: ['U1'],
+    });
+    expect(JSON.parse(readFileSync(path, 'utf8')).slack).toEqual({
+      socketMode: true,
+      commanders: ['U1'],
+    });
+  });
 });
 
 describe('writeConfig — preservation', () => {
