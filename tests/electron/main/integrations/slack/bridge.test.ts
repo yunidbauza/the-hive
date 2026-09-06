@@ -1,0 +1,417 @@
+// @vitest-environment node
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  createSlackBridge,
+  type SlackSocket,
+  type SlackWeb,
+} from '../../../../../electron/main/integrations/slack/bridge';
+import { readSubscriptions } from '../../../../../electron/main/integrations/slack/subscriptions';
+import {
+  SLACK_EVENT_DEBOUNCE_MS,
+  SLACK_EVENT_DEDUPE_MAX,
+  SLACK_EVENT_MIN_GAP_MS,
+} from '../../../../../electron/shared/slack-contract';
+
+const message = (ts: string, user = 'U08BA712189', channel = 'C0123ABCD') => ({
+  type: 'events_api',
+  payload: { event: { type: 'message', channel, user, ts, text: `msg ${ts}` } },
+});
+
+const mention = (ts: string, text: string, user = 'U08BA712189') => ({
+  type: 'events_api',
+  payload: {
+    event: { type: 'app_mention', channel: 'C0123ABCD', user, ts, text },
+  },
+});
+
+function harness(over: Partial<Parameters<typeof createSlackBridge>[0]> = {}) {
+  const listeners = new Map<string, (arg: unknown) => void>();
+  const socket: SlackSocket & { started: number; disconnected: number } = {
+    started: 0,
+    disconnected: 0,
+    start: vi.fn(async function (this: typeof socket) {
+      this.started += 1;
+      listeners.get('connected')?.(undefined);
+    }),
+    disconnect: vi.fn(async function (this: typeof socket) {
+      this.disconnected += 1;
+    }),
+    on: (event: string, fn: (arg: unknown) => void) => listeners.set(event, fn),
+  } as never;
+
+  const web: SlackWeb = {
+    authTest: vi.fn(async () => ({ team: 'behiques', user: 'hive' })),
+    listChannels: vi.fn(async () => [{ name: 'eng-code-review', id: 'C0123ABCD' }]),
+  };
+
+  const wakes: { name: string; entry: unknown; job: boolean }[] = [];
+  const statuses: unknown[] = [];
+
+  const bridge = createSlackBridge({
+    tokens: { read: () => ({ appToken: 'xapp-1-A', botToken: 'xoxb-2-B' }) },
+    config: () => ({ socketMode: true, commanders: ['U08BA712189'] }),
+    subscriptions: () =>
+      readSubscriptions([
+        { name: 'pr-patrol', paused: false, valid: true, on: ['slack.channel:#eng-code-review'] },
+        { name: 'acr', paused: false, valid: true, on: ['slack.app_mention'] },
+      ]),
+    openSocket: () => socket,
+    openWeb: () => web,
+    onWake: (name, entry, opts) => wakes.push({ name, entry, job: opts.job }),
+    onStatus: (status) => statuses.push(status),
+    now: () => Date.now(),
+    ...over,
+  });
+
+  const deliver = (envelope: unknown) => listeners.get('slack_event')?.({ body: envelope });
+
+  return { bridge, socket, web, wakes, statuses, deliver, listeners };
+}
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-09-06T12:00:00Z'));
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe('connecting', () => {
+  it('opens the socket when the switch is on, tokens are held and an agent subscribes', async () => {
+    const h = harness();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+    expect(h.socket.started).toBe(1);
+  });
+
+  it('does not connect while the switch is off', async () => {
+    const h = harness({ config: () => ({ socketMode: false, commanders: [] }) });
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+    expect(h.socket.started).toBe(0);
+    expect(h.statuses.at(-1)).toEqual({ kind: 'off' });
+  });
+
+  it('does not connect without both tokens', async () => {
+    const h = harness({ tokens: { read: () => ({ appToken: 'xapp-1-A' }) } });
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+    expect(h.socket.started).toBe(0);
+  });
+
+  it('does not connect while no enabled agent subscribes', async () => {
+    const h = harness({
+      subscriptions: () =>
+        readSubscriptions([
+          { name: 'quiet', paused: false, valid: true, on: ['ledger'] },
+        ]),
+    });
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+    expect(h.socket.started).toBe(0);
+    expect(h.statuses.at(-1)).toEqual({ kind: 'off' });
+  });
+
+  it('opens the socket once across repeated syncs', async () => {
+    const h = harness();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+    h.bridge.sync();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+    expect(h.socket.started).toBe(1);
+  });
+
+  it('disconnects when the last subscriber is paused', async () => {
+    let paused = false;
+    const h = harness({
+      subscriptions: () =>
+        readSubscriptions([
+          { name: 'pr-patrol', paused, valid: true, on: ['slack.channel:#eng-code-review'] },
+        ]),
+    });
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+    expect(h.socket.started).toBe(1);
+
+    paused = true;
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+    expect(h.socket.disconnected).toBe(1);
+    expect(h.statuses.at(-1)).toEqual({ kind: 'off' });
+  });
+});
+
+describe('coalescing', () => {
+  it('turns a burst inside the debounce into one wake', async () => {
+    const h = harness();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+
+    h.deliver(message('1757012345.000100'));
+    h.deliver(message('1757012345.000200'));
+    h.deliver(message('1757012345.000300'));
+    expect(h.wakes).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(SLACK_EVENT_DEBOUNCE_MS);
+    expect(h.wakes).toHaveLength(1);
+    expect(h.wakes[0].name).toBe('pr-patrol');
+    expect(h.wakes[0].job).toBe(false);
+    expect((h.wakes[0].entry as { text: string }).text).toContain('3 messages');
+    expect((h.wakes[0].entry as { kind: string }).kind).toBe('slack.channel');
+    expect((h.wakes[0].entry as { id: string }).id).toBe('1757012345.000300');
+    expect((h.wakes[0].entry as { text: string }).text).toContain('#eng-code-review');
+  });
+
+  it('holds the second wake behind the floor and delivers it when the gap opens', async () => {
+    const h = harness();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+
+    h.deliver(message('1757012345.000100'));
+    await vi.advanceTimersByTimeAsync(SLACK_EVENT_DEBOUNCE_MS);
+    expect(h.wakes).toHaveLength(1);
+
+    h.deliver(message('1757012400.000100'));
+    await vi.advanceTimersByTimeAsync(SLACK_EVENT_DEBOUNCE_MS);
+    expect(h.wakes).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(SLACK_EVENT_MIN_GAP_MS);
+    expect(h.wakes).toHaveLength(2);
+  });
+
+  /*
+    Correction 1 to the brief: the dedupe key is per *agent*, not global.
+
+    An `@hive` mention posted in a watched channel arrives twice — once as
+    `app_mention`, once as `message`. A global `(channel, ts)` key would let the
+    mention's delivery to its own subscriber swallow the channel watcher's copy,
+    so an agent watching `#eng-code-review` would silently stop seeing every
+    message that mentioned the app. The invariant is that one Slack message
+    never wakes *the same agent* twice.
+  */
+  it('wakes an agent watching both routes once, and still wakes the channel watcher', async () => {
+    const h = harness({
+      subscriptions: () =>
+        readSubscriptions([
+          {
+            name: 'both',
+            paused: false,
+            valid: true,
+            on: ['slack.channel:#eng-code-review', 'slack.app_mention'],
+          },
+          {
+            name: 'pr-patrol',
+            paused: false,
+            valid: true,
+            on: ['slack.channel:#eng-code-review'],
+          },
+        ]),
+    });
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+
+    h.deliver(mention('1757012400.002100', '<@U09HIVEBOT> hello'));
+    h.deliver(message('1757012400.002100'));
+    await vi.advanceTimersByTimeAsync(SLACK_EVENT_DEBOUNCE_MS);
+
+    expect(h.wakes.filter((w) => w.name === 'both')).toHaveLength(1);
+    expect(h.wakes.filter((w) => w.name === 'pr-patrol')).toHaveLength(1);
+  });
+
+  it('bounds the dedupe cache, so the oldest key is evicted first', async () => {
+    const h = harness();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+
+    const first = '1757010000.000000';
+    h.deliver(message(first));
+    for (let index = 1; index <= SLACK_EVENT_DEDUPE_MAX; index += 1) {
+      h.deliver(message(`17570100${String(index).padStart(2, '0')}.000001`));
+    }
+    /*
+      The oldest key has been evicted, so the same message is admitted again —
+      the cache is bounded rather than a leak that grows for the app's lifetime.
+    */
+    h.deliver(message(first));
+    await vi.advanceTimersByTimeAsync(SLACK_EVENT_DEBOUNCE_MS);
+
+    expect(h.wakes).toHaveLength(1);
+    expect((h.wakes[0].entry as { text: string }).text).toContain(
+      `${SLACK_EVENT_DEDUPE_MAX + 2} messages`,
+    );
+  });
+});
+
+describe('commands', () => {
+  it('runs a named agent immediately, past the debounce and the floor', async () => {
+    const h = harness();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+
+    h.deliver(mention('1757012400.002100', '<@U09HIVEBOT> pr-patrol review 42'));
+    expect(h.wakes).toEqual([
+      {
+        name: 'pr-patrol',
+        entry: {
+          kind: 'slack.command',
+          id: '1757012400.002100',
+          from: 'U08BA712189',
+          text: 'review 42',
+        },
+        job: true,
+      },
+    ]);
+  });
+
+  it('does not reset the floor, so a channel wake behind it is not delayed', async () => {
+    const h = harness();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+
+    h.deliver(mention('1757012400.002100', '<@U09HIVEBOT> pr-patrol review 42'));
+    h.deliver(message('1757012401.000100'));
+    await vi.advanceTimersByTimeAsync(SLACK_EVENT_DEBOUNCE_MS);
+
+    expect(h.wakes).toHaveLength(2);
+  });
+
+  it('delivers two commands separately rather than collapsing them', async () => {
+    const h = harness();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+
+    h.deliver(mention('1757012400.002100', '<@U09HIVEBOT> pr-patrol review 42'));
+    h.deliver(mention('1757012400.002200', '<@U09HIVEBOT> pr-patrol review 43'));
+
+    expect(h.wakes.map((w) => (w.entry as { text: string }).text)).toEqual([
+      'review 42',
+      'review 43',
+    ]);
+  });
+
+  it('buffers a bare mention for every mention subscriber', async () => {
+    const h = harness();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+
+    h.deliver(mention('1757012400.002100', '<@U09HIVEBOT> anyone home'));
+    await vi.advanceTimersByTimeAsync(SLACK_EVENT_DEBOUNCE_MS);
+
+    expect(h.wakes).toHaveLength(1);
+    expect(h.wakes[0].name).toBe('acr');
+    expect(h.wakes[0].job).toBe(false);
+    expect((h.wakes[0].entry as { kind: string }).kind).toBe('slack.app_mention');
+  });
+
+  it('drops a mention from an author who is not allow-listed', async () => {
+    const h = harness();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+
+    h.deliver(mention('1757012400.002100', '<@U09HIVEBOT> pr-patrol go', 'U0STRANGER'));
+    await vi.advanceTimersByTimeAsync(SLACK_EVENT_DEBOUNCE_MS + SLACK_EVENT_MIN_GAP_MS);
+    expect(h.wakes).toHaveLength(0);
+  });
+});
+
+describe('channel resolution', () => {
+  it('ignores a channel no enabled agent subscribes to', async () => {
+    const h = harness();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+
+    h.deliver(message('1757012345.000100', 'U08BA712189', 'C9OTHER'));
+    await vi.advanceTimersByTimeAsync(SLACK_EVENT_DEBOUNCE_MS);
+    expect(h.wakes).toHaveLength(0);
+  });
+
+  it('ignores an envelope that is not a Slack event at all', async () => {
+    const h = harness();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+
+    h.deliver({ type: 'hello' });
+    await vi.advanceTimersByTimeAsync(SLACK_EVENT_DEBOUNCE_MS);
+    expect(h.wakes).toHaveLength(0);
+  });
+
+  it('reports a channel name that resolves to nothing rather than dropping it silently', async () => {
+    const h = harness({
+      subscriptions: () =>
+        readSubscriptions([
+          { name: 'pr-patrol', paused: false, valid: true, on: ['slack.channel:#not-a-channel'] },
+        ]),
+    });
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+    expect(h.bridge.unresolved()).toEqual(['#not-a-channel']);
+    expect(h.statuses.at(-1)).toEqual({
+      kind: 'connected',
+      workspace: 'behiques',
+      bot: 'hive',
+      unresolved: ['#not-a-channel'],
+    });
+  });
+});
+
+describe('status and teardown', () => {
+  it('reports connected with the workspace auth.test returned', async () => {
+    const h = harness();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+    expect(h.statuses.at(-1)).toEqual({
+      kind: 'connected',
+      workspace: 'behiques',
+      bot: 'hive',
+      unresolved: [],
+    });
+  });
+
+  it('reports a failure the socket raised rather than staying on connecting', async () => {
+    const h = harness();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+
+    h.listeners.get('error')?.(new Error('invalid app token'));
+    expect(h.statuses.at(-1)).toEqual({ kind: 'failed', message: 'invalid app token' });
+  });
+
+  it('answers Test from auth.test without opening a socket', async () => {
+    const h = harness();
+    await expect(h.bridge.test()).resolves.toEqual({
+      kind: 'ok',
+      workspace: 'behiques',
+      bot: 'hive',
+    });
+    expect(h.socket.started).toBe(0);
+  });
+
+  it('answers Test with an error when no bot token is held', async () => {
+    const h = harness({ tokens: { read: () => ({}) } });
+    const result = await h.bridge.test();
+    expect(result.kind).toBe('error');
+  });
+
+  it('stops the socket and cancels every pending timer', async () => {
+    const h = harness();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+
+    h.deliver(message('1757012345.000100'));
+    h.bridge.stop();
+    await vi.advanceTimersByTimeAsync(SLACK_EVENT_DEBOUNCE_MS + SLACK_EVENT_MIN_GAP_MS);
+
+    expect(h.socket.disconnected).toBe(1);
+    expect(h.wakes).toHaveLength(0);
+  });
+
+  it('ignores a sync after stop', async () => {
+    const h = harness();
+    h.bridge.stop();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+    expect(h.socket.started).toBe(0);
+  });
+});
