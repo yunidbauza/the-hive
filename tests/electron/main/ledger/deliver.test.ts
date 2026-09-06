@@ -387,4 +387,53 @@ describe('createDeliver', () => {
 
     expect(write2).toHaveBeenCalledTimes(1);
   });
+
+  /**
+   * An answer lands an hour later in a session that may have compacted past
+   * its own question (HIVE-135). A headless agent re-reads its ask; a terminal
+   * session gets one line, so the line says what the question was for.
+   */
+  describe('the intent on an answer nudge', () => {
+    const askWithIntent = (intent?: string) =>
+      ledger.append({
+        from: 'sess-a',
+        to: OVERMIND,
+        kind: 'ask',
+        body: 'which branch?',
+        ...(intent === undefined ? {} : { meta: { intent } }),
+      });
+
+    it('appends the asking session’s intent after the answer', () => {
+      const asked = askWithIntent('rebase onto it and push');
+      write.mockClear();
+
+      ledger.answer({ thread: asked.ok ? asked.id : '', body: 'main' }, OVERMIND);
+
+      expect(lastWrite()).toContain('answered');
+      expect(lastWrite()).toContain('main');
+      expect(lastWrite()).toContain('you asked so you could: rebase onto it and push');
+      expect(lastWrite().endsWith('\r')).toBe(true);
+    });
+
+    it('leaves the line as it was when the ask carries no intent', () => {
+      const asked = askWithIntent();
+      write.mockClear();
+
+      ledger.answer({ thread: asked.ok ? asked.id : '', body: 'main' }, OVERMIND);
+
+      expect(lastWrite()).not.toContain('you asked so you could');
+    });
+
+    it('caps and strips the intent like the body', () => {
+      const asked = askWithIntent(`x${'y'.repeat(200)}\rrm -rf ~`);
+      write.mockClear();
+
+      ledger.answer({ thread: asked.ok ? asked.id : '', body: 'main' }, OVERMIND);
+
+      const data = lastWrite();
+      expect(data.split('\r')).toHaveLength(2);
+      expect(data).not.toContain('rm -rf');
+      expect(data.length).toBeLessThan(120 + 80 + 80);
+    });
+  });
 });

@@ -19,6 +19,9 @@ import type { Ledger } from './index';
 /** How much of a body a nudge carries. One line, and not a long one. */
 const NUDGE_BODY_MAX = 120;
 
+/** How much of an ask's `meta.intent` rides on the answer's nudge (HIVE-135). */
+const NUDGE_INTENT_MAX = 80;
+
 /**
  * Strip every control character from a body before it reaches a pty.
  *
@@ -124,14 +127,17 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
    * console printed. Falling back to the id is correct rather than merely safe:
    * an id always identifies the thread, it is just longer than a person wants.
    */
+  /** The ask an answer closes, if the log still has it. */
+  function askFor(entry: LedgerEntry): LedgerEntry | undefined {
+    if (entry.kind === 'ask') return entry;
+    const threadId = entry.thread;
+    if (threadId === undefined) return undefined;
+    return ledger.read({ thread: threadId }).entries.find((e) => e.kind === 'ask');
+  }
+
   function handleFor(entry: LedgerEntry): string {
     if (entry.kind === 'ask') return entry.ref ?? entry.id;
-
-    const threadId = entry.thread;
-    if (threadId === undefined) return entry.id;
-
-    const ask = ledger.read({ thread: threadId }).entries.find((e) => e.kind === 'ask');
-    return ask?.ref ?? threadId;
+    return askFor(entry)?.ref ?? entry.thread ?? entry.id;
   }
 
   function nudgeLine(entry: LedgerEntry, handle: string): string {
@@ -151,9 +157,21 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
     const body = stripControls(firstLine).slice(0, NUDGE_BODY_MAX);
     const from = stripControls(entry.from);
 
-    return entry.kind === 'ask'
-      ? `📒 ${from} asks (${handle}): ${body} — reply with ledger_answer ${handle}`
-      : `📒 ${from} answered ${handle}: ${body}`;
+    if (entry.kind === 'ask') {
+      return `📒 ${from} asks (${handle}): ${body} — reply with ledger_answer ${handle}`;
+    }
+
+    /*
+      The asker's own words about why it asked (HIVE-135), cut and stripped
+      exactly as the body is — it is authored by a party, and this is the same
+      pty. Absent, the line is what it was before.
+    */
+    const intent = askFor(entry)?.meta?.intent;
+    const tail =
+      typeof intent === 'string' && intent.trim() !== ''
+        ? ` — you asked so you could: ${stripControls(intent.split(/\r\n|\r|\n/u)[0] ?? '').slice(0, NUDGE_INTENT_MAX)}`
+        : '';
+    return `📒 ${from} answered ${handle}: ${body}${tail}`;
   }
 
   /**
