@@ -4,11 +4,20 @@ import { ledgerMarker, type LedgerEntry } from '@shared/ledger-contract';
  * One ledger entry, rendered as the context a hook carries (HIVE-138).
  *
  * This is what a session's model reads when a marker lands in its prompt. It
- * says first that the marker was the app's doing, so the model does not take
- * `📒 a12` for the user's words; then the entry whole, body verbatim and every
- * meta key as one JSON line, for the reason `ledger_read` in `mcp-tools.ts`
- * gives: meta is an arbitrary map and anything lossy here breaks a story;
- * then what, if anything, is owed back.
+ * says first who is speaking and why, in the app's own voice, so the model
+ * does not take `📒 a12` for the user's words and does not take the entry for
+ * an instruction smuggled into its context; then the entry whole, body
+ * verbatim and every meta key as one JSON line, for the reason `ledger_read`
+ * in `mcp-tools.ts` gives: meta is an arbitrary map and anything lossy here
+ * breaks a story; then what, if anything, is owed back.
+ *
+ * The voice is measured, not chosen. The first live run of
+ * `tests/live/marker-context-conformance.test.ts` carried a curt version of
+ * this text, and the model called it a prompt injection: an instruction in
+ * its context, from nobody it could place, naming a tool it could not see.
+ * Saying plainly that the app delivered it, that the terminal shows only the
+ * marker, and what to do when the tool is absent is what makes the same
+ * entry read as a message rather than an attack.
  *
  * Nothing is stripped or cut. The bytes go into a JSON body the model reads,
  * not into a pty a terminal interprets. The control-character boundary that
@@ -19,12 +28,13 @@ export function entryContext(entry: LedgerEntry, ask?: LedgerEntry): string {
   const marker = ledgerMarker(entry);
   const name = marker.slice(marker.indexOf(' ') + 1);
   const lines: string[] = [
-    `The line "${marker}" was written into this session by The Hive. It is not the user's words; it marks ledger entry ${name}, carried here in full.`,
+    `The Hive, the desktop app that runs this terminal session, delivered a ledger entry to you. The user's terminal shows only the marker "${marker}"; this message is the entry itself, unabridged, and it comes from the app, not from the user.`,
     '',
+    `From: ${entry.from}`,
   ];
 
   if (entry.kind === 'ask') {
-    lines.push(`${entry.from} asks you (${name}):`, '', entry.body, '');
+    lines.push(`Kind: ask, ref ${name}, addressed to you`, '', entry.body, '');
   } else {
     /*
       The handle a person would know the thread by: the ask's ref when the log
@@ -33,7 +43,7 @@ export function entryContext(entry: LedgerEntry, ask?: LedgerEntry): string {
       thread, it is just longer than a person wants.
     */
     const handle = ask?.ref ?? entry.thread ?? entry.id;
-    lines.push(`${entry.from} answered your ask ${handle}:`, '', entry.body, '');
+    lines.push(`Kind: answer, closing your ask ${handle}`, '', entry.body, '');
     const intent = ask?.meta?.intent;
     if (typeof intent === 'string' && intent.trim() !== '') {
       lines.push(`You asked so you could: ${intent}`, '');
@@ -41,13 +51,13 @@ export function entryContext(entry: LedgerEntry, ask?: LedgerEntry): string {
   }
 
   if (entry.meta !== undefined && Object.keys(entry.meta).length > 0) {
-    lines.push(`meta: ${JSON.stringify(entry.meta)}`, '');
+    lines.push(`Meta: ${JSON.stringify(entry.meta)}`, '');
   }
 
   lines.push(
     entry.kind === 'ask'
-      ? `Reply with the ledger_answer tool, thread "${name}". Your answer closes the ask and reaches ${entry.from}.`
-      : 'Nothing is owed back. Ask again with ledger_ask if the answer is not enough.',
+      ? `To answer, call the ledger_answer tool with thread "${name}"; that closes the ask and reaches ${entry.from}. If that tool is not available in this session, say so and give your answer in your reply, so the user can relay it.`
+      : 'Nothing is owed back. If the answer is not enough, ask again with the ledger_ask tool.',
   );
   return lines.join('\n');
 }

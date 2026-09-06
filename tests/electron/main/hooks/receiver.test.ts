@@ -1424,7 +1424,8 @@ describe('hook receiver', () => {
 
       expect(response.status).toBe(200);
       const text = await context(response);
-      expect(text).toContain('overmind answered your ask');
+      expect(text).toContain('From: overmind');
+      expect(text).toContain('Kind: answer, closing your ask');
       expect(text).toContain('yes');
       expect(text).toContain('You asked so you could: push');
     });
