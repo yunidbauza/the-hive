@@ -424,16 +424,40 @@ describe('createDeliver', () => {
       expect(lastWrite()).not.toContain('you asked so you could');
     });
 
-    it('caps and strips the intent like the body', () => {
-      const asked = askWithIntent(`x${'y'.repeat(200)}\rrm -rf ~`);
+    it('cuts the intent at its first line break, before stripping', () => {
+      // Cut first, then strip — the same order as the body: stripping first
+      // would delete the break and splice `second` onto the end of `first`.
+      const asked = askWithIntent('first line\nsecond line');
+      write.mockClear();
+
+      ledger.answer({ thread: asked.ok ? asked.id : '', body: 'main' }, OVERMIND);
+
+      expect(lastWrite()).toContain('you asked so you could: first line');
+      expect(lastWrite()).not.toContain('second');
+    });
+
+    it('strips control characters from the intent', () => {
+      const asked = askWithIntent('see [2J now');
+      write.mockClear();
+
+      ledger.answer({ thread: asked.ok ? asked.id : '', body: 'main' }, OVERMIND);
+
+      expect(lastWrite()).not.toContain('');
+      expect(lastWrite()).toContain('see [2J now');
+      expect(lastWrite().split('\r')).toHaveLength(2);
+    });
+
+    it('caps the intent at NUDGE_INTENT_MAX characters', () => {
+      // 100 printable characters, then a marker only the cap can remove.
+      const asked = askWithIntent(`${'a'.repeat(100)} DROPPED`);
       write.mockClear();
 
       ledger.answer({ thread: asked.ok ? asked.id : '', body: 'main' }, OVERMIND);
 
       const data = lastWrite();
-      expect(data.split('\r')).toHaveLength(2);
-      expect(data).not.toContain('rm -rf');
-      expect(data.length).toBeLessThan(120 + 80 + 80);
+      const tail = data.slice(data.indexOf('you asked so you could: ') + 'you asked so you could: '.length, -1);
+      expect(tail).toBe('a'.repeat(80));
+      expect(data).not.toContain('DROPPED');
     });
   });
 });
