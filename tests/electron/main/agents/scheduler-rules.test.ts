@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 
-import { decide } from '../../../../electron/main/agents/scheduler-rules';
+import { decide, decideForEvent } from '../../../../electron/main/agents/scheduler-rules';
 import type { AgentStatus } from '../../../../electron/shared/agent-contract';
 import type { LedgerEntry } from '../../../../electron/shared/ledger-contract';
 
@@ -67,5 +67,23 @@ describe('decide', () => {
     // entries that could never have woken it.
     expect(decide('paused', entry({ kind: 'event' }))).toBe('ignore');
     expect(decide('working', entry({ kind: 'claim' }))).toBe('ignore');
+  });
+});
+
+describe('decideForEvent (HIVE-124)', () => {
+  it('wakes a sleeping agent', () => {
+    expect(decideForEvent('sleeping')).toBe('wake');
+  });
+
+  it('queues for a working one, so a burst becomes one wake', () => {
+    expect(decideForEvent('working')).toBe('queue');
+  });
+
+  it('holds for a paused one, and resume delivers', () => {
+    expect(decideForEvent('paused')).toBe('hold');
+  });
+
+  it('wakes an asking agent, which is not running', () => {
+    expect(decideForEvent('asking')).toBe('wake');
   });
 });

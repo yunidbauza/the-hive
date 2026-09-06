@@ -68,6 +68,23 @@ export function decideForStatus(status: AgentStatus): WakeDecision {
   return 'wake';
 }
 
+/**
+ * A Slack event's fate, by the agent's state (HIVE-124).
+ *
+ * Delegates to {@link decideForStatus} rather than repeating the table: an
+ * event and an addressed entry are the same question — is this agent able to
+ * take a wake right now — and the two answers must not drift apart. What is
+ * genuinely different about an event is decided in `bridge.ts`, which
+ * coalesces and floors before anything reaches here.
+ *
+ * Notably there is no `ignore` branch. `onEntry` has one because a broadcast
+ * reaches every agent and most of them should not care; an event arrives here
+ * only after the subscription index named this agent, so the wanting is
+ * already established.
+ */
+export const decideForEvent = (status: AgentStatus): WakeDecision =>
+  decideForStatus(status);
+
 export function decide(status: AgentStatus, entry: LedgerEntry): WakeDecision {
   // A broadcast wakes nobody — parties read those on their own schedule.
   if (entry.to === undefined) return 'ignore';

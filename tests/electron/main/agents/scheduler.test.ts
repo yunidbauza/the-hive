@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { createScheduler } from '../../../../electron/main/agents/scheduler';
+import { createScheduler, triggerFor } from '../../../../electron/main/agents/scheduler';
 import { createAgentState } from '../../../../electron/main/agents/state';
 import {
   AGENT_PENDING_WAKE_MAX,
@@ -1709,6 +1709,131 @@ describe('createScheduler', () => {
         'two',
         'three',
       ]);
+    });
+  });
+
+  describe('onEvent (HIVE-124)', () => {
+    /*
+      The bridge has already decided which agent and already coalesced the
+      burst, so these tests only interrogate the one question left: can this
+      agent take a wake right now.
+    */
+
+    it('wakes a sleeping agent with the slack trigger and the event line', () => {
+      scheduler.onEvent(
+        AGENT,
+        { kind: 'slack.channel', id: '1757.1', from: 'U08', text: '#x (C1) · …' },
+        { job: false },
+      );
+
+      expect(woke).toEqual([
+        {
+          name: AGENT,
+          trigger: 'slack',
+          extra: 'slack.channel 1757.1 from U08 — #x (C1) · …',
+        },
+      ]);
+    });
+
+    it('queues while working and flushes as one wake when the run closes', () => {
+      state.patch(AGENT, { status: 'working' });
+
+      scheduler.onEvent(
+        AGENT,
+        { kind: 'slack.channel', id: '1757.1', from: 'U08', text: 'first' },
+        { job: false },
+      );
+      scheduler.onEvent(
+        AGENT,
+        { kind: 'slack.channel', id: '1757.2', from: 'U08', text: 'second' },
+        { job: false },
+      );
+
+      expect(woke).toEqual([]);
+
+      state.patch(AGENT, { status: 'sleeping' });
+      scheduler.onRunClosed(AGENT);
+
+      expect(woke).toHaveLength(1);
+      expect(woke[0]?.trigger).toBe('slack');
+      expect(woke[0]?.extra).toContain('1757.1');
+      expect(woke[0]?.extra).toContain('1757.2');
+    });
+
+    it('holds for a paused agent and delivers on resume', () => {
+      state.patch(AGENT, { status: 'paused' });
+
+      scheduler.onEvent(
+        AGENT,
+        { kind: 'slack.channel', id: '1757.1', from: 'U08', text: 'first' },
+        { job: false },
+      );
+
+      expect(woke).toEqual([]);
+
+      state.patch(AGENT, { status: 'sleeping' });
+      scheduler.onResume(AGENT);
+
+      expect(woke).toHaveLength(1);
+    });
+
+    it('wakes at once for a job entry, reporting job:true and the slack trigger', () => {
+      scheduler.onEvent(
+        AGENT,
+        { kind: 'slack.command', id: '1757.9', from: 'U08', text: 'review 42' },
+        { job: true },
+      );
+
+      expect(woke).toEqual([
+        { name: AGENT, trigger: 'slack', extra: 'review 42', job: true },
+      ]);
+    });
+
+    /*
+      A `slack.command` job run must report `slack`, not `manual` — `manual`
+      names the route a person pressing Run inside the app takes, and this one
+      arrived off a socket. Corrects the brief, which copied the shipped
+      `flush` line before this task's own change to `triggerFor` existed.
+    */
+    it('runs a slack command as its own job on an agent that fans out', () => {
+      parallel = 3;
+      state.patch(AGENT, { status: 'working' });
+
+      scheduler.onEvent(
+        AGENT,
+        { kind: 'slack.command', id: '1757.9', from: 'U08', text: 'review 42' },
+        { job: true },
+      );
+
+      state.patch(AGENT, { status: 'sleeping' });
+      scheduler.onRunClosed(AGENT);
+
+      expect(woke).toEqual([
+        { name: AGENT, trigger: 'slack', extra: 'review 42', job: true },
+      ]);
+    });
+
+    it('ranks a person pressing run above a slack event, and slack above the ledger', () => {
+      expect(
+        triggerFor([
+          { kind: 'ledger', id: 'a1', from: 'overmind' },
+          { kind: 'slack.channel', id: '1757.1', from: 'U08' },
+        ]),
+      ).toBe('slack');
+
+      expect(
+        triggerFor([
+          { kind: 'slack.channel', id: '1757.1', from: 'U08' },
+          { kind: 'manual', id: 'm1', from: 'overmind', text: 'go' },
+        ]),
+      ).toBe('manual');
+    });
+
+    it('still reports manual for a manual entry, unaffected by the slack rank', () => {
+      const started = scheduler.manualWake(AGENT, 'go');
+
+      expect(started.started).toBe(true);
+      expect(woke).toEqual([{ name: AGENT, trigger: 'manual', extra: 'go', job: true }]);
     });
   });
 });

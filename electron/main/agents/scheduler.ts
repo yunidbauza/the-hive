@@ -13,10 +13,10 @@ import {
   type LedgerPostRequest,
 } from '@shared/ledger-contract';
 import { expiredAsks } from '@shared/ledger-derive';
-import { SLACK_SERVER_KEY } from '@shared/slack-contract';
+import { SLACK_COMMAND_KIND, SLACK_SERVER_KEY, SLACK_TRIGGER } from '@shared/slack-contract';
 
 import type { RunStart } from './runs';
-import { decide, decideForStatus, type WakeDecision } from './scheduler-rules';
+import { decide, decideForEvent, decideForStatus, type WakeDecision } from './scheduler-rules';
 import type { AgentState } from './state';
 import { inQuiet, nextRunFrom, quietEndAfter } from './wake-schedule';
 
@@ -203,6 +203,19 @@ export interface Scheduler {
   /** A paused agent was resumed. */
   onResume(name: string): void;
   /**
+   * A Slack Socket Mode event matched this agent (HIVE-124).
+   *
+   * The bridge has already decided *which* agent — it holds the subscription
+   * index — and has already coalesced the burst and applied the floor, so this
+   * is one delivery for one agent and the only question left is the one
+   * `decideForEvent` answers.
+   *
+   * `job` carries HIVE-128's distinction: a `@hive <agent> <task>` is a task
+   * run with its own words, and a channel message is the standing conversation
+   * noticing something.
+   */
+  onEvent(name: string, entry: PendingWakeEntry, opts: { job: boolean }): void;
+  /**
    * A person pressed run (HIVE-126).
    *
    * The manual path used to call `RunTracker.run` directly, so a refusal was
@@ -245,16 +258,35 @@ const describeEntries = (queued: readonly PendingWakeEntry[]): string =>
   queued.map(describeEntry).join(', ');
 
 /**
- * Which trigger a flushed queue reports (HIVE-126).
+ * Which trigger a flushed queue reports (HIVE-126, HIVE-124).
  *
- * `manual` wins over `ledger` whenever a person's own run is in the queue: it
- * is the reason with someone behind it, and `ledger` would name a route that
- * entry never took — there is no log line for `ledger_read` to find.
+ * `manual` wins over everything: it is the reason with a person behind it.
+ * `slack` wins over `ledger` for the reason `manual` does — `ledger` would
+ * name a route the entry never took, and there is no log line for
+ * `ledger_read` to find when the queue came off a socket.
+ *
+ * Exported for its own test: this is the ranking, not an implementation
+ * detail of `flush`.
  */
-const triggerFor = (queued: readonly PendingWakeEntry[]): string =>
-  queued.some((item) => item.kind === MANUAL_KIND)
-    ? MANUAL_TRIGGER
-    : LEDGER_TRIGGER;
+export const triggerFor = (queued: readonly PendingWakeEntry[]): string => {
+  if (queued.some((item) => item.kind === MANUAL_KIND)) return MANUAL_TRIGGER;
+  if (queued.some((item) => item.kind.startsWith('slack.'))) return SLACK_TRIGGER;
+
+  return LEDGER_TRIGGER;
+};
+
+/**
+ * Which trigger a job run reports, by the queued entry's own kind (HIVE-124).
+ *
+ * A job is only ever one of the two kinds `isJob` lets through, so this is a
+ * closed table rather than a general-purpose lookup: `MANUAL_KIND` is a
+ * person's own run, and everything else a job entry can be is a Slack
+ * command. Used by both places a job is run — the immediate path in
+ * `onEvent` and the queued path in `flush` — so a task run reports the same
+ * trigger however it got there.
+ */
+const jobTrigger = (kind: string): string =>
+  kind === MANUAL_KIND ? MANUAL_TRIGGER : SLACK_TRIGGER;
 
 /**
  * Ledger-addressed wakes (HIVE-120).
@@ -657,9 +689,10 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       it was.
     */
     const fanOut = deps.parallelFor(name) > 1;
-    const jobs = fanOut
-      ? queued.filter((entry) => entry.kind === MANUAL_KIND && entry.text !== undefined)
-      : [];
+    const isJob = (entry: PendingWakeEntry): boolean =>
+      (entry.kind === MANUAL_KIND || entry.kind === SLACK_COMMAND_KIND) &&
+      entry.text !== undefined;
+    const jobs = fanOut ? queued.filter(isJob) : [];
     const rest = queued.filter((entry) => !jobs.includes(entry));
     const back: PendingWakeEntry[] = [];
 
@@ -673,7 +706,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
 
     for (const job of jobs) {
       if (!refused) {
-        const started = deps.run(name, MANUAL_TRIGGER, job.text, { job: true });
+        const started = deps.run(name, jobTrigger(job.kind), job.text, { job: true });
 
         if (started.started) continue;
         refused = true;
@@ -758,9 +791,18 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
    * the command cannot be built — which at boot is the ordinary case rather than
    * an edge one, because `mcp.start()` is still in flight. Queueing there turns
    * every one of those into a delivery deferred rather than a question lost.
+   *
+   * `trigger` defaults to {@link LEDGER_TRIGGER} for `onEntry` and the sweep;
+   * `onEvent` (HIVE-124) passes {@link SLACK_TRIGGER} so an immediate wake off
+   * a socket event reports the route it actually took.
    */
-  const route = (name: string, decision: WakeDecision, item: PendingWakeEntry): void => {
-    if (decision === 'wake' && deps.run(name, LEDGER_TRIGGER, describeEntry(item)).started) {
+  const route = (
+    name: string,
+    decision: WakeDecision,
+    item: PendingWakeEntry,
+    trigger: string = LEDGER_TRIGGER,
+  ): void => {
+    if (decision === 'wake' && deps.run(name, trigger, describeEntry(item)).started) {
       return;
     }
 
@@ -789,6 +831,35 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       if (decision === 'ignore') return;
 
       route(to, decision, { kind: entry.kind, id: entry.id, from: entry.from });
+    },
+
+    onEvent(name, entry, opts) {
+      if (stopped) return;
+
+      const decision = decideForEvent(deps.state.read(name).status);
+
+      /*
+        A job carries its own words and its own `{ job: true }` (HIVE-128),
+        so it cannot go through `route()` unchanged — that helper always
+        calls `describeEntry` and never passes run options. It reuses the
+        same queue-or-wake shape `route()` does: try the wake only when the
+        agent can take one right now, and enqueue whatever that attempt
+        does not land, exactly as `flush`'s job loop does for the queued
+        case.
+      */
+      if (opts.job) {
+        if (
+          decision === 'wake' &&
+          deps.run(name, jobTrigger(entry.kind), entry.text, { job: true }).started
+        ) {
+          return;
+        }
+
+        enqueue(name, entry);
+        return;
+      }
+
+      route(name, decision, entry, SLACK_TRIGGER);
     },
 
     onRunClosed(name) {
