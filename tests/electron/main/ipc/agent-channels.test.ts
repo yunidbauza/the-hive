@@ -7,6 +7,7 @@ import type {
   AgentsSnapshot,
   LiveRunSummary,
 } from '../../../../electron/shared/agent-contract';
+import { emptySnapshot } from '../../../../electron/shared/config-contract';
 import {
   OVERMIND,
   type LedgerEntry,
@@ -88,15 +89,20 @@ vi.mock('../../../../electron/main/shutdown', () => ({
   },
 }));
 
-const snapshot = {
-  configPath: '/tmp/config.json',
-  templateWritten: false,
-  shell: '/bin/zsh',
-  claudeCommand: 'claude',
-  subscriptionAuth: true,
-  projects: [],
-  errors: [],
-};
+/**
+ * The whole snapshot, not a hand-picked corner of it.
+ *
+ * `registerIpcHandlers` builds the hook runtime with
+ * `hostAlias: () => getConfig().receiver.hostAlias` (`ipc/index.ts`), so a
+ * fixture missing `receiver` made that getter throw on every registration —
+ * swallowed by the container-write `catch` in `hooks/index.ts` as a console
+ * line, once per test. Fifty-nine of those forwards raced the worker's
+ * teardown and failed the *run* with no failing test (HIVE-139).
+ *
+ * `emptySnapshot` is exported for exactly this reason: it is typed, so a field
+ * added to `ConfigSnapshot` later cannot silently go missing here again.
+ */
+const snapshot = emptySnapshot('/tmp/config.json', '/bin/zsh');
 
 vi.mock('../../../../electron/main/config/index', () => ({
   getConfig: vi.fn(() => snapshot),

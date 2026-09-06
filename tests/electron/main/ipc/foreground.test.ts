@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { emptySnapshot } from '../../../../electron/shared/config-contract';
+
 /**
  * `ui:foreground` (HIVE-81) — main records the id and computes the predicate.
  * The notifier's re-arm (`reevaluateForeground`) is one of its consumers now;
@@ -146,14 +148,9 @@ vi.mock('../../../../electron/main/notifications', async () => {
   };
 });
 
-const snapshot = {
-  configPath: '/tmp/config.json',
-  templateWritten: false,
-  shell: '/bin/zsh',
-  claudeCommand: 'claude',
-  projects: [],
-  errors: [],
-};
+// The whole snapshot, so no getter reading a field this fixture forgot can
+// throw into a swallowing catch (HIVE-139).
+const snapshot = emptySnapshot('/tmp/config.json', '/bin/zsh');
 
 vi.mock('../../../../electron/main/config/index', () => ({
   getConfig: vi.fn(() => snapshot),
