@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { AgentContainer } from '../../../../electron/shared/agent-contract';
 import type { ResolvedContainer } from '../../../../electron/shared/config-contract';
 import { HOOK_ENV_TOKEN } from '../../../../electron/shared/hook-contract';
 
@@ -517,5 +518,92 @@ describe('createHookRuntime — writeContainerSession (HIVE-133)', () => {
 
     const origins = writeSessionSpy.mock.calls.at(-1)?.[2];
     expect(origins).toHaveProperty('metricsUrl');
+  });
+});
+
+describe('createHookRuntime — an agent in a container (HIVE-137)', () => {
+  let dir: string;
+  let ledger: Ledger;
+  let runtime: HookRuntime | undefined;
+  const config: AgentContainer = {
+    runtime: 'docker',
+    name: 'devbox',
+    workspace: '/work',
+    hiveDir: '/hive',
+  };
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'hive-hooks-agent-container-'));
+    ledger = createLedger({ dir, knowsParty: () => true });
+    writeAliasSpy.mockClear();
+  });
+
+  afterEach(async () => {
+    await runtime?.stop();
+    runtime = undefined;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('answers null for everything before the receiver has bound', () => {
+    runtime = createHookRuntime({ userDataPath: dir, sessionMetrics: () => false, ledger });
+
+    expect(runtime.containerOriginsFor('host.docker.internal')).toBeNull();
+    expect(runtime.agentContainerSettingsPathFor(config)).toBeNull();
+    expect(runtime.receiverGrants()).toBeNull();
+  });
+
+  it('addresses the origins by the alias asked for', async () => {
+    runtime = createHookRuntime({ userDataPath: dir, sessionMetrics: () => false, ledger });
+    await runtime.start(noopHandlers);
+
+    const origins = runtime.containerOriginsFor('gateway.local');
+
+    expect(origins?.origin).toMatch(/^http:\/\/gateway\.local:\d+$/);
+    expect(origins?.url).toMatch(/^http:\/\/gateway\.local:\d+\/hook$/);
+    expect(origins?.readyUrl).toMatch(/^http:\/\/gateway\.local:\d+\//);
+    // Metrics are off, so the set must not name a status line.
+    expect(origins?.metricsUrl).toBeUndefined();
+  });
+
+  it('names the shared agent settings file for exec-env on the global alias, writing nothing', async () => {
+    runtime = createHookRuntime({ userDataPath: dir, sessionMetrics: () => false, ledger });
+    await runtime.start(noopHandlers);
+
+    expect(runtime.agentContainerSettingsPathFor(config)).toBe(
+      join(dir, 'hive', 'container', 'claude-agent.settings.json'),
+    );
+    expect(writeAliasSpy).not.toHaveBeenCalled();
+  });
+
+  it('names and writes an alias copy when the agent\'s alias diverges', async () => {
+    runtime = createHookRuntime({ userDataPath: dir, sessionMetrics: () => false, ledger });
+    await runtime.start(noopHandlers);
+
+    const path = runtime.agentContainerSettingsPathFor({ ...config, hostAlias: 'gateway.local' });
+
+    expect(path).toBe(
+      join(dir, 'hive', 'container', 'aliases', 'gateway.local', 'claude-agent.settings.json'),
+    );
+    expect(writeAliasSpy).toHaveBeenCalledWith(
+      dir,
+      'gateway.local',
+      expect.objectContaining({ origin: expect.stringMatching(/^http:\/\/gateway\.local:\d+$/) }),
+      { containerRoot: '/hive/container/aliases/gateway.local' },
+    );
+    await vi.waitFor(async () => {
+      const written = await readFile(path ?? '', 'utf8');
+      expect(JSON.parse(written)).toHaveProperty('permissions');
+    });
+  });
+
+  it('exposes the receiver\'s grants registry once bound', async () => {
+    runtime = createHookRuntime({ userDataPath: dir, sessionMetrics: () => false, ledger });
+    await runtime.start(noopHandlers);
+
+    const grants = runtime.receiverGrants();
+
+    expect(grants).not.toBeNull();
+    expect(typeof grants?.set).toBe('function');
+    expect(typeof grants?.delete).toBe('function');
   });
 });

@@ -102,7 +102,7 @@ export const writeAliasContainerFiles = (
   );
 
 /**
- * Exported, unlike {@link AGENT_FILE} and {@link SCRIPT_FILE} (HIVE-133,
+ * Exported, unlike {@link SCRIPT_FILE} (HIVE-133,
  * post-review fix): `sessions/index.ts` has to name these same two files when
  * it selects `--settings` and `--mcp-config` for a container spawn, and it
  * used to do that with its own hardcoded copies of these strings. Nothing
@@ -113,7 +113,12 @@ export const writeAliasContainerFiles = (
  */
 export const CONTAINER_MCP_FILE = 'hive.mcp.json';
 export const CONTAINER_SETTINGS_FILE = 'claude-hooks.settings.json';
-const AGENT_FILE = 'claude-agent.settings.json';
+/**
+ * The agent-space settings file in every set — the one carrying
+ * `permissions.ask: ["*"]`. Exported since HIVE-137, because a containerised
+ * agent's wake has to name it on its own command line.
+ */
+export const CONTAINER_AGENT_FILE = 'claude-agent.settings.json';
 const SCRIPT_FILE = 'statusline.sh';
 
 /** What only the caller placing these files can know (HIVE-133). */
@@ -228,7 +233,7 @@ const writeSet = async (
     { encoding: 'utf8', mode },
   );
   await writeFile(
-    join(root, AGENT_FILE),
+    join(root, CONTAINER_AGENT_FILE),
     `${JSON.stringify(
       agentSettings(origins.url, origins.readyUrl, identity),
       null,
@@ -268,7 +273,7 @@ const writeSet = async (
     token.
   */
   await Promise.all(
-    [CONTAINER_SETTINGS_FILE, AGENT_FILE, CONTAINER_MCP_FILE].map((file) =>
+    [CONTAINER_SETTINGS_FILE, CONTAINER_AGENT_FILE, CONTAINER_MCP_FILE].map((file) =>
       chmod(join(root, file), mode),
     ),
   );

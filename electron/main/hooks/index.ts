@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import type { AgentsDirectory } from '@shared/agent-contract';
+import type { AgentContainer, AgentsDirectory } from '@shared/agent-contract';
 import { DEFAULT_RECEIVER, type ResolvedContainer } from '@shared/config-contract';
 import {
   HOOK_ENV_RECEIVER_URL,
@@ -13,9 +13,12 @@ import {
 import type { SessionMetrics } from '@shared/metrics-contract';
 
 import {
+  CONTAINER_AGENT_FILE,
   CONTAINER_ALIASES_DIR,
   CONTAINER_ALIASES_SUBDIR,
+  CONTAINER_DIR,
   CONTAINER_SESSIONS_SUBDIR,
+  type ContainerOrigins,
   containerOrigins,
   sweepSessionContainerFiles,
   writeAliasContainerFiles,
@@ -235,6 +238,23 @@ export interface HookRuntime {
    */
   containerOrigin(): string | null;
   /**
+   * The receiver's URLs as a container reaching the host by `alias` must
+   * address them (HIVE-137), or `null` before the bind. What
+   * `writeContainerSession` computes for a project's alias, exposed so an
+   * agent's wake can build its own HTTP MCP descriptor from the same values.
+   */
+  containerOriginsFor(alias: string): ContainerOrigins | null;
+  /**
+   * The settings file a containerised agent's wake passes as `--settings`
+   * (HIVE-137): the shared set's `claude-agent.settings.json` — the one with
+   * `permissions.ask: ["*"]` — or the alias copy when the agent's `hostAlias`
+   * diverges from the global one, written on demand exactly as
+   * `writeContainerSession` does for a session. `null` before the bind.
+   */
+  agentContainerSettingsPathFor(config: AgentContainer): string | null;
+  /** The receiver's per-run grants registry (HIVE-137), or `null` before the bind. */
+  receiverGrants(): Receiver['grants'] | null;
+  /**
    * Write one session's resolved container set, for a `rewrite` project — or,
    * since HIVE-133's post-review fix, one shared alias set for an `exec-env`
    * project whose `hostAlias` diverges from the global one. The shared set at
@@ -266,6 +286,25 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
   let receiver: Receiver | null = null;
   let settingsPath: string | null = null;
   let agentSettingsPath: string | null = null;
+
+  /**
+   * The receiver's URLs as the *host* addresses them, gated on
+   * `sessionMetrics()` — matching `writeHookSettings` and
+   * `writeSharedContainerFiles`. Without the gate a user who turned session
+   * metrics off still got a status line baked into every container set: the
+   * dot never renders anything, but Claude Code drops its footer key hints for
+   * any *configured* status line, rendering or not. One place, because a
+   * `rewrite` set, an alias `exec-env` set and an agent's HTTP descriptor all
+   * build it identically (HIVE-133, HIVE-137).
+   */
+  const originsOf = (running: Receiver, url: string, origin: string): ContainerOrigins => ({
+    url,
+    origin,
+    ...(sessionMetrics() && running.metricsUrl !== null
+      ? { metricsUrl: running.metricsUrl }
+      : {}),
+    ...(running.readyUrl === null ? {} : { readyUrl: running.readyUrl }),
+  });
 
   return {
     settingsPathFor() {
@@ -487,6 +526,51 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       return running.doneUrl;
     },
 
+    containerOriginsFor(alias) {
+      const running = receiver;
+
+      if (running === null || running.url === null || running.origin === null) return null;
+
+      return containerOrigins(originsOf(running, running.url, running.origin), alias);
+    },
+
+    agentContainerSettingsPathFor(config) {
+      const running = receiver;
+
+      if (running === null || running.url === null || running.origin === null) return null;
+
+      const alias = config.hostAlias ?? hostAlias();
+
+      if (alias === hostAlias()) return join(userDataPath, CONTAINER_DIR, CONTAINER_AGENT_FILE);
+
+      /*
+        Written on demand and not awaited, exactly as `writeContainerSession`
+        does for a session whose alias diverges — but that one is awaited by
+        its caller, and this is a path lookup from a synchronous wake builder.
+        Safe to fire and forget because the set is secret-free (every
+        per-session value is a `${VAR}`), so a redundant write is harmless and
+        a first write racing the spawn loses nothing that the *next* wake will
+        not have. The realistic case is that the alias was written many wakes
+        ago.
+      */
+      void writeAliasContainerFiles(
+        userDataPath,
+        alias,
+        containerOrigins(originsOf(running, running.url, running.origin), alias),
+        { containerRoot: join(config.hiveDir, CONTAINER_ALIASES_SUBDIR, alias) },
+      ).catch((cause) => {
+        console.info(
+          `[hive] alias container set for ${alias} could not be written (${String(cause)})`,
+        );
+      });
+
+      return join(userDataPath, CONTAINER_ALIASES_DIR, alias, CONTAINER_AGENT_FILE);
+    },
+
+    receiverGrants() {
+      return receiver?.grants ?? null;
+    },
+
     containerOrigin(): string | null {
       /*
         Gated on the receiver alone, not on `settingsPath`: what this answers is
@@ -536,14 +620,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
         or not. Computed once here, ahead of the branch below, because both a
         `rewrite` set and an alias `exec-env` set build it identically.
       */
-      const origins = {
-        url: running.url,
-        origin: running.origin,
-        ...(sessionMetrics() && running.metricsUrl !== null
-          ? { metricsUrl: running.metricsUrl }
-          : {}),
-        ...(running.readyUrl === null ? {} : { readyUrl: running.readyUrl }),
-      };
+      const origins = originsOf(running, running.url, running.origin);
 
       if (config.freshness === 'rewrite') {
         return writeSessionContainerFiles(
