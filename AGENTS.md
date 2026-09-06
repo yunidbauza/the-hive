@@ -42,7 +42,7 @@ Zustand · Tailwind v4 · shadcn/ui · pnpm.
 | `pnpm test:e2e` | Playwright — both the web and electron projects |
 | `pnpm test:e2e:web` · `:electron` | Either half alone — browser specs (070), or the built app (085) |
 | `pnpm test:pty` | PTY conformance — real PTYs, Electron ABI, no UI (098) |
-| `pnpm test:hooks` · `:statusline` · `:skills` · `:done` · `:ready` · `:back` · `:title` · `:ledger` · `:mcp-http` · `:agent` · `:container` | Live conformance against a **real `claude`** — hooks (~3½ min), the status line, custom skills, `/done`, the boot-ready signal, the bare-`←` claim in the built app, that an unnamed session titles itself (~2½ min), the ledger MCP tools, the same tools served over `POST /mcp` with the container config's `${VAR}` shape, the headless agent runs — hooks, `--resume`, the two-wake ledger conversation, the permission fence, the scheduler's own clock, and two task runs live at once with distinct receipts (~3½ min, after a `desktop:build`) — and the container session profile and a containerised agent against a real Docker container: the mechanism half needs only `alpine:3`; the claude and agent halves need `HIVE_LIVE_CONTAINER_IMAGE` naming an image built from `tests/live/container/Dockerfile` plus a credential in env (~2 min) |
+| `pnpm test:hooks` · `:statusline` · `:skills` · `:done` · `:ready` · `:back` · `:nudge` · `:title` · `:ledger` · `:mcp-http` · `:agent` · `:container` | Live conformance against a **real `claude`** — hooks (~3½ min), the status line, custom skills, `/done`, the boot-ready signal, the bare-`←` claim in the built app, that a nudge is held while the visible input box holds a draft and lands once it is cleared (HIVE-135), that an unnamed session titles itself (~2½ min), the ledger MCP tools, the same tools served over `POST /mcp` with the container config's `${VAR}` shape, the headless agent runs — hooks, `--resume`, the two-wake ledger conversation, the permission fence, the scheduler's own clock, and two task runs live at once with distinct receipts (~3½ min, after a `desktop:build`) — and the container session profile and a containerised agent against a real Docker container: the mechanism half needs only `alpine:3`; the claude and agent halves need `HIVE_LIVE_CONTAINER_IMAGE` naming an image built from `tests/live/container/Dockerfile` plus a credential in env (~2 min) |
 | `pnpm verify:boundaries` | Proves every architecture fence still fires |
 
 **`pnpm lint` and `pnpm type-check` must both pass before any task is considered
@@ -193,6 +193,6 @@ slice back; boot data is last run's ended sessions. Tests: `tests/support/`.
   cwd, write/resize/kill routing, exit handling. What only a real process can
   show: terminal semantics — `pnpm test:pty` (098); what Claude Code's hooks
   actually send — `pnpm test:hooks`; what it actually **draws**, which no staged
-  buffer can prove — `pnpm test:back` (HIVE-79, `docs/terminal-architecture.md`).
+  buffer can prove — `pnpm test:back` (HIVE-79, `docs/terminal-architecture.md`) and `pnpm test:nudge` (HIVE-135).
 - Never add a coverage-ignore comment to pass the gate. An untestable branch is
   usually a design smell — fix the shape instead.

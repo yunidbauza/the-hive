@@ -17,6 +17,7 @@ export interface TerminalTransport {
   write(data: string): void;                 // keystrokes → backend
   onData(cb: TerminalDataHandler): () => void; // backend → terminal
   resize(cols: number, rows: number): void;
+  reportPrompt?(input: PromptInput): void;
 }
 ```
 
@@ -33,6 +34,14 @@ has no backpressure to apply.
 
 The alternative — a fourth method — was rejected. This is one optional argument
 to an existing callback, and every caller that ignores it still compiles.
+
+**`reportPrompt` is the second thing it gained** (HIVE-135), and it is a method
+because the fact it carries does not ride on a chunk: the surface learns what
+the input box holds from its own buffer, on reveal and after each parsed
+chunk, and pushes `empty` / `draft` / `unfocused` on change. Main uses it as a
+delivery precondition — see `docs/agents-and-ledger.md`. `StaticTransport`
+omits it and the surface checks before calling, so nothing in the browser
+target changes.
 
 `src/components/terminal/` is written against that and nothing else. It cannot
 import `features/`, `data/`, or `stores/` — the import zone in
@@ -405,3 +414,11 @@ per-shape fixtures in `tests/lib/terminal/keymap.test.ts`, and `pnpm test:back` 
 a desktop e2e that drives a real `claude` and asserts the overmind, not Claude's
 agent list, is what `←` reaches. Only the last one could have caught either
 assumption above.
+
+The same read has a second customer (HIVE-135). `isEmptyClaudePrompt` — the
+boolean half of `claimBareBack` — is what the visible surface evaluates to
+tell main whether a ledger nudge may be written into this session. `claim`
+becomes `empty`; `declined` and `foreign` both become `draft`, because the
+safe mistake is holding a nudge, never writing one into a half-typed message.
+The proof is `pnpm test:nudge`: a real `claude`, a draft, an ask addressed to
+the session, and the pty showing the nudge held until the draft is cleared.

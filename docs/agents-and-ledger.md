@@ -197,6 +197,18 @@ the whole of "never write mid-turn". And a turn that ended while a backgrounded
 shell is still running *does* derive `idle`, with `detail: 'script'`, so the
 status alone would say yes to a session that is still working.
 
+And **only into an empty input box** (HIVE-135). Idleness is about the agent;
+a user who typed half a sentence and stopped has an idle agent and a full
+box, and the trailing `\r` would submit their draft and the nudge as one
+prompt nobody wrote. Main cannot see the box — it holds raw pty bytes, not a
+rendered grid — so the visible terminal surface reports what it sees over
+`pty:prompt` (`empty`, `draft`, `unfocused`), derived from the same screen
+read as the bare-`←` claim, and `deliver` keeps one record: the focused
+session and its last report. A focused session delivers only on `empty`;
+every other session delivers on idleness as before; the transition to `empty`
+is the third flush trigger beside idle and ready. Refusing is free — a held
+nudge writes no receipt — and that is why the default is to refuse.
+
 And it **never loses a nudge**. Every line that lands is recorded as an `event`
 entry carrying `meta.delivered`, which turns "what does this session still owe a
 reading of" into a query against the log rather than a queue in memory. That
@@ -220,6 +232,16 @@ itself.
 An entry addressed to the overmind is an inbox card (HIVE-118), not a terminal
 line; one addressed to an agent is a wake (see below); a broadcast wakes nobody,
 because parties read those on their own schedule.
+
+**What `meta` carries, and who is told.** `meta` is free-form, and a key the
+app reads exists only if the tool schema names it — a model told to "include
+the context" writes it into the body where nothing can find it. Named today:
+`slack.permalink` (HIVE-123), `ttlMs` (an ask's own shorter expiry), and on an
+ask `intent` (HIVE-135): what the asker was about to do, written for a copy of
+itself with no memory of the turn. `AGENT_PREAMBLE` interpolates the same
+`ASK_INTENT_GUIDANCE` constant the schema uses, and a test holds them
+together. A headless agent re-reads its ask on wake; a terminal session gets
+the intent appended to the answer's nudge line, since one line is all it gets.
 
 ### Wakes
 
