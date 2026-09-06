@@ -38,6 +38,7 @@ interface Bridge {
   resize: ReturnType<typeof vi.fn>;
   kill: ReturnType<typeof vi.fn>;
   ack: ReturnType<typeof vi.fn>;
+  prompt: ReturnType<typeof vi.fn>;
   data: Set<DataCb>;
   exit: Set<ExitCb>;
   lost: Set<LostCb>;
@@ -57,6 +58,7 @@ function installBridge(): Bridge {
     resize: vi.fn(),
     kill: vi.fn(() => Promise.resolve()),
     ack: vi.fn(),
+    prompt: vi.fn(),
     data,
     exit,
     lost,
@@ -78,6 +80,7 @@ function installBridge(): Bridge {
       resize: stub.resize,
       kill: stub.kill,
       ack: stub.ack,
+      prompt: stub.prompt,
       onData: subscribe(data),
       onExit: subscribe(exit),
       onLost: subscribe(lost),
@@ -331,6 +334,14 @@ describe('PtyTransport — flow control', () => {
     }
 
     expect(reports.at(-1)).toBeUndefined();
+  });
+
+  it('reports what the input box holds, keyed by the entity (HIVE-135)', () => {
+    const transport = createPtyTransport('sess-a', 'proj-1');
+
+    transport.reportPrompt?.('draft');
+
+    expect(bridge.prompt).toHaveBeenCalledWith({ sessionId: 'sess-a', input: 'draft' });
   });
 });
 

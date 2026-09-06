@@ -514,6 +514,10 @@ function createTransport(
 
     resize: (cols, rows) => pty().resize({ sessionId: entityId, cols, rows }),
 
+    reportPrompt(input) {
+      pty().prompt({ sessionId: entityId, input });
+    },
+
     onData(cb) {
       const channel = channels.get(entityId) ?? openChannel(entityId);
 
