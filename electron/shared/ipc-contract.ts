@@ -469,6 +469,11 @@ export const CH = {
    * very backpressure it is measuring.
    */
   ptyAck: 'pty:ack',
+  /**
+   * The input-box report (HIVE-135). Renderer → main, `send`: like an ack it
+   * is a report, not a question, and it must never sit in the typing path.
+   */
+  ptyPrompt: 'pty:prompt',
   ptyData: 'pty:data', // main → renderer, stream
   ptyExit: 'pty:exit', // main → renderer
   /**
@@ -937,6 +942,24 @@ export interface AckRequest {
   seq: number;
 }
 
+/**
+ * What the renderer can see in a session's input box (HIVE-135).
+ *
+ * Sent by the one visible terminal surface, on change: `empty` when the
+ * screen read behind the bare-`←` claim says Claude's input holds nothing,
+ * `draft` when it holds something or cannot prove it holds nothing, and
+ * `unfocused` when the surface stops being the one on screen. Main uses it
+ * as a delivery precondition — a nudge is never written into a draft — so
+ * the conservative answer is `draft`, and a session that has never reported
+ * is simply not focused.
+ */
+export type PromptInput = 'empty' | 'draft' | 'unfocused';
+
+export interface PromptReport {
+  sessionId: string;
+  input: PromptInput;
+}
+
 export interface ExitEvent {
   sessionId: string;
   exitCode: number;
@@ -1328,6 +1351,8 @@ export interface HiveBridge {
     kill(sessionId: string): Promise<void>;
     /** Report progress so main can apply backpressure. See {@link AckRequest}. */
     ack(request: AckRequest): void;
+    /** What the visible surface sees in the input box. See {@link PromptReport}. */
+    prompt(report: PromptReport): void;
     /** Returns its own unsubscribe. Callers MUST invoke it on unmount. */
     onData(callback: (event: DataEvent) => void): () => void;
     onExit(callback: (event: ExitEvent) => void): () => void;

@@ -11,6 +11,7 @@ import {
   parseLedgerAnswerRequest,
   parseLedgerPostBody,
   parseLedgerReadQuery,
+  parsePromptReport,
   parseRemoveProjectRequest,
   parseRenameProjectRequest,
   parseReorderProjectsRequest,
@@ -380,6 +381,37 @@ describe('parseResizeRequest', () => {
     ).toThrow(/unexpected key/);
     expect(() => parseResizeRequest({ sessionId: [], cols: 80, rows: 24 })).toThrow(
       /expected a string/,
+    );
+  });
+});
+
+/**
+ * The renderer's report about a session's input box (HIVE-135). Three
+ * literals and nothing else: a report is what lets main write into a
+ * terminal, so an unknown word must not be read as permission.
+ */
+describe('parsePromptReport', () => {
+  it.each(['empty', 'draft', 'unfocused'] as const)('accepts %s', (input) => {
+    expect(parsePromptReport({ sessionId: 'sess-1', input })).toEqual({
+      sessionId: 'sess-1',
+      input,
+    });
+  });
+
+  it('rejects the whole matrix', () => {
+    expect(() => parsePromptReport(null)).toThrow(IpcValidationError);
+    expect(() => parsePromptReport({ sessionId: 'sess-1' })).toThrow(/missing key "input"/);
+    expect(() => parsePromptReport({ sessionId: 'sess-1', input: 'empty', seq: 1 })).toThrow(
+      /unexpected key/,
+    );
+    expect(() => parsePromptReport({ sessionId: [], input: 'empty' })).toThrow(
+      /expected a string/,
+    );
+    expect(() => parsePromptReport({ sessionId: 'sess-1', input: 'yes' })).toThrow(
+      IpcValidationError,
+    );
+    expect(() => parsePromptReport({ sessionId: 'sess-1', input: 1 })).toThrow(
+      IpcValidationError,
     );
   });
 });

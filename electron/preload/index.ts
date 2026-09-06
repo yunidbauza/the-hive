@@ -73,6 +73,7 @@ import {
   type NotificationDeliveryStatus,
   type NotificationDismissedEvent,
   type NotificationReadEvent,
+  type PromptReport,
   type ResizeRequest,
   type SessionLostEvent,
   type SessionNameReport,
@@ -266,6 +267,8 @@ const bridge: HiveBridge = {
     // `send`: an ack is a report, not a question. Awaiting one would put the
     // main process in the path of the backpressure it is measuring.
     ack: (request: AckRequest): void => ipcRenderer.send(CH.ptyAck, request),
+    // `send`, for the same reason as `ack`: a report, never a round trip.
+    prompt: (report: PromptReport): void => ipcRenderer.send(CH.ptyPrompt, report),
     onData: (callback: (event: DataEvent) => void) =>
       subscribe<DataEvent>(CH.ptyData, callback),
     onExit: (callback: (event: ExitEvent) => void) =>

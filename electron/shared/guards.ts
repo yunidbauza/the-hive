@@ -54,6 +54,7 @@ import type {
 import { MAX_FILE_BYTES } from './fs-contract';
 import type {
   AckRequest,
+  PromptReport,
   ResizeRequest,
   SpawnRequest,
   WriteRequest,
@@ -514,6 +515,25 @@ export function parseAckRequest(input: unknown): AckRequest {
   return {
     sessionId: assertId(raw.sessionId, 'ack.sessionId'),
     seq: assertSeq(raw.seq, 'ack.seq'),
+  };
+}
+
+const PROMPT_INPUTS: readonly string[] = ['empty', 'draft', 'unfocused'];
+
+/**
+ * The input-box report (HIVE-135). `input` is a closed set: this value is what
+ * lets main write into a terminal, so an unknown word is refused rather than
+ * read as either answer.
+ */
+export function parsePromptReport(input: unknown): PromptReport {
+  const raw = assertShape(input, ['sessionId', 'input'], 'prompt');
+  const state = raw.input;
+  if (typeof state !== 'string' || !PROMPT_INPUTS.includes(state)) {
+    return fail(`prompt.input: expected one of ${PROMPT_INPUTS.join(', ')}, got ${describe(state)}`);
+  }
+  return {
+    sessionId: assertId(raw.sessionId, 'prompt.sessionId'),
+    input: state as PromptReport['input'],
   };
 }
 
