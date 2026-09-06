@@ -268,6 +268,9 @@ const SPECIALIST = 'probe-specialist';
  */
 const FANOUT = 'probe-fanout';
 
+/** The agent that must remember, with no memory, why it asked (HIVE-135). */
+const INTENT = 'probe-intent';
+
 const AGENTS = [
   NAME,
   ASKER,
@@ -280,6 +283,7 @@ const AGENTS = [
   DISCOVERER,
   SPECIALIST,
   FANOUT,
+  INTENT,
 ];
 
 const AGENT_MD = `---
@@ -447,6 +451,51 @@ Read your ledger inbox, then do exactly one of these and end your turn:
   "probe asker finished".
 - Otherwise, call \`ledger_ask\` with \`to\` set to "overmind" and the body
   "which branch should the probe use?".
+
+Say nothing else.
+`;
+
+/**
+ * Two wakes, and the second one is a **fresh session**: the test drops the
+ * persisted `sessionUuid` before the answer lands, so the waker cannot
+ * `--resume`. The codeword is invented at run time on wake one and written
+ * only to `meta.intent` — never to the body, never to a file — so a `done`
+ * naming it on wake two can only have come from `ledger_read` of the agent's
+ * own ask. That is what "reconstructs its intent from the ask alone" means.
+ *
+ * The body deliberately does not say where the codeword is on wake two. The
+ * preamble does. Measured 2026-09-06 against claude 2.1.263: green on both
+ * the pre-HIVE-135 preamble (two runs) and the current one (one run) — the
+ * `ledger_ask` tool's own schema already tells the model to write and read
+ * back `meta.intent` (HIVE-135's Task 6), so this probe does not discriminate
+ * the preamble wording Task 7 added on top of it. A probe that is green
+ * either way is still a valid measurement; it just measures the schema, not
+ * the prose.
+ */
+const INTENT_MD = `---
+name: ${INTENT}
+description: Asks with an intent, is answered in a fresh session, and reports the codeword.
+icon: Ghost
+model: haiku
+wake:
+  on: [ledger]
+tools: [TodoWrite]
+limits:
+  turns: 8
+  rotate_after: 50
+---
+This is a conformance probe. Do not read files, search the disk, or run
+commands — there is nothing here to find.
+
+Read your ledger inbox, then do exactly one of these and end your turn:
+
+- If your inbox contains an **answer** to an ask of yours: carry out what you
+  set out to do when you asked.
+- Otherwise: invent a codeword of six lowercase letters. Call \`ledger_ask\`
+  with \`to\` set to "overmind", the body "which branch should the probe
+  use?", and \`meta.intent\` set to exactly:
+  "post ledger_done with the body: probe intent <codeword>" (with your
+  codeword in place of <codeword>). Do not write the codeword anywhere else.
 
 Say nothing else.
 `;
@@ -738,6 +787,7 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       [DISCOVERER, DISCOVERER_MD],
       [SPECIALIST, SPECIALIST_MD],
       [FANOUT, FANOUT_MD],
+      [INTENT, INTENT_MD],
     ] as const) {
       await mkdir(join(agentsRoot(), name), { recursive: true });
       await writeFile(join(agentsRoot(), name, 'AGENT.md'), body, 'utf8');
@@ -1360,6 +1410,51 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
     expect(closed.runs[1]?.outcome).not.toBe('failed');
     // The queue is empty: this wake was immediate, never queued.
     expect(closed.pendingWake ?? []).toEqual([]);
+  }, 300_000);
+
+  /**
+   * A fresh session reconstructs its intent from its own ask alone (HIVE-135).
+   *
+   * The assertion that matters is the second run's `done`: nothing here tells
+   * that run what it asked for, or where to find out. `sessionUuid` is
+   * dropped before the answer lands, so the second wake mints a fresh
+   * `--session-id` rather than `--resume`ing the first — the only route left
+   * to the codeword is `ledger_read` of the agent's own ask, whose
+   * `meta.intent` the preamble tells a woken agent to act on.
+   */
+  it('reconstructs its intent from its own ask when woken in a fresh session (HIVE-135)', async () => {
+    await wake('manual', INTENT);
+
+    const first = await persisted(INTENT);
+    expect(first.runs[0]?.outcome).toBe('asking');
+
+    const open = ledger.read({}).openAsks.filter((ask) => ask.from === INTENT);
+    expect(open).toHaveLength(1);
+    const askEntry = ledger.read({ thread: open[0]!.id }).entries.find((e) => e.kind === 'ask');
+    const intent = askEntry?.meta?.intent;
+    expect(typeof intent, JSON.stringify(askEntry?.meta)).toBe('string');
+    const codeword = /probe intent ([a-z]{6})/u.exec(intent as string)?.[1] ?? '';
+    expect(codeword).not.toBe('');
+    // The body never names it.
+    expect(askEntry?.body).not.toContain(codeword);
+
+    // Forget the conversation: the next wake cannot --resume.
+    agentState.patch(INTENT, { sessionUuid: undefined });
+
+    const before = spawns.length;
+    const second = settled(INTENT);
+    const answered = ledger.answer({ thread: open[0]!.id, body: 'main' }, OVERMIND);
+    expect(answered.ok).toBe(true);
+    expect(spawns).toHaveLength(before + 1);
+    expect(spawns[before]?.args ?? []).not.toContain('--resume');
+
+    await second;
+
+    const done = (await onDisk()).filter(
+      (entry) => entry['from'] === INTENT && entry['kind'] === 'done',
+    );
+    expect(done, JSON.stringify(done)).toHaveLength(1);
+    expect(String(done[0]?.['body'])).toContain(`probe intent ${codeword}`);
   }, 300_000);
 
   /**
