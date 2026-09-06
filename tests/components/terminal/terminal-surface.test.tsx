@@ -1595,6 +1595,20 @@ describe('TerminalSurface input-box report', () => {
     expect(transport.reportPrompt).toHaveBeenLastCalledWith('empty');
   });
 
+  it('reports unfocused once when hidden, not once per effect pass', () => {
+    const { transport } = fakeTransport();
+    const { rerender } = render(
+      <TerminalSurface transport={transport} palette={TERM} visible />,
+    );
+    stage([RULE, '❯ ', RULE], 1);
+    const report = transport.reportPrompt as ReturnType<typeof vi.fn>;
+    report.mockClear();
+
+    rerender(<TerminalSurface transport={transport} palette={TERM} visible={false} />);
+
+    expect(report.mock.calls).toEqual([['unfocused']]);
+  });
+
   it('reports unfocused on unmount', () => {
     const { transport } = fakeTransport();
     const { unmount } = render(

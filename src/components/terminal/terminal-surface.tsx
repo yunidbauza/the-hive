@@ -802,8 +802,10 @@ export function TerminalSurface({
     const { terminal } = instance;
 
     if (!visible) {
-      lastPromptRef.current = null;
-      transport.reportPrompt('unfocused');
+      if (lastPromptRef.current !== null) {
+        lastPromptRef.current = null;
+        transport.reportPrompt('unfocused');
+      }
       return;
     }
 
@@ -812,7 +814,11 @@ export function TerminalSurface({
     transport.reportPrompt(next);
 
     return () => {
-      // Unmount while visible: the surface is gone, so is the box.
+      // Fires on unmount, on a hide, and on a transport change — all three
+      // leave nothing behind to report to. The `!visible` branch above is
+      // what makes a surface that was hidden on mount report nothing: it
+      // never had a prompt in flight, so main never had a record of it to
+      // release.
       lastPromptRef.current = null;
       transport.reportPrompt?.('unfocused');
     };
