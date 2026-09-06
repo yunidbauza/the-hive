@@ -182,7 +182,11 @@ export const AGENT_STATUSES = [
 ] as const;
 export type AgentStatus = (typeof AGENT_STATUSES)[number];
 
-export type WakeOn = 'ledger' | 'slack.mention' | `slack.channel:${string}`;
+export type WakeOn =
+  | 'ledger'
+  | 'slack.mention'
+  | 'slack.app_mention'
+  | `slack.channel:${string}`;
 
 /**
  * The two wake events that are a fixed word, rather than a word plus a target.
@@ -200,7 +204,19 @@ export type WakeOn = 'ledger' | 'slack.mention' | `slack.channel:${string}`;
  * tools. A broadcast (no `to`) wakes nobody, because parties read those on
  * their own schedule.
  */
-export const WAKE_ON_EVENTS = ['ledger', 'slack.mention'] as const;
+/**
+ * `slack.app_mention` is the one genuinely new value (HIVE-124), and it is not
+ * a rename of `slack.mention`. They are opposites: `slack.mention` means
+ * *search my mentions on the wakes this agent already takes* and adds no wakes,
+ * because Slack has no event for a person's mentions. `slack.app_mention` is
+ * Slack's real event, fires for mentions of the **app**, and is a genuine push
+ * trigger requiring the Socket Mode bridge.
+ */
+export const WAKE_ON_EVENTS = [
+  'ledger',
+  'slack.mention',
+  'slack.app_mention',
+] as const;
 
 /** `slack.channel:#incorp-dev` — the prefix, and what may follow it. */
 export const WAKE_ON_CHANNEL_PREFIX = 'slack.channel:';

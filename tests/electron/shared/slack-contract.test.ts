@@ -2,9 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import {
   SLACK_CALLBACK_PORT,
+  SLACK_CHANNEL_KIND,
   SLACK_CLIENT_ID,
+  SLACK_COMMAND_KIND,
+  SLACK_EVENT_DEBOUNCE_MS,
+  SLACK_EVENT_MIN_GAP_MS,
   SLACK_MCP_URL,
+  SLACK_MENTION_KIND,
   SLACK_SERVER_KEY,
+  SLACK_TOKENS_FILE,
   SLACK_TOOL_GLOB,
   grantsSlackTools,
   slackOnlyMcpConfig,
@@ -62,5 +68,20 @@ describe('grantsSlackTools', () => {
     expect(grantsSlackTools(['Read', 'Grep'])).toBe(false);
     // A near miss must not count — this is what the pane's hint depends on.
     expect(grantsSlackTools(['mcp__hive__*'])).toBe(false);
+  });
+});
+
+describe('socket mode constants (HIVE-124)', () => {
+  it('names the three queue kinds apart', () => {
+    const kinds = [SLACK_CHANNEL_KIND, SLACK_MENTION_KIND, SLACK_COMMAND_KIND];
+    expect(new Set(kinds).size).toBe(3);
+  });
+
+  it('floors event wakes above the debounce, so a burst never outruns the gap', () => {
+    expect(SLACK_EVENT_DEBOUNCE_MS).toBeLessThan(SLACK_EVENT_MIN_GAP_MS);
+  });
+
+  it('keeps the tokens file out of any directory the renderer names', () => {
+    expect(SLACK_TOKENS_FILE).toBe('slack-tokens.bin');
   });
 });

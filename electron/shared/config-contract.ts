@@ -502,6 +502,39 @@ export const JIRA_KEYS: readonly (keyof JiraConfig)[] = [
 ];
 
 /**
+ * Real-time Slack events (HIVE-124).
+ *
+ * The switch and the allow-list live here; the two tokens live in
+ * `slack-tokens.bin` under `userData`. Exactly the split `jira` uses, and for
+ * the same reason: a secret and a preference have different homes.
+ */
+export interface SlackConfig {
+  /** Off by default. Nothing connects and no token is required while it is. */
+  socketMode: boolean;
+  /**
+   * Slack user ids allowed to command an agent with `@hive`.
+   *
+   * **Defaults to empty, deliberately.** Nothing in this app can honestly
+   * discover the user's own Slack id: `auth.test` with the bot token returns
+   * the *bot's* identity, and the human's id is known only to the MCP server
+   * the agents talk to. Guessing it would repeat the paraphrase mistake
+   * HIVE-123 corrected. Empty means nobody can command, and the pane says so.
+   */
+  commanders: string[];
+}
+
+/** Off, and nobody allowed to command. See {@link SlackConfig.commanders}. */
+export const DEFAULT_SLACK: SlackConfig = {
+  socketMode: false,
+  commanders: [],
+};
+
+export const SLACK_KEYS: readonly (keyof SlackConfig)[] = [
+  'socketMode',
+  'commanders',
+];
+
+/**
  * How a containerised session addresses this machine (HIVE-131).
  *
  * A container cannot reach `127.0.0.1` — inside one that is the container's own
@@ -767,6 +800,14 @@ export interface ConfigSnapshot {
    * on one branch.
    */
   receiver: ReceiverConfig;
+  /**
+   * Real-time Slack events, always fully resolved (HIVE-124).
+   *
+   * Defaulted here for the reason `jira` and `receiver` are: main reads it on
+   * every socket decision, and a consumer that had to remember to apply
+   * defaults is one that will eventually forget on one branch.
+   */
+  slack: SlackConfig;
   /**
    * Whether sessions authenticate on the Claude.ai plan (HIVE-79).
    *
@@ -1236,6 +1277,7 @@ export function emptySnapshot(
     notifications: { ...DEFAULT_NOTIFICATIONS },
     jira: { ...DEFAULT_JIRA },
     receiver: { ...DEFAULT_RECEIVER },
+    slack: { ...DEFAULT_SLACK },
     errors: [],
   };
 }

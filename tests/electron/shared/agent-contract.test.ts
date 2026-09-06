@@ -317,3 +317,17 @@ describe('container fields (HIVE-137)', () => {
     expect(isContainerCommand(value)).toBe(ok);
   });
 });
+
+describe('slack.app_mention (HIVE-124)', () => {
+  it('is a wake event, so a definition may subscribe to it', () => {
+    expect(isWakeOn('slack.app_mention')).toBe(true);
+    expect(WAKE_ON_EVENTS).toContain('slack.app_mention');
+  });
+
+  it('leaves the shipped values alone', () => {
+    expect(isWakeOn('ledger')).toBe(true);
+    expect(isWakeOn('slack.mention')).toBe(true);
+    expect(isWakeOn('slack.channel:#eng-code-review')).toBe(true);
+    expect(isWakeOn('slack.app_mentions')).toBe(false);
+  });
+});

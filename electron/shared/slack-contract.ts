@@ -107,3 +107,92 @@ export type SlackStatus =
  */
 export const grantsSlackTools = (tools: readonly string[]): boolean =>
   tools.some((tool) => tool.startsWith(SLACK_TOOL_PREFIX));
+
+/* ---------------------------------------------------------------- HIVE-124 */
+
+/**
+ * The trigger name a Socket Mode wake reports (HIVE-124).
+ *
+ * Ranked between `manual` and `ledger` in `scheduler.ts`'s `triggerFor`: a
+ * person pressing Run still wins, and `ledger` would name a route the entry
+ * never took — there is no log line for `ledger_read` to find.
+ */
+export const SLACK_TRIGGER = 'slack';
+
+/** A message in a channel an agent named with `slack.channel:#x`. */
+export const SLACK_CHANNEL_KIND = 'slack.channel';
+/** An `@hive` mention with no agent name in it — a wake, not an instruction. */
+export const SLACK_MENTION_KIND = 'slack.app_mention';
+/** An `@hive <agent> <task>` from an allow-listed author — a task run. */
+export const SLACK_COMMAND_KIND = 'slack.command';
+
+/** A burst inside this window becomes one wake. */
+export const SLACK_EVENT_DEBOUNCE_MS = 3_000;
+
+/**
+ * The floor between two event wakes of the same agent.
+ *
+ * Push replaces a 5-minute tick, so without this a chatty channel spends a
+ * day's model budget before lunch. Bounds the worst case at 1440 runs a day;
+ * the agent's own `limits` remain the real backstop. A `@hive` command bypasses
+ * it — see `bridge.ts`.
+ */
+export const SLACK_EVENT_MIN_GAP_MS = 60_000;
+
+/** How much of a Slack message reaches the wake prompt. */
+export const SLACK_EVENT_TEXT_MAX = 300;
+
+/**
+ * How many `(channel, ts)` keys the dedupe cache holds.
+ *
+ * An `app_mention` also arrives as a `message` in the same channel, and one
+ * Slack message must never produce two wakes.
+ */
+export const SLACK_EVENT_DEDUPE_MAX = 500;
+
+/** The encrypted file under `userData`, beside Jira's `jira-credential.bin`. */
+export const SLACK_TOKENS_FILE = 'slack-tokens.bin';
+
+/** One Slack message, as this app reads it. */
+export interface SlackEvent {
+  kind: typeof SLACK_CHANNEL_KIND | typeof SLACK_MENTION_KIND;
+  /** The channel **id**, e.g. `C0123ABCD`. Slack events never carry the name. */
+  channel: string;
+  ts: string;
+  /** The parent thread, or `ts` itself for a top-level message. */
+  threadTs: string;
+  user: string;
+  text: string;
+}
+
+/** What the pane is told about the socket. Never carries a token. */
+export type SlackSocketStatus =
+  | { kind: 'off' }
+  | { kind: 'connecting' }
+  | {
+      kind: 'connected';
+      workspace: string | null;
+      bot: string | null;
+      /**
+       * Channel names from `wake.on` that resolved to no Slack channel id.
+       *
+       * Carried on the status push rather than fetched by a verb of its own:
+       * the pane has to report an unresolved name in its Wakes-on summary
+       * ("never dropped in silence"), the resolution happens in the main
+       * process, and this is the message the pane already receives.
+       */
+      unresolved: string[];
+    }
+  | { kind: 'failed'; message: string };
+
+/** Presence, never values. This is what crosses IPC. */
+export interface SlackTokensState {
+  hasAppToken: boolean;
+  hasBotToken: boolean;
+  encryptionAvailable: boolean;
+}
+
+/** What `Test` answers with. */
+export type SlackSocketTestResult =
+  | { kind: 'ok'; workspace: string; bot: string }
+  | { kind: 'error'; message: string };
