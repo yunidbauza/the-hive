@@ -3247,9 +3247,9 @@ export function registerIpcHandlers(): void {
    * session forever, since nothing would ever report it empty.
    */
   on(CH.ptyPrompt, (event, payload) => {
+    watchReporter(event.sender);
     const report = parsePromptReport(payload);
     deliver.onPrompt(report.sessionId, report.input);
-    watchReporter(event.sender);
   });
 }
 

@@ -318,16 +318,26 @@ describe('createDeliver', () => {
     });
 
     it('does not flush on an empty report that is not a transition', () => {
+      /*
+        After a nudge is submitted the renderer's next screen read says
+        `empty` again, and main's idle answer can lag the busy-state hook.
+        A repeat report must not flush the backlog behind the turn the last
+        nudge started. Staged so the session *is* idle when the repeat
+        arrives: with the transition guard removed this writes twice.
+      */
       deliver.onPrompt('sess-a', 'empty');
-      ask('sess-a');
+      ask('sess-a', 'first');
       expect(write).toHaveBeenCalledTimes(1);
 
-      // A second nudge is queued behind the turn the first one started.
       idle.delete('sess-a');
       ask('sess-a', 'second');
+      idle.add('sess-a');
       deliver.onPrompt('sess-a', 'empty');
 
       expect(write).toHaveBeenCalledTimes(1);
+      // The second is not lost: the next idle transition takes it.
+      deliver.onIdle('sess-a');
+      expect(write).toHaveBeenCalledTimes(2);
     });
 
     it('clears the record when the renderer goes away', () => {
