@@ -176,9 +176,35 @@ silent.
 
 The ledger records; it does not tell anyone. `electron/main/ledger/deliver.ts`
 is the first rule on top of it (HIVE-113): an `ask` or an `answer` addressed to
-a **live session** is written into that session's terminal as one line, through
+a **live session** is announced in that session's terminal as one line, through
 the same `sessions.write` primitive `send` uses. The trailing `\r` submits it,
 which is the intent — the nudge becomes a turn the agent takes.
+
+**The line is a marker, not the entry** (HIVE-138). `ledgerMarker` in
+`electron/shared/ledger-contract.ts` names one entry and nothing else: `📒 a12`
+for an ask, by its ref, the handle the woken session answers with; `📒 <id>`
+for an answer, which has no ref. The entry itself reaches the model as
+hook-carried context. The marker is a prompt, so it arrives at the hook
+receiver on `UserPromptSubmit` like every prompt does; the receiver recognises
+it (`parseLedgerMarker`), resolves it among the entries addressed to that
+session, and answers `200` with `hookSpecificOutput.additionalContext` carrying
+what `electron/main/ledger/context.ts` renders: that the line was the app's
+doing and not the user's words, who posted, the ref, the body verbatim, every
+meta key as one JSON line, the asker's own `intent` on an answer, and what is
+owed back. Claude Code puts that text in the model's context beside the prompt
+(HIVE-136 measured it; `hook-contract.ts` records the matrix). A marker that
+resolves to nothing, or to an entry addressed elsewhere, or to a kind no nudge
+carries, is answered `204` like any other prompt. A marker prompt also takes no
+ticket intent and no session name, and does not spend the first-prompt mark.
+
+Two things follow. No party-authored byte reaches a pty from delivery any more:
+the truncation to one line and the control-character stripping that used to
+be `deliver.ts`'s security boundary went with the body, which now travels as
+JSON the model reads. And the hook `timeout` in `electron/main/hooks/settings.ts`
+is 3 s with a new reason: the prompt waits behind the hook, and the reply now
+matters, so the number bounds what a stalled main process can add to a prompt
+rather than hiding a dead one (it cannot; a refused connection is drawn at
+once).
 
 Delivery is party-agnostic and stays that way, but since HIVE-126 the entries
 reaching it are **written by agents**, not by a human at the console. `ask` is
@@ -247,8 +273,8 @@ the context" writes it into the body where nothing can find it. Named today:
 ask `intent` (HIVE-135): what the asker was about to do, written for a copy of
 itself with no memory of the turn. `AGENT_PREAMBLE` interpolates the same
 `ASK_INTENT_GUIDANCE` constant the schema uses, and a test holds them
-together. A headless agent re-reads its ask on wake; a terminal session gets
-the intent appended to the answer's nudge line, since one line is all it gets.
+together. A headless agent re-reads its ask on wake; a terminal session reads
+the intent in the context the answer's marker carries, whole.
 
 ### Wakes
 
@@ -707,10 +733,11 @@ DOM-specific in it — see the note on that file below.
 
 The hook receiver (`electron/main/hooks/receiver.ts`) — the same loopback
 HTTP socket Claude Code's hooks and the status line already post to — adds two
-ledger paths:
+ledger paths, and the hook path itself carries one ledger answer:
 
 | Route | Purpose | Success | Refusals |
 | --- | --- | --- | --- |
+| `POST /hook` | Claude Code's hooks. A `UserPromptSubmit` whose prompt is exactly one ledger marker (HIVE-138) | `200 HookContextReply` for a marker resolved among the caller's own `ask`/`answer` entries · `204` for every other prompt and event | None to a live session: a bad token, a missing header, an unknown identity and a body that is not JSON are refused and answered `204`, logged once per status and identity, because a non-2xx from a hook is drawn on the user's screen · `500` on a thrown handler, accepted as the honest signal of a bug |
 | `POST /ledger` | Append an entry | `200 { id, ref? }` | `403` bad token, an `answer` from a non-party, or a `release` from a non-holder · `400` missing session header, unknown `kind`, unknown `thread`, or an `answer` whose thread is not an open ask · `404` unknown session or unknown party · `413` over `LEDGER_BODY_MAX` or the transport cap · `500` the write itself failed |
 | `POST /ledger/read` | Read a filtered snapshot | `200 LedgerSnapshot` | `403` bad token · `400` missing session header or malformed query · `404` unknown session · `413` over the transport cap |
 

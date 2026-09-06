@@ -16,6 +16,11 @@ import { launchHive, startSession } from './fixtures/hive-app';
  * typed `let me check the` and stopped has an idle agent and a full box. The
  * `\r` then submits draft and nudge together as one prompt nobody wrote.
  *
+ * Since HIVE-138 the line is a marker, `📒 <ref>`, and the body never touches
+ * the pty; the entry reaches the model as hook context instead
+ * (`tests/live/marker-context-conformance.test.ts` proves that half). So this
+ * spec watches for the marker, and holds that the body is nowhere on screen.
+ *
  * Nothing short of a real `claude` behind a real pty in the real app can show
  * whether that merge actually happens — Claude's own input handling could in
  * principle absorb it — so this spec is both the reproduction and the
@@ -32,6 +37,9 @@ import { launchHive, startSession } from './fixtures/hive-app';
  * ```
  * ❯ let me check the📒 overmind asks (a1): NUDGE-HELD-1788677780559 — reply with ledger_answer a1
  * ```
+ *
+ * (That was the pre-HIVE-138 line; today the same failure would read
+ * `let me check the📒 a1`.)
  *
  * ## Why it is opt-in
  *
@@ -150,13 +158,14 @@ async function tail(page: Page, lines = 24): Promise<string> {
   return plain.split('\n').slice(-lines).join('\n');
 }
 
-/** The overmind asks the session, exactly as the console's verbs do. */
-async function ask(page: Page, body: string): Promise<void> {
+/** The overmind asks the session, exactly as the console's verbs do. Yields the ref. */
+async function ask(page: Page, body: string): Promise<string> {
   const result = await page.evaluate(
     ([to, text]) => window.hive!.ledger.post({ to: to!, kind: 'ask', body: text! }),
     [SESSION, body],
   );
   expect(result.ok, JSON.stringify(result)).toBe(true);
+  return result.ok ? (result.ref ?? result.id) : '';
 }
 
 test.skip(!enabled, 'set HIVE_LIVE_NUDGE_PROOF=1 — spawns a real claude');
@@ -190,7 +199,7 @@ test('a nudge is held while a draft is in the box, and lands once it is cleared'
     await settle(page);
 
     const held = `NUDGE-HELD-${Date.now()}`;
-    await ask(page, held);
+    const marker = `📒 ${await ask(page, held)}`;
 
     /**
      * The reproduction, and the first half of the fix. Before HIVE-135 the
@@ -198,7 +207,7 @@ test('a nudge is held while a draft is in the box, and lands once it is cleared'
      * and the `\r` submits both. After it, five quiet seconds show nothing.
      */
     await page.waitForTimeout(5_000);
-    expect(await output(page), `last of the session:\n${await tail(page)}`).not.toContain(held);
+    expect(await output(page), `last of the session:\n${await tail(page)}`).not.toContain(marker);
 
     // Clear the draft the way a user does. Backspace, not Ctrl+U: `\x15`'s
     // scope in Claude's editor is unverified and the kill ring is the user's.
@@ -214,9 +223,11 @@ test('a nudge is held while a draft is in the box, and lands once it is cleared'
      */
     await expect
       .poll(() => output(page), { timeout: 20_000, intervals: [500] })
-      .toContain(held);
+      .toContain(marker);
     // And it was submitted on its own line, not appended to the draft.
     expect(await output(page)).not.toContain(`${DRAFT}📒`);
+    // The body itself never reached the pty: it is the marker's context, not its text.
+    expect(await output(page)).not.toContain(held);
   } finally {
     await app.close();
   }

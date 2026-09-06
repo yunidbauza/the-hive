@@ -175,9 +175,17 @@ export type HookEvent = (typeof HOOK_EVENTS)[number];
  * it is no longer silent either: the refused connection is drawn on every
  * prompt, which is not what the `timeout` docblock in `settings.ts` promises.
  * A non-2xx status is shown the same way, never swallowed, so a receiver with
- * nothing to say must say 204 with nothing in it, not an error — which the
- * hook route's `reject()` paths do not yet honour. That, the timeout, and its
- * docblock are HIVE-138's.
+ * nothing to say must say 204 with nothing in it, not an error.
+ *
+ * What HIVE-138 made of it. The nudge is a marker ({@link ledgerMarker} in
+ * `ledger-contract.ts`), and the receiver answers that prompt with the entry
+ * whole as {@link HookContextReply}. The hook route answers 204 and logs
+ * where `reject()` computes a refusal, and where the body is not JSON; every
+ * other route keeps its 4xx, since curl and MCP read those and hooks do not.
+ * The one non-2xx left on the hook route is the dispatcher's 500 on a thrown
+ * handler, accepted: a handler that throws is a bug, and a line on screen is
+ * the honest signal. The timeout is 3 s, and its docblock in `settings.ts`
+ * carries the measurements above as its reason.
  */
 
 /**
