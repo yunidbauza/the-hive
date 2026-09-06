@@ -176,6 +176,70 @@ describe('hookSettings', () => {
  * creeping back: this file merges **above** the user's own scope, so a grant
  * written here is one they can neither find among their settings nor revoke.
  */
+/**
+ * The container transport (HIVE-137). Measured against Claude Code 2.1.263
+ * inside a container: an http hook to `host.docker.internal` is refused as a
+ * private address, so the container set's status hooks are `curl` commands
+ * — same headers, same payload, off stdin.
+ */
+describe('hookSettings — command transport (HIVE-137)', () => {
+  const URL = 'http://host.docker.internal:51234/hook';
+
+  const firstHandler = (
+    settings: ReturnType<typeof hookSettings>,
+    event: string,
+  ): { type: string; command?: string; url?: string; allowedEnvVars?: string[]; timeout?: number } =>
+    (settings.hooks[event] as { hooks: { type: string }[] }[])[0]!.hooks[0]!;
+
+  it('spells every event as a curl command carrying the URL, the headers and the payload', () => {
+    const settings = hookSettings(URL, undefined, undefined, 'command');
+
+    for (const event of HOOK_EVENTS) {
+      const handler = firstHandler(settings, event);
+      expect(handler.type).toBe('command');
+      expect(handler.url).toBeUndefined();
+      expect(handler.allowedEnvVars).toBeUndefined();
+      expect(handler.command).toContain(`-X POST ${URL}`);
+      expect(handler.command).toContain(`${HOOK_HEADER_SESSION}: $${HOOK_ENV_SESSION}`);
+      expect(handler.command).toContain(`${HOOK_HEADER_TOKEN}: $${HOOK_ENV_TOKEN}`);
+      expect(handler.command).toContain('--data-binary @-');
+      expect(handler.command).toContain("-H 'content-type: application/json'");
+      expect(handler.timeout).toBe(10);
+    }
+  });
+
+  it('bakes the identity in for rewrite, with no $VAR left', () => {
+    const handler = firstHandler(
+      hookSettings(URL, undefined, { session: 'sess-9', token: 'tok-9' }, 'command'),
+      'Stop',
+    );
+
+    expect(handler.command).toContain(`${HOOK_HEADER_SESSION}: sess-9`);
+    expect(handler.command).toContain(`${HOOK_HEADER_TOKEN}: tok-9`);
+    expect(handler.command).not.toContain('$HIVE_');
+  });
+
+  it('keeps the ready command as SessionStart\'s second handler', () => {
+    const settings = hookSettings(URL, 'http://host.docker.internal:51234/ready', undefined, 'command');
+    const entries = settings.hooks['SessionStart'] as { hooks: { type: string; command: string }[] }[];
+
+    expect(entries).toHaveLength(2);
+    expect(entries[1]!.hooks[0]!.command).toContain('/ready');
+  });
+
+  it('is what agentSettings emits too, fence intact', () => {
+    const settings = agentSettings(URL, undefined, undefined, 'command');
+
+    expect(firstHandler(settings, 'Stop').type).toBe('command');
+    expect(settings.permissions).toEqual({ ask: ['*'] });
+  });
+
+  it('defaults to http, so the host set is untouched', () => {
+    expect(firstHandler(hookSettings(URL), 'Stop').type).toBe('http');
+    expect(firstHandler(agentSettings(URL), 'Stop').type).toBe('http');
+  });
+});
+
 describe('the settings file grants no permissions', () => {
   it('writes no permissions block', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'hive-done-'));

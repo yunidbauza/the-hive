@@ -9,6 +9,7 @@ import {
   HOOK_HEADER_SESSION,
   HOOK_HEADER_TOKEN,
   readyCommand,
+  statusCommand,
 } from '@shared/hook-contract';
 import { METRICS_REFRESH_SECONDS } from '@shared/metrics-contract';
 
@@ -196,36 +197,51 @@ const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)
  * what makes a host session's file and an `exec-env` container's file the same
  * code path differing by their URL alone.
  */
+/**
+ * How a status hook reaches the receiver.
+ *
+ * `http` on the host. `command` for a set that runs inside a container
+ * (HIVE-137), where the binary refuses an http hook to `host.docker.internal`
+ * — see {@link statusCommand} for the measurement.
+ */
+export type HookTransport = 'http' | 'command';
+
 export function hookSettings(
   url: string,
   readyUrl?: string,
   identity?: HookIdentity,
+  transport: HookTransport = 'http',
 ): HookSettings {
-  const handler = {
-    type: 'http',
-    url,
-    headers: {
-      [HOOK_HEADER_SESSION]: identity?.session ?? `$${HOOK_ENV_SESSION}`,
-      [HOOK_HEADER_TOKEN]: identity?.token ?? `$${HOOK_ENV_TOKEN}`,
-    },
-    /*
-      Only when there is something left to interpolate. With the values already
-      baked, naming them here would claim an interpolation that never happens.
-    */
-    ...(identity === undefined
-      ? { allowedEnvVars: [HOOK_ENV_SESSION, HOOK_ENV_TOKEN] }
-      : {}),
-    /**
-     * Short, and shorter than the hook system's default.
-     *
-     * This handler's answer never changes what the session does — the receiver
-     * replies 204 and the agent carries on regardless — so a slow or dead
-     * endpoint must not be something the user waits behind. Ten seconds is
-     * generous for a loopback POST and brief enough to be invisible if the app
-     * has quit while a session is still running.
-     */
-    timeout: 10,
-  };
+  /**
+   * Short, and shorter than the hook system's default.
+   *
+   * This handler's answer never changes what the session does — the receiver
+   * replies 204 and the agent carries on regardless — so a slow or dead
+   * endpoint must not be something the user waits behind. Ten seconds is
+   * generous for a loopback POST and brief enough to be invisible if the app
+   * has quit while a session is still running.
+   */
+  const timeout = 10;
+  const handler =
+    transport === 'command'
+      ? { type: 'command', command: statusCommand(url, identity), timeout }
+      : {
+          type: 'http',
+          url,
+          headers: {
+            [HOOK_HEADER_SESSION]: identity?.session ?? `$${HOOK_ENV_SESSION}`,
+            [HOOK_HEADER_TOKEN]: identity?.token ?? `$${HOOK_ENV_TOKEN}`,
+          },
+          /*
+            Only when there is something left to interpolate. With the values
+            already baked, naming them here would claim an interpolation that
+            never happens.
+          */
+          ...(identity === undefined
+            ? { allowedEnvVars: [HOOK_ENV_SESSION, HOOK_ENV_TOKEN] }
+            : {}),
+          timeout,
+        };
 
   /**
    * `SessionStart` carries a second handler, and it is a `command` (HIVE-101).
@@ -304,9 +320,10 @@ export function agentSettings(
   url: string,
   readyUrl?: string,
   identity?: HookIdentity,
+  transport: HookTransport = 'http',
 ): HookSettings & { permissions: { ask: string[] } } {
   return {
-    ...hookSettings(url, readyUrl, identity),
+    ...hookSettings(url, readyUrl, identity, transport),
     /*
       Measured against claude 2.1.251: `permissions.ask` is the only thing that
       makes a permission check fire under `-p`, and `*` is valid there (it is

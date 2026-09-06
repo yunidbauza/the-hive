@@ -490,6 +490,41 @@ export const READY_PATH = '/ready';
  * be loud because the session will otherwise never close. Here it should be
  * silent, because the overlay lifts on a timeout regardless.
  */
+/**
+ * A status hook as a `command`, for a set that runs **inside a container**
+ * (HIVE-137).
+ *
+ * Because the http one is refused there. Measured against Claude Code 2.1.263
+ * from inside a Docker Desktop container, in the run log of a `-p` turn:
+ *
+ * ```
+ * SessionEnd hook [http://host.docker.internal:62903/hook] failed:
+ *   HTTP hook blocked: host.docker.internal resolves to 192.168.65.254
+ *   (private/link-local address). Loopback (127.0.0.1, ::1) is allowed for local dev.
+ * ```
+ *
+ * The binary resolves an http hook's host and refuses every private or
+ * link-local address that is not loopback (`ERR_HTTP_HOOK_BLOCKED_ADDRESS`),
+ * with no environment or settings escape hatch a search of the binary could
+ * find. `host.docker.internal` is by definition such an address, so an http
+ * status hook from a container never arrives — silently, because a hook
+ * failure is not a turn failure. MCP over HTTP is unaffected, and so is a
+ * `command` hook: `curl` is not the binary's HTTP client. So the container
+ * set spells its status hooks this way, the host set keeps http, and the
+ * payload the receiver reads is the same JSON either way — a command hook
+ * gets it on stdin, and `--data-binary @-` forwards it whole.
+ *
+ * Silent for the reasons {@link readyCommand} is: a hook's output is Claude's
+ * to interpret, and a receiver that has gone away is not the agent's problem.
+ * `-m 10` matches the http handler's timeout.
+ */
+export const statusCommand = (url: string, identity?: HookIdentity): string =>
+  `curl -s -m 10 -o /dev/null -X POST ${url}` +
+  ` -H 'content-type: application/json'` +
+  ` -H "${HOOK_HEADER_SESSION}: ${identity?.session ?? `$${HOOK_ENV_SESSION}`}"` +
+  ` -H "${HOOK_HEADER_TOKEN}: ${identity?.token ?? `$${HOOK_ENV_TOKEN}`}"` +
+  ` --data-binary @- 2>/dev/null || true`;
+
 export const readyCommand = (url: string, identity?: HookIdentity): string =>
   `curl -s -m 3 -o /dev/null -X POST ${url}` +
   ` -H "${HOOK_HEADER_SESSION}: ${identity?.session ?? `$${HOOK_ENV_SESSION}`}"` +
