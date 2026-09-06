@@ -480,3 +480,46 @@ test('seeds a new agent with an icon the registry can draw', async ({}, testInfo
     await app.close();
   }
 });
+
+test('switches an agent into a container and writes the block to disk (HIVE-137)', async ({}, testInfo) => {
+  /**
+   * The switch driven for real: on writes `container.runtime`, the fields
+   * appear, three of them are filled, and what reaches `~/.hive/agents` is a
+   * block main's own parser accepted. Then off again, and the block is gone
+   * — parent line included, which a jsdom test cannot distinguish from a
+   * file the reader merely tolerates.
+   */
+  const { app, page, configPath } = await launchWithConfig((name) =>
+    testInfo.outputPath(name),
+  );
+
+  try {
+    await openAgents(page);
+    await page.getByRole('button', { name: '+ New agent' }).click();
+    await page.getByRole('tab', { name: 'Source' }).click();
+    await fillAgentSource(page, DEFINITION);
+    await page.getByRole('tab', { name: 'Form' }).click();
+
+    const toggle = page.getByRole('switch', { name: /runs in a container/i });
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+
+    await page.getByRole('textbox', { name: 'container' }).fill('devbox');
+    await page.getByRole('textbox', { name: 'workspace' }).fill('/work');
+    await page.getByRole('textbox', { name: 'hive dir' }).fill('/hive');
+    await page.getByRole('button', { name: 'Save' }).click();
+
+    const file = join(dirname(configPath), 'agents', 'slack-watcher', 'AGENT.md');
+    await expect.poll(() => (existsSync(file) ? readFileSync(file, 'utf8') : '')).toContain(
+      'container:\n  runtime: docker\n  name: devbox\n  workspace: /work\n  hive_dir: /hive',
+    );
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await page.getByRole('button', { name: 'Save' }).click();
+    await expect.poll(() => readFileSync(file, 'utf8')).not.toContain('container');
+  } finally {
+    await app.close();
+  }
+});
