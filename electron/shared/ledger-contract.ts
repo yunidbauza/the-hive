@@ -147,6 +147,44 @@ export const LEDGER_MEMORY_CAP = 500;
 /** Refs are this prefix plus a decimal counter: `a1`, `a2`, … */
 export const LEDGER_REF_PREFIX = 'a';
 
+/**
+ * The line a nudge writes into a session's pty (HIVE-138).
+ *
+ * A marker names one entry and carries nothing else. The entry itself reaches
+ * the model as hook-carried context when the receiver sees this prompt on
+ * `UserPromptSubmit` (`electron/main/hooks/receiver.ts`), untruncated, every
+ * meta key intact, and labelled as context rather than passing as the user's
+ * own words.
+ *
+ * An ask is named by its `ref`: that is the handle the woken session answers
+ * with, so the one thing on the pty is the one thing a person would type.
+ * Anything else is named by its `id`. An answer has no ref, and a thread can
+ * carry more than one entry, so the ask's ref would not say which one to carry.
+ */
+export const LEDGER_MARKER_PREFIX = '📒 ';
+
+/** What a marker may name: a ref or a canonical id, nothing a shell would read. */
+const MARKER_TOKEN = /^[A-Za-z0-9-]+$/u;
+
+export function ledgerMarker(entry: Pick<LedgerEntry, 'id' | 'kind' | 'ref'>): string {
+  const token = entry.kind === 'ask' ? (entry.ref ?? entry.id) : entry.id;
+  return `${LEDGER_MARKER_PREFIX}${token}`;
+}
+
+/**
+ * The ref or id a prompt names, when the prompt is exactly one marker.
+ *
+ * Strict on purpose. A prompt that merely starts with the prefix is the user
+ * quoting a marker, and the receiver must answer it as it answers any other
+ * prompt: with nothing.
+ */
+export function parseLedgerMarker(prompt: string): string | undefined {
+  const text = prompt.trim();
+  if (!text.startsWith(LEDGER_MARKER_PREFIX)) return undefined;
+  const token = text.slice(LEDGER_MARKER_PREFIX.length);
+  return MARKER_TOKEN.test(token) ? token : undefined;
+}
+
 /** Receiver routes. Both POST — see `receiver.ts`. */
 export const LEDGER_POST_PATH = '/ledger';
 export const LEDGER_READ_PATH = '/ledger/read';

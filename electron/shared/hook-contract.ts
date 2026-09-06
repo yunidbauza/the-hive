@@ -181,6 +181,22 @@ export type HookEvent = (typeof HOOK_EVENTS)[number];
  */
 
 /**
+ * What the receiver answers when a `UserPromptSubmit` prompt is a ledger
+ * marker (HIVE-138): the shape Claude Code reads from a hook's body, measured
+ * above. Typed once so the receiver and the tests that read it cannot drift.
+ */
+export interface HookContextReply {
+  hookSpecificOutput: {
+    hookEventName: 'UserPromptSubmit';
+    additionalContext: string;
+  };
+}
+
+export const hookContextReply = (additionalContext: string): HookContextReply => ({
+  hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext },
+});
+
+/**
  * The `SessionEnd` reason that means "the conversation ended, the process did
  * not". The only one this app acts on.
  */
