@@ -41,7 +41,9 @@ const emitAppEvent = (event: string): void => {
 vi.mock('electron', () => ({
   app: {
     getVersion: () => '0.0.0',
-    getPath: () => '/tmp/hive-test',
+    // Per-spec, never shared: these specs really write a container set here,
+    // and vitest runs spec files in parallel worker processes (HIVE-139).
+    getPath: () => '/tmp/hive-test-foreground',
     on: (event: string, listener: () => void) => {
       const existing = appListeners.get(event) ?? new Set<() => void>();
       existing.add(listener);

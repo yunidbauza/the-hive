@@ -38,7 +38,9 @@ vi.mock('electron', () => ({
     getVersion: () => '0.0.0',
     on: vi.fn(),
     removeListener: vi.fn(),
-    getPath: () => '/tmp/hive-test',
+    // Per-spec, never shared: these specs really write a container set here,
+    // and vitest runs spec files in parallel worker processes (HIVE-139).
+    getPath: () => '/tmp/hive-test-agent-channels',
   },
   BrowserWindow: { fromWebContents: () => null, getAllWindows: () => windows },
   dialog: { showOpenDialog: vi.fn() },
@@ -99,8 +101,17 @@ vi.mock('../../../../electron/main/shutdown', () => ({
  * line, once per test. Fifty-nine of those forwards raced the worker's
  * teardown and failed the *run* with no failing test (HIVE-139).
  *
- * `emptySnapshot` is exported for exactly this reason: it is typed, so a field
- * added to `ConfigSnapshot` later cannot silently go missing here again.
+ * `emptySnapshot` is what the real config module answers with, and it is
+ * *typed*, which is the durable half: a field added to `ConfigSnapshot` later
+ * cannot silently go missing here again — which is exactly how `receiver` went
+ * missing when HIVE-132 added it.
+ *
+ * What this fixes is the console forwarding, which is what the rpc teardown
+ * error named. It does not make `hooks.start()` awaited — it is still
+ * fire-and-forget from `createSessions`, still binds a real receiver and still
+ * writes real files that can settle after the last test. Those do not travel
+ * over vitest's rpc, so they cannot reproduce *this* error, but a future
+ * unawaited console line here would.
  */
 const snapshot = emptySnapshot('/tmp/config.json', '/bin/zsh');
 

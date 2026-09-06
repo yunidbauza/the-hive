@@ -36,7 +36,9 @@ vi.mock('electron', () => ({
     getVersion: () => '0.0.0',
     on: vi.fn(),
     removeListener: vi.fn(),
-    getPath: () => '/tmp/hive-test',
+    // Per-spec, never shared: these specs really write a container set here,
+    // and vitest runs spec files in parallel worker processes (HIVE-139).
+    getPath: () => '/tmp/hive-test-slack-channels',
   },
   BrowserWindow: { fromWebContents: () => null, getAllWindows: () => [] },
   dialog: { showOpenDialog: vi.fn() },
