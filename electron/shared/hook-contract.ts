@@ -146,14 +146,15 @@ export type HookEvent = (typeof HOOK_EVENTS)[number];
  * An http response is honoured exactly as a command's stdout. The transcript
  * records it as a `hook_success` attachment with the HTTP status as `exitCode`
  * and the body as `stdout`, then a `hook_additional_context` attachment
- * carrying the text, which the model reads and acts on. So the receiver can
- * carry a ledger entry whole, labelled as context rather than passing as the
- * user's own words, on any event it already answers — `SessionStart` excepted,
- * which keeps the finding above.
+ * carrying the text, which the model reads and acts on. So on those three
+ * events the receiver can carry a ledger entry whole, labelled as context
+ * rather than passing as the user's own words. The other subscribed events
+ * were not measured and are not assumed; `SessionStart` keeps the finding
+ * above.
  *
- * What that costs was measured in the same runs, and it is why the ten-second
- * `timeout` in `electron/main/hooks/settings.ts` loses its rationale the moment
- * a response carries context:
+ * What that costs was measured in the same runs, one session each, and it is
+ * why the ten-second `timeout` in `electron/main/hooks/settings.ts` loses its
+ * rationale the moment a response carries context:
  *
  * ```
  * response at once              -> turn ends +7.5s after the prompt
@@ -162,15 +163,21 @@ export type HookEvent = (typeof HOOK_EVENTS)[number];
  *                                  output discarded", on screen; turn ends +12.3s
  * HTTP 500, same body           -> "UserPromptSubmit hook error · HTTP 500 from
  *                                  <url>", on screen; body discarded; turn runs
+ * nothing listening on the port -> "UserPromptSubmit hook error · connect
+ *                                  ECONNREFUSED 127.0.0.1:<port>", on screen at
+ *                                  once, not after the timeout; turn runs
  * 204, empty                    -> nothing drawn, as today
  * ```
  *
  * **The prompt waits behind the hook.** A slow receiver adds its whole latency
  * to every prompt round trip, and the timeout is what bounds it, at the price
- * of a line the user sees. A receiver that has gone away is therefore no longer
- * invisible: every prompt would draw the timeout line until the settings file
- * is gone. A non-2xx status is shown the same way, never swallowed, so a
- * receiver with nothing to say must say 204 with nothing in it, not an error.
+ * of a line the user sees. A receiver that has gone away costs no wait, but
+ * it is no longer silent either: the refused connection is drawn on every
+ * prompt, which is not what the `timeout` docblock in `settings.ts` promises.
+ * A non-2xx status is shown the same way, never swallowed, so a receiver with
+ * nothing to say must say 204 with nothing in it, not an error — which the
+ * hook route's `reject()` paths do not yet honour. That, the timeout, and its
+ * docblock are HIVE-138's.
  */
 
 /**
