@@ -2841,4 +2841,66 @@ describe('the MCP route', () => {
       expect(response.status).toBe(400);
     },
   );
+
+  /**
+   * The channel the doc comment on `handlersFor` said was missing (HIVE-137).
+   *
+   * The stdio host reads `HIVE_GRANTS` from its own environment; there is no
+   * environment on this side of an HTTP call, so a run's grants are registered
+   * here under the run id every request already carries in `x-hive-run`. The
+   * only observable is `approve`'s decision, so that is what these read.
+   */
+  describe('run grants (HIVE-137)', () => {
+    const approve = (run?: string) =>
+      rpc(
+        {
+          jsonrpc: '2.0',
+          id: 9,
+          method: 'tools/call',
+          params: { name: 'approve', arguments: { tool_name: 'Read', input: {} } },
+        },
+        {
+          [HOOK_HEADER_SESSION]: CALLER,
+          ...(run === undefined ? {} : { [HOOK_HEADER_RUN]: run }),
+        },
+      );
+
+    const behaviour = async (response: Response): Promise<string> => {
+      const body = (await response.json()) as { result: { content: { text: string }[] } };
+
+      return (JSON.parse(body.result.content[0]?.text ?? '{}') as { behavior: string })
+        .behavior;
+    };
+
+    it('hands approve the grants registered for the run named in x-hive-run', async () => {
+      receiver.grants.set('run-1', ['Read']);
+
+      expect(await behaviour(await approve('run-1'))).toBe('allow');
+    });
+
+    it('keeps an empty list for a run nobody registered, with no run at all, and after delete', async () => {
+      expect(await behaviour(await approve('run-2'))).toBe('deny');
+      expect(await behaviour(await approve())).toBe('deny');
+
+      receiver.grants.set('run-1', ['Read']);
+      receiver.grants.delete('run-1');
+
+      expect(await behaviour(await approve('run-1'))).toBe('deny');
+    });
+
+    it('is bounded: past the cap the oldest registration is evicted', async () => {
+      for (let i = 0; i < 257; i += 1) receiver.grants.set(`r${String(i)}`, ['Read']);
+
+      expect(await behaviour(await approve('r0'))).toBe('deny');
+      expect(await behaviour(await approve('r256'))).toBe('allow');
+    });
+
+    it('forgets every registration when the receiver stops', async () => {
+      receiver.grants.set('run-1', ['Read']);
+      await receiver.stop();
+      url = (await receiver.start()) as string;
+
+      expect(await behaviour(await approve('run-1'))).toBe('deny');
+    });
+  });
 });
