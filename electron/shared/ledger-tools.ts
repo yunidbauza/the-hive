@@ -58,24 +58,30 @@ export const ASK_INTENT_GUIDANCE =
  * card's "Open in Slack" link, and an agent told merely to "include the
  * permalink" writes it into the body, where nothing can find it. A described
  * key is the whole producer for that feature — the schema is the only place the
- * model is told the shape. `ttlMs` is named for the same reason (it was read by
- * `ledger-derive.ts` for a release before anything told a model it existed),
- * and `intent` on an ask likewise (HIVE-135).
+ * model is told the shape. `ttlMs` is described on `askMeta` instead, below,
+ * because `ttlOf` (`ledger-derive.ts`) only ever reads it off an ask — naming
+ * it here would tell a model it does something on a post or an answer that it
+ * does not do. `intent` on an ask is likewise its own key, not this one.
  */
 const META_DESCRIPTION =
-  'Optional structured detail carried with the entry — a ticket key, a PR number, a Slack timestamp. Free-form, with keys The Hive reads: if you posted a message in Slack, put its permalink at `slack.permalink` — `{"slack": {"permalink": "https://…slack.com/archives/…"}}` — and the card gets an "Open in Slack" link straight to it. Naming it in your body text instead does nothing. `ttlMs` (a number of milliseconds) shortens how long an ask stays open; it can never lengthen it.';
+  'Optional structured detail carried with the entry — a ticket key, a PR number, a Slack timestamp. Free-form, with keys The Hive reads: if you posted a message in Slack, put its permalink at `slack.permalink` — `{"slack": {"permalink": "https://…slack.com/archives/…"}}` — and the card gets an "Open in Slack" link straight to it. Naming it in your body text instead does nothing.';
 
 const meta = {
   type: 'object',
   description: META_DESCRIPTION,
 } as const;
 
-/** The ask's `meta`: the shared fragment plus the one key only an ask carries. */
+/** What `meta.ttlMs` is for, in the words a model acts on (HIVE-135). */
+const TTL_GUIDANCE =
+  '`ttlMs` (a number of milliseconds) shortens how long this ask stays open; it can never lengthen it.';
+
+/** The ask's `meta`: the shared fragment plus the two keys only an ask carries. */
 const askMeta = {
   type: 'object',
-  description: `${META_DESCRIPTION} ${ASK_INTENT_GUIDANCE}`,
+  description: `${META_DESCRIPTION} ${ASK_INTENT_GUIDANCE} ${TTL_GUIDANCE}`,
   properties: {
     intent: { type: 'string', description: ASK_INTENT_GUIDANCE },
+    ttlMs: { type: 'number', description: TTL_GUIDANCE },
   },
 } as const;
 

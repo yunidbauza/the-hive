@@ -205,9 +205,16 @@ rendered grid — so the visible terminal surface reports what it sees over
 `pty:prompt` (`empty`, `draft`, `unfocused`), derived from the same screen
 read as the bare-`←` claim, and `deliver` keeps one record: the focused
 session and its last report. A focused session delivers only on `empty`;
-every other session delivers on idleness as before; the transition to `empty`
-is the third flush trigger beside idle and ready. Refusing is free — a held
-nudge writes no receipt — and that is why the default is to refuse.
+every other session delivers on idleness as before. That includes a session
+the user has switched away from: it stops reporting when it leaves the
+screen, so a draft left in a hidden tab is not protected — the surface is
+the only thing that can see the box, and only while it is on screen. The
+transition to `empty` is the third flush trigger beside idle and ready.
+Refusing is free — a held nudge writes no receipt — and that is why the
+default is to refuse. A visible session whose frame never reads as Claude's
+empty input — an unrecognised frame, a non-Claude `claudeCommand` — is held
+for as long as it stays on screen; that is the intended safe failure, and it
+is silent.
 
 And it **never loses a nudge**. Every line that lands is recorded as an `event`
 entry carrying `meta.delivered`, which turns "what does this session still owe a

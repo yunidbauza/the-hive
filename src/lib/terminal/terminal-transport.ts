@@ -1,5 +1,7 @@
 import type { PromptInput } from '@shared/ipc-contract';
 
+export type { PromptInput };
+
 /**
  * THE SEAM.
  *
@@ -17,7 +19,6 @@ import type { PromptInput } from '@shared/ipc-contract';
  * in a transport.
  */
 
-export type { PromptInput };
 /**
  * What a consumer does with one chunk of backend output.
  *

@@ -146,7 +146,7 @@ async function settle(page: Page, quietMs = 400): Promise<void> {
 async function tail(page: Page, lines = 24): Promise<string> {
   const all = await output(page);
   // eslint-disable-next-line no-control-regex
-  const plain = all.replace(/\[[0-9;?]*[A-Za-z]/gu, '');
+  const plain = all.replace(/\u001b\[[0-9;?]*[A-Za-z]/gu, '');
   return plain.split('\n').slice(-lines).join('\n');
 }
 

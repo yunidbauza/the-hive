@@ -523,8 +523,9 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     /**
      * HIVE-135 added `prompt`, and like `ack` it is a report, not a
      * capability: the renderer telling main what a session's input box
-     * holds, sent `send`-style so it never sits in the typing path. Nothing
-     * consumes it yet — that lands with the nudge itself.
+     * holds, sent `send`-style so it never sits in the typing path. Main's
+     * `deliver` consumes it as the delivery precondition: a nudge is written
+     * only into a box this report says is empty.
      */
     'prompt',
     'resize',

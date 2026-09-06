@@ -191,12 +191,25 @@ describe('ledger-tools', () => {
     expect(ASK_INTENT_GUIDANCE).toMatch(/no memory/i);
   });
 
-  it('names ttlMs on every meta, since main reads it', () => {
-    for (const tool of LEDGER_TOOLS) {
-      const meta = tool.inputSchema.properties?.meta as { description?: string } | undefined;
-      if (meta === undefined) continue;
-      expect(meta.description).toContain('ttlMs');
-    }
+  /**
+   * `ttlOf` (`ledger-derive.ts`) only ever reads `meta.ttlMs` off an ask, so
+   * it is named on `ledger_ask`'s `meta` alone — naming it on every tool's
+   * `meta` would tell a model it does something on a post or an answer that
+   * it does not do.
+   */
+  it('describes ttlMs on ledger_ask, and only there', () => {
+    const ask = LEDGER_TOOLS.find((tool) => tool.name === 'ledger_ask');
+    const askMeta = ask?.inputSchema.properties?.meta as {
+      description?: string;
+      properties?: Record<string, { type?: string; description?: string }>;
+    };
+
+    expect(askMeta.description).toContain('ttlMs');
+    expect(askMeta.properties?.ttlMs).toMatchObject({ type: 'number' });
+
+    const post = LEDGER_TOOLS.find((tool) => tool.name === 'ledger_post');
+    const postMeta = post?.inputSchema.properties?.meta as { description?: string };
+    expect(postMeta.description).not.toContain('ttlMs');
   });
 });
 
