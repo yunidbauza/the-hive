@@ -1,6 +1,7 @@
 // @vitest-environment node
-import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn, spawnSync, type SpawnOptions } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -15,18 +16,28 @@ import {
   writeSessionContainerFiles,
   writeSharedContainerFiles,
 } from '../../electron/main/container/generated';
+import { agentPromptFile, agentWorkdir, agentsRoot } from '../../electron/main/agents/paths';
+import { createRunTracker, type ChildLike, type RunTracker } from '../../electron/main/agents/runs';
+import { createAgentState, type AgentState } from '../../electron/main/agents/state';
+import { createWakeCommand } from '../../electron/main/agents/wake-command';
+import { createHookRuntime, type HookRuntime } from '../../electron/main/hooks';
 import { createReceiver } from '../../electron/main/hooks/receiver';
-import { createLedger } from '../../electron/main/ledger';
+import { createLedger, type Ledger } from '../../electron/main/ledger';
+import { agentMcpConfigFile } from '../../electron/main/mcp';
 import { mcpConfig } from '../../electron/main/mcp/config';
 import { PLUGIN_DIR } from '../../electron/main/skills/paths';
 import { writePluginDir } from '../../electron/main/skills/plugin';
 import type { SkillsRead } from '../../electron/main/skills/read';
+import type { RunLine } from '../../electron/shared/agent-contract';
+import { CONFIG_PATH_ENV } from '../../electron/shared/config-contract';
 import {
   HOOK_ENV_RECEIVER_URL,
   HOOK_ENV_SESSION,
   HOOK_ENV_TOKEN,
+  type HookAgentEvent,
   type HookStatusEvent,
 } from '../../electron/shared/hook-contract';
+import { LEDGER_DIR, OVERMIND } from '../../electron/shared/ledger-contract';
 
 /**
  * The container session profile, end to end (HIVE-133).
@@ -565,16 +576,15 @@ describe.skipIf(!RUN || CLAUDE_IMAGE === undefined)('container conformance — c
       expect(bodiesFrom(CONTAINER_SESSION)).toContain('posted from inside the container');
 
       /*
-        The hooks crossed too, not only MCP: the http handlers in the mounted
-        settings file carry `$HIVE_SESSION_ID`/`$HIVE_HOOK_TOKEN` through
-        `allowedEnvVars`, and the `SessionStart` command hook `curl`s the ready
-        URL through the alias. Either arriving attributed to the container's
-        session is the identity crossing the boundary.
+        The hooks crossed too, not only MCP — and as *status* events, not only
+        the ready `curl`. An earlier version of this assertion accepted either,
+        and passed while every http hook from the container was being refused
+        by the binary as a private address (HIVE-137, `statusCommand`): the
+        ready command was the one that got through. Both are required now,
+        because both are promised.
       */
-      const fromContainer =
-        seen.ready.includes(CONTAINER_SESSION) ||
-        seen.events.some((event) => event.entityId === CONTAINER_SESSION);
-      expect(fromContainer).toBe(true);
+      expect(seen.ready).toContain(CONTAINER_SESSION);
+      expect(seen.events.some((event) => event.entityId === CONTAINER_SESSION)).toBe(true);
 
       // Host → container, through the built stdio host on this side.
       const hostSettings = join(dir, 'hive', 'claude-hooks.settings.json');
@@ -661,5 +671,329 @@ describe.skipIf(!RUN || CLAUDE_IMAGE === undefined)('container conformance — c
       expect(bodiesFrom(CONTAINER_SESSION)).not.toContain('with the stale token');
     },
     600_000,
+  );
+});
+
+/*
+  A containerised **agent** (HIVE-137), behind the same gate as the claude
+  cases: the same image, the same credential rule, and the app's own agent
+  runtime composed the way `ipc/index.ts` composes it — the hook runtime, the
+  wake builder and the run tracker, with a real `spawn`. What only this can
+  prove:
+
+  - a wake becomes `docker exec …` and the run closes `done`, with its hooks
+    arriving on the agent register and its ledger post carrying its name;
+  - `approve` over HTTP saw the run's grants — the agent read its inbox and
+    posted without a single permission card;
+  - the second wake resumes the first's transcript, which lives inside the
+    container's HOME;
+  - a stop from the host reaches the process *inside* — measured earlier in
+    this story: signalling the `docker exec` client alone does not;
+  - a stopped container is a `failed` run whose reason is the runtime's own
+    sentence, and nothing worse.
+*/
+describe.skipIf(!RUN || CLAUDE_IMAGE === undefined)('container conformance — agent', () => {
+  const AGENT = 'pr-patrol';
+  const CNAME = `${NAME}-agent`;
+  const HIVE_DIR = '/hive';
+  const WORKSPACE = '/work';
+
+  let dir: string;
+  let userData: string;
+  let previousConfigPath: string | undefined;
+  let ledger: Ledger;
+  let hooks: HookRuntime;
+  let agentState: AgentState;
+  let runs: RunTracker;
+  const agentEvents: HookAgentEvent[] = [];
+  const spawns: { file: string; args: string[] }[] = [];
+  const lines: RunLine[] = [];
+  /** Resolved by `pushStatus` the moment the agent stops being `working`. */
+  const settlers = new Map<string, () => void>();
+  const settled = (name: string): Promise<void> =>
+    new Promise((resolve) => settlers.set(name, resolve));
+
+  const agentMd = (): string => `---
+name: ${AGENT}
+description: Proves a containerised wake end to end.
+icon: GitPullRequest
+wake:
+  on: [ledger]
+tools: [Bash]
+autonomy: ask
+limits:
+  turns: 8
+container:
+  runtime: docker
+  name: ${CNAME}
+  workspace: ${WORKSPACE}
+  hive_dir: ${HIVE_DIR}
+---
+You are a conformance probe. Do exactly what the wake prompt asks, using the
+tool it names, and nothing more. Never ask a question.
+`;
+
+  const bodiesFrom = (from: string): string[] =>
+    ledger.read({ from }).entries.filter((entry) => entry.kind === 'post').map((entry) => entry.body);
+
+  /** `pgrep -f <uuid>` inside: the run's own argv carries the uuid. */
+  const insideAlive = (uuid: string): boolean =>
+    spawnSync('docker', ['exec', CNAME, 'pgrep', '-f', uuid], { stdio: 'ignore' }).status === 0;
+
+  const sessionUuidOf = (args: readonly string[]): string => {
+    const at = Math.max(args.indexOf('--session-id'), args.indexOf('--resume'));
+    return args[at + 1] ?? '';
+  };
+
+  beforeAll(async () => {
+    if (!hasDocker()) {
+      throw new Error(
+        'docker is not available — this suite needs a real runtime. Start Docker, or unset HIVE_LIVE_CONTAINER_PROOF.',
+      );
+    }
+
+    dir = mkdtempSync(join(tmpdir(), 'hive-container-agent-'));
+    userData = join(dir, 'userData');
+    /*
+      Every path an agent touches derives from `configPath()`, which reads
+      this variable per call — pointing it at a temp directory moves
+      `~/.hive/agents`, the work dir and `agents.json` at once, so nothing
+      here can reach the developer's own `~/.hive`.
+    */
+    previousConfigPath = process.env[CONFIG_PATH_ENV];
+    process.env[CONFIG_PATH_ENV] = join(dir, '.hive', 'config.json');
+
+    mkdirSync(join(agentsRoot(), AGENT), { recursive: true });
+    writeFileSync(join(agentsRoot(), AGENT, 'AGENT.md'), agentMd(), 'utf8');
+    mkdirSync(agentWorkdir(AGENT), { recursive: true });
+
+    ledger = createLedger({
+      dir: join(dir, '.hive', LEDGER_DIR),
+      knowsParty: (party) => party === AGENT || party === OVERMIND,
+    });
+
+    /*
+      The real hook runtime, which writes the host set, the shared container
+      set (addressed by the default alias, `host.docker.internal`) and starts
+      the receiver — exactly what a launch does before any agent can wake.
+    */
+    hooks = createHookRuntime({ userDataPath: userData, ledger, sessionMetrics: () => false });
+    await hooks.start({
+      knowsSession: () => false,
+      knowsAgent: (id) => id === AGENT,
+      onAgentsList: () => Promise.resolve({ agents: [] }),
+      onEvent: () => {},
+      onAgentEvent: (event) => {
+        agentEvents.push(event);
+      },
+      onTicketIntent: () => {},
+      onPromptName: () => {},
+      onCleared: () => {},
+      onMetrics: () => {},
+      onDone: () => {},
+      onReady: () => {},
+    });
+    await writePluginDir(join(userData, PLUGIN_DIR), '0.0.0-test', NO_SKILLS);
+
+    const credential = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']
+      .filter((name) => process.env[name] !== undefined && process.env[name] !== '')
+      .flatMap((name) => ['-e', name]);
+    execFileSync('docker', [
+      'run', '-d', '--name', CNAME,
+      '-v', `${join(userData, 'hive')}:${HIVE_DIR}:ro`,
+      // The agent's workdir, read-write: the run's cwd inside, and where a
+      // `Bash` probe may leave a file.
+      '-v', `${agentWorkdir(AGENT)}:${WORKSPACE}`,
+      ...credential,
+      CLAUDE_IMAGE ?? '',
+      'sleep', 'infinity',
+    ]);
+
+    agentState = createAgentState({
+      path: join(dir, '.hive', LEDGER_DIR, 'agents.json'),
+      debounceMs: 1,
+    });
+
+    const buildWakeCommand = createWakeCommand({
+      agentsRoot,
+      workdir: agentWorkdir,
+      promptFile: (name) => agentPromptFile(userData, name),
+      pluginDir: () => join(userData, PLUGIN_DIR),
+      agentSettingsPath: () => hooks.agentSettingsPathFor(),
+      // The host stdio file: written by an MCP runtime this suite does not
+      // compose, and never read by a container agent — but the builder's
+      // host-side precondition wants a path, so it gets one.
+      mcpConfig: () => join(userData, 'hive', 'hive.mcp.json'),
+      hiveServer: () => null,
+      agentMcpFile: (name) => agentMcpConfigFile(userData, name),
+      hookEnv: (name) => hooks.envFor(name),
+      claudeCommand: () => 'claude',
+      subscriptionAuth: () => false,
+      state: agentState,
+      env: () => process.env,
+      newUuid: randomUUID,
+      pendingGrants: () => [],
+      userDataPath: () => userData,
+      hostAlias: () => 'host.docker.internal',
+      agentContainerSettingsPath: (config) => hooks.agentContainerSettingsPathFor(config),
+    });
+
+    runs = createRunTracker({
+      spawn: (file, args, options) => {
+        spawns.push({ file, args: [...args] });
+        return spawn(file, [...args], options as SpawnOptions) as unknown as ChildLike;
+      },
+      command: (name, trigger, extra, options) => buildWakeCommand(name, trigger, extra, options),
+      parallelFor: () => 1,
+      state: agentState,
+      appendLedger: (entry) => {
+        expect(ledger.append(entry).ok).toBe(true);
+      },
+      openAsksFor: (name, run) =>
+        ledger.read({ from: name }).openAsks.some((ask) => ask.from === name && ask.meta?.['run'] === run),
+      hasOpenAsk: (name) => ledger.read({}).openAsks.some((ask) => ask.from === name),
+      handoffFor: () => undefined,
+      newUuid: randomUUID,
+      pushStatus: (name) => {
+        if (agentState.read(name).status === 'working') return;
+        const settle = settlers.get(name);
+        settlers.delete(name);
+        settle?.();
+      },
+      pushLines: (_name, pushed) => lines.push(...pushed),
+      now: () => Date.now(),
+      newRunId: randomUUID,
+      grants: {
+        set: (run, grants) => hooks.receiverGrants()?.set(run, grants),
+        delete: (run) => hooks.receiverGrants()?.delete(run),
+      },
+    });
+  }, 180_000);
+
+  afterAll(async () => {
+    runs.closeAll('app-closed');
+    spawnSync('docker', ['rm', '-f', CNAME], { stdio: 'ignore' });
+    await hooks.stop();
+    if (previousConfigPath === undefined) delete process.env[CONFIG_PATH_ENV];
+    else process.env[CONFIG_PATH_ENV] = previousConfigPath;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it(
+    'wakes inside the container: hooks on the agent register, a post under its name, no permission card',
+    async () => {
+      const done = settled(AGENT);
+      const start = runs.run(
+        AGENT,
+        'manual',
+        'Call ledger_post once with the body "posted from inside the container by an agent", then reply DONE.',
+      );
+
+      expect(start).toMatchObject({ started: true });
+      await done;
+
+      expect(spawns[0]?.file).toBe('docker');
+      expect(spawns[0]?.args.slice(0, 3)).toEqual(['exec', '--workdir', WORKSPACE]);
+      expect(spawns[0]?.args).toContain(CNAME);
+
+      const state = agentState.read(AGENT);
+      expect(state.runs.at(-1)?.outcome).toBe('done');
+      expect(bodiesFrom(AGENT)).toContain('posted from inside the container by an agent');
+      // The hooks crossed, attributed to the agent, through the alias.
+      expect(agentEvents.some((event) => event.entityId === AGENT)).toBe(true);
+      // The grants crossed: `approve` over HTTP allowed the ledger tool, so
+      // no permission ask was ever written.
+      expect(
+        ledger.read({ from: AGENT }).openAsks.some((ask) => ask.meta?.['kind'] === 'permission'),
+      ).toBe(false);
+    },
+    300_000,
+  );
+
+  it(
+    'resumes the previous wake: the transcript lives inside the container',
+    async () => {
+      const done = settled(AGENT);
+      runs.run(
+        AGENT,
+        'manual',
+        'Call ledger_post once whose body is exactly "again: " followed by the body you posted in your previous wake, verbatim. Then reply DONE.',
+      );
+      await done;
+
+      expect(spawns[1]?.args).toContain('--resume');
+      expect(sessionUuidOf(spawns[1]?.args ?? [])).toBe(sessionUuidOf(spawns[0]?.args ?? []));
+      expect(agentState.read(AGENT).runs.at(-1)?.outcome).toBe('done');
+      expect(bodiesFrom(AGENT)).toContain('again: posted from inside the container by an agent');
+    },
+    300_000,
+  );
+
+  it(
+    'a kill from the host stops the run inside the container',
+    async () => {
+      const done = settled(AGENT);
+      /*
+        `tail -f /dev/null`, not `sleep`: Claude Code refuses a bare `sleep`
+        outright — "blocked by the sandbox's standalone-sleep guard", in the
+        run log — so a prompt asking for one ends the turn with nothing to
+        stop. A tail on /dev/null never exits until it is killed, which is
+        the property the case needs.
+      */
+      runs.run(
+        AGENT,
+        'manual',
+        'Use Bash to run exactly this command: tail -f /dev/null. It never exits on its own; that is expected. Do nothing else.',
+      );
+
+      const uuid = sessionUuidOf(spawns.at(-1)?.args ?? []);
+      expect(uuid).not.toBe('');
+
+      /*
+        Wait for the run to be *inside its tool* before stopping it. Killing a
+        process that is still starting proves less than killing one that is
+        mid-work: the tool's process is a grandchild of `claude`, and a stop
+        that reached only the client, or only `claude`, would leave it
+        running. Anchored, or `claude`'s own argv — which carries the prompt
+        naming the command — matches, and the poll passes before any tool
+        has run.
+      */
+      const inTool = (): boolean =>
+        spawnSync('docker', ['exec', CNAME, 'pgrep', '-f', '^tail -f /dev/null$'], {
+          stdio: 'ignore',
+        }).status === 0;
+      await expect.poll(inTool, { timeout: 120_000, interval: 1_000 }).toBe(true);
+      expect(insideAlive(uuid)).toBe(true);
+
+      expect(runs.kill(AGENT)).toBe(true);
+      await done;
+
+      expect(agentState.read(AGENT).runs.at(-1)?.outcome).toBe('failed');
+      // The measured fact this story exists for: the client alone would not
+      // have stopped it. The `pkill -f <uuid>` inside did — and took the
+      // tool's process with it.
+      await expect.poll(() => insideAlive(uuid), { timeout: 15_000, interval: 500 }).toBe(false);
+      await expect.poll(inTool, { timeout: 15_000, interval: 500 }).toBe(false);
+      expect(spawns.some((call) => call.args.includes('pkill') && call.args.includes(uuid))).toBe(true);
+    },
+    300_000,
+  );
+
+  it(
+    'a stopped container is a failed run naming the runtime\'s reason, and the next wake works again',
+    async () => {
+      execFileSync('docker', ['stop', CNAME], { stdio: 'ignore' });
+
+      const done = settled(AGENT);
+      const before = lines.length;
+      runs.run(AGENT, 'manual', 'Reply DONE.');
+      await done;
+
+      expect(agentState.read(AGENT).runs.at(-1)?.outcome).toBe('failed');
+      expect(lines.slice(before).map((line) => line.text).join('\n')).toContain('is not running');
+
+      execFileSync('docker', ['start', CNAME], { stdio: 'ignore' });
+    },
+    120_000,
   );
 });
