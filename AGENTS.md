@@ -188,12 +188,11 @@ slice back; boot data is last run's ended sessions. Tests: `tests/support/`.
   plumbing only. Colours, selection and scrollback belong in Playwright.
   **CodeMirror is the opposite**: it renders without measuring first, so
   `.cm-content` really holds the text. Do not add a mock for it.
-- **`node-pty` is never loaded for real** — a unit test that spawns real
-  processes leaks them. `__mocks__/node-pty.ts` records; assert spawn arguments,
-  cwd, write/resize/kill routing, exit handling. What only a real process can
-  show: terminal semantics — `pnpm test:pty` (098); what Claude Code's hooks
-  actually send — `pnpm test:hooks`; what it actually **draws**, which no staged
-  buffer can prove — `pnpm test:back` (HIVE-79, `docs/terminal-architecture.md`)
-  and `pnpm test:nudge` (HIVE-135).
+- **`node-pty` is never loaded for real** — a unit test that spawns real processes
+  leaks them. `__mocks__/node-pty.ts` records; assert spawn arguments, cwd,
+  write/resize/kill routing, exit handling. What only a real process can show:
+  terminal semantics — `pnpm test:pty` (098); what Claude Code's hooks actually
+  send — `pnpm test:hooks`; what it actually **draws**, which no staged buffer
+  can prove — `pnpm test:back` (HIVE-79) and `pnpm test:nudge` (HIVE-135).
 - Never add a coverage-ignore comment to pass the gate. An untestable branch is
   usually a design smell — fix the shape instead.
