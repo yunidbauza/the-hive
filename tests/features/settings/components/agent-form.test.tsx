@@ -1153,4 +1153,80 @@ describe('AgentForm', () => {
       screen.getByText('This file has no frontmatter.'),
     ).toBeInTheDocument();
   });
+
+  /**
+   * The container switch (HIVE-137). Off is no block — the file of every
+   * existing agent, untouched. On writes the one key that names the block and
+   * lets the parser say which of the others are still required, beside their
+   * own inputs, rather than inventing a container name the user does not have.
+   */
+  describe('Runs in a container (HIVE-137)', () => {
+    const CONTAINER_SOURCE = SOURCE.replace(
+      'autonomy: ask',
+      'autonomy: ask\ncontainer:\n  runtime: docker\n  name: devbox\n  workspace: /work\n  hive_dir: /hive',
+    );
+
+    it('is off with no block, and turning it on writes the runtime line under a container: block', async () => {
+      const onChange = setup();
+      const toggle = screen.getByRole('switch', { name: /runs in a container/i });
+
+      expect(toggle).toHaveAttribute('aria-checked', 'false');
+      expect(screen.queryByRole('textbox', { name: 'container' })).toBeNull();
+
+      await userEvent.click(toggle);
+
+      expect(patched(onChange, 'container.runtime')).toBe('docker');
+      expect(screen.getByRole('textbox', { name: 'container' })).toBeInTheDocument();
+    });
+
+    it('turning it off removes every container key and nothing else', async () => {
+      const onChange = setup({ source: CONTAINER_SOURCE });
+
+      await userEvent.click(screen.getByRole('switch', { name: /runs in a container/i }));
+
+      const next = onChange.mock.calls.at(-1)?.[0] as string;
+      const keys = [...(readFrontmatter(next)?.fields.keys() ?? [])];
+      expect(keys.some((key) => key.startsWith('container.'))).toBe(false);
+      expect(keys).toContain('autonomy');
+      expect(next).not.toContain('container:');
+    });
+
+    it('renders the fields when on, patches one, and shows a problem beside its field', async () => {
+      const onChange = vi.fn();
+      render(
+        <AgentForm
+          source={CONTAINER_SOURCE}
+          problems={[{ field: 'container.name', reason: 'A container name: no spaces.' }]}
+          taken={[]}
+          onChange={onChange}
+        />,
+      );
+
+      for (const name of ['container', 'command inside', 'workspace', 'hive dir', 'env arg', 'host alias']) {
+        expect(screen.getByRole('textbox', { name })).toBeInTheDocument();
+      }
+      expect(screen.getByRole('textbox', { name: 'container' })).toHaveValue('devbox');
+      expect(screen.getByText('A container name: no spaces.')).toBeInTheDocument();
+
+      await userEvent.type(screen.getByRole('textbox', { name: 'workspace' }), 'x');
+      expect(patched(onChange, 'container.workspace')).toBe('/workx');
+    });
+
+    it('offers docker, podman and a path for the runtime', async () => {
+      const onChange = setup({ source: CONTAINER_SOURCE });
+
+      await userEvent.click(screen.getByRole('radio', { name: 'podman' }));
+      expect(patched(onChange, 'container.runtime')).toBe('podman');
+
+      await userEvent.click(screen.getByRole('radio', { name: 'other' }));
+      expect(patched(onChange, 'container.runtime')).toBe('/');
+      expect(screen.getByRole('textbox', { name: 'runtime path' })).toBeInTheDocument();
+    });
+
+    it('does not offer rewrite: the wake refuses it for an agent this story', () => {
+      setup({ source: CONTAINER_SOURCE });
+
+      expect(screen.queryByText(/rewrite/)).toBeNull();
+    });
+  });
 });

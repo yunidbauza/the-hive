@@ -5,8 +5,10 @@ import {
   SegmentedControl,
   type SegmentedOption,
 } from '@components/ui/segmented-control';
+import { Switch } from '@components/ui/switch';
 import { SettingsGroup } from '@features/settings/components/settings-group';
 import {
+  AGENT_FIELDS,
   AGENT_LIMIT_DEFAULTS,
   AUTONOMIES,
   KNOWN_AGENT_MCP,
@@ -142,6 +144,37 @@ const MODEL_OPTIONS = [
 const AUTONOMY_OPTIONS = [
   { value: 'ask', label: 'ask first' },
   { value: 'act', label: 'act' },
+] as const;
+
+/**
+ * The runtime a containerised agent is reached through (HIVE-137). `other`
+ * reveals a path field; `container.runtime` then holds the path itself, which
+ * is what the parser accepts — the segmented control is only the common case.
+ */
+const RUNTIME_OPTIONS = [
+  { value: 'docker', label: 'docker' },
+  { value: 'podman', label: 'podman' },
+  { value: 'other', label: 'other' },
+] as const;
+
+/** Every key the switch owns, derived from the table so a new field cannot escape the off-switch. */
+const CONTAINER_PATHS: readonly string[] = AGENT_FIELDS.filter((field) =>
+  field.path.startsWith('container.'),
+).map((field) => field.path);
+
+/*
+  The text fields under the switch, in the order the block is read. `runtime`
+  is a segmented control above them and `freshness` is not offered: the wake
+  refuses `rewrite` for an agent this story, and a control for a value the
+  runtime refuses is a lie in the pane.
+*/
+const CONTAINER_FIELDS = [
+  { path: 'container.name', label: 'container', hint: 'devbox' },
+  { path: 'container.command', label: 'command inside', hint: 'claude' },
+  { path: 'container.workspace', label: 'workspace', hint: '/work' },
+  { path: 'container.hive_dir', label: 'hive dir', hint: '/hive' },
+  { path: 'container.env_arg', label: 'env arg', hint: '-e {name}={value}' },
+  { path: 'container.host_alias', label: 'host alias', hint: 'host.docker.internal' },
 ] as const;
 
 /**
@@ -329,6 +362,18 @@ export const FIELD_HELP: Record<string, string> = {
     'Empty means no daily ceiling. A number stops its scheduled wakes for the rest of the day once the day’s runs reach it, and posts a card saying so — you can still wake it by hand, and it resumes at midnight. Priced at list rates, like the budget above.',
   'limits.rotate_after': `Runs before it starts a fresh session. Every wake resumes the last one, so this is what stops the transcript growing forever. Default ${AGENT_LIMIT_DEFAULTS.rotateAfter}.`,
   'limits.parallel': `How many runs may be live at once. 1 keeps one conversation, strictly in turn. Above 1, a console run that carries a prompt starts a task run beside the standing session — a fresh conversation for that one job — up to this many live. Default ${AGENT_LIMIT_DEFAULTS.parallel}.`,
+  'container.runtime':
+    'docker, podman, or the absolute path of another runtime that speaks `exec`.',
+  'container.name': 'The running container, as `docker exec` names it. This app never starts or stops it.',
+  'container.command': 'The claude binary inside the container. Blank means `claude` on its PATH.',
+  'container.workspace':
+    'Where ~/.hive/work/<name> is mounted inside the container. The run starts there, and its transcript is keyed by it — so keep it stable, or --resume finds nothing.',
+  'container.hive_dir':
+    "Where this app's generated files are mounted inside — the same directory a containerised session mounts.",
+  'container.env_arg':
+    'How one variable is spelled for this runtime. Blank means -e {name}={value}. Values are on the command line, so they are visible to ps.',
+  'container.host_alias':
+    "How the container reaches this Mac. Blank inherits the receiver's alias, host.docker.internal on Docker Desktop.",
 };
 
 /**
@@ -360,6 +405,10 @@ export const RENDERED_PATHS: readonly string[] = [
   'autonomy',
   'model',
   ...LIMIT_FIELDS.map((field) => field.path),
+  // HIVE-137. Every container key with an input — `freshness` has none, so
+  // a problem naming it belongs in the banner, not beside a control that is
+  // not there.
+  ...CONTAINER_PATHS.filter((path) => path !== 'container.freshness'),
 ];
 
 /**
@@ -603,6 +652,26 @@ export function AgentForm({
    * nothing could reach once blur existed, and an unreachable branch is a shape
    * problem rather than something to cover.
    */
+  /**
+   * Delete an emptied parent line — `container:` with no children left under
+   * it — which `clear` never touches because it is not a field. Left behind,
+   * the reader sees an open block with nothing in it, and the next
+   * `patchFrontmatter` would put a child back under it: the switch would
+   * never quite turn off.
+   */
+  const clearParent = (parent: string, from: string): string => {
+    const lines = from.split('\n');
+    const close = lines.findIndex((line, i) => i > 0 && line.trim() === '---');
+    const opens = lines.findIndex(
+      (line, i) => i > 0 && i < close && line.trim() === `${parent}:`,
+    );
+    if (opens === -1) return from;
+    const next = lines[opens + 1] ?? '';
+    if (/^\s+\S/.test(next)) return from;
+    lines.splice(opens, 1);
+    return lines.join('\n');
+  };
+
   const stash = (path: string, value: string) => {
     setDraft(value.trim() === value ? null : { path, text: value });
   };
@@ -1246,6 +1315,69 @@ export function AgentForm({
           {LIMIT_FIELDS.map(({ path, label, hint }) =>
             row(path, label, input(path, label, hint)),
           )}
+        </div>
+      </SettingsGroup>
+
+      {/*
+        HIVE-137. The switch is the block: on writes the key that names it and
+        lets the parser say which of the others are still required, beside
+        their own inputs — inventing a container name the user does not have
+        would be a value in the file nobody chose. Off deletes every
+        `container.*` line, derived from the field table so a key added later
+        cannot outlive the switch.
+      */}
+      <SettingsGroup
+        title="Container"
+        description="Run this agent's wakes inside a container you already run. It must be up when the agent wakes, and its home directory must persist between wakes or the agent forgets everything it knew."
+      >
+        <div className="flex flex-col gap-2.5">
+          <Switch
+            label="Runs in a container"
+            checked={has('container.runtime')}
+            onCheckedChange={(next) => {
+              if (!next) {
+                let draft = source;
+                for (const path of CONTAINER_PATHS) draft = clear(path, draft);
+                onChange(clearParent('container', draft));
+                return;
+              }
+              onChange(patchFrontmatter(source, 'container.runtime', 'docker'));
+            }}
+          />
+          {has('container.runtime') ? (
+            <>
+              {row(
+                'container.runtime',
+                'runtime',
+                <SegmentedControl
+                  label="runtime"
+                  options={RUNTIME_OPTIONS}
+                  value={
+                    at('container.runtime') === 'docker' || at('container.runtime') === 'podman'
+                      ? (at('container.runtime') as 'docker' | 'podman')
+                      : 'other'
+                  }
+                  onChange={(next) => {
+                    // `other` seeds the path field with the one character
+                    // every absolute path begins with, so the parser's
+                    // "absolute path" rule reads as a prompt rather than a
+                    // refusal.
+                    set('container.runtime', next === 'other' ? '/' : next);
+                  }}
+                />,
+              )}
+              {at('container.runtime').startsWith('/')
+                ? row(
+                    'container.runtime',
+                    'runtime path',
+                    input('container.runtime', 'runtime path', '/usr/local/bin/nerdctl'),
+                  )
+                : null}
+              {CONTAINER_FIELDS.map(({ path, label, hint }) =>
+                row(path, label, input(path, label, hint)),
+              )}
+            </>
+          ) : null}
         </div>
       </SettingsGroup>
     </div>
