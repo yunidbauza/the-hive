@@ -32,10 +32,12 @@ import {
   KNOWN_AGENT_MCP,
   parseList,
   readFrontmatter,
+  type AgentContainer,
   type AgentDefinition,
   type RunKind,
 } from '@shared/agent-contract';
 
+import { CONTAINER_DIR, CONTAINER_MCP_FILE } from '../container/generated';
 import { agentMcpConfig, type McpServerSpec } from '../mcp/agent-config';
 
 import { resolveClaude } from './claude-path';
@@ -126,6 +128,16 @@ export interface WakeCommandDeps {
    * machine rather than on this function.
    */
   isExecutable?: (path: string) => boolean;
+  /**
+   * The three things a containerised agent's wake needs that a host wake does
+   * not (HIVE-137): `app.getPath('userData')` for the path map, the receiver's
+   * global alias for the re-addressed `HIVE_RECEIVER_URL`, and the settings
+   * file inside the container set — `hooks.agentContainerSettingsPathFor`,
+   * `null` before the receiver has bound.
+   */
+  userDataPath: () => string;
+  hostAlias: () => string;
+  agentContainerSettingsPath: (config: AgentContainer) => string | null;
 }
 
 /**
@@ -266,18 +278,65 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
 
     if ('problem' in parsed) return parsed;
 
+    const { def } = parsed;
+
+    /*
+      A container agent's binary is inside the container (HIVE-137), so the
+      host's `claudeCommand` is not consulted at all: a machine with no
+      `claude` on it, or one whose command carries arguments, can still wake
+      an agent whose image has one. `wakeCommand` puts `container.command`
+      after the container's name; `claudePath` is what a *host* wake spawns.
+    */
     const claude =
-      deps.isExecutable === undefined
-        ? resolveClaude(deps.claudeCommand(), deps.env()['PATH'])
-        : resolveClaude(
-            deps.claudeCommand(),
-            deps.env()['PATH'],
-            deps.isExecutable,
-          );
+      def.container !== undefined
+        ? { path: def.container.command ?? 'claude' }
+        : deps.isExecutable === undefined
+          ? resolveClaude(deps.claudeCommand(), deps.env()['PATH'])
+          : resolveClaude(deps.claudeCommand(), deps.env()['PATH'], deps.isExecutable);
 
     if ('problem' in claude) return claude;
 
-    const { def } = parsed;
+    /*
+      What this story does not do for an agent, refused rather than half-done
+      (HIVE-137, recorded as a deviation). `rewrite` needs a per-run set
+      written before `claude` starts and carrying the run id, which only the
+      synchronous tracker knows; an integration's MCP server is a binary on
+      this machine, unreachable from inside a container. Both are said plainly
+      at the one moment the author is around to act on it.
+    */
+    if (def.container?.freshness === 'rewrite') {
+      return {
+        problem:
+          `${name} asks for freshness: rewrite, which is not supported for an ` +
+          'agent yet — use exec-env, the default.',
+      };
+    }
+
+    if (def.container !== undefined && def.mcp.length > 0) {
+      return {
+        problem:
+          `${name} names the ${def.mcp.join(', ')} integration, which runs on this ` +
+          'machine and cannot be reached from inside a container. Remove it from ' +
+          'mcp:, or run the agent on the host.',
+      };
+    }
+
+    /*
+      Inside the container set, never the host files above (HIVE-137). The
+      host checks stay where they are: they are written at the same start,
+      so a container agent that passed them and fails here has a receiver
+      that bound but a set that is still being written.
+    */
+    const containerSettings =
+      def.container === undefined ? null : deps.agentContainerSettingsPath(def.container);
+
+    if (def.container !== undefined && containerSettings === null) {
+      return {
+        problem:
+          'The container agent settings file has not been written yet — the ' +
+          'receiver may still be starting. Try again in a moment.',
+      };
+    }
     const previous = deps.state.read(name);
     /*
       A resumed session carries every earlier turn, so its cost per wake climbs
@@ -367,30 +426,56 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
       task || pending !== undefined ? undefined : previous.sessionUuid;
     const minted = task ? deps.newUuid() : (pending?.uuid ?? deps.newUuid());
 
-    const command = wakeCommand({
-      claudePath: claude.path,
-      def,
-      ...(resuming === undefined ? {} : { sessionUuid: resuming }),
-      newUuid: minted,
-      trigger,
-      ...(extra === undefined ? {} : { extra }),
-      ...(lastTurn ? { lastTurn: true as const } : {}),
-      ...(task || pending === undefined ? {} : { handoff: pending.handoff }),
-      kind,
-      paths: {
-        settings,
-        pluginDir: deps.pluginDir(),
-        mcpConfig: agentMcp ?? mcpConfig,
-        systemPrompt,
-        workdir,
-      },
-      env: {
-        base: deps.env(),
-        hook: deps.hookEnv(name),
-        subscriptionAuth: deps.subscriptionAuth(),
-      },
-      grants: deps.pendingGrants(name),
-    });
+    let command: WakeCommand;
+
+    try {
+      command = wakeCommand({
+        claudePath: claude.path,
+        def,
+        ...(resuming === undefined ? {} : { sessionUuid: resuming }),
+        newUuid: minted,
+        trigger,
+        ...(extra === undefined ? {} : { extra }),
+        ...(lastTurn ? { lastTurn: true as const } : {}),
+        ...(task || pending === undefined ? {} : { handoff: pending.handoff }),
+        kind,
+        paths: {
+          settings: containerSettings ?? settings,
+          pluginDir: deps.pluginDir(),
+          /*
+            A container agent reads the shared container MCP file — the
+            HTTP descriptor with `${VAR}` headers — never the host's stdio
+            one, which names a binary the container does not have. The
+            per-agent file (`agentMcp`) is only ever written for an
+            integration, which a container agent was refused above.
+          */
+          mcpConfig:
+            def.container === undefined
+              ? (agentMcp ?? mcpConfig)
+              : join(deps.userDataPath(), CONTAINER_DIR, CONTAINER_MCP_FILE),
+          systemPrompt,
+          workdir,
+        },
+        env: {
+          base: deps.env(),
+          hook: deps.hookEnv(name),
+          subscriptionAuth: deps.subscriptionAuth(),
+        },
+        grants: deps.pendingGrants(name),
+        ...(def.container === undefined
+          ? {}
+          : {
+              container: {
+                config: def.container,
+                userDataPath: deps.userDataPath(),
+                hostAlias: deps.hostAlias(),
+              },
+            }),
+      });
+    } catch (cause) {
+      // The path map's refusal (HIVE-137): a flag with no spelling inside.
+      return { problem: describe(cause) };
+    }
 
     // Whichever of the two `wakeCommand` actually spelled — `--resume <uuid>`
     // or `--session-id <uuid>`. The tracker matches a Stop hook against it.

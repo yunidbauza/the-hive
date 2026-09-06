@@ -110,6 +110,10 @@ const build = (over: Partial<WakeCommandDeps> = {}) =>
     pendingGrants: () => [],
     fs,
     isExecutable: (path) => path === '/usr/local/bin/claude',
+    // HIVE-137. Unused by a host agent, which every fixture above is.
+    userDataPath: () => '/data',
+    hostAlias: () => 'host.docker.internal',
+    agentContainerSettingsPath: () => null,
     ...over,
   });
 
@@ -625,6 +629,10 @@ Read the channel and report.
       hookEnv: (name) => ({ HIVE_SESSION_ID: name, HIVE_HOOK_TOKEN: 'tok' }),
       claudeCommand: () => '/usr/local/bin/claude',
       subscriptionAuth: () => true,
+      // HIVE-137. Host agents only in this describe.
+      userDataPath: () => '/userData',
+      hostAlias: () => 'host.docker.internal',
+      agentContainerSettingsPath: () => null,
       state: {
         all: () => ({ ...localState }),
         read: (name) => localState[name] ?? EMPTY,
@@ -722,5 +730,83 @@ Read the channel and report.
         'The ledger tools are not configured yet, and an agent reads its ' +
         'inbox before anything else. Try again in a moment.',
     });
+  });
+});
+
+describe('a containerised agent (HIVE-137)', () => {
+  const CONTAINER_MD = AGENT_MD.replace(
+    'limits:',
+    'container:\n  runtime: docker\n  name: devbox\n  workspace: /work\n  hive_dir: /hive\nlimits:',
+  );
+  const containerDeps = (): Partial<WakeCommandDeps> => ({
+    userDataPath: () => '/data',
+    hostAlias: () => 'host.docker.internal',
+    agentContainerSettingsPath: () => '/data/hive/container/claude-agent.settings.json',
+  });
+
+  beforeEach(() => {
+    files['/home/u/.hive/agents/slack-watcher/AGENT.md'] = CONTAINER_MD;
+  });
+
+  it('uses the container agent settings file and the shared container MCP file, mapped inside', () => {
+    const built = build(containerDeps())('slack-watcher', 'manual');
+
+    if ('problem' in built) throw new Error(built.problem);
+
+    const joined = built.args.join(' ');
+    expect(joined).toContain('--settings /hive/container/claude-agent.settings.json');
+    expect(joined).toContain('--mcp-config /hive/container/hive.mcp.json');
+    expect(built.container?.name).toBe('devbox');
+    expect(built.env['HIVE_RECEIVER_URL']).toBeUndefined();
+  });
+
+  it('does not need a claude on the host: the binary is inside', () => {
+    const built = build({ ...containerDeps(), claudeCommand: () => 'claude --tel' })(
+      'slack-watcher',
+      'manual',
+    );
+
+    expect('problem' in built).toBe(false);
+  });
+
+  it('refuses when the container settings file is not ready', () => {
+    const built = build({ ...containerDeps(), agentContainerSettingsPath: () => null })(
+      'slack-watcher',
+      'manual',
+    );
+
+    expect('problem' in built && built.problem).toMatch(/container/i);
+  });
+
+  it('refuses an unmappable path as a problem, not a throw', () => {
+    const built = build({
+      ...containerDeps(),
+      agentContainerSettingsPath: () => '/elsewhere/claude-agent.settings.json',
+    })('slack-watcher', 'manual');
+
+    expect('problem' in built && built.problem).toContain('/elsewhere/claude-agent.settings.json');
+  });
+
+  it('refuses rewrite, which this story does not support for an agent', () => {
+    files['/home/u/.hive/agents/slack-watcher/AGENT.md'] = CONTAINER_MD.replace(
+      '  hive_dir: /hive',
+      '  hive_dir: /hive\n  freshness: rewrite',
+    );
+
+    const built = build(containerDeps())('slack-watcher', 'manual');
+
+    expect('problem' in built && built.problem).toContain('exec-env');
+  });
+
+  it('refuses an integration, which runs on this machine and cannot be reached inside', () => {
+    files['/home/u/.hive/agents/slack-watcher/AGENT.md'] = CONTAINER_MD.replace(
+      'tools: [Read, Bash]',
+      'tools: [Read, Bash]\nmcp: [slack]',
+    );
+
+    const built = build(containerDeps())('slack-watcher', 'manual');
+
+    expect('problem' in built && built.problem).toContain('slack');
+    expect(written['/data/hive/agents/slack-watcher.mcp.json']).toBeUndefined();
   });
 });

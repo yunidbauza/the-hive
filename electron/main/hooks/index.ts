@@ -238,13 +238,6 @@ export interface HookRuntime {
    */
   containerOrigin(): string | null;
   /**
-   * The receiver's URLs as a container reaching the host by `alias` must
-   * address them (HIVE-137), or `null` before the bind. What
-   * `writeContainerSession` computes for a project's alias, exposed so an
-   * agent's wake can build its own HTTP MCP descriptor from the same values.
-   */
-  containerOriginsFor(alias: string): ContainerOrigins | null;
-  /**
    * The settings file a containerised agent's wake passes as `--settings`
    * (HIVE-137): the shared set's `claude-agent.settings.json` — the one with
    * `permissions.ask: ["*"]` — or the alias copy when the agent's `hostAlias`
@@ -524,14 +517,6 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       const running = receiver;
       if (running === null || settingsPath === null) return null;
       return running.doneUrl;
-    },
-
-    containerOriginsFor(alias) {
-      const running = receiver;
-
-      if (running === null || running.url === null || running.origin === null) return null;
-
-      return containerOrigins(originsOf(running, running.url, running.origin), alias);
     },
 
     agentContainerSettingsPathFor(config) {

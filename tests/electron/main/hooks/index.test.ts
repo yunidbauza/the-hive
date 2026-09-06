@@ -547,22 +547,8 @@ describe('createHookRuntime — an agent in a container (HIVE-137)', () => {
   it('answers null for everything before the receiver has bound', () => {
     runtime = createHookRuntime({ userDataPath: dir, sessionMetrics: () => false, ledger });
 
-    expect(runtime.containerOriginsFor('host.docker.internal')).toBeNull();
     expect(runtime.agentContainerSettingsPathFor(config)).toBeNull();
     expect(runtime.receiverGrants()).toBeNull();
-  });
-
-  it('addresses the origins by the alias asked for', async () => {
-    runtime = createHookRuntime({ userDataPath: dir, sessionMetrics: () => false, ledger });
-    await runtime.start(noopHandlers);
-
-    const origins = runtime.containerOriginsFor('gateway.local');
-
-    expect(origins?.origin).toMatch(/^http:\/\/gateway\.local:\d+$/);
-    expect(origins?.url).toMatch(/^http:\/\/gateway\.local:\d+\/hook$/);
-    expect(origins?.readyUrl).toMatch(/^http:\/\/gateway\.local:\d+\//);
-    // Metrics are off, so the set must not name a status line.
-    expect(origins?.metricsUrl).toBeUndefined();
   });
 
   it('names the shared agent settings file for exec-env on the global alias, writing nothing', async () => {

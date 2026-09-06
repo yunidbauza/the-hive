@@ -1419,6 +1419,12 @@ export function registerIpcHandlers(): void {
     // module binding for the same reason `hooks`/`mcp` are read through
     // getters here rather than closed over as values.
     pendingGrants: (name) => permissions?.grantsFor(name) ?? [],
+    // HIVE-137. The container agent's settings file lives in the container
+    // set `hooks` writes at start, and the alias is the receiver's global one,
+    // read live so a config reload is honoured on the next wake.
+    userDataPath: () => app.getPath('userData'),
+    hostAlias: () => getConfig().receiver.hostAlias,
+    agentContainerSettingsPath: (config) => hooks.agentContainerSettingsPathFor(config),
   });
 
   /**

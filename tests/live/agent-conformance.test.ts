@@ -880,6 +880,11 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
         [HOOK_ENV_RECEIVER_URL]: receiver?.origin ?? '',
       }),
       claudeCommand: () => 'claude',
+      // HIVE-137. This suite's agents run on the host; the container gate is
+      // `container-conformance.test.ts`'s.
+      userDataPath: () => userDataPath,
+      hostAlias: () => 'host.docker.internal',
+      agentContainerSettingsPath: () => null,
       /*
         False, so the child inherits this shell's environment untouched — the
         same environment every other live suite spawns `claude` with. Stripping
