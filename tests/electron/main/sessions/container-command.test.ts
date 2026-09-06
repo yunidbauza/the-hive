@@ -4,6 +4,7 @@ import {
   ENV_PLACEHOLDER,
   expandEnvArgs,
   substituteEnv,
+  expandEnvArgv,
 } from '../../../../electron/main/sessions/container-command';
 
 describe('expandEnvArgs', () => {
@@ -27,6 +28,29 @@ describe('expandEnvArgs', () => {
 
   it('is empty for an empty environment', () => {
     expect(expandEnvArgs({}, '-e {name}={value}')).toBe('');
+  });
+});
+
+describe('expandEnvArgv (HIVE-137)', () => {
+  it('yields one argv element per template token, values unquoted', () => {
+    expect(expandEnvArgv({ HIVE_RUN_ID: 'run-1', HIVE_RUN_KIND: 'standing' }, '-e {name}={value}')).toEqual([
+      '-e',
+      'HIVE_RUN_ID=run-1',
+      '-e',
+      'HIVE_RUN_KIND=standing',
+    ]);
+  });
+
+  it('keeps a value with spaces as one element — there is no shell to split it', () => {
+    expect(expandEnvArgv({ X: 'a b' }, '-e {name}={value}')).toEqual(['-e', 'X=a b']);
+  });
+
+  it('spells a template with the placeholders in separate tokens', () => {
+    expect(expandEnvArgv({ X: '1' }, '--env {name} {value}')).toEqual(['--env', 'X', '1']);
+  });
+
+  it('is empty for an empty environment', () => {
+    expect(expandEnvArgv({}, '-e {name}={value}')).toEqual([]);
   });
 });
 

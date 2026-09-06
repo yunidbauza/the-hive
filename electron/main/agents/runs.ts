@@ -7,9 +7,11 @@ import {
   type RunLine,
   type RunOutcome,
 } from '@shared/agent-contract';
-import { HOOK_ENV_RUN, HOOK_ENV_RUN_KIND } from '@shared/hook-contract';
+import { HOOK_ENV_GRANTS, HOOK_ENV_RUN, HOOK_ENV_RUN_KIND } from '@shared/hook-contract';
 import { OVERMIND } from '@shared/ledger-contract';
 import { SLACK_SERVER_KEY } from '@shared/slack-contract';
+
+import { expandEnvArgv } from '../sessions/container-command';
 
 import {
   NO_LOG,
@@ -195,6 +197,17 @@ export interface RunTrackerDeps {
   newRunId: () => string;
   killGraceMs?: number;
   stallGraceMs?: number;
+  /**
+   * The receiver's per-run grants registry (HIVE-137), for `approve` over
+   * HTTP. Registered before the spawn with the same list the child gets in
+   * `HIVE_GRANTS`, and deleted in `close()`. Optional, because the tracker is
+   * composed before the receiver binds and a host run never needs it: the
+   * stdio host reads the environment instead.
+   */
+  grants?: {
+    set(run: string, grants: readonly string[]): void;
+    delete(run: string): void;
+  };
 }
 
 export interface ChildLike {
@@ -271,6 +284,16 @@ interface LiveRun {
   startedAt: number;
   sessionUuid: string;
   child: ChildLike;
+  /**
+   * Stop the run *inside* the container (HIVE-137), or `null` for a host run.
+   *
+   * Measured: SIGTERM to a `docker exec` client leaves the process running
+   * inside, with or without a TTY. So `child.kill` alone would orphan every
+   * wedged container run, and this runs `<runtime> exec <name> pkill -<SIG>
+   * -f <session uuid>` beside it — the uuid is on every wake's argv and unique
+   * per run, so `-f` is a precise handle.
+   */
+  stop: ((signal: 'TERM' | 'KILL') => void) | null;
   fold: LogFold;
   closed: boolean;
   reason: string | null;
@@ -328,6 +351,25 @@ interface FinalizeInfo {
   sessionUuid?: string;
 }
 
+/**
+ * `HIVE_GRANTS` as the stdio host reads it — a JSON array of rules — or
+ * nothing. Tolerant, because the value is main's own and a malformed one is
+ * a bug upstream rather than something to fail a wake over here.
+ */
+const parseGrants = (raw: string | undefined): readonly string[] => {
+  if (raw === undefined || raw === '') return [];
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+
+    return Array.isArray(parsed)
+      ? parsed.filter((rule): rule is string => typeof rule === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+};
+
 export function createRunTracker(deps: RunTrackerDeps): RunTracker {
   const grace = deps.killGraceMs ?? AGENT_KILL_GRACE_MS;
   const stallGrace = deps.stallGraceMs ?? AGENT_STALL_GRACE_MS;
@@ -369,12 +411,17 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
     if (live.closed) return;
 
     live.reason = live.reason ?? reason;
+    // Inside first, then the client: the client's pipes closing is what
+    // reaches `close()`, and the process inside is what actually has to stop.
+    live.stop?.('TERM');
     live.child.kill('SIGTERM');
 
     if (live.escalation !== null) return;
 
     const timer = setTimeout(() => {
-      if (!live.closed) live.child.kill('SIGKILL');
+      if (live.closed) return;
+      live.stop?.('KILL');
+      live.child.kill('SIGKILL');
     }, grace);
 
     timer.unref?.();
@@ -664,6 +711,8 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
 
     live.closed = true;
     clearTimers(live);
+    // The run's grants die with it (HIVE-137); a later run registers its own.
+    deps.grants?.delete(live.run);
     // This run only — a neighbour under the same name is still in flight, and
     // `finalizeRun` reads what is left to decide the agent's status (HIVE-128).
     forget(name, live);
@@ -792,21 +841,65 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
         meta: { run, trigger, kind, ...(extra === undefined ? {} : { extra }) },
       });
 
+      /*
+        The run's own identity, for the MCP host `claude` starts from this
+        environment (HIVE-128). The host stamps `meta.run` on every entry
+        the run writes, which is the only way main can later tell one
+        run's asks and handoff from a concurrent neighbour's.
+      */
+      const env: Record<string, string> = {
+        ...command.env,
+        [HOOK_ENV_RUN]: run,
+        [HOOK_ENV_RUN_KIND]: kind,
+      };
+
+      /*
+        The same list the child reads from `HIVE_GRANTS`, handed to the
+        receiver under this run's id (HIVE-137) so `approve` over HTTP sees
+        what `approve` over stdio sees. Registered before the spawn, because
+        the first thing a wake does is call a tool; unconditional, because
+        a host run registering a list nobody reads costs one map entry that
+        `close()` removes.
+      */
+      deps.grants?.set(run, parseGrants(env[HOOK_ENV_GRANTS]));
+
+      /*
+        A container run is wrapped here, not in `wakeCommand` (HIVE-137):
+        this is the one place that knows the run id and kind the `-e` set has
+        to carry. `--workdir` is the cwd inside; the host `cwd` is not passed,
+        because the exec's cwd is the container's. Nothing from main's own
+        environment reaches the runtime client either — `env` is the argv's
+        `-e` set and nothing else, so a host `PATH` finds `docker` and a
+        container `PATH` finds `claude`, each their own.
+      */
+      const container = command.container;
+      const plan =
+        container === undefined
+          ? {
+              file: command.file,
+              args: command.args,
+              options: { cwd: command.cwd, env, stdio: ['ignore', 'pipe', 'pipe'] },
+            }
+          : {
+              file: container.runtime,
+              args: [
+                'exec',
+                '--workdir',
+                container.workspace,
+                ...expandEnvArgv(env, container.envArg),
+                container.name,
+                container.command,
+                ...command.args,
+              ],
+              options: { stdio: ['ignore', 'pipe', 'pipe'] },
+            };
+
       let child: ChildLike;
 
       try {
-        child = deps.spawn(command.file, command.args, {
-          cwd: command.cwd,
-          /*
-            The run's own identity, for the MCP host `claude` starts from this
-            environment (HIVE-128). The host stamps `meta.run` on every entry
-            the run writes, which is the only way main can later tell one
-            run's asks and handoff from a concurrent neighbour's.
-          */
-          env: { ...command.env, [HOOK_ENV_RUN]: run, [HOOK_ENV_RUN_KIND]: kind },
-          stdio: ['ignore', 'pipe', 'pipe'],
-        });
+        child = deps.spawn(plan.file, plan.args, plan.options);
       } catch (error) {
+        deps.grants?.delete(run);
         /*
           A synchronous throw never produced a process. Two things follow, and
           they point in opposite directions:
@@ -851,6 +944,30 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
         startedAt,
         sessionUuid: command.sessionUuid,
         child,
+        stop:
+          container === undefined
+            ? null
+            : (signal) => {
+                try {
+                  deps.spawn(
+                    container.runtime,
+                    ['exec', container.name, 'pkill', `-${signal}`, '-f', command.sessionUuid],
+                    { stdio: 'ignore' },
+                  );
+                } catch (cause) {
+                  // Named rather than silent: the client below is still
+                  // killed, so `close()` runs, but the process inside may not
+                  // have stopped — and that orphan is worth a line in the log.
+                  pushRunLines(name, started, [
+                    {
+                      text: `could not stop the run inside ${container.name}: ${
+                        cause instanceof Error ? cause.message : String(cause)
+                      }`,
+                      color: 'amber',
+                    },
+                  ]);
+                }
+              },
         fold: NO_LOG,
         closed: false,
         reason: null,

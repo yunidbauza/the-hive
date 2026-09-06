@@ -1411,4 +1411,147 @@ describe('createRunTracker', () => {
       expect(childInstances[0]?.killed).toBe(false);
     });
   });
+
+  /**
+   * A container run (HIVE-137). The tracker wraps `wakeCommand`'s inner argv
+   * into `<runtime> exec …` here, because this is the one place that knows
+   * the run id and kind the `-e` set has to carry; and it stops the run
+   * *inside* the container, because — measured — SIGTERM to the `docker exec`
+   * client leaves the process running.
+   */
+  describe('a container run (HIVE-137)', () => {
+    const containerCommand = () => ({
+      file: 'claude',
+      args: ['-p', '--session-id', 'u-1', 'go'],
+      env: {
+        HIVE_GRANTS: JSON.stringify(['mcp__hive__*', 'Read']),
+        HIVE_AGENT: '1',
+        HIVE_SESSION_ID: 'a',
+        HIVE_HOOK_TOKEN: 't',
+      },
+      cwd: '/home/u/.hive/work/a',
+      container: {
+        runtime: 'docker',
+        name: 'devbox',
+        command: 'claude',
+        envArg: '-e {name}={value}',
+        workspace: '/work',
+        sessionUuid: 'u-1',
+      },
+      sessionUuid: 'u-1',
+      lastTurn: false,
+      kind: 'standing' as const,
+    });
+
+    const containerTracker = (grants?: { set: (r: string, g: readonly string[]) => void; delete: (r: string) => void }) =>
+      createRunTracker({
+        spawn,
+        command: containerCommand,
+        parallelFor: () => 1,
+        state,
+        appendLedger: (entry) => ledger.push(entry),
+        openAsksFor: () => false,
+        hasOpenAsk: () => false,
+        handoffFor: () => undefined,
+        newUuid: () => 'uuid-minted',
+        pushStatus: (name) => statuses.push(name),
+        pushLines: (name, pushed) =>
+          lines.push({ name, count: pushed.length, pushed: [...pushed] }),
+        now: () => 1_000,
+        newRunId: () => 'run-1',
+        ...(grants === undefined ? {} : { grants }),
+      });
+
+    it('spawns the runtime with exec, the workdir, the -e set including the run id, the name, the command, then the inner argv', () => {
+      containerTracker().run('a', 'ledger');
+
+      const call = spawnCalls[0];
+      expect(call?.file).toBe('docker');
+      expect(call?.args).toEqual([
+        'exec',
+        '--workdir',
+        '/work',
+        '-e',
+        `HIVE_GRANTS=${JSON.stringify(['mcp__hive__*', 'Read'])}`,
+        '-e',
+        'HIVE_AGENT=1',
+        '-e',
+        'HIVE_SESSION_ID=a',
+        '-e',
+        'HIVE_HOOK_TOKEN=t',
+        '-e',
+        'HIVE_RUN_ID=run-1',
+        '-e',
+        'HIVE_RUN_KIND=standing',
+        'devbox',
+        'claude',
+        '-p',
+        '--session-id',
+        'u-1',
+        'go',
+      ]);
+      // Nothing from main's environment reaches the runtime client, and no
+      // host cwd: the exec's cwd is the container's.
+      expect(call?.options).toEqual({ stdio: ['ignore', 'pipe', 'pipe'] });
+    });
+
+    it('registers the grants before the spawn and clears them when the run closes', () => {
+      const events: string[] = [];
+      const tracker = containerTracker({
+        set: (run, grants) => events.push(`set ${run} ${grants.join(',')} spawned=${String(spawnCalls.length)}`),
+        delete: (run) => events.push(`delete ${run}`),
+      });
+
+      tracker.run('a', 'ledger');
+      childInstances[0]?.emitClose(0);
+
+      expect(events).toEqual(['set run-1 mcp__hive__*,Read spawned=0', 'delete run-1']);
+    });
+
+    it('stops inside the container with pkill on the session uuid, TERM then KILL, beside the client kill', () => {
+      const tracker = containerTracker();
+      tracker.run('a', 'ledger');
+
+      tracker.kill('a');
+
+      expect(spawnCalls[1]?.file).toBe('docker');
+      expect(spawnCalls[1]?.args).toEqual(['exec', 'devbox', 'pkill', '-TERM', '-f', 'u-1']);
+      expect(spawnCalls[1]?.options).toEqual({ stdio: 'ignore' });
+      expect(childInstances[0]?.killSignals).toEqual(['SIGTERM']);
+
+      vi.advanceTimersByTime(AGENT_KILL_GRACE_MS);
+
+      expect(spawnCalls[2]?.args).toEqual(['exec', 'devbox', 'pkill', '-KILL', '-f', 'u-1']);
+      expect(childInstances[0]?.killSignals).toEqual(['SIGTERM', 'SIGKILL']);
+    });
+
+    it('registers grants for a host run too, from the same environment', () => {
+      const events: string[] = [];
+      const tracker = createRunTracker({
+        spawn,
+        command: () => ({ ...containerCommand(), container: undefined }),
+        parallelFor: () => 1,
+        state,
+        appendLedger: (entry) => ledger.push(entry),
+        openAsksFor: () => false,
+        hasOpenAsk: () => false,
+        handoffFor: () => undefined,
+        newUuid: () => 'uuid-minted',
+        pushStatus: () => {},
+        pushLines: () => {},
+        now: () => 1_000,
+        newRunId: () => 'run-9',
+        grants: {
+          set: (run, grants) => events.push(`set ${run} ${grants.length}`),
+          delete: (run) => events.push(`delete ${run}`),
+        },
+      });
+
+      tracker.run('a', 'ledger');
+
+      expect(spawnCalls[0]?.file).toBe('claude');
+      expect(spawnCalls[0]?.options).toMatchObject({ cwd: '/home/u/.hive/work/a' });
+      expect(events).toEqual(['set run-9 2']);
+    });
+  });
 });

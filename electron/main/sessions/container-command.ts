@@ -45,6 +45,29 @@ export function expandEnvArgs(
 }
 
 /**
+ * The same expansion as {@link expandEnvArgs}, as **argv** rather than a
+ * shell line (HIVE-137).
+ *
+ * A session's command is typed into a login shell, so its values are quoted
+ * and the whole thing is one string. An agent's wake is spawned without a
+ * shell, so there is nothing to quote *for*: each whitespace-separated token
+ * of the template is one argv element, with the placeholders substituted in
+ * place — `-e {name}={value}` → `['-e', 'HIVE_RUN_ID=run-1']` — and a value
+ * with a space stays inside its element, because no shell will ever split it.
+ * Quoting here would put literal quotes into the container's environment.
+ */
+export function expandEnvArgv(
+  env: Record<string, string>,
+  template: string,
+): string[] {
+  const tokens = template.split(/\s+/).filter((token) => token !== '');
+
+  return Object.entries(env).flatMap(([name, value]) =>
+    tokens.map((token) => token.replaceAll('{name}', name).replaceAll('{value}', value)),
+  );
+}
+
+/**
  * Put `args` where the command asks for them, or refuse.
  *
  * `null` means the command has no {@link ENV_PLACEHOLDER}, which is fatal
