@@ -247,12 +247,12 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
   /**
    * Write everything this session is owed, one nudge per idle window.
    *
-   * **`isIdle` is re-checked on every iteration, and the loop stops at the
-   * first delivery.** Each nudge ends in `\r`, which submits it — so the
-   * instant one lands the session is mid-turn, and writing the rest of the
-   * backlog behind it would break the single invariant this module exists to
-   * hold. The remainder is not lost: it has no receipt, so the next idle
-   * transition picks up exactly where this one stopped.
+   * **The preconditions are checked once, before the loop, and the loop stops
+   * at the first delivery.** Each nudge ends in `\r`, which submits it — so
+   * the instant one lands the session is mid-turn, and writing the rest of
+   * the backlog behind it would break the single invariant this module
+   * exists to hold. The remainder is not lost: it has no receipt, so the
+   * next idle transition picks up exactly where this one stopped.
    */
   function flush(entityId: string): void {
     if (!isLive(entityId) || !isIdle(entityId) || !clear(entityId)) return;
@@ -297,15 +297,20 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
         return;
       }
 
-      const wasClear = clear(entityId);
+      const before = focus;
       focus = { entityId, input };
 
       /*
-        The third flush trigger, beside idle and ready. Only on the transition
-        into `empty`: a report that changes nothing must not re-run a flush
-        that would find the same backlog behind the turn the last nudge started.
+        The third flush trigger, beside idle and ready. Not on a report that
+        changes nothing: after a nudge is submitted the next screen read says
+        `empty` again while main's idle answer can lag the busy-state hook,
+        and re-running the flush then would find the backlog behind the turn
+        the last nudge started. Every other arrival at `empty` — first report,
+        after a reset, after a draft, after a focus round-trip — is a
+        transition, and the held nudge is what the user is waiting on.
       */
-      if (input === 'empty' && !wasClear) flush(entityId);
+      const unchanged = before?.entityId === entityId && before.input === 'empty';
+      if (input === 'empty' && !unchanged) flush(entityId);
     },
 
     onRendererReset() {

@@ -347,6 +347,30 @@ describe('createDeliver', () => {
 
       expect(write).toHaveBeenCalledTimes(1);
     });
+
+    it('flushes a held nudge on the first empty report after a renderer reset', () => {
+      deliver.onPrompt('sess-a', 'draft');
+      ask('sess-a');
+      deliver.onRendererReset();
+      expect(write).not.toHaveBeenCalled();
+
+      // The surface remounts and reads an empty box: this is the transition.
+      deliver.onPrompt('sess-a', 'empty');
+
+      expect(write).toHaveBeenCalledTimes(1);
+    });
+
+    it('flushes a held nudge after a draft, away, and back to an empty box', () => {
+      deliver.onPrompt('sess-a', 'draft');
+      ask('sess-a');
+      deliver.onPrompt('sess-a', 'unfocused');
+      // Delivered as an unfocused session? No entry arrived and no idle fired.
+      expect(write).not.toHaveBeenCalled();
+
+      deliver.onPrompt('sess-a', 'empty');
+
+      expect(write).toHaveBeenCalledTimes(1);
+    });
   });
 
   /*
