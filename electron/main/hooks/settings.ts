@@ -213,15 +213,31 @@ export function hookSettings(
   transport: HookTransport = 'http',
 ): HookSettings {
   /**
-   * Short, and shorter than the hook system's default.
+   * Three seconds, and the reason is no longer "the answer never matters".
    *
-   * This handler's answer never changes what the session does — the receiver
-   * replies 204 and the agent carries on regardless — so a slow or dead
-   * endpoint must not be something the user waits behind. Ten seconds is
-   * generous for a loopback POST and brief enough to be invisible if the app
-   * has quit while a session is still running.
+   * The prompt waits behind this hook. Measured (HIVE-136, the note beside
+   * `HOOK_EVENTS` in `hook-contract.ts`, pinned by
+   * `tests/live/hook-context-conformance.test.ts`): a reply that took 5 s
+   * moved a turn's end from 7.5 s to 11.8 s after the prompt, and a reply past
+   * the timeout is discarded with "UserPromptSubmit hook timed out" drawn on
+   * screen. Since HIVE-138 the reply can carry a ledger entry as context, so
+   * the answer does change what the session does, and the timeout is what
+   * bounds the wait rather than what hides it.
+   *
+   * The receiver answers from memory over loopback, in milliseconds. Three
+   * seconds is three orders of magnitude of headroom for a stalled main
+   * process, and the ceiling on what such a stall can add to a prompt: past
+   * it the user loses one marker's context and reads one line, which beats
+   * waiting on an app that is not answering. The same number serves
+   * `PreToolUse`, the other blocking hook, where nothing is carried.
+   *
+   * A receiver that has gone away is not invisible, whatever this docblock
+   * used to promise: the refused connection is drawn at once, on every
+   * prompt, not after the timeout (measured, same suite). A Hive session's
+   * pty is a child of the app, so a session outliving the receiver is not
+   * the common case, and no number here would make it silent.
    */
-  const timeout = 10;
+  const timeout = 3;
   const handler =
     transport === 'command'
       ? { type: 'command', command: statusCommand(url, identity), timeout }

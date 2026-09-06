@@ -204,7 +204,7 @@ describe('hookSettings — command transport (HIVE-137)', () => {
       expect(handler.command).toContain(`${HOOK_HEADER_TOKEN}: $${HOOK_ENV_TOKEN}`);
       expect(handler.command).toContain('--data-binary @-');
       expect(handler.command).toContain("-H 'content-type: application/json'");
-      expect(handler.timeout).toBe(10);
+      expect(handler.timeout).toBe(3);
     }
   });
 
@@ -550,7 +550,7 @@ describe('hookSettings — freshness (HIVE-132)', () => {
     expect(JSON.stringify(handler)).toBe(
       '{"type":"http","url":"http://127.0.0.1:63999/hook",' +
         '"headers":{"x-hive-session":"$HIVE_SESSION_ID","x-hive-token":"$HIVE_HOOK_TOKEN"},' +
-        '"allowedEnvVars":["HIVE_SESSION_ID","HIVE_HOOK_TOKEN"],"timeout":10}',
+        '"allowedEnvVars":["HIVE_SESSION_ID","HIVE_HOOK_TOKEN"],"timeout":3}',
     );
   });
 });
