@@ -251,6 +251,94 @@ describe('createDeliver', () => {
     expect(lastWrite()).toContain('second question');
   });
 
+  /**
+   * The input box is a precondition beside idleness (HIVE-135). `isIdle` is
+   * about the agent; a user who typed half a sentence and stopped has an idle
+   * agent and a full box, and a nudge written then is submitted together with
+   * their draft. The visible surface reports what it sees; main refuses to
+   * write into a draft and picks the nudge up when the box clears.
+   */
+  describe('the focused session', () => {
+    it('holds a nudge while the focused session reports a draft', () => {
+      deliver.onPrompt('sess-a', 'draft');
+      ask('sess-a');
+
+      expect(write).not.toHaveBeenCalled();
+      expect(receipts()).toHaveLength(0);
+    });
+
+    it('delivers the held nudge the moment the box is reported empty', () => {
+      deliver.onPrompt('sess-a', 'draft');
+      ask('sess-a');
+      deliver.onPrompt('sess-a', 'empty');
+
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(receipts()).toHaveLength(1);
+    });
+
+    it('holds at idle too — idle is about the agent, not the box', () => {
+      idle.delete('sess-a');
+      ask('sess-a');
+      deliver.onPrompt('sess-a', 'draft');
+      idle.add('sess-a');
+      deliver.onIdle('sess-a');
+
+      expect(write).not.toHaveBeenCalled();
+    });
+
+    it('delivers to a session that is not the focused one, as before', () => {
+      live.add('sess-b');
+      idle.add('sess-b');
+      deliver.onPrompt('sess-a', 'draft');
+      ask('sess-b');
+
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(write.mock.calls[0][0]).toBe('sess-b');
+    });
+
+    it('treats an unfocused report as "no session is focused"', () => {
+      deliver.onPrompt('sess-a', 'draft');
+      deliver.onPrompt('sess-a', 'unfocused');
+      ask('sess-a');
+
+      expect(write).toHaveBeenCalledTimes(1);
+    });
+
+    it('ignores an unfocused report from a surface that already lost focus', () => {
+      // sess-a was focused with a draft; focus moved to sess-b, also a draft.
+      live.add('sess-b');
+      idle.add('sess-b');
+      deliver.onPrompt('sess-a', 'draft');
+      deliver.onPrompt('sess-b', 'draft');
+      // A late `unfocused` from sess-a must not clear sess-b's record.
+      deliver.onPrompt('sess-a', 'unfocused');
+      ask('sess-b');
+
+      expect(write).not.toHaveBeenCalled();
+    });
+
+    it('does not flush on an empty report that is not a transition', () => {
+      deliver.onPrompt('sess-a', 'empty');
+      ask('sess-a');
+      expect(write).toHaveBeenCalledTimes(1);
+
+      // A second nudge is queued behind the turn the first one started.
+      idle.delete('sess-a');
+      ask('sess-a', 'second');
+      deliver.onPrompt('sess-a', 'empty');
+
+      expect(write).toHaveBeenCalledTimes(1);
+    });
+
+    it('clears the record when the renderer goes away', () => {
+      deliver.onPrompt('sess-a', 'draft');
+      deliver.onRendererReset();
+      ask('sess-a');
+
+      expect(write).toHaveBeenCalledTimes(1);
+    });
+  });
+
   /*
     The two halves of the reason delivery is recorded in the log rather than
     held in memory. A second `createLedger` over the same directory is what a

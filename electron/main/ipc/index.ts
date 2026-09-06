@@ -45,6 +45,7 @@ import type {
 import type { GhResult, PrRecord, PrsSnapshot } from '@shared/github-contract';
 import {
   parseAckRequest,
+  parsePromptReport,
   parseAgentNameRequest,
   parseAgentRenameRequest,
   parseAgentRunRequest,
@@ -1144,6 +1145,25 @@ export function registerIpcHandlers(): void {
     // `deliver` records a receipt on the strength of it.
     write: (id, text) => sessions?.write(id, text) ?? false,
   });
+
+  /**
+   * `webContents` already watched for a reset (HIVE-135). A `WeakSet` so a
+   * closed window's contents can be collected; `on` is checked because the
+   * unit suites hand in a bare object as the event sender.
+   */
+  const watchedReporters = new WeakSet<object>();
+  const watchReporter = (sender: unknown): void => {
+    if (typeof sender !== 'object' || sender === null) return;
+    if (watchedReporters.has(sender)) return;
+    const contents = sender as {
+      on?: (event: string, listener: () => void) => unknown;
+    };
+    if (typeof contents.on !== 'function') return;
+    watchedReporters.add(sender);
+    for (const event of ['did-start-loading', 'render-process-gone', 'destroyed']) {
+      contents.on(event, () => deliver.onRendererReset());
+    }
+  };
 
   /**
    * One entry landed, from any party — pushed the way `notifications:new` is
@@ -3216,6 +3236,20 @@ export function registerIpcHandlers(): void {
   on(CH.ptyAck, (_event, payload) => {
     const request = parseAckRequest(payload);
     sessions?.ack(request.sessionId, request.seq);
+  });
+
+  /**
+   * The input-box report (HIVE-135). Session ids arriving from the renderer are
+   * entity ids, as they are for `ack`; `deliver` keys its record by the same.
+   *
+   * The reporter is watched for its own reload, crash and close: a record left
+   * behind by a renderer that no longer exists would hold every nudge to that
+   * session forever, since nothing would ever report it empty.
+   */
+  on(CH.ptyPrompt, (event, payload) => {
+    const report = parsePromptReport(payload);
+    deliver.onPrompt(report.sessionId, report.input);
+    watchReporter(event.sender);
   });
 }
 

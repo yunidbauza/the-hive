@@ -1,3 +1,4 @@
+import type { PromptInput } from '../../shared/ipc-contract';
 import { OVERMIND, type LedgerEntry, type LedgerKind } from '../../shared/ledger-contract';
 
 import type { Ledger } from './index';
@@ -79,9 +80,42 @@ export interface Deliver {
   onIdle(entityId: string): void;
   /** A session's agent came up, including after a resume. */
   onReady(entityId: string): void;
+  /**
+   * The visible terminal surface reported what its input box holds
+   * (HIVE-135). `empty` and `draft` make that session the focused one;
+   * `unfocused` releases it, if it still holds the record.
+   */
+  onPrompt(entityId: string, input: PromptInput): void;
+  /** The renderer reloaded or died: no surface is visible until one reports again. */
+  onRendererReset(): void;
 }
 
 export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions): Deliver {
+  /**
+   * The one session a user can type into, and what its box holds (HIVE-135).
+   *
+   * One record, not a map, because the stage shows one terminal at a time and
+   * a user can only type into the terminal they can see. Everything else
+   * delivers on idleness alone, as it did before this existed — the check is
+   * expensive on the renderer side and the race it guards is only possible on
+   * the visible surface.
+   *
+   * `null` until a surface reports. That is the conservative default in
+   * disguise: no surface has reported means no surface is visible, and a
+   * surface reports in the same effect that reveals it.
+   */
+  let focus: { entityId: string; input: 'empty' | 'draft' } | null = null;
+
+  /**
+   * May a line be written into this session's box right now?
+   *
+   * Refusing is always safe — a held nudge writes no receipt and the next
+   * transition retries it. Writing into a draft never is.
+   */
+  function clear(entityId: string): boolean {
+    return focus === null || focus.entityId !== entityId || focus.input === 'empty';
+  }
+
   /**
    * The short handle a person would use for this entry's conversation.
    *
@@ -203,7 +237,7 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
    * transition picks up exactly where this one stopped.
    */
   function flush(entityId: string): void {
-    if (!isLive(entityId) || !isIdle(entityId)) return;
+    if (!isLive(entityId) || !isIdle(entityId) || !clear(entityId)) return;
 
     for (const entry of undelivered(entityId)) {
       if (deliverOne(entityId, entry)) return;
@@ -222,7 +256,9 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
       // An agent is woken by the scheduler (HIVE-120), not written to — it has
       // no terminal to nudge. An unknown party has nowhere to write to either.
       // A live session mid-turn is caught here too, and flushed by `onIdle`.
-      if (!isLive(to) || !isIdle(to)) return;
+      // A focused session whose box holds a draft is held here too, and
+      // flushed by onPrompt when the box clears (HIVE-135).
+      if (!isLive(to) || !isIdle(to) || !clear(to)) return;
 
       deliverOne(to, entry);
     },
@@ -233,6 +269,29 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
 
     onReady(entityId) {
       flush(entityId);
+    },
+
+    onPrompt(entityId, input) {
+      if (input === 'unfocused') {
+        // Only the holder releases the record: a late report from a surface
+        // that already lost focus must not clear a newer one.
+        if (focus?.entityId === entityId) focus = null;
+        return;
+      }
+
+      const wasClear = clear(entityId);
+      focus = { entityId, input };
+
+      /*
+        The third flush trigger, beside idle and ready. Only on the transition
+        into `empty`: a report that changes nothing must not re-run a flush
+        that would find the same backlog behind the turn the last nudge started.
+      */
+      if (input === 'empty' && !wasClear) flush(entityId);
+    },
+
+    onRendererReset() {
+      focus = null;
     },
   };
 }
