@@ -1,5 +1,5 @@
 import { render } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   MockFitAddon,
@@ -54,6 +54,7 @@ function fakeTransport() {
       emit.push(cb);
       return unsubscribe;
     }),
+    reportPrompt: vi.fn(),
   };
   return {
     transport,
@@ -1492,5 +1493,136 @@ describe('TerminalSurface', () => {
       unmount();
       expect(addon.contextLossListenerCount).toBe(0);
     });
+  });
+});
+
+/**
+ * The input-box report (HIVE-135). Derived from the same screen read as the
+ * bare-`←` claim, sent through the transport, and only for the surface on
+ * screen: a hidden one cannot be typed into and says so once.
+ */
+describe('TerminalSurface input-box report', () => {
+  const RULE = '─'.repeat(40);
+
+  beforeEach(() => {
+    resetTerminalInstances();
+    resetFitAddonInstances();
+    resetWebLinksAddonInstances();
+    resetWebglAddonInstances();
+    vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) =>
+      setTimeout(() => cb(0), 16) as unknown as number,
+    );
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => clearTimeout(id));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  function stage(rows: string[], cursorY: number) {
+    const mock = terminal();
+    mock.bufferLines = rows;
+    mock.buffer.active.baseY = 0;
+    mock.buffer.active.cursorY = cursorY;
+    mock.buffer.active.cursorX = 2;
+  }
+
+  it('reports empty on reveal when the buffer shows an empty Claude prompt', () => {
+    const { transport } = fakeTransport();
+    const { rerender } = render(
+      <TerminalSurface transport={transport} palette={TERM} visible={false} />,
+    );
+    stage([RULE, '❯ ', RULE], 1);
+
+    rerender(<TerminalSurface transport={transport} palette={TERM} visible />);
+
+    expect(transport.reportPrompt).toHaveBeenLastCalledWith('empty');
+  });
+
+  it('reports draft when the prompt holds text, and again only on change', () => {
+    const { transport, push } = fakeTransport();
+    render(<TerminalSurface transport={transport} palette={TERM} visible />);
+    stage([RULE, '❯ hello', RULE], 1);
+    push('x', undefined);
+    vi.advanceTimersByTime(16);
+
+    expect(transport.reportPrompt).toHaveBeenLastCalledWith('draft');
+    const calls = (transport.reportPrompt as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    push('y', undefined);
+    vi.advanceTimersByTime(16);
+
+    expect((transport.reportPrompt as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls);
+  });
+
+  it('coalesces a burst of chunks into one read per frame', () => {
+    const { transport, push } = fakeTransport();
+    render(<TerminalSurface transport={transport} palette={TERM} visible />);
+    stage([RULE, '❯ ', RULE], 1);
+    const before = (transport.reportPrompt as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    push('a');
+    push('b');
+    push('c');
+    vi.advanceTimersByTime(16);
+
+    // One transition (unstaged → empty) reported, however many chunks arrived.
+    expect((transport.reportPrompt as ReturnType<typeof vi.fn>).mock.calls.length).toBe(before + 1);
+    expect(transport.reportPrompt).toHaveBeenLastCalledWith('empty');
+  });
+
+  it('reports draft when the caret row cannot be read at all', () => {
+    const { transport } = fakeTransport();
+    render(<TerminalSurface transport={transport} palette={TERM} visible />);
+
+    // No rows staged: `readCursorContext` returns null. Not provably empty.
+    expect(transport.reportPrompt).toHaveBeenLastCalledWith('draft');
+  });
+
+  it('reports unfocused when hidden, and reads again when revealed', () => {
+    const { transport } = fakeTransport();
+    const { rerender } = render(
+      <TerminalSurface transport={transport} palette={TERM} visible />,
+    );
+    stage([RULE, '❯ ', RULE], 1);
+
+    rerender(<TerminalSurface transport={transport} palette={TERM} visible={false} />);
+    expect(transport.reportPrompt).toHaveBeenLastCalledWith('unfocused');
+
+    rerender(<TerminalSurface transport={transport} palette={TERM} visible />);
+    expect(transport.reportPrompt).toHaveBeenLastCalledWith('empty');
+  });
+
+  it('reports unfocused on unmount', () => {
+    const { transport } = fakeTransport();
+    const { unmount } = render(
+      <TerminalSurface transport={transport} palette={TERM} visible />,
+    );
+
+    unmount();
+
+    expect(transport.reportPrompt).toHaveBeenLastCalledWith('unfocused');
+  });
+
+  it('never reports for a read-only surface', () => {
+    const { transport, push } = fakeTransport();
+    render(<TerminalSurface transport={transport} palette={TERM} visible readOnly />);
+    push('x');
+    vi.advanceTimersByTime(16);
+
+    expect(transport.reportPrompt).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the transport has no reportPrompt', () => {
+    const { transport, push } = fakeTransport();
+    delete (transport as { reportPrompt?: unknown }).reportPrompt;
+    render(<TerminalSurface transport={transport} palette={TERM} visible />);
+
+    expect(() => {
+      push('x');
+      vi.advanceTimersByTime(16);
+    }).not.toThrow();
   });
 });

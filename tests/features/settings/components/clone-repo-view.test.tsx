@@ -52,6 +52,10 @@ function installBridge(): void {
       resize: vi.fn(),
       kill: vi.fn(() => Promise.resolve()),
       ack: vi.fn(),
+      // HIVE-135. The surface reports its input box on mount+visible, so a
+      // clone's terminal — real `PtyTransport`, not the fake used elsewhere —
+      // calls this on every render this test drives.
+      prompt: vi.fn(),
       onData: () => () => {},
       onExit: () => () => {},
       onLost: () => () => {},

@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -303,6 +303,9 @@ describe('CenterStage — interactive terminals', () => {
         resize: vi.fn(),
         kill: vi.fn(() => Promise.resolve()),
         ack: vi.fn(),
+        // HIVE-135. The surface reports its input box on mount+visible, so an
+        // interactive terminal here — real `PtyTransport` — calls this.
+        prompt: vi.fn(),
         onData: vi.fn(() => vi.fn()),
         onExit: vi.fn(() => vi.fn()),
         onLost: vi.fn(() => vi.fn()),
@@ -320,6 +323,17 @@ describe('CenterStage — interactive terminals', () => {
   });
 
   afterEach(() => {
+    /**
+     * Unmount while the bridge still exists (HIVE-135).
+     *
+     * `TerminalSurface` now reports `unfocused` from the reveal effect's
+     * cleanup, which fires when a live surface unmounts — a passive effect
+     * that would otherwise flush during the global `afterEach`'s `cleanup()`
+     * in `tests/setup.ts`, *after* the bridge below was already deleted. Doing
+     * it here first, before the delete, is what `clone-repo-view.test.tsx`
+     * settled on for the same race.
+     */
+    cleanup();
     delete (window as { hive?: unknown }).hive;
   });
 

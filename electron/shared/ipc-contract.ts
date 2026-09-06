@@ -2495,4 +2495,7 @@ export const BRIDGE_PTY_KEYS = [
   'onExit',
   'onLost',
   'restart',
+  // HIVE-135. What the surface can see in the backend's input box, reported
+  // as a fire-and-forget send — the same shape as `ack`.
+  'prompt',
 ] as const;

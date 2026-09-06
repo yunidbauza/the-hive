@@ -10,6 +10,7 @@ import { shouldAutoScroll } from '@lib/terminal/auto-scroll';
 import {
   FRAME_SCAN,
   isBareBack,
+  isEmptyClaudePrompt,
   LINE_KILL_SEQUENCE,
   LINE_MOTION_SEQUENCE,
   NEWLINE_SEQUENCE,
@@ -20,7 +21,7 @@ import {
   type TerminalChordDetail,
 } from '@lib/terminal/keymap';
 import { handleWebLink, terminalLinkHandler } from '@lib/terminal/open-link';
-import type { TerminalTransport } from '@lib/terminal/terminal-transport';
+import type { PromptInput, TerminalTransport } from '@lib/terminal/terminal-transport';
 
 import '@xterm/xterm/css/xterm.css';
 
@@ -185,6 +186,18 @@ function readCursorContext(terminal: Terminal): CursorContext | null {
 }
 
 /**
+ * What the box holds, in the transport's three words (HIVE-135).
+ *
+ * The same read as the bare-`←` claim and nothing else: `claim` is `empty`,
+ * and both other answers — not empty, or not provably empty — are `draft`,
+ * because the only safe mistake here is holding a nudge that could have gone.
+ */
+function promptInputOf(terminal: Terminal): PromptInput {
+  const cursor = readCursorContext(terminal);
+  return cursor !== null && isEmptyClaudePrompt(cursor) ? 'empty' : 'draft';
+}
+
+/**
  * Reported rather than swallowed outright (HIVE-92).
  *
  * These used to fail invisibly, and that was survivable only because it was not
@@ -344,6 +357,13 @@ export function TerminalSurface({
    */
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
+
+  /**
+   * The last input-box report sent, so an unchanged answer is not resent
+   * (HIVE-135). Null between reveals: hiding reports `unfocused` and the next
+   * reveal must report afresh even if the box reads the same as before.
+   */
+  const lastPromptRef = useRef<PromptInput | null>(null);
 
   useEffect(() => {
     if (!container) return;
@@ -678,6 +698,31 @@ export function TerminalSurface({
     if (!instance) return;
     const { terminal } = instance;
 
+    /**
+     * The input-box report (HIVE-135).
+     *
+     * Read on every parsed chunk while visible — Claude echoes each keystroke
+     * as output, so the box cannot change without a chunk — and coalesced to
+     * one read per frame, because a repaint arrives as a burst and the read
+     * walks seventeen rows of cells. Reported only on change. Read-only
+     * surfaces have no box anyone nudges; transports without the method have
+     * no backend to protect.
+     */
+    const reports = !readOnly && typeof transport.reportPrompt === 'function';
+    let frame: number | null = null;
+    const report = () => {
+      frame = null;
+      if (!visibleRef.current) return;
+      const next = promptInputOf(terminal);
+      if (next === lastPromptRef.current) return;
+      lastPromptRef.current = next;
+      transport.reportPrompt?.(next);
+    };
+    const schedule = () => {
+      if (!reports || frame !== null) return;
+      frame = requestAnimationFrame(report);
+    };
+
     const unsubscribe = transport.onData((chunk, parsed) => {
       /**
        * Measured *before* the write: afterwards `baseY` has already advanced to
@@ -702,6 +747,7 @@ export function TerminalSurface({
          * finished, which is the one fact only it has.
          */
         parsed?.();
+        schedule();
       });
     });
 
@@ -712,6 +758,7 @@ export function TerminalSurface({
     return () => {
       unsubscribe();
       typing?.dispose();
+      if (frame !== null) cancelAnimationFrame(frame);
     };
   }, [instance, transport, readOnly]);
 
@@ -741,6 +788,35 @@ export function TerminalSurface({
     fitPreservingBottom(instance);
     if (!readOnly) instance.terminal.focus();
   }, [instance, visible, readOnly]);
+
+  /**
+   * Reveal reads the box at once; hiding says so once (HIVE-135).
+   *
+   * On reveal there may be no chunk coming — an idle Claude at an empty
+   * prompt draws nothing until something happens — so the report cannot wait
+   * for one. On hide the surface can no longer be typed into, and `unfocused`
+   * is what lets main deliver to a session the user has switched away from.
+   */
+  useEffect(() => {
+    if (!instance || readOnly || typeof transport.reportPrompt !== 'function') return;
+    const { terminal } = instance;
+
+    if (!visible) {
+      lastPromptRef.current = null;
+      transport.reportPrompt('unfocused');
+      return;
+    }
+
+    const next = promptInputOf(terminal);
+    lastPromptRef.current = next;
+    transport.reportPrompt(next);
+
+    return () => {
+      // Unmount while visible: the surface is gone, so is the box.
+      lastPromptRef.current = null;
+      transport.reportPrompt?.('unfocused');
+    };
+  }, [instance, visible, readOnly, transport]);
 
   /**
    * A finished process stops pretending to accept input (story 108).
