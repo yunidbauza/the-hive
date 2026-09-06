@@ -264,7 +264,8 @@ export interface Receiver {
    * for it exactly as before.
    */
   readonly grants: {
-    set(run: string, grants: readonly string[]): void;
+    /** `owner` is the agent the run belongs to; a caller that is not it gets `[]`. */
+    set(run: string, owner: string, grants: readonly string[]): void;
     delete(run: string): void;
   };
   /** The URL hooks should POST to, or `null` before a successful start. */
@@ -572,7 +573,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
    * every run id ever minted, and a run that crashed before `close()` cleared
    * it must not hold a slot forever.
    */
-  const runGrants = new Map<string, readonly string[]>();
+  const runGrants = new Map<string, { owner: string; grants: readonly string[] }>();
   const RUN_GRANTS_MAX = 256;
 
   /**
@@ -1030,8 +1031,17 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       mcpCursors.set(caller, store);
     }
 
+    /*
+      By run id **and** owner. A run id is not a secret — it is on every hook
+      payload and every ledger entry the run writes — so a lookup by id alone
+      would let any authenticated caller present a sibling run's id and
+      inherit its one-shot grants. The caller's identity is what `reject`
+      already authenticated; the registration says which agent it was minted
+      for; the two must agree.
+    */
     const run = headers[HOOK_HEADER_RUN];
-    const grants = typeof run === 'string' && run !== '' ? (runGrants.get(run) ?? []) : [];
+    const registered = typeof run === 'string' && run !== '' ? runGrants.get(run) : undefined;
+    const grants = registered !== undefined && registered.owner === caller ? registered.grants : [];
 
     return createToolHandlers(clientFor(headers), grants, store);
   }
@@ -1439,13 +1449,13 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     tokenFor,
 
     grants: {
-      set(run, grants) {
+      set(run, owner, grants) {
         if (runGrants.size >= RUN_GRANTS_MAX && !runGrants.has(run)) {
           const oldest = runGrants.keys().next();
 
           if (!oldest.done) runGrants.delete(oldest.value);
         }
-        runGrants.set(run, [...grants]);
+        runGrants.set(run, { owner, grants: [...grants] });
       },
       delete(run) {
         runGrants.delete(run);

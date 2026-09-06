@@ -205,7 +205,7 @@ export interface RunTrackerDeps {
    * stdio host reads the environment instead.
    */
   grants?: {
-    set(run: string, grants: readonly string[]): void;
+    set(run: string, owner: string, grants: readonly string[]): void;
     delete(run: string): void;
   };
 }
@@ -861,16 +861,17 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
         a host run registering a list nobody reads costs one map entry that
         `close()` removes.
       */
-      deps.grants?.set(run, parseGrants(env[HOOK_ENV_GRANTS]));
+      deps.grants?.set(run, name, parseGrants(env[HOOK_ENV_GRANTS]));
 
       /*
         A container run is wrapped here, not in `wakeCommand` (HIVE-137):
         this is the one place that knows the run id and kind the `-e` set has
         to carry. `--workdir` is the cwd inside; the host `cwd` is not passed,
-        because the exec's cwd is the container's. Nothing from main's own
-        environment reaches the runtime client either — `env` is the argv's
-        `-e` set and nothing else, so a host `PATH` finds `docker` and a
-        container `PATH` finds `claude`, each their own.
+        because the exec's cwd is the container's. The runtime *client*
+        inherits main's environment — it has to, to find `docker` on `PATH`
+        and honour `DOCKER_HOST` — and hands none of it on: what reaches the
+        container is the `-e` set on the argv and nothing else, so `claude`
+        inside is found by the container's own `PATH`.
       */
       const container = command.container;
       const plan =

@@ -2873,7 +2873,7 @@ describe('the MCP route', () => {
     };
 
     it('hands approve the grants registered for the run named in x-hive-run', async () => {
-      receiver.grants.set('run-1', ['Read']);
+      receiver.grants.set('run-1', CALLER, ['Read']);
 
       expect(await behaviour(await approve('run-1'))).toBe('allow');
     });
@@ -2882,21 +2882,27 @@ describe('the MCP route', () => {
       expect(await behaviour(await approve('run-2'))).toBe('deny');
       expect(await behaviour(await approve())).toBe('deny');
 
-      receiver.grants.set('run-1', ['Read']);
+      receiver.grants.set('run-1', CALLER, ['Read']);
       receiver.grants.delete('run-1');
 
       expect(await behaviour(await approve('run-1'))).toBe('deny');
     });
 
+    it('keeps an empty list for a caller that is not the run\'s owner', async () => {
+      receiver.grants.set('run-1', 'someone-else', ['Read']);
+
+      expect(await behaviour(await approve('run-1'))).toBe('deny');
+    });
+
     it('is bounded: past the cap the oldest registration is evicted', async () => {
-      for (let i = 0; i < 257; i += 1) receiver.grants.set(`r${String(i)}`, ['Read']);
+      for (let i = 0; i < 257; i += 1) receiver.grants.set(`r${String(i)}`, CALLER, ['Read']);
 
       expect(await behaviour(await approve('r0'))).toBe('deny');
       expect(await behaviour(await approve('r256'))).toBe('allow');
     });
 
     it('forgets every registration when the receiver stops', async () => {
-      receiver.grants.set('run-1', ['Read']);
+      receiver.grants.set('run-1', CALLER, ['Read']);
       await receiver.stop();
       url = (await receiver.start()) as string;
 

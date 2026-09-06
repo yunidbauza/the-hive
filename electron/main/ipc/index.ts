@@ -1548,7 +1548,7 @@ export function registerIpcHandlers(): void {
       here would be `null` for the life of the app.
     */
     grants: {
-      set: (run, grants) => hooks.receiverGrants()?.set(run, grants),
+      set: (run, owner, grants) => hooks.receiverGrants()?.set(run, owner, grants),
       delete: (run) => hooks.receiverGrants()?.delete(run),
     },
     /*

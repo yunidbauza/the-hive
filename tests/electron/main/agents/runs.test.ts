@@ -1443,7 +1443,10 @@ describe('createRunTracker', () => {
       kind: 'standing' as const,
     });
 
-    const containerTracker = (grants?: { set: (r: string, g: readonly string[]) => void; delete: (r: string) => void }) =>
+    const containerTracker = (grants?: {
+      set: (r: string, o: string, g: readonly string[]) => void;
+      delete: (r: string) => void;
+    }) =>
       createRunTracker({
         spawn,
         command: containerCommand,
@@ -1490,22 +1493,24 @@ describe('createRunTracker', () => {
         'u-1',
         'go',
       ]);
-      // Nothing from main's environment reaches the runtime client, and no
-      // host cwd: the exec's cwd is the container's.
+      // No `env` and no `cwd`: the client inherits main's environment (it
+      // has to find `docker`), hands none of it on, and the exec's cwd is the
+      // container's — everything the container gets is on the argv above.
       expect(call?.options).toEqual({ stdio: ['ignore', 'pipe', 'pipe'] });
     });
 
     it('registers the grants before the spawn and clears them when the run closes', () => {
       const events: string[] = [];
       const tracker = containerTracker({
-        set: (run, grants) => events.push(`set ${run} ${grants.join(',')} spawned=${String(spawnCalls.length)}`),
+        set: (run, owner, grants) =>
+          events.push(`set ${run} ${owner} ${grants.join(',')} spawned=${String(spawnCalls.length)}`),
         delete: (run) => events.push(`delete ${run}`),
       });
 
       tracker.run('a', 'ledger');
       childInstances[0]?.emitClose(0);
 
-      expect(events).toEqual(['set run-1 mcp__hive__*,Read spawned=0', 'delete run-1']);
+      expect(events).toEqual(['set run-1 a mcp__hive__*,Read spawned=0', 'delete run-1']);
     });
 
     it('stops inside the container with pkill on the session uuid, TERM then KILL, beside the client kill', () => {
@@ -1542,7 +1547,7 @@ describe('createRunTracker', () => {
         now: () => 1_000,
         newRunId: () => 'run-9',
         grants: {
-          set: (run, grants) => events.push(`set ${run} ${grants.length}`),
+          set: (run, owner, grants) => events.push(`set ${run} ${owner} ${grants.length}`),
           delete: (run) => events.push(`delete ${run}`),
         },
       });
@@ -1551,7 +1556,7 @@ describe('createRunTracker', () => {
 
       expect(spawnCalls[0]?.file).toBe('claude');
       expect(spawnCalls[0]?.options).toMatchObject({ cwd: '/home/u/.hive/work/a' });
-      expect(events).toEqual(['set run-9 2']);
+      expect(events).toEqual(['set run-9 a 2']);
     });
   });
 });

@@ -864,7 +864,7 @@ tool it names, and nothing more. Never ask a question.
       now: () => Date.now(),
       newRunId: randomUUID,
       grants: {
-        set: (run, grants) => hooks.receiverGrants()?.set(run, grants),
+        set: (run, owner, grants) => hooks.receiverGrants()?.set(run, owner, grants),
         delete: (run) => hooks.receiverGrants()?.delete(run),
       },
     });

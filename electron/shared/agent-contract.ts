@@ -334,7 +334,8 @@ export const isContainerRuntime = (value: unknown): value is string =>
   typeof value === 'string' &&
   (value === 'docker' ||
     value === 'podman' ||
-    (value.startsWith('/') && ONE_TOKEN.test(value)));
+    // A path, which a bare `/` — the form's "other" seed — is not yet.
+    (value.length > 1 && value.startsWith('/') && ONE_TOKEN.test(value)));
 
 /** A Docker name token: alphanumeric first, then `[A-Za-z0-9_.-]`, bounded like a hostname. */
 export const isContainerName = (value: unknown): value is string =>

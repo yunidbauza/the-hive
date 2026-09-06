@@ -291,6 +291,7 @@ describe('container fields (HIVE-137)', () => {
     ['', false],
     ['relative/bin', false],
     ['/bin/x\u0007', false],
+    ['/', false],
     [42, false],
   ])('isContainerRuntime(%j) → %s', (value, ok) => {
     expect(isContainerRuntime(value)).toBe(ok);
