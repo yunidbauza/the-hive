@@ -193,6 +193,7 @@ slice back; boot data is last run's ended sessions. Tests: `tests/support/`.
   cwd, write/resize/kill routing, exit handling. What only a real process can
   show: terminal semantics — `pnpm test:pty` (098); what Claude Code's hooks
   actually send — `pnpm test:hooks`; what it actually **draws**, which no staged
-  buffer can prove — `pnpm test:back` (HIVE-79, `docs/terminal-architecture.md`) and `pnpm test:nudge` (HIVE-135).
+  buffer can prove — `pnpm test:back` (HIVE-79, `docs/terminal-architecture.md`)
+  and `pnpm test:nudge` (HIVE-135).
 - Never add a coverage-ignore comment to pass the gate. An untestable branch is
   usually a design smell — fix the shape instead.
