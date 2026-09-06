@@ -5,10 +5,10 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, write
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { createReceiver, type Receiver } from '../../electron/main/hooks/receiver';
-import { hookSettings } from '../../electron/main/hooks/settings';
+import { hookSettings, type HookTransport } from '../../electron/main/hooks/settings';
 import { readTranscript as readScreen } from '../../electron/main/integrations/slack/tty';
 import { createLedger } from '../../electron/main/ledger';
 import { ledgerMarker } from '../../electron/shared/ledger-contract';
@@ -32,9 +32,16 @@ import { ledgerMarker } from '../../electron/shared/ledger-contract';
  * tells the model what word to reply with. The second is a marker nothing
  * resolves, `📒 a999`, which must be answered 204 and draw nothing.
  *
+ * Once per transport. A host session's hooks are `http`; a container's are
+ * `command` hooks around `curl` (HIVE-137, `statusCommand`), and a command
+ * hook's stdout is its output, so the curl must print the body or the
+ * container's model gets the marker and never the entry. The second session
+ * runs the same settings the container would get, on the host, which is
+ * what proves the curl and not the container.
+ *
  * ## Why it is opt-in
  *
- * One real `claude` session, real tokens, about a minute and a half.
+ * Two real `claude` sessions, real tokens, about a minute each.
  *
  * ```
  * pnpm test:marker
@@ -58,6 +65,7 @@ interface Arrival {
 
 interface Finding {
   version: string;
+  transport: HookTransport;
   ref: string;
   arrivals: Arrival[];
   contextLines: number;
@@ -119,16 +127,16 @@ function analyse(lines: string[], word: string, intent: string): Analysis {
 describe.skipIf(!enabled)('a marker carries its entry as context, against a real claude (HIVE-138)', () => {
   let receiver: Receiver | null = null;
 
-  afterAll(async () => {
+  afterEach(async () => {
     await receiver?.stop();
   });
 
-  it('the woken session reads the whole ask, and an unresolved marker draws nothing', { timeout: (BUDGET_S + 30) * 1000 }, async () => {
+  it.each<HookTransport>(['http', 'command'])('over %s: the woken session reads the whole ask, and an unresolved marker draws nothing', { timeout: (BUDGET_S + 30) * 1000 }, async (transport) => {
     const version = execFileSync('claude', ['--version'], { encoding: 'utf8' }).trim();
     const nonce = randomBytes(3).toString('hex');
     const word = `ZEBRA_${nonce}`;
     const intent = `INTENT_${nonce}`;
-    const dir = mkdtempSync(join(tmpdir(), 'hive-marker-'));
+    const dir = mkdtempSync(join(tmpdir(), `hive-marker-${transport}-`));
     const arrivals: Arrival[] = [];
 
     /*
@@ -184,7 +192,9 @@ describe.skipIf(!enabled)('a marker carries its entry as context, against a real
     const settingsPath = join(dir, 'settings.json');
     writeFileSync(
       settingsPath,
-      JSON.stringify(hookSettings(url as string, undefined, { session: SESSION, token: receiver.tokenFor(SESSION) })),
+      JSON.stringify(
+        hookSettings(url as string, undefined, { session: SESSION, token: receiver.tokenFor(SESSION) }, transport),
+      ),
       'utf8',
     );
 
@@ -282,6 +292,7 @@ describe.skipIf(!enabled)('a marker carries its entry as context, against a real
 
     const finding: Finding = {
       version,
+      transport,
       ref,
       arrivals,
       ...analysis,
@@ -290,7 +301,7 @@ describe.skipIf(!enabled)('a marker carries its entry as context, against a real
     };
     writeFileSync(join(dir, 'finding.json'), JSON.stringify(finding, null, 2), 'utf8');
     console.info('EVIDENCE ', dir);
-    console.info(`=== ${version} · marker ${marker} ===`);
+    console.info(`=== ${version} · ${transport} · marker ${marker} ===`);
     console.info('ARRIVALS ', arrivals.map((a) => `${a.event} +${a.at - (arrivals[0]?.at ?? a.at)}ms`).join(' | '));
     console.info('CONTEXT  ', JSON.stringify({ lines: analysis.contextLines, word: analysis.wordInContext, intent: analysis.intentInContext }));
     console.info('REPLY    ', JSON.stringify(analysis.assistantText.slice(0, 400)));

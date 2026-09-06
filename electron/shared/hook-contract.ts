@@ -594,12 +594,20 @@ export const READY_PATH = '/ready';
  * payload the receiver reads is the same JSON either way — a command hook
  * gets it on stdin, and `--data-binary @-` forwards it whole.
  *
- * Silent for the reasons {@link readyCommand} is: a hook's output is Claude's
- * to interpret, and a receiver that has gone away is not the agent's problem.
- * `-m 10` matches the http handler's timeout.
+ * **The response body is printed, on purpose** (HIVE-138). A command hook's
+ * stdout is Claude's hook output, exactly as an http handler's body is
+ * (measured, the HIVE-136 note beside {@link HOOK_EVENTS}). The receiver
+ * answers every hook with 204 and nothing, so on every event this prints
+ * nothing; the one exception is a `UserPromptSubmit` whose prompt is a
+ * ledger marker, answered with a {@link HookContextReply} the container's
+ * model must read as surely as a host session's does. `-o /dev/null` here
+ * would carry the marker into a container and drop the entry behind it.
+ * Errors are still silenced and the exit is still zero, for the reasons
+ * {@link readyCommand} gives: a receiver that has gone away is not the
+ * agent's problem. `-m 3` matches the http handler's timeout.
  */
 export const statusCommand = (url: string, identity?: HookIdentity): string =>
-  `curl -s -m 10 -o /dev/null -X POST ${url}` +
+  `curl -s -m 3 -X POST ${url}` +
   ` -H 'content-type: application/json'` +
   ` -H "${HOOK_HEADER_SESSION}: ${identity?.session ?? `$${HOOK_ENV_SESSION}`}"` +
   ` -H "${HOOK_HEADER_TOKEN}: ${identity?.token ?? `$${HOOK_ENV_TOKEN}`}"` +

@@ -49,7 +49,7 @@ describe('entryContext (HIVE-138)', () => {
   });
 
   it("carries an answer with the ask it closes and the asker's intent", () => {
-    const text = entryContext(answer, ask);
+    const text = entryContext(answer, { ask });
     expect(text).toContain('"📒 20260906-141600-0003"');
     expect(text).toContain('From: pr-watcher');
     expect(text).toContain('Kind: answer, closing your ask a12');
@@ -61,17 +61,26 @@ describe('entryContext (HIVE-138)', () => {
   });
 
   it('omits the intent line when the ask has none, and the meta line when there is none', () => {
-    const bare = entryContext({ ...answer, meta: undefined }, { ...ask, meta: {} });
+    const bare = entryContext({ ...answer, meta: undefined }, { ask: { ...ask, meta: {} } });
     expect(bare).not.toContain('You asked so you could');
     expect(bare).not.toContain('Meta:');
 
-    const blank = entryContext(answer, { ...ask, meta: { intent: '   ' } });
+    const blank = entryContext(answer, { ask: { ...ask, meta: { intent: '   ' } } });
     expect(blank).not.toContain('You asked so you could');
   });
 
-  it("names an answer's thread by id when the ask is gone", () => {
+  it("names an answer's thread by id when the ask is gone or not the caller's to see", () => {
     const text = entryContext(answer);
     expect(text).toContain(`closing your ask ${ask.id}`);
+    expect(text).not.toContain('a12');
     expect(text).not.toContain('You asked so you could');
+  });
+
+  it('tells the model an ask is closed instead of asking for an answer', () => {
+    const text = entryContext(ask, { open: false });
+    expect(text).toContain(ask.body);
+    expect(text).toContain('no longer open');
+    expect(text).toContain('nothing is owed back');
+    expect(text).not.toContain('ledger_answer');
   });
 });

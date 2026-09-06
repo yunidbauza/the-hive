@@ -709,7 +709,12 @@ export function createReceiver(options: ReceiverOptions): Receiver {
    * should read about in their terminal. So the hook route alone answers 204
    * and says so here, once per status and identity rather than once per
    * event, since a stale session posts a burst.
+   *
+   * The set is capped, because its keys are the caller's to choose: a
+   * loopback process minting session ids would otherwise grow it forever.
+   * Past the cap it starts over, at the price of one repeated line.
    */
+  const REFUSED_HOOKS_MAX = 256;
   const refusedHooks = new Set<string>();
   function refusedHook(
     status: number,
@@ -719,6 +724,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     const name = typeof who === 'string' && who !== '' ? who : '(no session)';
     const key = `${status}:${name}`;
     if (!refusedHooks.has(key)) {
+      if (refusedHooks.size >= REFUSED_HOOKS_MAX) refusedHooks.clear();
       refusedHooks.add(key);
       console.warn(`[hooks] hook from ${name} refused (${status}); answered 204`);
     }
@@ -731,21 +737,35 @@ export function createReceiver(options: ReceiverOptions): Receiver {
    * Resolved only among entries addressed to the caller and of a kind a nudge
    * carries. A session typing another party's ref reads nothing, exactly as
    * {@link visibleTo} keeps the read route honest; a marker for a `post` reads
-   * nothing because no nudge ever named one. The answer's ask is looked up
-   * the way `deliver.ts` does, for the asker's own `meta.intent`.
+   * nothing because no nudge ever named one.
+   *
+   * The answer's ask is looked up the way `deliver.ts` does, for its ref and
+   * the asker's own `meta.intent`, and then held to {@link visibleTo} like
+   * everything else this receiver hands a caller. An answer may be addressed
+   * to a third party (`Ledger.append` keeps an answer's `to` as sent), and
+   * that party is owed the answer, not the question behind it: without the
+   * gate, the context would read it a ref it never saw and an intent that is
+   * not its own. An ask is also checked for openness, so a marker re-typed
+   * after the ask closed does not tell the model to answer it.
    */
   function markerContext(caller: string, token: string): string | undefined {
-    const mine = onLedgerRead(caller, { to: caller }).entries.filter(
+    const snapshot = onLedgerRead(caller, { to: caller });
+    const mine = snapshot.entries.filter(
       (entry) => entry.to === caller && (entry.kind === 'ask' || entry.kind === 'answer'),
     );
     const id = resolveRef(mine, token);
     const entry = mine.find((candidate) => candidate.id === id);
     if (entry === undefined) return undefined;
+    if (entry.kind === 'ask') {
+      return entryContext(entry, { open: snapshot.openAsks.some((ask) => ask.id === entry.id) });
+    }
     const ask =
-      entry.kind === 'answer' && entry.thread !== undefined
-        ? onLedgerRead(caller, { thread: entry.thread }).entries.find((e) => e.kind === 'ask')
-        : undefined;
-    return entryContext(entry, ask);
+      entry.thread === undefined
+        ? undefined
+        : onLedgerRead(caller, { thread: entry.thread }).entries.find(
+            (candidate) => candidate.kind === 'ask' && visibleTo(caller, candidate),
+          );
+    return entryContext(entry, { ask });
   }
 
   /**

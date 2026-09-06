@@ -205,6 +205,14 @@ describe('hookSettings — command transport (HIVE-137)', () => {
       expect(handler.command).toContain('--data-binary @-');
       expect(handler.command).toContain("-H 'content-type: application/json'");
       expect(handler.timeout).toBe(3);
+      /*
+        The body is printed, not discarded (HIVE-138): a command hook's stdout
+        is its hook output, and a marker's context arrives that way in a
+        container. Everything else the receiver answers is an empty 204.
+      */
+      expect(handler.command).not.toContain('-o /dev/null');
+      expect(handler.command).toContain('-m 3');
+      expect(handler.command).toContain('|| true');
     }
   });
 

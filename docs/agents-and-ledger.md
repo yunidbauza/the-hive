@@ -196,6 +196,15 @@ owed back. Claude Code puts that text in the model's context beside the prompt
 resolves to nothing, or to an entry addressed elsewhere, or to a kind no nudge
 carries, is answered `204` like any other prompt. A marker prompt also takes no
 ticket intent and no session name, and does not spend the first-prompt mark.
+An answer's ask is read for its ref and the asker's `intent` only when the
+caller is a party to it; an answer addressed to a third party carries the
+answer and names the thread by id. An ask that has closed since the marker was
+written says so instead of asking to be answered.
+
+The same holds in a container, where the hooks are `command` hooks (HIVE-137):
+`statusCommand` prints curl's response body, because a command hook's stdout
+is its hook output exactly as an http handler's body is. Every event's answer
+is an empty `204`, so it prints nothing, and a marker's context prints whole.
 
 Two things follow. No party-authored byte reaches a pty from delivery any more:
 the truncation to one line and the control-character stripping that used to

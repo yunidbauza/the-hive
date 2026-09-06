@@ -1248,6 +1248,26 @@ describe('hook receiver', () => {
     }
   });
 
+  it('caps what it remembers having refused, so a caller cannot grow it forever', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const stale = (id: string) => ({ [HOOK_HEADER_TOKEN]: 'nope', [HOOK_HEADER_SESSION]: id });
+      // 256 distinct identities fill the set; the 257th starts it over.
+      for (let index = 0; index < 257; index += 1) {
+        await post({ hook_event_name: 'Stop' }, stale(`sess-gone-${index}`));
+      }
+      expect(warn).toHaveBeenCalledTimes(257);
+      // The first identity is forgotten, so it warns again; the last is not.
+      await post({ hook_event_name: 'Stop' }, stale('sess-gone-0'));
+      expect(warn).toHaveBeenCalledTimes(258);
+      await post({ hook_event_name: 'Stop' }, stale('sess-gone-256'));
+      expect(warn).toHaveBeenCalledTimes(258);
+      expect(events).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('leaves every other route refusing aloud (HIVE-138)', async () => {
     const response = await fetch(`${receiver.origin as string}${LEDGER_READ_PATH}`, {
       method: 'POST',
@@ -1428,6 +1448,54 @@ describe('hook receiver', () => {
       expect(text).toContain('Kind: answer, closing your ask');
       expect(text).toContain('yes');
       expect(text).toContain('You asked so you could: push');
+    });
+
+    it("carries an answer addressed to a third party without the ask's ref or intent", async () => {
+      /*
+        `Ledger.append` keeps an answer's `to` as sent, so a party to the
+        thread can address its answer to someone who is not. That someone is
+        owed the answer, not the question: no ref it never saw, no intent
+        that is not its own.
+      */
+      const asked = ledger.append({
+        from: 'sess-x',
+        to: 'sess-02',
+        kind: 'ask',
+        body: 'may I?',
+        meta: { intent: 'rotate the prod key' },
+      });
+      const answered = ledger.append({
+        from: 'sess-02',
+        to: 'sess-01',
+        kind: 'answer',
+        thread: asked.ok ? asked.id : '',
+        body: 'go ahead',
+      });
+      expect(answered.ok).toBe(true);
+
+      const response = await prompt(`📒 ${answered.ok ? answered.id : ''}`);
+
+      expect(response.status).toBe(200);
+      const text = await context(response);
+      expect(text).toContain('go ahead');
+      expect(text).toContain(`closing your ask ${asked.ok ? asked.id : ''}`);
+      expect(text).not.toContain(asked.ok ? `ask ${asked.ref}` : 'never');
+      expect(text).not.toContain('rotate the prod key');
+      expect(text).not.toContain('You asked so you could');
+    });
+
+    it('tells the model when the ask a marker names is no longer open', async () => {
+      const asked = ledger.append({ from: 'overmind', to: 'sess-01', kind: 'ask', body: 'still?' });
+      const ref = asked.ok ? asked.ref : '';
+      ledger.answer({ thread: asked.ok ? asked.id : '', body: 'done' }, 'sess-01');
+
+      const response = await prompt(`📒 ${ref}`);
+
+      expect(response.status).toBe(200);
+      const text = await context(response);
+      expect(text).toContain('still?');
+      expect(text).toContain('no longer open');
+      expect(text).not.toContain('ledger_answer');
     });
 
     it('answers 204 for a marker it cannot resolve', async () => {
@@ -1898,6 +1966,13 @@ describe('hook receiver', () => {
 describe('the token binds to one session (HIVE-112)', () => {
   let receiver: Receiver;
   let dir: string;
+  /**
+   * What reached the app. Since HIVE-138 the hook route answers a refusal
+   * with the same 204 an acceptance gets, so on that route the status proves
+   * nothing and this is what the pairing check is held to: a refused pair
+   * publishes no event, a matching one publishes exactly one.
+   */
+  let events: HookStatusEvent[];
 
   const VALID_METRICS = {
     model: { display_name: 'Opus 4.5' },
@@ -1910,10 +1985,11 @@ describe('the token binds to one session (HIVE-112)', () => {
 
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), 'hive-receiver-token-binding-'));
+    events = [];
     const ledger = createLedger({ dir, knowsParty: () => true });
     receiver = createReceiver({
       onCleared: () => {},
-      onEvent: () => {},
+      onEvent: (event) => events.push(event),
       onTicketIntent: () => {},
       onPromptName: () => {},
       onDone: () => {},
@@ -2002,19 +2078,23 @@ describe('the token binds to one session (HIVE-112)', () => {
       );
 
       expect(response.status).toBe(refused);
+      expect(events).toEqual([]);
     },
   );
 
-  it.each(ROUTES)('accepts the matching pair on $name', async ({ url, body, ok }) => {
+  it.each(ROUTES)('accepts the matching pair on $name', async ({ name, url, body, ok }) => {
     const response = await send(url(receiver), receiver.tokenFor('sess-a'), 'sess-a', body);
 
     expect(response.status).toBe(ok);
+    // The hook route's 204 is an acceptance only if the event got through.
+    if (name === '/hook') expect(events.map((e) => e.event)).toEqual(['Stop']);
   });
 
   it.each(ROUTES)('refuses an unknown, garbage token on $name', async ({ url, body, refused }) => {
     const response = await send(url(receiver), 'not-a-real-token', 'sess-a', body);
 
     expect(response.status).toBe(refused);
+    expect(events).toEqual([]);
   });
 
   it.each(ROUTES)(
@@ -2037,6 +2117,7 @@ describe('the token binds to one session (HIVE-112)', () => {
       const response = await send(url(receiver), impostor.tokenFor('sess-a'), 'sess-a', body);
 
       expect(response.status).toBe(refused);
+      expect(events).toEqual([]);
     },
   );
 

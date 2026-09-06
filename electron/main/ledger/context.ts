@@ -24,7 +24,24 @@ import { ledgerMarker, type LedgerEntry } from '@shared/ledger-contract';
  * `deliver.ts` used to enforce on the body moved out of the pty path with the
  * body itself; the pty now sees a ref or an id main minted and nothing else.
  */
-export function entryContext(entry: LedgerEntry, ask?: LedgerEntry): string {
+export interface EntryContextOptions {
+  /**
+   * The ask this closes, when the caller may see it. An answer's ask is
+   * where the ref and the asker's `meta.intent` come from; passed only when
+   * the caller is a party to it, since an answer can be addressed to a third
+   * party and that party is owed the answer, not the question behind it.
+   */
+  ask?: LedgerEntry;
+  /**
+   * Whether an ask is still open. A marker re-typed, or redelivered after a
+   * refused receipt, can name an ask that has since been answered or has
+   * expired; telling the model to answer it would only earn a refusal.
+   */
+  open?: boolean;
+}
+
+export function entryContext(entry: LedgerEntry, options: EntryContextOptions = {}): string {
+  const { ask, open = true } = options;
   const marker = ledgerMarker(entry);
   const name = marker.slice(marker.indexOf(' ') + 1);
   const lines: string[] = [
@@ -54,10 +71,16 @@ export function entryContext(entry: LedgerEntry, ask?: LedgerEntry): string {
     lines.push(`Meta: ${JSON.stringify(entry.meta)}`, '');
   }
 
-  lines.push(
-    entry.kind === 'ask'
-      ? `To answer, call the ledger_answer tool with thread "${name}"; that closes the ask and reaches ${entry.from}. If that tool is not available in this session, say so and give your answer in your reply, so the user can relay it.`
-      : 'Nothing is owed back. If the answer is not enough, ask again with the ledger_ask tool.',
-  );
+  if (entry.kind !== 'ask') {
+    lines.push('Nothing is owed back. If the answer is not enough, ask again with the ledger_ask tool.');
+  } else if (!open) {
+    lines.push(
+      `This ask is no longer open: it has been answered or has expired since the marker was written, so nothing is owed back.`,
+    );
+  } else {
+    lines.push(
+      `To answer, call the ledger_answer tool with thread "${name}"; that closes the ask and reaches ${entry.from}. If that tool is not available in this session, say so and give your answer in your reply, so the user can relay it.`,
+    );
+  }
   return lines.join('\n');
 }
