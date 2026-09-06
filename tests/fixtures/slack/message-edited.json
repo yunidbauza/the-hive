@@ -1,0 +1,15 @@
+{
+  "type": "events_api",
+  "envelope_id": "1d3c8e00-0000-4000-8000-000000000003",
+  "payload": {
+    "type": "event_callback",
+    "team_id": "T01ABCDEF",
+    "event": {
+      "type": "message",
+      "subtype": "message_changed",
+      "channel": "C0123ABCD",
+      "ts": "1757012500.000100",
+      "message": { "type": "message", "user": "U08BA712189", "text": "edited" }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "type": "events_api",
+  "envelope_id": "1d3c8e00-0000-4000-8000-000000000004",
+  "payload": {
+    "type": "event_callback",
+    "team_id": "T01ABCDEF",
+    "event": {
+      "type": "message",
+      "channel": "C0123ABCD",
+      "bot_id": "B01BOT",
+      "ts": "1757012600.000100",
+      "text": "build passed"
+    }
+  }
+}

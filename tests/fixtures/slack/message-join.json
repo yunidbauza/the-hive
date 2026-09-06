@@ -1,0 +1,16 @@
+{
+  "type": "events_api",
+  "envelope_id": "1d3c8e00-0000-4000-8000-000000000005",
+  "payload": {
+    "type": "event_callback",
+    "team_id": "T01ABCDEF",
+    "event": {
+      "type": "message",
+      "subtype": "channel_join",
+      "channel": "C0123ABCD",
+      "user": "U08BA712189",
+      "ts": "1757012700.000100",
+      "text": "<@U08BA712189> has joined the channel"
+    }
+  }
+}

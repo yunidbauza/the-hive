@@ -1,0 +1,14 @@
+{
+  "type": "events_api",
+  "envelope_id": "1d3c8e00-0000-4000-8000-000000000006",
+  "payload": {
+    "type": "event_callback",
+    "team_id": "T01ABCDEF",
+    "event": {
+      "type": "reaction_added",
+      "user": "U08BA712189",
+      "reaction": "eyes",
+      "item": { "type": "message", "channel": "C0123ABCD", "ts": "1757012345.001200" }
+    }
+  }
+}

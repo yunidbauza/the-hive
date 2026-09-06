@@ -1,0 +1,16 @@
+{
+  "type": "events_api",
+  "envelope_id": "1d3c8e00-0000-4000-8000-000000000001",
+  "payload": {
+    "type": "event_callback",
+    "team_id": "T01ABCDEF",
+    "event": {
+      "type": "message",
+      "channel": "C0123ABCD",
+      "channel_type": "channel",
+      "user": "U08BA712189",
+      "ts": "1757012345.001200",
+      "text": "can someone review https://github.com/x/y/pull/42"
+    }
+  }
+}
