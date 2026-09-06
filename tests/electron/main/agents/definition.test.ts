@@ -672,3 +672,84 @@ Wait to be asked.
     });
   });
 });
+
+describe('container (HIVE-137)', () => {
+  const withContainer = (block: string) => `---
+name: slack-watcher
+description: Watches PRs.
+icon: GitPullRequest
+container:
+${block}
+---
+Body.
+`;
+
+  it('parses a full block onto the definition and defaults nothing', () => {
+    const def = definition(
+      withContainer('  runtime: docker\n  name: devbox\n  workspace: /work\n  hive_dir: /hive'),
+    );
+
+    expect(def.container).toEqual({
+      runtime: 'docker',
+      name: 'devbox',
+      workspace: '/work',
+      hiveDir: '/hive',
+    });
+  });
+
+  it('carries the optional fields when the file names them', () => {
+    const def = definition(
+      withContainer(
+        '  runtime: podman\n  name: devbox\n  command: /opt/claude\n  workspace: /work\n' +
+          '  hive_dir: /hive\n  env_arg: --env {name}={value}\n  freshness: rewrite\n' +
+          '  host_alias: gateway.local',
+      ),
+    );
+
+    expect(def.container).toEqual({
+      runtime: 'podman',
+      name: 'devbox',
+      command: '/opt/claude',
+      workspace: '/work',
+      hiveDir: '/hive',
+      envArg: '--env {name}={value}',
+      freshness: 'rewrite',
+      hostAlias: 'gateway.local',
+    });
+  });
+
+  it('is absent when the file has no block', () => {
+    expect(definition(GOOD).container).toBeUndefined();
+  });
+
+  it.each([
+    ['runtime', 'docker exec', 'container.runtime'],
+    ['name', '-x', 'container.name'],
+    ['workspace', 'relative', 'container.workspace'],
+    ['env_arg', '-e {name}', 'container.env_arg'],
+    ['host_alias', 'bad host', 'container.host_alias'],
+    ['command', 'claude --x', 'container.command'],
+    ['freshness', 'stale', 'container.freshness'],
+  ])('refuses a bad %s naming the field', (key, value, field) => {
+    const base: Record<string, string> = {
+      runtime: 'docker',
+      name: 'devbox',
+      workspace: '/work',
+      hive_dir: '/hive',
+      [key]: value,
+    };
+    const block = Object.entries(base)
+      .map(([k, v]) => `  ${k}: ${v}`)
+      .join('\n');
+
+    expect(problems(withContainer(block)).some((p) => p.field === field)).toBe(true);
+  });
+
+  it('requires runtime, name, workspace and hiveDir once any container key is present', () => {
+    expect(
+      problems(withContainer('  runtime: docker'))
+        .map((p) => p.field)
+        .sort(),
+    ).toEqual(['container.hive_dir', 'container.name', 'container.workspace']);
+  });
+});

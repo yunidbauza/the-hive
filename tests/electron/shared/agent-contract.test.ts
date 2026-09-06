@@ -18,6 +18,9 @@ import {
   dayKey,
   formatRunCost,
   isQueueableRefusal,
+  isContainerCommand,
+  isContainerName,
+  isContainerRuntime,
   isReservedAgentName,
   isWakeOn,
 } from '../../../electron/shared/agent-contract';
@@ -146,6 +149,14 @@ describe('agent-contract', () => {
       'limits.daily_usd',
       'limits.rotate_after',
       'limits.parallel',
+      'container.runtime',
+      'container.name',
+      'container.command',
+      'container.workspace',
+      'container.hive_dir',
+      'container.env_arg',
+      'container.freshness',
+      'container.host_alias',
     ]);
     expect(new Set(paths).size).toBe(paths.length);
   });
@@ -178,7 +189,7 @@ describe('agent-contract', () => {
   });
 
   it('derives the nesting parents from the table', () => {
-    expect(AGENT_PARENT_KEYS).toEqual(['wake', 'limits']);
+    expect(AGENT_PARENT_KEYS).toEqual(['wake', 'limits', 'container']);
   });
 });
 
@@ -252,5 +263,56 @@ describe('the refusals that end on their own (HIVE-128)', () => {
     expect(isQueueableRefusal('invalid')).toBe(false);
     expect(isQueueableRefusal('unknown')).toBe(false);
     expect(isQueueableRefusal('saturated')).toBe(true);
+  });
+});
+
+describe('container fields (HIVE-137)', () => {
+  it('lists every container key so the grammar knows the parent', () => {
+    for (const path of [
+      'container.runtime',
+      'container.name',
+      'container.command',
+      'container.workspace',
+      'container.hive_dir',
+      'container.env_arg',
+      'container.freshness',
+      'container.host_alias',
+    ]) {
+      expect(AGENT_FIELDS.some((field) => field.path === path)).toBe(true);
+    }
+    expect(AGENT_PARENT_KEYS).toContain('container');
+  });
+
+  it.each([
+    ['docker', true],
+    ['podman', true],
+    ['/usr/local/bin/nerdctl', true],
+    ['docker exec', false],
+    ['', false],
+    ['relative/bin', false],
+    ['/bin/x\u0007', false],
+    [42, false],
+  ])('isContainerRuntime(%j) → %s', (value, ok) => {
+    expect(isContainerRuntime(value)).toBe(ok);
+  });
+
+  it.each([
+    ['devbox', true],
+    ['dev_box.2', true],
+    ['-bad', false],
+    ['a b', false],
+    ['', false],
+    ['x'.repeat(254), false],
+  ])('isContainerName(%j) → %s', (value, ok) => {
+    expect(isContainerName(value)).toBe(ok);
+  });
+
+  it.each([
+    ['claude', true],
+    ['/usr/bin/claude', true],
+    ['claude --x', false],
+    ['', false],
+  ])('isContainerCommand(%j) → %s', (value, ok) => {
+    expect(isContainerCommand(value)).toBe(ok);
   });
 });

@@ -17,6 +17,9 @@ import {
   WAKE_EVERY_FLOOR_MS,
   WAKE_ON_CHANNEL_PREFIX,
   WAKE_ON_EVENTS,
+  isContainerCommand,
+  isContainerName,
+  isContainerRuntime,
   isReservedAgentName,
   isWakeOn,
   parseDays,
@@ -26,6 +29,7 @@ import {
   parseTimes,
   readFrontmatter,
   WAKE_DAYS,
+  type AgentContainer,
   type AgentDefinition,
   type AgentProblem,
   type Autonomy,
@@ -34,6 +38,11 @@ import {
   type WakeDay,
   type WakeOn,
 } from '@shared/agent-contract';
+import {
+  isAbsoluteContainerPath,
+  isEnvArgTemplate,
+  isHostAlias,
+} from '@shared/config-contract';
 import type {
   SessionEffort,
   SessionModel,
@@ -357,7 +366,84 @@ export function parseAgent(source: string, ctx: ParseContext): ParseResult {
     });
   }
 
+  /*
+    The container block (HIVE-137). Validate-never-default: absent keys stay
+    absent all the way to `wake-command.ts`, which is the layer that knows
+    what to inherit. The four required keys are required *together*: naming
+    one is naming the block, and half a block spawns nothing useful.
+
+    The predicates are the project block's own (`config-contract.ts`), so a
+    value the settings form accepts is a value this reader accepts too — the
+    same one-set rule `isHostAlias` was written under.
+  */
+  const containerKeys = [...fields.keys()].filter((key) => key.startsWith('container.'));
+  const checkContainer = (
+    key: string,
+    ok: (value: unknown) => boolean,
+    reason: string,
+  ): void => {
+    const value = shaped(key);
+
+    if (value !== undefined && !ok(value)) problems.push({ field: key, reason });
+  };
+
+  if (containerKeys.length > 0) {
+    for (const key of [
+      'container.runtime',
+      'container.name',
+      'container.workspace',
+      'container.hive_dir',
+    ]) {
+      if (fields.get(key) === undefined) {
+        problems.push({ field: key, reason: 'Required when the agent runs in a container.' });
+      }
+    }
+
+    checkContainer(
+      'container.runtime',
+      isContainerRuntime,
+      'docker, podman, or an absolute path to a runtime.',
+    );
+    checkContainer(
+      'container.name',
+      isContainerName,
+      'A container name: letters, digits, _ . - and no spaces.',
+    );
+    checkContainer('container.command', isContainerCommand, 'One executable, no arguments.');
+    checkContainer(
+      'container.workspace',
+      isAbsoluteContainerPath,
+      'Must be an absolute path inside the container.',
+    );
+    checkContainer(
+      'container.hive_dir',
+      isAbsoluteContainerPath,
+      'Must be an absolute path inside the container.',
+    );
+    checkContainer('container.env_arg', isEnvArgTemplate, 'Must contain {name} and {value}.');
+    checkContainer('container.host_alias', isHostAlias, 'Must be a hostname.');
+  }
+
   if (problems.length > 0) return { problems };
+
+  const containerBlock = (): AgentContainer => ({
+    runtime: shaped('container.runtime') as string,
+    name: shaped('container.name') as string,
+    workspace: shaped('container.workspace') as string,
+    hiveDir: shaped('container.hive_dir') as string,
+    ...(shaped('container.command') === undefined
+      ? {}
+      : { command: shaped('container.command') as string }),
+    ...(shaped('container.env_arg') === undefined
+      ? {}
+      : { envArg: shaped('container.env_arg') as string }),
+    ...(shaped('container.freshness') === undefined
+      ? {}
+      : { freshness: shaped('container.freshness') as AgentContainer['freshness'] }),
+    ...(shaped('container.host_alias') === undefined
+      ? {}
+      : { hostAlias: shaped('container.host_alias') as string }),
+  });
 
   const quiet = shaped('wake.quiet');
   const model = shaped('model');
@@ -419,6 +505,7 @@ export function parseAgent(source: string, ctx: ParseContext): ParseResult {
         parallel: limit('limits.parallel', AGENT_LIMIT_DEFAULTS.parallel),
       },
       body,
+      ...(containerKeys.length === 0 ? {} : { container: containerBlock() }),
     },
   };
 }
