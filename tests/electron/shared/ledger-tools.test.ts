@@ -4,6 +4,7 @@ import { LEDGER_KINDS } from '@shared/ledger-contract';
 import {
   AGENTS_TOOL,
   APPROVE_TOOL,
+  ASK_INTENT_GUIDANCE,
   LEDGER_TOOLS,
   LEDGER_TOOL_NAMES,
 } from '@shared/ledger-tools';
@@ -170,6 +171,32 @@ describe('ledger-tools', () => {
     expect(tool?.inputSchema.required).toEqual(['body']);
     // A handoff is addressed to your own next session; `to` would be noise.
     expect(tool?.inputSchema.properties).not.toHaveProperty('to');
+  });
+
+  /**
+   * An ask carries what its asker was about to do (HIVE-135). The schema is
+   * the whole producer: a key the model is not told about is a key it never
+   * writes. Named on `ledger_ask` alone — no other kind is waited on.
+   */
+  it('describes meta.intent on ledger_ask, in the model-facing words', () => {
+    const ask = LEDGER_TOOLS.find((tool) => tool.name === 'ledger_ask');
+    const meta = ask?.inputSchema.properties?.meta as {
+      description?: string;
+      properties?: Record<string, { type?: string; description?: string }>;
+    };
+
+    expect(meta.description).toContain(ASK_INTENT_GUIDANCE);
+    expect(meta.properties?.intent).toMatchObject({ type: 'string' });
+    expect(meta.properties?.intent?.description).toBe(ASK_INTENT_GUIDANCE);
+    expect(ASK_INTENT_GUIDANCE).toMatch(/no memory/i);
+  });
+
+  it('names ttlMs on every meta, since main reads it', () => {
+    for (const tool of LEDGER_TOOLS) {
+      const meta = tool.inputSchema.properties?.meta as { description?: string } | undefined;
+      if (meta === undefined) continue;
+      expect(meta.description).toContain('ttlMs');
+    }
   });
 });
 

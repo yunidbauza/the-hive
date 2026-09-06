@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { AGENT_PREAMBLE } from '../../../../electron/main/agents/preamble';
+import { ASK_INTENT_GUIDANCE } from '../../../../electron/shared/ledger-tools';
 
 describe('AGENT_PREAMBLE', () => {
   it('tells a woken agent to retry the denied call exactly once', () => {
@@ -100,5 +101,20 @@ describe('AGENT_PREAMBLE', () => {
   it('tells the agent its own instructions are standing work', () => {
     expect(AGENT_PREAMBLE).toMatch(/instructions below/i);
     expect(AGENT_PREAMBLE).toMatch(/every wake/i);
+  });
+
+  /**
+   * Word for word (HIVE-135). Both audiences read one sentence set: the
+   * schema is all a terminal session ever sees, the preamble is what a
+   * headless agent reads, and one constant interpolated into both is what
+   * keeps them from drifting.
+   */
+  it('carries the intent guidance verbatim from the tool schema', () => {
+    expect(AGENT_PREAMBLE).toContain(ASK_INTENT_GUIDANCE);
+  });
+
+  it('tells a woken agent to act on the intent it recorded', () => {
+    expect(AGENT_PREAMBLE).toMatch(/meta\.intent/);
+    expect(AGENT_PREAMBLE).toMatch(/woken because an ask you opened was answered/i);
   });
 });

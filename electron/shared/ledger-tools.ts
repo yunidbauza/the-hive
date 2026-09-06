@@ -39,19 +39,44 @@ const body = {
 } as const;
 
 /**
- * Free-form, with one key the app actually reads.
+ * What `meta.intent` is for, in the words a model acts on (HIVE-135).
+ *
+ * Exported because it is read by two audiences and must not drift between
+ * them: `AGENT_PREAMBLE` interpolates this exact string, and a test holds the
+ * two together. Written for a *copy* of the asker: the answer may arrive an
+ * hour later, to a session whose context has been compacted past the reason
+ * it asked, or to a fresh session with no context at all.
+ */
+export const ASK_INTENT_GUIDANCE =
+  'Put what you were about to do, and will do once answered, at `meta.intent` — `{"intent": "post the reply draft to #incorp-dev once approved"}` — written for a copy of you with no memory of this turn. The answer that wakes you carries only the answer; `meta.intent` on your own ask is how you remember the question.';
+
+/**
+ * Free-form, with the keys the app actually reads.
  *
  * `slack.permalink` is named here because naming it is the only thing that
  * makes it happen (HIVE-123): `ledger/notify.ts` turns that exact path into the
  * card's "Open in Slack" link, and an agent told merely to "include the
  * permalink" writes it into the body, where nothing can find it. A described
  * key is the whole producer for that feature — the schema is the only place the
- * model is told the shape.
+ * model is told the shape. `ttlMs` is named for the same reason (it was read by
+ * `ledger-derive.ts` for a release before anything told a model it existed),
+ * and `intent` on an ask likewise (HIVE-135).
  */
+const META_DESCRIPTION =
+  'Optional structured detail carried with the entry — a ticket key, a PR number, a Slack timestamp. Free-form, with keys The Hive reads: if you posted a message in Slack, put its permalink at `slack.permalink` — `{"slack": {"permalink": "https://…slack.com/archives/…"}}` — and the card gets an "Open in Slack" link straight to it. Naming it in your body text instead does nothing. `ttlMs` (a number of milliseconds) shortens how long an ask stays open; it can never lengthen it.';
+
 const meta = {
   type: 'object',
-  description:
-    'Optional structured detail carried with the entry — a ticket key, a PR number, a Slack timestamp. Free-form, with one key The Hive reads: if you posted a message in Slack, put its permalink at `slack.permalink` — `{"slack": {"permalink": "https://…slack.com/archives/…"}}` — and the card gets an "Open in Slack" link straight to it. Naming it in your body text instead does nothing.',
+  description: META_DESCRIPTION,
+} as const;
+
+/** The ask's `meta`: the shared fragment plus the one key only an ask carries. */
+const askMeta = {
+  type: 'object',
+  description: `${META_DESCRIPTION} ${ASK_INTENT_GUIDANCE}`,
+  properties: {
+    intent: { type: 'string', description: ASK_INTENT_GUIDANCE },
+  },
 } as const;
 
 export const LEDGER_TOOLS: readonly McpToolDefinition[] = [
@@ -141,7 +166,7 @@ export const LEDGER_TOOLS: readonly McpToolDefinition[] = [
           },
           required: ['author', 'text'],
         },
-        meta,
+        meta: askMeta,
       },
       required: ['to', 'body'],
     },

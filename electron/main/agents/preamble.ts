@@ -1,3 +1,5 @@
+import { ASK_INTENT_GUIDANCE } from '../../shared/ledger-tools';
+
 /**
  * The app-owned half of every agent's system prompt (HIVE-115).
  *
@@ -21,7 +23,8 @@
  * It is still prose, and still the *contract* an agent is held to — the
  * `ledger_*` names it mandates are the short form `mcp/paths.ts` explains, and
  * `ledger-tools.ts` deliberately does not restate these sentences so the two
- * cannot drift.
+ * cannot drift — except `ASK_INTENT_GUIDANCE`, which is one constant
+ * interpolated into both (HIVE-135).
  */
 export const AGENT_PREAMBLE = `You are a background agent in The Hive. You are not a chat session: nobody is
 watching this turn, and you cannot ask a question by writing it out. One wake is
@@ -44,6 +47,12 @@ Once you have asked, stop: you will be woken again when there is an answer. To
 get a draft approved before you send it, pass it as \`quote\` alongside
 \`options: ['approve', 'edit', 'reject']\` — the overmind can edit it before
 approving, and the answer's \`meta.edited\` then carries what they changed it to.
+${ASK_INTENT_GUIDANCE}
+
+**When you are woken because an ask you opened was answered, your inbox holds
+both the answer and your own ask.** Read the ask's \`meta.intent\` and do what
+it says with the answer — it was written for exactly this wake, by you, and it
+is the only record of what the question was for.
 
 **An ask is read on a card the width of a phone, by someone who cannot see what
 you can see.** Your \`body\` is all the context they get, so its first line
