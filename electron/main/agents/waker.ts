@@ -1,10 +1,14 @@
 import type {
+  AgentContainer,
   AgentDefinition,
   Autonomy,
   RunKind,
 } from '@shared/agent-contract';
-import { AUTH_ENV_KEYS, isSessionEnvDenied } from '@shared/config-contract';
-import { HOOK_ENV_GRANTS } from '@shared/hook-contract';
+import { AUTH_ENV_KEYS, DEFAULT_ENV_ARG, isSessionEnvDenied } from '@shared/config-contract';
+import { HOOK_ENV_GRANTS, HOOK_ENV_RECEIVER_URL } from '@shared/hook-contract';
+
+import { withHostAlias } from '../hooks/container-origin';
+import { createPathMap } from '../sessions/path-map';
 
 /**
  * The command line one wake runs (HIVE-115).
@@ -88,13 +92,51 @@ export interface WakeInput {
    * `wake-command.ts`'s decision, made by never passing `sessionUuid` here.
    */
   kind?: RunKind;
+  /**
+   * The agent runs in a container (HIVE-137).
+   *
+   * `userDataPath` and `hostAlias` are what the path map and the re-addressed
+   * receiver URL need, and neither is on the definition: the first is the
+   * app's, the second is the receiver's global alias the block may override.
+   */
+  container?: {
+    config: AgentContainer;
+    userDataPath: string;
+    hostAlias: string;
+  };
+}
+
+/**
+ * What `runs.ts` wraps the inner command with, for a container wake (HIVE-137).
+ *
+ * Carried as a descriptor rather than spelled into `args` here, because the
+ * `-e` set has to include the run id and kind — and only the tracker, at the
+ * moment it spawns, knows those. `sessionUuid` is the handle a stop inside
+ * the container uses: it is on the argv of every wake and unique per run.
+ */
+export interface ContainerWake {
+  runtime: string;
+  name: string;
+  /** The binary inside; `claude` unless the block says otherwise. */
+  command: string;
+  envArg: string;
+  /** The cwd inside — `--workdir` on the exec. */
+  workspace: string;
+  sessionUuid: string;
 }
 
 export interface WakeCommand {
+  /**
+   * The executable to spawn. For a container wake this is the binary
+   * *inside* the container — informational, because `runs.ts` spawns
+   * `container.runtime` and puts this after the container's name.
+   */
   file: string;
   args: string[];
   env: Record<string, string>;
   cwd: string;
+  /** Present for a container wake, absent for a host one. */
+  container?: ContainerWake;
 }
 
 export function wakePrompt(
@@ -213,6 +255,41 @@ export function systemPromptFor(
 export function wakeCommand(input: WakeInput): WakeCommand {
   const { def, paths, env } = input;
 
+  /*
+    Every path on the argv is the container's spelling of it, or the wake is
+    refused (HIVE-137). Two roots, the same two `sessions/index.ts` maps for a
+    session: the agent's workdir is this map's "project" — it is the cwd the
+    run gets, and `--workdir` on the exec — and `<userData>/hive` is where the
+    settings file, the plugin and the system prompt all live.
+
+    A throw rather than a `{ problem }`, because this function returns a
+    command and has no problem shape; `createWakeCommand` catches it into
+    one. Guessing a path would produce a flag naming a file the container
+    cannot open — an error at `claude` startup about a file, which is further
+    from the cause than a refusal naming the path.
+  */
+  const map =
+    input.container === undefined
+      ? null
+      : createPathMap({
+          projectPath: paths.workdir,
+          userDataPath: input.container.userDataPath,
+          workspace: input.container.config.workspace,
+          hiveDir: input.container.config.hiveDir,
+        });
+  const inside = (hostPath: string): string => {
+    if (map === null) return hostPath;
+
+    const mapped = map.toContainer(hostPath);
+
+    if (mapped === null) {
+      throw new Error(
+        `${hostPath} is under neither the agent's workdir nor <userData>/hive, so it has no path inside the container.`,
+      );
+    }
+
+    return mapped;
+  };
   const args = [
     '-p',
     ...(input.sessionUuid === undefined
@@ -223,14 +300,14 @@ export function wakeCommand(input: WakeInput): WakeCommand {
     ...(def.model === undefined ? [] : ['--model', def.model]),
     ...(def.effort === undefined ? [] : ['--effort', def.effort]),
     '--settings',
-    paths.settings,
+    inside(paths.settings),
     // The isolation flag. See the module comment.
     '--setting-sources',
     '',
     '--plugin-dir',
-    paths.pluginDir,
+    inside(paths.pluginDir),
     '--mcp-config',
-    paths.mcpConfig,
+    inside(paths.mcpConfig),
     '--strict-mcp-config',
     '--allowedTools',
     ['mcp__hive__*', ...def.tools].join(','),
@@ -250,7 +327,7 @@ export function wakeCommand(input: WakeInput): WakeCommand {
       ? []
       : ['--max-budget-usd', String(def.limits.budgetUsd)]),
     '--append-system-prompt-file',
-    paths.systemPrompt,
+    inside(paths.systemPrompt),
     '--output-format',
     'stream-json',
     '--verbose',
@@ -322,6 +399,48 @@ export function wakeCommand(input: WakeInput): WakeCommand {
     ...def.tools,
     ...(input.grants ?? []),
   ]);
+
+  if (input.container !== undefined) {
+    const { config, hostAlias } = input.container;
+    const hook = { ...env.hook };
+    const receiver = hook[HOOK_ENV_RECEIVER_URL];
+
+    /*
+      Re-addressed by the agent's alias, or the global one. `envFor`'s
+      `HIVE_RECEIVER_URL` is the loopback origin, unreachable from inside a
+      container — the same substitution `sessions/index.ts` makes for a
+      session, for the same reason.
+    */
+    if (receiver !== undefined) {
+      hook[HOOK_ENV_RECEIVER_URL] = withHostAlias(receiver, config.hostAlias ?? hostAlias);
+    }
+
+    return {
+      file: config.command ?? 'claude',
+      args,
+      /*
+        Only what a container may know: the grants, the identity, the marker
+        — and the identity last, so nothing can spoof it. Nothing from
+        `merged` beyond the grants: that is main's own environment, filtered
+        for a host process, and a container's environment is the image's.
+        `AUTH_ENV_KEYS` are therefore absent by construction, not by deletion.
+      */
+      env: {
+        [HOOK_ENV_GRANTS]: merged[HOOK_ENV_GRANTS] as string,
+        HIVE_AGENT: '1',
+        ...hook,
+      },
+      cwd: paths.workdir,
+      container: {
+        runtime: config.runtime,
+        name: config.name,
+        command: config.command ?? 'claude',
+        envArg: config.envArg ?? DEFAULT_ENV_ARG,
+        workspace: config.workspace,
+        sessionUuid: input.sessionUuid ?? input.newUuid,
+      },
+    };
+  }
 
   return {
     file: input.claudePath,

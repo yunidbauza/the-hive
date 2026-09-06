@@ -438,3 +438,94 @@ describe('systemPromptFor', () => {
     );
   });
 });
+
+describe('a container wake (HIVE-137)', () => {
+  const container = {
+    config: { runtime: 'docker', name: 'devbox', workspace: '/work', hiveDir: '/hive' },
+    userDataPath: '/u',
+    hostAlias: 'host.docker.internal',
+  };
+  const containerPaths = {
+    settings: '/u/hive/container/claude-agent.settings.json',
+    pluginDir: '/u/hive/plugin',
+    mcpConfig: '/u/hive/container/hive.mcp.json',
+    systemPrompt: '/u/hive/agents/slack-watcher.system.md',
+    workdir: '/home/me/.hive/work/slack-watcher',
+  };
+  const built = () => build({ container, paths: containerPaths });
+
+  it('maps every path flag into the container and carries the descriptor', () => {
+    const command = built();
+
+    expect(command.container).toEqual({
+      runtime: 'docker',
+      name: 'devbox',
+      command: 'claude',
+      envArg: '-e {name}={value}',
+      workspace: '/work',
+      sessionUuid: '11111111-2222-3333-4444-555555555555',
+    });
+    const joined = command.args.join(' ');
+    expect(joined).toContain('--settings /hive/container/claude-agent.settings.json');
+    expect(joined).toContain('--plugin-dir /hive/plugin');
+    expect(joined).toContain('--mcp-config /hive/container/hive.mcp.json');
+    expect(joined).toContain('--append-system-prompt-file /hive/agents/slack-watcher.system.md');
+    // The inner binary, informational: `runs.ts` spawns the runtime, not this.
+    expect(command.file).toBe('claude');
+  });
+
+  it('honours command, env_arg and the resumed uuid', () => {
+    const command = build({
+      container: {
+        ...container,
+        config: { ...container.config, command: '/opt/claude', envArg: '--env {name}={value}' },
+      },
+      paths: containerPaths,
+      sessionUuid: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+    });
+
+    expect(command.container?.command).toBe('/opt/claude');
+    expect(command.container?.envArg).toBe('--env {name}={value}');
+    expect(command.container?.sessionUuid).toBe('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
+  });
+
+  it("crosses only HIVE_* and the marker, re-addressed by the alias, never main's environment", () => {
+    const command = built();
+
+    expect(Object.keys(command.env).sort()).toEqual([
+      'HIVE_AGENT',
+      'HIVE_GRANTS',
+      'HIVE_HOOK_TOKEN',
+      'HIVE_RECEIVER_URL',
+      'HIVE_SESSION_ID',
+    ]);
+    expect(command.env['HIVE_RECEIVER_URL']).toBe('http://host.docker.internal:5051');
+    expect(command.env['ANTHROPIC_API_KEY']).toBeUndefined();
+    expect(command.env['PATH']).toBeUndefined();
+  });
+
+  it("prefers the agent's own alias over the global one", () => {
+    const command = build({
+      container: { ...container, config: { ...container.config, hostAlias: 'gateway.local' } },
+      paths: containerPaths,
+    });
+
+    expect(command.env['HIVE_RECEIVER_URL']).toBe('http://gateway.local:5051');
+  });
+
+  it('refuses a path under neither root rather than guessing one', () => {
+    expect(() =>
+      build({
+        container,
+        paths: { ...containerPaths, settings: '/elsewhere/claude-agent.settings.json' },
+      }),
+    ).toThrow(/\/elsewhere\/claude-agent\.settings\.json/);
+  });
+
+  it('is byte-identical for a host wake: no descriptor, no mapping', () => {
+    const command = build();
+
+    expect(command.container).toBeUndefined();
+    expect(command.args.join(' ')).toContain('--settings /u/hive/claude-hooks.settings.json');
+  });
+});
