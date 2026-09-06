@@ -1649,6 +1649,73 @@ minute ago could, and the result would be a last-turn prompt on a brand-new
 happened. With the term, a forced rotation on a never-run agent degrades to the
 ordinary first wake, which is already the fresh session the user was asking for.
 
+### Containerised agents (HIVE-137)
+
+An agent whose `AGENT.md` carries a `container:` block wakes **inside** that
+container, the way a HIVE-133 session does — and the block is the project
+block's fields plus the two a no-shell wake needs:
+
+```yaml
+container:
+  runtime: docker          # docker | podman | /absolute/path/to/a/runtime
+  name: devbox             # the running container, as `<runtime> exec` names it
+  command: claude          # optional; the binary inside
+  workspace: /work         # container-side path of ~/.hive/work/<name>; the run's cwd
+  hive_dir: /hive          # container-side path of <userData>/hive
+  env_arg: -e {name}={value}   # optional
+  host_alias: host.docker.internal  # optional; the receiver's global alias
+```
+
+Snake case, because `readFrontmatter`'s key grammar is `[a-z0-9_-]` —
+`hiveDir` never parses. The form's "Runs in a container" switch writes and
+removes the whole block; off is today's host wake, byte for byte.
+
+**Two commands, assembled in two places.** `wakeCommand` builds the inner
+`claude -p …` with every path mapped through the same two-root `PathMap` a
+session uses (the agent's workdir → `workspace`, `<userData>/hive` →
+`hive_dir`) and returns a `ContainerWake` descriptor. `runs.ts` wraps it at
+spawn — `<runtime> exec --workdir <workspace> -e … <name> <command> …` —
+because it alone knows `HIVE_RUN_ID` and `HIVE_RUN_KIND`. `expandEnvArgv`
+spells the `-e` set as argv, unquoted: there is no shell to split it, and
+quoting would put literal quotes into the container. Nothing from main's
+environment crosses; the runtime client gets none, so a host `PATH` finds
+`docker` and a container `PATH` finds `claude`.
+
+**Stopping happens inside.** Measured: SIGTERM to a `docker exec` client
+leaves the process running, with or without a TTY. So `escalate` runs
+`<runtime> exec <name> pkill -TERM -f <session uuid>` beside the client kill,
+and `-KILL` on the grace timer — the uuid is on every wake's argv and unique
+per run. Proven live: the run's `sleep` grandchild is gone afterwards too.
+
+**Grants cross by registry, not environment.** The stdio host reads
+`HIVE_GRANTS` from its environment; there is none on the receiver's side of
+`POST /mcp`. `runs.ts` registers the same list with `receiver.grants` under
+the run id before the spawn and deletes it in `close()`; `handlersFor` hands
+it to `approve` by `x-hive-run`. Sessions and stale runs keep `[]`.
+
+**Status hooks are `curl` commands in the container set.** Claude Code
+2.1.263 refuses an http hook whose host resolves to a private or link-local
+address that is not loopback — `HTTP hook blocked: host.docker.internal
+resolves to 192.168.65.254` — with no escape hatch a search of the binary
+found. So `hookSettings(…, 'command')` spells every status hook as
+`statusCommand`, the same headers and payload off stdin; the host set keeps
+http. This also fixed containerised **sessions**, whose status events had
+been silently refused since HIVE-133.
+
+**What a container agent does not get, this story.** `freshness: rewrite`
+(a per-run set needs the run id only the synchronous tracker knows) and an
+integration in `mcp:` (its server is a binary on this machine). Both are
+refused by the wake with a sentence naming the alternative. A stopped
+container is a `failed` run whose reason is the runtime's own — `container
+<id> is not running` — and the next addressed entry wakes the agent again.
+There is no pre-spawn probe: `RunTracker.run` is synchronous by design.
+
+**The premise the user owns:** the container is theirs, must be up when the
+agent wakes, and its HOME must persist between wakes — the transcript lives
+at `$HOME/.claude/projects/<workspace>/<uuid>.jsonl` inside, which is what
+`--resume` reads. `pnpm test:container` with `HIVE_LIVE_CONTAINER_IMAGE`
+proves all of it against a real container.
+
 ### A run ends exactly once, and quitting is one of the ways
 
 `runs.ts` finalizes on the child's **`'close'`**, not on `'exit'`. `'exit'` can
