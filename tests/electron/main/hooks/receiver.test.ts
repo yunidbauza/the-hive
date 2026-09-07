@@ -220,6 +220,10 @@ describe('hook receiver', () => {
     expect(url.startsWith('http://127.0.0.1:')).toBe(true);
   });
 
+  it('reports the running bind through `boundHost` while listening', () => {
+    expect(receiver.boundHost).toBe('127.0.0.1');
+  });
+
   /**
    * The `/done` route (HIVE-93).
    *
@@ -3216,6 +3220,18 @@ describe('a widened bind', () => {
   });
 
   /*
+    `boundHost` is what the header's exposure chip is sourced from (HIVE-134):
+    the plain, unparsed `host` `listen()` actually succeeded with, not a value
+    re-derived from `origin`'s `http://host:port` shape. Asserted as an exact
+    match rather than a `startsWith`, unlike `origin` and the derived URLs
+    above — there is no port, scheme or path riding along with it to make a
+    prefix check meaningful.
+  */
+  it('reports the widened host through `boundHost`, exactly', () => {
+    expect(widened.boundHost).toBe('0.0.0.0');
+  });
+
+  /*
     The literal was duplicated — once in `listen` and once building `origin`
     (receiver.ts, in `start`). If only one moved, the announced URL would name
     an address nothing is listening on, and every derived URL with it.
@@ -3237,6 +3253,47 @@ describe('a widened bind', () => {
     });
     // `/ready` answers `204`, the same no-body convention `/done` follows.
     expect(response.status).toBe(204);
+  });
+});
+
+/**
+ * `boundHost`'s lifecycle (HIVE-134).
+ *
+ * `url` and `origin` already have this shape proven on them implicitly — every
+ * other `describe` block here starts from a receiver already listening and
+ * stops it in `afterEach` — but `boundHost` is what the header's exposure chip
+ * reads through `AppInfo`, so its *own* start-to-stop journey is asserted
+ * directly rather than left to be inferred from those.
+ */
+describe('boundHost (HIVE-134)', () => {
+  it('is null before start, the bound host after a successful start, and null again after stop', async () => {
+    const fresh = createReceiver({
+      onCleared: () => {},
+      onEvent: () => {},
+      onTicketIntent: () => {},
+      onPromptName: () => {},
+      onDone: () => {},
+      onReady: () => {},
+      knowsSession: () => false,
+      ...noAgents,
+      ...noLedger,
+      onMetrics: () => {},
+      host: '127.0.0.1',
+    });
+
+    // Before `start()`, nothing is listening — a socket that has never bound
+    // is exactly as unreachable as one that failed to.
+    expect(fresh.boundHost).toBeNull();
+
+    const started = await fresh.start();
+    expect(started).not.toBeNull();
+    expect(fresh.boundHost).toBe('127.0.0.1');
+
+    await fresh.stop();
+    // `stop()` closes the socket this session had open; a chip still reading
+    // the pre-stop value here would be exactly the false "still exposed"
+    // signal in the other direction from the one this story fixes.
+    expect(fresh.boundHost).toBeNull();
   });
 });
 

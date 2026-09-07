@@ -43,6 +43,7 @@ const info = (over: Partial<AppInfo> = {}): AppInfo => ({
   node: '22.0.0',
   platform: 'darwin',
   logPath: '/Users/me/Library/Logs/The Hive',
+  receiverBoundHost: null,
   ...over,
 });
 

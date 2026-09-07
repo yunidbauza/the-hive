@@ -231,6 +231,22 @@ export interface HookRuntime {
    */
   doneUrl(): string | null;
   /**
+   * The host the receiver's socket is actually bound to right now, or `null`
+   * when nothing is listening — before the bind, after a failed one, or after
+   * `stop()` (HIVE-134).
+   *
+   * Reads straight through to {@link Receiver.boundHost} rather than being
+   * gated on `settingsPath` the way {@link HookRuntime.doneUrl} is: `doneUrl`
+   * cares whether a session has a token to present, but this answers a
+   * narrower, purely socket-shaped question — is the process reachable off
+   * loopback — that does not depend on whether the settings file also wrote
+   * successfully. A receiver that bound but then had its container-file write
+   * fail still had a real, listening, possibly-non-loopback socket for the
+   * moments before `stop()` closed it; this getter reports exactly that
+   * lifetime, no more and no less.
+   */
+  boundHost(): string | null;
+  /**
    * The receiver's origin as a *container* must address it, addressed by the
    * **global** alias, or `null` before the bind (HIVE-132).
    *
@@ -545,6 +561,10 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       const running = receiver;
       if (running === null || settingsPath === null) return null;
       return running.doneUrl;
+    },
+
+    boundHost(): string | null {
+      return receiver === null ? null : receiver.boundHost;
     },
 
     agentContainerSettingsPathFor(config) {

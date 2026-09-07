@@ -2177,6 +2177,13 @@ export function registerIpcHandlers(): void {
       platform: process.platform,
       // Reported, never written to — this app logs to stdout. See `AppInfo`.
       logPath: app.getPath('logs'),
+      // `hooks?.` rather than `hooks.`, matching every other read through this
+      // runtime on this file: `null` is the correct answer for a receiver that
+      // never bound, exactly as `boundHost()` itself already returns for that
+      // case, so there is nothing here to distinguish "no runtime" from "no
+      // bind" — both mean the same thing to a caller asking whether the
+      // process is reachable off loopback right now.
+      receiverBoundHost: hooks?.boundHost() ?? null,
       // Omitted rather than empty when nothing has run, so the field's presence
       // means something.
       ...(diagnostics.length > 0 ? { pty: diagnostics } : {}),

@@ -266,10 +266,13 @@ export const CH = {
    * because a socket already listening cannot be moved. Three things bound it:
    * the same `isHostAlias` predicate, so the value is a host and never a URL; the
    * next-launch delay, so the change is not silent to a user who is looking; and
-   * the header's exposure chip, which says the receiver is exposed for exactly as
-   * long as it is. The guards `reject` applies — a timing-safe token compare and
-   * an Origin and Host allowlist on every route — do not depend on this value and
-   * hold at every bind.
+   * the header's exposure chip, which reads `receiverBoundHost` off `AppInfo` — the
+   * receiver's *running* bind, not this config's snapshot of it — and so says the
+   * receiver is exposed for exactly as long as it is, including the session
+   * between toggling this switch off and the next launch that would actually
+   * close the wider socket (HIVE-134). The guards `reject` applies — a
+   * timing-safe token compare and an Origin and Host allowlist on every route —
+   * do not depend on this value and hold at every bind.
    *
    * Neither field names a *file*: the one file this bridge can write is still
    * chosen by main, as for every verb on this list.
@@ -1255,6 +1258,32 @@ export interface AppInfo {
    * answering it, so no such button ships and this stays text.
    */
   logPath: string;
+  /**
+   * The host the hook receiver's socket is actually bound to right now, or
+   * `null` when nothing is listening (HIVE-134).
+   *
+   * It lives here rather than behind a verb of its own for the reason
+   * {@link AppInfo.logPath} does: `AppInfo` already exists "for the About box
+   * and bug reports", and this is the same kind of fact — something true of the
+   * running process, read once. What makes a one-shot read sufficient, rather
+   * than something the renderer would need to subscribe to and keep live, is
+   * the same fact that makes `receiver.bind` say "takes effect at next
+   * launch" in Settings: a listening socket cannot be moved, so this value is
+   * fixed for the life of the session that reads it. It cannot go stale
+   * between the read and the moment it is displayed, because nothing on this
+   * side of a relaunch can change it.
+   *
+   * Deliberately **not** `receiver.bind.host` off the config snapshot, which
+   * says what will be bound at the *next* launch, not what is bound *now* —
+   * the two can disagree for an entire running session (toggle the settings
+   * switch off; the snapshot updates instantly, the open socket does not) and
+   * a false "safe" reading from the gap is worse than a stale one. The header's
+   * exposure chip (`useReceiverExposure`) reads this field for exactly that
+   * reason; `container-alias-group.tsx`'s settings switch is the one place
+   * that correctly stays config-derived, because it is a control over the file,
+   * not a status readout.
+   */
+  receiverBoundHost: string | null;
   /**
    * Per-session flow-control counters (story 093).
    *
@@ -2649,10 +2678,14 @@ export const BRIDGE_CONFIG_KEYS = [
    * bridge could do before, taking effect at next launch because a listening
    * socket cannot be moved. What bounds it: the same `isHostAlias` predicate,
    * the next-launch delay that keeps the change from being silent, and the
-   * header chip that says the receiver is exposed for exactly as long as it
-   * is. `reject`'s `timingSafeEqual` token compare and the `Origin`/`Host`
-   * checks on all eight routes hold at every bind, which is why widening it is
-   * not a cliff. See the fuller justification beside `'setReceiver'` in
+   * header chip, which is sourced from the receiver's *running* bind
+   * (`AppInfo.receiverBoundHost`) rather than this config's snapshot of it — so it
+   * still says the receiver is exposed for exactly as long as it is, even
+   * across the gap between toggling this switch off and the relaunch that
+   * would actually close the wider socket (HIVE-134). `reject`'s
+   * `timingSafeEqual` token compare and the `Origin`/`Host` checks on all
+   * eight routes hold at every bind, which is why widening it is not a cliff.
+   * See the fuller justification beside `'setReceiver'` in
    * `tests/e2e/electron/security.spec.ts`.
    */
   'setReceiver',

@@ -1,9 +1,10 @@
-import { useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 
 import {
   projectAccess,
   projectConfigSnapshot,
   projectPath,
+  readAppInfo,
   subscribeProjectConfig,
   type ProjectAccess,
 } from '@lib/project-config';
@@ -61,20 +62,53 @@ export function useProjectAccess(projectId: string): ProjectAccess {
 }
 
 /**
- * The address the receiver is exposed on, or `null` while it is not (HIVE-134).
+ * The address the receiver is **actually** exposed on, or `null` while it is
+ * not (HIVE-134).
  *
- * Derived, never stored — the codebase rule, and here it is also the whole
- * safety argument: there is no `bind.enabled` flag that could say "off" while
- * the socket was open. One predicate, `isLoopbackHost`, answers the question for
- * main and for this hook alike.
+ * `snapshot.receiver.bind.host` is the wrong source for this and used to be
+ * the one in use: it names what will be bound at the app's *next* launch, not
+ * what a listening socket is bound to right now, and the two diverge for a
+ * whole running session — toggle the settings switch off and the config file
+ * (and this hook's old snapshot read) goes loopback instantly, while the
+ * receiver bound wide at boot keeps listening until relaunch, exactly because
+ * a listening socket cannot be moved (see Settings' own "takes effect at next
+ * launch"). A security indicator has to say what *is* true, not what will
+ * become true, so this reads `AppInfo.receiverBoundHost` — the host the
+ * receiver's `listen()` actually succeeded with — through the same on-demand
+ * `readAppInfo` the diagnostics pane already uses, rather than the config
+ * snapshot `useProjectConfig` exposes.
  *
- * Returns the address rather than a boolean because the only consumer needs to
- * print it, and a hook that returned `true` would make the caller reach back
- * into the snapshot for the value it actually wanted.
+ * One fetch on mount, not a subscription: `receiverBoundHost` cannot change
+ * during a session (same premise as above, from the other side — nothing on
+ * this side of a relaunch can move an already-open socket), so there is
+ * nothing for a later render of this hook to catch that the first one missed.
+ * Gated on `useProjectConfig` having resolved for the same reason
+ * `AdvancedSection` gates its own `readAppInfo` call on it: a proxy for "the
+ * bridge is actually up," which the browser demo (no bridge, `snapshot` stays
+ * `null`) then correctly never crosses.
+ *
+ * `isLoopbackHost` is still the one predicate that answers "exposed or not,"
+ * for main's guards and for this hook alike — only the value it is asked
+ * about changed. Returns the address rather than a boolean because the only
+ * consumer needs to print it, and a hook that returned `true` would make the
+ * caller reach back for the value it actually wanted.
  */
 export function useReceiverExposure(): string | null {
   const snapshot = useProjectConfig();
-  if (snapshot === null) return null;
-  const { host } = snapshot.receiver.bind;
-  return isLoopbackHost(host) ? null : host;
+  const hasSnapshot = snapshot !== null;
+  const [boundHost, setBoundHost] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!hasSnapshot) return;
+
+    let cancelled = false;
+    void readAppInfo().then((info) => {
+      if (!cancelled) setBoundHost(info?.receiverBoundHost ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [hasSnapshot]);
+
+  return boundHost !== null && !isLoopbackHost(boundHost) ? boundHost : null;
 }

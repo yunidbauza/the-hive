@@ -384,3 +384,58 @@ test('the header names the address when the app starts exposed', async ({}, test
 
   await app.close();
 });
+
+/**
+ * The defect HIVE-134's own review found, proven against the **built app**
+ * rather than only in unit tests: a receiver reads its bind once, at boot, so
+ * a listening socket cannot be moved — which is exactly what "takes effect
+ * at next launch" already says. Toggling the settings switch off rewrites the
+ * config file and its in-memory snapshot to loopback *instantly*, but the
+ * socket this app bound wide at launch keeps listening until the app actually
+ * restarts. A chip sourced from that snapshot would vanish the instant the
+ * switch is toggled and read as safe; it would not be. So the chip must
+ * survive exactly this sequence, still naming the address, because the
+ * process is still reachable off loopback for the rest of this run.
+ */
+test('the chip survives the switch going loopback — it reports the running bind, not the file (HIVE-134)', async ({}, testInfo) => {
+  const configPath = testInfo.outputPath('hive-config.json');
+  writeFileSync(
+    configPath,
+    JSON.stringify(
+      {
+        version: 2,
+        shell: '/bin/sh',
+        projects: [],
+        receiver: { bind: { host: '0.0.0.0', port: 0, allowedOrigins: [] } },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+  const page = await app.firstWindow();
+  await page.waitForSelector('header');
+
+  await expect(page.getByTestId('header-chips').getByText('0.0.0.0')).toBeVisible();
+
+  await openAdvanced(page);
+  await page.getByRole('switch', { name: /off loopback/i }).click();
+
+  // The file, proving the toggle really did rewrite it to loopback — the
+  // half of the story a config-derived chip would have reacted to.
+  await expect
+    .poll(() => (read(configPath).receiver as Record<string, unknown> | undefined)
+      ?.bind as Record<string, unknown> | undefined)
+    .toMatchObject({ host: '127.0.0.1' });
+
+  // The chip, proving it did not react to that write: the socket this
+  // session opened at boot is still bound to `0.0.0.0` and still reachable,
+  // and the header still has to say so.
+  await expect(page.getByTestId('header-chips').getByText('0.0.0.0')).toBeVisible();
+
+  await app.close();
+});

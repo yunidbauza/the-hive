@@ -601,6 +601,50 @@ describe('createHookRuntime — an agent in a container (HIVE-137)', () => {
 });
 
 /**
+ * `HookRuntime.boundHost` (HIVE-134).
+ *
+ * This runtime's own twin of `receiver.test.ts`'s `boundHost` coverage, one
+ * level up: `receiver.ts` proves the underlying socket reports the right
+ * value at each point in its lifecycle, and this proves `createHookRuntime`
+ * reads straight through to it rather than gating it on `settingsPath` the
+ * way `doneUrl` deliberately is (see the doc comment on `HookRuntime.boundHost`
+ * for why the two answer different questions).
+ */
+describe('createHookRuntime — boundHost', () => {
+  let dir: string;
+  let ledger: Ledger;
+  let runtime: HookRuntime | undefined;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'hive-hooks-boundhost-'));
+    ledger = createLedger({ dir, knowsParty: () => true });
+  });
+
+  afterEach(async () => {
+    await runtime?.stop();
+    runtime = undefined;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('is null before start, the bound host after a successful start, and null again after stop', async () => {
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      bind: { host: '0.0.0.0', port: 0, allowedOrigins: [] },
+      ledger,
+    });
+
+    expect(runtime.boundHost()).toBeNull();
+
+    await runtime.start(noopHandlers);
+    expect(runtime.boundHost()).toBe('0.0.0.0');
+
+    await runtime.stop();
+    expect(runtime.boundHost()).toBeNull();
+  });
+});
+
+/**
  * `HookRuntimeOptions.bind` reaching `createReceiver` (HIVE-134).
  *
  * Before this block, `bind` was not a field this runtime read at all —

@@ -710,8 +710,12 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
      *   the receiver off loopback — at the next launch, because a listening
      *   socket cannot be moved. What bounds it is no longer "it cannot": it is
      *   the same `isHostAlias` predicate, the next-launch delay that keeps the
-     *   change from being silent, and the header chip that says the receiver is
-     *   exposed for exactly as long as it is.
+     *   change from being silent, and the header chip — sourced from the
+     *   receiver's *running* bind (`AppInfo.receiverBoundHost`), not from this config's
+     *   snapshot of it, precisely so it still says the receiver is exposed for
+     *   exactly as long as it is even across the gap between toggling this
+     *   switch off and the relaunch that actually closes the wider socket
+     *   (HIVE-134).
      * - What does *not* depend on the bind, and is the reason widening it is not
      *   a cliff: `reject` compares the hook token with `timingSafeEqual` and
      *   checks `Origin` and `Host` on all eight routes, at every bind. Those

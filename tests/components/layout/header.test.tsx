@@ -1,16 +1,34 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Header } from '@components/layout/header';
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
-import { DEFAULT_BIND, DEFAULT_RECEIVER, emptySnapshot } from '@shared/config-contract';
+import { emptySnapshot } from '@shared/config-contract';
 import { useAppearanceStore } from '@stores/appearance-store';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
 
 import { notif } from '../../support/notifications';
 import { seedDemoFleet } from '@tests/support/demo-fleet';
+
+/**
+ * The one seam the exposure chip's sub-tests below need mocked: `readAppInfo`
+ * (HIVE-134). Everything else in `@lib/project-config` stays real, the same
+ * split `advanced-section.test.tsx` and `use-project-config.test.tsx` make —
+ * `ExposureChip` reads the receiver's *running* bind through this function,
+ * never through `setProjectConfigForTest`'s snapshot, so a widened-bind test
+ * that only installed a snapshot (the old, config-derived shape of this test)
+ * would now assert on a chip with nothing to render. Defaults to resolving
+ * `null`, matching what a real, un-mocked bridge would answer in this
+ * environment (there is no `window.hive` in jsdom), so every test in this
+ * file *except* the ones that override it behaves exactly as before.
+ */
+const readAppInfo = vi.fn();
+vi.mock('@/lib/project-config', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/project-config')>();
+  return { ...actual, readAppInfo: () => readAppInfo() };
+});
 
 /**
  * The header only composes — the three sub-components are asserted in their own
@@ -24,6 +42,8 @@ describe('Header', () => {
     useHiveStore.getState().reset();
     seedDemoFleet();
     useUiStore.getState().reset();
+    readAppInfo.mockReset();
+    readAppInfo.mockResolvedValue(null);
     /**
      * Pinned to dark rather than left on the story-105 default of `system`.
      * `system` resolves against `prefers-color-scheme`, which the test
@@ -379,6 +399,11 @@ describe('Header', () => {
    * names the address — belong to its own spec. What is pinned here is that it
    * is actually mounted in the `header-chips` cluster, after `DemoChip` and
    * `ModelChip` (HIVE-134).
+   *
+   * The chip is sourced from the receiver's **running** bind, read through
+   * `readAppInfo` — see the mock at the top of this file — never from
+   * `setProjectConfigForTest`'s snapshot; a config-only snapshot install here
+   * would exercise nothing the chip actually reads.
    */
   describe('the exposure chip (HIVE-134)', () => {
     it('is absent from the chips cluster on the default loopback bind', () => {
@@ -388,19 +413,26 @@ describe('Header', () => {
       expect(chips).not.toHaveTextContent('172.17.0.1');
     });
 
-    it('joins the cluster, after DemoChip and ModelChip, once the bind widens', () => {
-      setProjectConfigForTest({
-        ...emptySnapshot('/Users/dev/.hive/config.json'),
-        receiver: {
-          ...DEFAULT_RECEIVER,
-          bind: { ...DEFAULT_BIND, host: '172.17.0.1' },
-        },
+    it('joins the cluster, after DemoChip and ModelChip, once the running bind widens', async () => {
+      // A real snapshot, because `useReceiverExposure` gates its `readAppInfo`
+      // fetch on one resolving — see its own doc comment for why, and
+      // `use-project-config.test.tsx` for the "no snapshot" case this gate
+      // produces.
+      setProjectConfigForTest(emptySnapshot('/Users/dev/.hive/config.json'));
+      readAppInfo.mockResolvedValue({
+        version: '0.1.0',
+        electron: '38.0.0',
+        chrome: '140.0.0',
+        node: '22.0.0',
+        platform: 'darwin',
+        logPath: '/Users/dev/Library/Logs/The Hive',
+        receiverBoundHost: '172.17.0.1',
       });
 
       render(<Header />);
 
       const chips = screen.getByTestId('header-chips');
-      expect(chips).toHaveTextContent('172.17.0.1');
+      await waitFor(() => expect(chips).toHaveTextContent('172.17.0.1'));
 
       const names = Array.from(chips.children).map((child) => child.textContent);
       expect(names.indexOf('172.17.0.1')).toBeGreaterThan(names.indexOf('demo'));

@@ -346,6 +346,27 @@ export interface Receiver {
    * trimmed off by a caller.
    */
   readonly origin: string | null;
+  /**
+   * The host `listen()` actually succeeded with, or `null` when nothing is
+   * listening — before a successful start, after a failed one, or after
+   * {@link Receiver.stop} (HIVE-134).
+   *
+   * The configured bind (`receiver.bind.host`) says what *will* be bound at
+   * the next launch; this says what *is* bound right now, and the two can
+   * disagree for the rest of a running session — toggling the settings
+   * switch rewrites the config file and its snapshot instantly, but the
+   * listening socket this receiver already opened cannot be moved, only
+   * closed. A security indicator that cares whether the process is currently
+   * reachable off-loopback has to read this field, not the config.
+   *
+   * Set in the same `listen` success callback that sets {@link Receiver.origin}
+   * and {@link Receiver.url}, from the same `host` local already in scope
+   * there — never re-parsed out of `origin`, which would just be two copies of
+   * the same fact free to drift. Cleared everywhere `origin` and `url` are
+   * cleared, for the same reason: a bind failure or a `stop()` means nothing is
+   * listening, and this field exists to say exactly that.
+   */
+  readonly boundHost: string | null;
   stop(): Promise<void>;
 }
 
@@ -581,6 +602,8 @@ export function createReceiver(options: ReceiverOptions): Receiver {
    * second path without re-deriving a port from a string it just built.
    */
   let origin: string | null = null;
+  /** The host `listen()` succeeded with, or `null` — see {@link Receiver.boundHost}. */
+  let boundHost: string | null = null;
 
   /**
    * One MCP read cursor per caller, for the lifetime of this receiver.
@@ -1705,6 +1728,10 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       return origin;
     },
 
+    get boundHost() {
+      return boundHost;
+    },
+
     get metricsUrl() {
       return origin === null ? null : `${origin}${METRICS_PATH}`;
     },
@@ -1876,6 +1903,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
           if (server === null) {
             url = null;
             origin = null;
+            boundHost = null;
             resolve(null);
           }
         });
@@ -1896,6 +1924,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
           */
           origin = `http://${host}:${address.port}`;
           url = `${origin}${HOOK_PATH}`;
+          boundHost = host;
           resolve(url);
         });
       });
@@ -1911,6 +1940,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
         server = null;
         url = null;
         origin = null;
+        boundHost = null;
         // The stdio host's cursor dies with its process; this one dies with the
         // socket that served it, so a restart starts every caller fresh.
         mcpCursors.clear();
