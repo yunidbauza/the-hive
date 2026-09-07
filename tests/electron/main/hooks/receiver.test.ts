@@ -3216,3 +3216,150 @@ describe('a widened bind', () => {
     expect(response.status).toBe(204);
   });
 });
+
+/**
+ * The token comparison (HIVE-134).
+ *
+ * `reject` now compares the presented token with `timingSafeEqual` instead of
+ * `!==`. Every case here is proven on `/ready` rather than `/hook`: since
+ * HIVE-138 the hook route turns *every* refusal into a `204` (`refusedHook`,
+ * above), so a status assertion on that route cannot tell an accepted token
+ * from a refused one. `/ready` has no such laundering — it answers `204` on
+ * success and `403` on refusal, honestly, which is exactly what a rewrite of
+ * the comparison itself needs proven.
+ *
+ * The one case also run against `/hook` is the wrong-length token, and there
+ * the proof is by side effect (did `events` grow) rather than by status, for
+ * the same reason: `/hook`'s status cannot distinguish the two outcomes.
+ */
+describe('the token comparison (HIVE-134)', () => {
+  let receiver: Receiver;
+  let dir: string;
+  let readies: string[];
+  let events: HookStatusEvent[];
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'hive-receiver-timing-safe-'));
+    readies = [];
+    events = [];
+    const ledger = createLedger({ dir, knowsParty: () => true });
+    receiver = createReceiver({
+      onCleared: () => {},
+      onEvent: (event) => events.push(event),
+      onTicketIntent: () => {},
+      onPromptName: () => {},
+      onDone: () => {},
+      onReady: (entityId) => readies.push(entityId),
+      onMetrics: () => {},
+      knowsSession: (entityId) => entityId === 'sess-01',
+      ...noAgents,
+      onLedgerRead: (_caller, query) => ledger.read(query),
+      onLedgerPost: (caller, request) => ledger.append({ ...request, from: caller }),
+    });
+    await receiver.start();
+  });
+
+  afterEach(async () => {
+    await receiver.stop();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const ready = (headers: Record<string, string> = {
+    [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-01'),
+    [HOOK_HEADER_SESSION]: 'sess-01',
+  }) =>
+    fetch(receiver.readyUrl as string, { method: 'POST', headers });
+
+  const hook = (headers: Record<string, string>) =>
+    fetch(receiver.url as string, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify({ hook_event_name: 'Stop' }),
+    });
+
+  it('still accepts the right token', async () => {
+    const response = await ready();
+
+    expect(response.status).toBe(204);
+    expect(readies).toEqual(['sess-01']);
+  });
+
+  it('refuses a token minted for a different session', async () => {
+    const response = await ready({
+      [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-02'),
+      [HOOK_HEADER_SESSION]: 'sess-01',
+    });
+
+    expect(response.status).toBe(403);
+    expect(readies).toEqual([]);
+  });
+
+  /**
+   * The case that matters most. `timingSafeEqual` throws on buffers of
+   * unequal length, and every one of these is a length other than 64 — the
+   * length of a real token. `reject` has to check the length itself, before
+   * ever calling `timingSafeEqual`, or one of these takes the whole receiver
+   * down rather than just refusing its own request. Proven on `/ready`
+   * (status) and, for one representative value, on `/hook` too (side effect):
+   * if the length check were missing, both would surface as a thrown
+   * exception instead of a clean refusal, on whichever route got there first.
+   */
+  it('refuses a token of the wrong length without throwing', async () => {
+    for (const token of ['', 'a', 'f'.repeat(63), 'f'.repeat(65), 'f'.repeat(4096)]) {
+      const response = await ready({
+        [HOOK_HEADER_TOKEN]: token,
+        [HOOK_HEADER_SESSION]: 'sess-01',
+      });
+
+      expect(response.status).toBe(403);
+    }
+    expect(readies).toEqual([]);
+  });
+
+  it('refuses a wrong-length token on /hook too, by side effect rather than status', async () => {
+    const response = await hook({
+      [HOOK_HEADER_TOKEN]: 'f'.repeat(4096),
+      [HOOK_HEADER_SESSION]: 'sess-01',
+    });
+
+    // `/hook` answers 204 whether accepted or refused (HIVE-138) — the proof
+    // a refusal actually happened is that no event reached the app.
+    expect(response.status).toBe(204);
+    expect(events).toEqual([]);
+  });
+
+  it('refuses a missing token header', async () => {
+    const response = await ready({ [HOOK_HEADER_SESSION]: 'sess-01' } as Record<
+      string,
+      string
+    >);
+
+    expect(response.status).toBe(403);
+    expect(readies).toEqual([]);
+  });
+
+  /**
+   * A header repeated on the wire never reaches `reject` as an array: Node's
+   * http server joins duplicate values of a header like this one into a
+   * single comma-separated string (verified directly against `node:http` —
+   * this is not `set-cookie`, the one header name that becomes an array).
+   * What it does reach `reject` as is a string of the wrong length, so this
+   * is really another instance of the length guard above — but it is worth
+   * proving on the actual malformed shape a repeated header takes, rather
+   * than only on ones this suite constructs by hand.
+   */
+  it('refuses a repeated token header', async () => {
+    const port = new URL(receiver.readyUrl as string).port;
+    const response = await fetch(`http://127.0.0.1:${port}/ready`, {
+      method: 'POST',
+      headers: [
+        [HOOK_HEADER_SESSION, 'sess-01'],
+        [HOOK_HEADER_TOKEN, 'a'],
+        [HOOK_HEADER_TOKEN, 'b'],
+      ],
+    });
+
+    expect(response.status).toBe(403);
+    expect(readies).toEqual([]);
+  });
+});

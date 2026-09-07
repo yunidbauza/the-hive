@@ -1,4 +1,4 @@
-import { createHmac, randomUUID } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { StringDecoder } from 'node:string_decoder';
 
@@ -688,14 +688,27 @@ export function createReceiver(options: ReceiverOptions): Receiver {
      * The presented token must be the one derived for *this* session id, not
      * merely a token this receiver minted for someone else (HIVE-112).
      *
-     * Not a timing-safe comparison, and deliberately not: this is a derived
-     * secret on a loopback socket, where an attacker able to time the
-     * comparison is already running as this user and has no need to — the
-     * thing being protected is one session's isolation from another's ledger
-     * entries, not the socket as a whole, and timing leaks nothing an
-     * on-machine attacker does not already have.
+     * **Timing-safe since HIVE-134.** It was not, and the justification was
+     * written down: "a derived secret on a loopback socket, where an attacker
+     * able to time the comparison is already running as this user". That premise
+     * died with `receiver.bind` — the socket is no longer loopback by
+     * construction, so the compare has to hold on its own without a claim about
+     * who can reach it. It is applied unconditionally rather than only on a
+     * widened bind, because a guard that engages on a config no user has set is
+     * a guard nothing exercises.
+     *
+     * Length is checked first, and separately: `timingSafeEqual` **throws** on
+     * buffers of unequal length, and the presented value is attacker-controlled.
+     * A throw here is not a 403 for one caller, it is an unhandled rejection in
+     * the request handler every session shares. The leak that check admits is
+     * the length of a 64-character constant, which is already public.
      */
-    if (headers[HOOK_HEADER_TOKEN] !== tokenFor(entityId)) return 403;
+    const presented = headers[HOOK_HEADER_TOKEN];
+    if (typeof presented !== 'string') return 403;
+    const expected = Buffer.from(tokenFor(entityId), 'utf8');
+    const offered = Buffer.from(presented, 'utf8');
+    if (offered.length !== expected.length) return 403;
+    if (!timingSafeEqual(offered, expected)) return 403;
 
     /**
      * An unknown identity is refused rather than remembered.
