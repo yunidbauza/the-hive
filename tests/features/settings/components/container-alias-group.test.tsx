@@ -283,6 +283,31 @@ describe('the off-loopback bind', () => {
     expect(setReceiverConfig).toHaveBeenCalledWith({ bind: { port: 0 } });
   });
 
+  /*
+    The IPC boundary already refuses a bad port (`parseSetReceiverRequest`
+    calls `assertPort`, `guards.ts:1292`, before `setReceiver` ever sees the
+    payload), so this client-side guard is not the only thing standing
+    between a bad value and the file. It exists for UX: without it, a bad
+    port would be sent, refused at the bridge, and swallowed by `mutate`
+    into `console.error` (`project-config.ts:117-119`) — leaving the field
+    showing a value that was never actually saved, with no on-screen sign
+    anything went wrong.
+  */
+  it.each([
+    ['out of range', '99999'],
+    ['not an integer', '12.5'],
+  ])('refuses to send a port that is %s', async (_label, value) => {
+    renderGroup({ host: '172.17.0.1', port: 0, allowedOrigins: [] });
+
+    const field = screen.getByLabelText(/^port$/i);
+    await userEvent.clear(field);
+    await userEvent.type(field, value);
+    await userEvent.tab();
+
+    expect(setReceiverConfig).not.toHaveBeenCalled();
+    expect(screen.getByText(/port from 0 to 65535/i)).toBeInTheDocument();
+  });
+
   it('splits allowed origins on commas and drops the blanks', async () => {
     renderGroup({ host: '172.17.0.1', port: 0, allowedOrigins: [] });
 
@@ -303,6 +328,7 @@ describe('the off-loopback bind', () => {
     await userEvent.tab();
 
     expect(setReceiverConfig).not.toHaveBeenCalled();
+    expect(screen.getByText(/scheme and a host/i)).toBeInTheDocument();
   });
 
   it('says the change takes effect at next launch', () => {
