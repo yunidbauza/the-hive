@@ -189,28 +189,25 @@ export type WakeOn =
   | `slack.channel:${string}`;
 
 /**
- * The two wake events that are a fixed word, rather than a word plus a target.
+ * The three wake events that are a fixed word, rather than a word plus a target.
  *
- * These strings are **The Hive's**, not Slack's, and the second one is worth
- * saying out loud because it reads like an event name and is not one. Slack's
- * real `app_mention` fires for mentions of a Slack *app*, never for mentions of
- * a person, so `slack.mention` can only ever mean *search my mentions on the
- * wakes this agent already takes*. It is a poll instruction; it adds no wakes.
+ * These strings are **The Hive's**, not Slack's, and the two Slack-shaped ones
+ * are worth separating because they read like the same event and are opposites.
  *
- * `ledger` is the one that adds wakes, and it is the reason background agents
- * are addressable at all: an `ask` or `answer` whose `to` names the agent wakes
- * it, whoever wrote it — the overmind through the console's `ask` verb, a
- * terminal session through `ledger_ask`, or another agent through the same
- * tools. A broadcast (no `to`) wakes nobody, because parties read those on
- * their own schedule.
- */
-/**
+ * `slack.mention` is **not** an event. Slack has no event for mentions of a
+ * *person*, so this can only ever mean *search my mentions on the wakes this
+ * agent already takes*. It is a poll instruction; it adds no wakes.
+ *
  * `slack.app_mention` is the one genuinely new value (HIVE-124), and it is not
- * a rename of `slack.mention`. They are opposites: `slack.mention` means
- * *search my mentions on the wakes this agent already takes* and adds no wakes,
- * because Slack has no event for a person's mentions. `slack.app_mention` is
- * Slack's real event, fires for mentions of the **app**, and is a genuine push
- * trigger requiring the Socket Mode bridge.
+ * a rename of the above. It is Slack's real event, fires for mentions of the
+ * **app**, and is a genuine push trigger requiring the Socket Mode bridge.
+ *
+ * `ledger` is the other one that adds wakes, and it is the reason background
+ * agents are addressable at all: an `ask` or `answer` whose `to` names the
+ * agent wakes it, whoever wrote it — the overmind through the console's `ask`
+ * verb, a terminal session through `ledger_ask`, or another agent through the
+ * same tools. A broadcast (no `to`) wakes nobody, because parties read those on
+ * their own schedule.
  */
 export const WAKE_ON_EVENTS = [
   'ledger',
