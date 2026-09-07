@@ -337,6 +337,60 @@ const CASES = [
     },
   },
   {
+    name: 'zone: electron/remote-host/ may not import electron/remote-client/ (HIVE-141)',
+    rule: 'import/no-restricted-paths',
+    files: {
+      'electron/remote-client/probe-target.ts': 'export const client = 1;\n',
+      'electron/remote-host/probe.ts':
+        "import { client } from '../remote-client/probe-target';\nexport const probe = client;\n",
+    },
+  },
+  {
+    name: 'zone: electron/remote-host/ may not import src/ — the cut is below preload',
+    rule: 'import/no-restricted-paths',
+    files: {
+      'src/utils/probe-target.ts': 'export const renderer = 1;\n',
+      'electron/remote-host/probe.ts':
+        "import { renderer } from '@/utils/probe-target';\nexport const probe = renderer;\n",
+    },
+  },
+  {
+    name: 'zone: electron/remote-client/ may not import electron/remote-host/ (HIVE-141)',
+    rule: 'import/no-restricted-paths',
+    files: {
+      'electron/remote-host/probe-target.ts': 'export const host = 1;\n',
+      'electron/remote-client/probe.ts':
+        "import { host } from '../remote-host/probe-target';\nexport const probe = host;\n",
+    },
+  },
+  {
+    name: 'zone: electron/remote-client/ may not import electron/preload/',
+    rule: 'import/no-restricted-paths',
+    files: {
+      'electron/preload/probe-target.ts': 'export const preload = 1;\n',
+      'electron/remote-client/probe.ts':
+        "import { preload } from '../preload/probe-target';\nexport const probe = preload;\n",
+    },
+  },
+  {
+    name: 'zone: src/ may not import electron/remote-host/',
+    rule: 'import/no-restricted-paths',
+    files: {
+      'electron/remote-host/probe-target.ts': 'export const host = 1;\n',
+      'src/utils/probe.ts':
+        "import { host } from '../../electron/remote-host/probe-target';\nexport const probe = host;\n",
+    },
+  },
+  {
+    name: 'zone: src/ may not import electron/remote-client/',
+    rule: 'import/no-restricted-paths',
+    files: {
+      'electron/remote-client/probe-target.ts': 'export const client = 1;\n',
+      'src/utils/probe.ts':
+        "import { client } from '../../electron/remote-client/probe-target';\nexport const probe = client;\n",
+    },
+  },
+  {
     name: 'PascalCase folder name is rejected under electron/ too',
     rule: 'check-file/folder-naming-convention',
     files: { 'electron/main/ProbeFolder/probe.ts': 'export const probe = 1;\n' },

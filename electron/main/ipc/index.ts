@@ -229,6 +229,7 @@ import {
   updateStatus,
 } from '../updates';
 
+import { createWindowBroadcaster, type Broadcaster } from './broadcaster';
 import { assertSender } from './sender';
 
 /**
@@ -756,7 +757,15 @@ export function sessionsLayer(): Sessions | null {
   return sessions;
 }
 
-export function registerIpcHandlers(): void {
+/**
+ * @param broadcaster Where main → renderer pushes go (HIVE-141). Defaults to
+ * the windows of this process, which is every caller today; server mode passes
+ * one that also writes to attached sockets. Optional rather than required so the
+ * boot path and eight existing suites call this exactly as they did.
+ */
+export function registerIpcHandlers(
+  broadcaster: Broadcaster = createWindowBroadcaster(),
+): void {
   const supervisor = registerPtyHost();
 
   /*
@@ -768,9 +777,13 @@ export function registerIpcHandlers(): void {
 
   /**
    * One window by design (story 000), so a broadcast reaches exactly the
-   * renderer that owns every session. Resolved per send rather than captured:
-   * the window is created after this runs, and on macOS it can be closed and
-   * re-created while the app keeps running.
+   * renderer that owns every session. Delivery is resolved per send rather than
+   * captured: the window is created after this runs, and on macOS it can be
+   * closed and re-created while the app keeps running.
+   *
+   * HIVE-141 moved the loop itself into `broadcaster.emit`. What stayed here is
+   * the *tap*, because it is the tap that must not reach every push — see the
+   * hub's `broadcast` below.
    */
   const send = (channel: string, payload: unknown): void => {
     // Story 106 taps the broadcast here rather than at each source, so an event
@@ -778,10 +791,7 @@ export function registerIpcHandlers(): void {
     // failed notification must not cost a `pty:data`.
     notifier.observe(channel, payload);
 
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (window.isDestroyed()) continue;
-      window.webContents.send(channel, payload);
-    }
+    broadcaster.emit(channel, payload);
   };
 
   /**
@@ -861,36 +871,32 @@ export function registerIpcHandlers(): void {
       app.dock?.bounce('informational');
     },
     /**
-     * Straight to the renderer, not through `send` (HIVE-75).
+     * Straight to the surfaces, not through `send` (HIVE-75).
      *
      * `send` taps the notifier, and the notifier produces into the hub — so
      * broadcasting a notification through it would feed the hub's own output
      * back into its input. `observe` ignores the channel, so nothing would
      * actually loop today, but the cycle would be one `if` away from existing
      * and nobody would see it coming.
+     *
+     * `broadcaster.emit` rather than a hand-rolled window loop (HIVE-141): the
+     * bypass is of the *tap*, not of the fan-out. A remote client that never
+     * received these three would show an empty inbox on a busy server, which is
+     * exactly the bug a second copy of the loop invites.
      */
     broadcast: (notification) => {
-      for (const window of BrowserWindow.getAllWindows()) {
-        if (window.isDestroyed()) continue;
-        window.webContents.send(CH.notificationsNew, notification);
-      }
+      broadcaster.emit(CH.notificationsNew, notification);
     },
     announceRead: (id, unread) => {
-      for (const window of BrowserWindow.getAllWindows()) {
-        if (window.isDestroyed()) continue;
-        window.webContents.send(CH.notificationsRead, {
-          id,
-          unread,
-        } satisfies NotificationReadEvent);
-      }
+      broadcaster.emit(CH.notificationsRead, {
+        id,
+        unread,
+      } satisfies NotificationReadEvent);
     },
     announceDismissed: (id) => {
-      for (const window of BrowserWindow.getAllWindows()) {
-        if (window.isDestroyed()) continue;
-        window.webContents.send(CH.notificationsDismissed, {
-          id,
-        } satisfies NotificationDismissedEvent);
-      }
+      broadcaster.emit(CH.notificationsDismissed, {
+        id,
+      } satisfies NotificationDismissedEvent);
     },
     /**
      * The count on the dock icon.
@@ -1240,10 +1246,10 @@ export function registerIpcHandlers(): void {
    * instead — the broadcast lands first, then delivery, then the notifier.
    */
   ledger.onChange((entry) => {
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (window.isDestroyed()) continue;
-      window.webContents.send(CH.ledgerChanged, entry);
-    }
+    // Not `send`: the notifier reads the ledger through its own subscription
+    // below, and tapping here would show it every entry twice. HIVE-141 routes
+    // the fan-out through the broadcaster all the same.
+    broadcaster.emit(CH.ledgerChanged, entry);
     /**
      * Neither delivery nor the notifier may fail the write that triggered them.
      *
@@ -1404,10 +1410,7 @@ export function registerIpcHandlers(): void {
   agents.onChange(() => {
     refreshKnownAgents();
 
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (window.isDestroyed()) continue;
-      window.webContents.send(CH.agentsChanged);
-    }
+    broadcaster.emit(CH.agentsChanged, undefined);
   });
 
   refreshKnownAgents();

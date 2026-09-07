@@ -343,6 +343,8 @@ export default tseslint.config(
                 './electron/preload/**/*',
                 './electron/pty-host/**/*',
                 './electron/mcp-host/**/*',
+                './electron/remote-host/**/*',
+                './electron/remote-client/**/*',
               ],
               message:
                 'The renderer may only see @shared. Reaching into electron/main/ or electron/preload/ would bundle main-process code into the renderer.',
@@ -388,6 +390,48 @@ export default tseslint.config(
               ],
               message:
                 'The MCP host is a client of the receiver, not a peer of main. It may import electron/shared/ only — reaching into main would mean a second writer on the ledger.',
+            },
+            /**
+             * TWO HALVES, TWO MACHINES (HIVE-141).
+             *
+             * `remote-host` runs on the server and `remote-client` on the
+             * laptop, and the whole design rests on their being separable — one
+             * process may hold either, never both. So neither may import the
+             * other: a shared helper that drifted across the cut would be a
+             * dependency that compiles on one machine and is dead weight on the
+             * other, and the first symptom would be a bundle, not an error.
+             * Anything genuinely common goes in `electron/shared/`, which is
+             * what that directory is for.
+             *
+             * Neither may reach the renderer or the bridge. The cut goes
+             * *below* preload precisely so `window.hive` never learns anything
+             * changed; a remote module importing `src/**` or
+             * `electron/preload/**` would be that knowledge leaking upward.
+             *
+             * `electron/main/**` is deliberately NOT fenced off. `remote-host`
+             * reuses the receiver's timing-safe compare and its Origin/Host
+             * allowlist (HIVE-134) rather than growing a second copy, and
+             * `remote-client` is driven by the router that lives in main.
+             */
+            {
+              target: './electron/remote-host/**/*',
+              from: [
+                './src/**/*',
+                './electron/preload/**/*',
+                './electron/remote-client/**/*',
+              ],
+              message:
+                'The remote host runs on the server. It may not import the renderer, the bridge, or the client half — the two halves must stay separable onto two machines.',
+            },
+            {
+              target: './electron/remote-client/**/*',
+              from: [
+                './src/**/*',
+                './electron/preload/**/*',
+                './electron/remote-host/**/*',
+              ],
+              message:
+                'The remote client runs on the laptop. It may not import the renderer, the bridge, or the host half — the two halves must stay separable onto two machines.',
             },
           ],
         },
