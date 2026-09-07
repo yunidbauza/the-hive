@@ -29,6 +29,7 @@ const clearSlackTokens = vi.fn();
 const setSlackConfig = vi.fn();
 const testSlackSocket = vi.fn();
 const subscribeSlackSocketStatus = vi.fn();
+const readSlackSocketState = vi.fn();
 
 vi.mock('@/lib/slack', () => ({
   readSlackStatus: () => status(),
@@ -39,6 +40,7 @@ vi.mock('@/lib/slack', () => ({
   clearSlackTokens: () => clearSlackTokens(),
   setSlackConfig: (request: unknown) => setSlackConfig(request),
   testSlackSocket: () => testSlackSocket(),
+  readSlackSocketState: () => readSlackSocketState(),
   subscribeSlackSocketStatus: (callback: (next: SlackSocketStatus) => void) =>
     subscribeSlackSocketStatus(callback),
 }));
@@ -68,27 +70,43 @@ beforeEach(() => {
   setSlackTokens.mockResolvedValue(null);
   clearSlackTokens.mockResolvedValue(null);
   testSlackSocket.mockResolvedValue(null);
+  readSlackSocketState.mockResolvedValue(null);
   configSnapshot = { slack: { socketMode: false, commanders: [] } };
 });
 
+/** Nothing stored — the default `slack:socket-state` answer for most tests. */
+const NO_TOKENS: SlackTokensState = {
+  hasAppToken: false,
+  hasBotToken: false,
+  encryptionAvailable: true,
+};
+
 /**
  * Renders `SlackGroup` with the connection status, the config snapshot's
- * `slack` block, and (test-only — production has no channel to read it back)
- * the stored-token presence, all pre-wired.
+ * `slack` block, and the `slack:socket-state` answer — token presence and the
+ * last socket status — all pre-wired.
+ *
+ * `tokens` and `socket` go through the *real* read verb rather than a prop:
+ * there is a channel for both now (HIVE-124 fix-round-2), and a test seam that
+ * bypassed it would be the one thing not proving the pane can hydrate after a
+ * restart.
  */
 function renderGroup(options?: {
   agents?: SlackGroupAgent[];
   slack?: SlackConfig;
   tokens?: SlackTokensState;
+  socket?: SlackSocketStatus;
   status?: SlackStatus;
 }) {
   status.mockResolvedValue(options?.status ?? { kind: 'connected' });
+  readSlackSocketState.mockResolvedValue({
+    tokens: options?.tokens ?? NO_TOKENS,
+    socket: options?.socket ?? { kind: 'off' },
+  });
   configSnapshot = {
     slack: options?.slack ?? { socketMode: false, commanders: [] },
   };
-  return render(
-    <SlackGroup agents={options?.agents ?? []} tokens={options?.tokens} />,
-  );
+  return render(<SlackGroup agents={options?.agents ?? []} />);
 }
 
 /** Opens the `Advanced` disclosure and waits for it to render. */
@@ -283,18 +301,25 @@ describe('real-time events (HIVE-124)', () => {
     expect(screen.getByLabelText(/allowed to command/i)).toHaveValue('U08BA712189');
   });
 
-  it('reports the enabled feature on the collapsed line, so it is never invisible', () => {
+  /*
+    `findBy`, not `getBy`, in these two alone: they assert on markup that is
+    there from the first frame, so a synchronous read passes — and leaves the
+    mount reads (`slack:status` and `slack:socket-state`) to settle after the
+    test has returned, which React reports as a state update outside `act`.
+    Awaiting once absorbs both.
+  */
+  it('reports the enabled feature on the collapsed line, so it is never invisible', async () => {
     renderGroup({ slack: { socketMode: true, commanders: [] } });
-    expect(screen.getByRole('button', { name: /advanced/i })).toHaveTextContent(
+    expect(await screen.findByRole('button', { name: /advanced/i })).toHaveTextContent(
       'real-time events on',
     );
   });
 
-  it('says nothing extra on the collapsed line when it is off', () => {
+  it('says nothing extra on the collapsed line when it is off', async () => {
     renderGroup({ slack: { socketMode: false, commanders: [] } });
-    expect(screen.getByRole('button', { name: /advanced/i })).not.toHaveTextContent(
-      'real-time events',
-    );
+    expect(
+      await screen.findByRole('button', { name: /advanced/i }),
+    ).not.toHaveTextContent('real-time events');
   });
 
   /**
@@ -335,6 +360,11 @@ describe('real-time events (HIVE-124)', () => {
    * the both-true case above, which collapses the per-field "Stored." into
    * one shared line instead — this proves that collapse does not also fire
    * when only one is actually stored (fix-round-1, HIVE-124).
+   *
+   * Asserted against each field's **accessible description**, not against the
+   * document. `getByText(/stored/i)` passed whichever field the word landed
+   * beside, so swapping `appTokenHint` and `botTokenHint` between the two
+   * inputs went undetected (fix-round-2).
    */
   it('says only the stored one is stored, when just one of the two tokens is', async () => {
     renderGroup({
@@ -343,9 +373,138 @@ describe('real-time events (HIVE-124)', () => {
     });
     await openAdvanced();
 
-    expect(screen.getByLabelText(/app-level token/i)).toHaveValue('');
-    expect(screen.getByLabelText(/bot token/i)).toHaveValue('');
-    expect(screen.getByText(/stored/i)).toBeInTheDocument();
+    const app = await screen.findByLabelText(/app-level token/i);
+    const bot = screen.getByLabelText(/bot token/i);
+
+    expect(app).toHaveValue('');
+    expect(bot).toHaveValue('');
+    // The word belongs to the field that actually has one behind it.
+    expect(app).toHaveAccessibleDescription(/stored/i);
+    expect(bot).not.toHaveAccessibleDescription(/stored/i);
+    // And the shared note is for the both-stored case, which this is not.
+    expect(screen.queryByText(/both tokens are already stored/i)).not.toBeInTheDocument();
+  });
+
+  /**
+   * The mirror image, so the assertion above cannot pass by the fields being
+   * swapped *and* the presence flags being read the wrong way round too.
+   */
+  it('says so on the bot field when the bot token is the stored one', async () => {
+    renderGroup({
+      slack: { socketMode: true, commanders: [] },
+      tokens: { hasAppToken: false, hasBotToken: true, encryptionAvailable: true },
+    });
+    await openAdvanced();
+
+    expect(await screen.findByLabelText(/bot token/i)).toHaveAccessibleDescription(
+      /stored/i,
+    );
+    expect(screen.getByLabelText(/app-level token/i)).not.toHaveAccessibleDescription(
+      /stored/i,
+    );
+  });
+
+  /**
+   * The scope the setup instructions did not ask for, said where the user is
+   * pasting the token it belongs to. `conversations.list` asks for private
+   * channels, and Slack fails the whole call with `missing_scope` without
+   * `groups:read` — so a bot token granted only what §12 originally listed
+   * opened no socket at all (fix-round-2, HIVE-124).
+   */
+  it('names groups:read on the bot-token field, which the code needs and the setup missed', async () => {
+    renderGroup({ slack: { socketMode: true, commanders: [] } });
+    await openAdvanced();
+
+    expect(await screen.findByLabelText(/bot token/i)).toHaveAccessibleDescription(
+      /groups:read/,
+    );
+  });
+
+  /**
+   * Hydration after a restart (fix-round-2, HIVE-124).
+   *
+   * Socket status is push-only, `send` buffers nothing and the bridge drops a
+   * repeat of the last status — so a bridge that connected at boot has already
+   * said everything it will say by the time Settings is opened. Without the
+   * mount read, this drawer rendered a working socket as `off` with two empty
+   * `xapp-…`/`xoxb-…` placeholders, and `unresolved` — which rides on the
+   * `connected` push — was unreachable in the state a user actually opens it in.
+   */
+  it('hydrates a connected bridge on mount, without waiting for a push that already happened', async () => {
+    renderGroup({
+      slack: { socketMode: true, commanders: ['U1'] },
+      tokens: { hasAppToken: true, hasBotToken: true, encryptionAvailable: true },
+      socket: {
+        kind: 'connected',
+        workspace: 'behiques',
+        bot: 'hive',
+        unresolved: ['#no-such-channel'],
+      },
+    });
+    await openAdvanced();
+
+    expect(await screen.findByText('Connected')).toBeInTheDocument();
+    expect(screen.getByText(/behiques/)).toBeInTheDocument();
+    // The one place an unresolved wake.on name is ever reported.
+    expect(screen.getByText(/#no-such-channel/)).toBeInTheDocument();
+    // And both fields say a token is held, rather than inviting a fresh paste.
+    expect(screen.getByLabelText(/app-level token/i)).toHaveAttribute(
+      'placeholder',
+      'Replace the stored token',
+    );
+    expect(screen.getByText(/both tokens are already stored/i)).toBeInTheDocument();
+    // Never emitted here, so it cannot be a push that painted any of it.
+    expect(emitSocketStatus).not.toBeNull();
+  });
+
+  /** A push that arrives first wins: the read must not overwrite fresher news. */
+  it('keeps a status pushed before the mount read answered', async () => {
+    let answer: (state: unknown) => void = () => {};
+    readSlackSocketState.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    render(<SlackGroup agents={[]} />);
+    configSnapshot = { slack: { socketMode: true, commanders: [] } };
+
+    await screen.findByRole('button', { name: /advanced/i });
+    act(() => {
+      emitSocketStatus?.({ kind: 'failed', message: 'invalid app token' });
+    });
+
+    await act(async () => {
+      answer({ tokens: NO_TOKENS, socket: { kind: 'off' } });
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: /advanced/i }));
+    expect(screen.getByText('Failed')).toBeInTheDocument();
+    expect(screen.getByText(/invalid app token/)).toBeInTheDocument();
+  });
+
+  /**
+   * The pill sits directly beneath a switch that is visibly on, so `● OFF`
+   * read as the toggle not having taken — the symptom found by driving the
+   * built app. In this position `off` can only mean "not connected", and when
+   * a token is missing the pill says what to do next instead (fix-round-2).
+   */
+  it('says Needs tokens, not Off, beneath a switch that is on with nothing stored', async () => {
+    renderGroup({ slack: { socketMode: true, commanders: [] } });
+    await openAdvanced();
+
+    expect(await screen.findByText('Needs tokens')).toBeInTheDocument();
+    expect(screen.queryByText('Off')).not.toBeInTheDocument();
+  });
+
+  it('says Not connected once both tokens are stored and the socket is still down', async () => {
+    renderGroup({
+      slack: { socketMode: true, commanders: [] },
+      tokens: { hasAppToken: true, hasBotToken: true, encryptionAvailable: true },
+    });
+    await openAdvanced();
+
+    expect(await screen.findByText('Not connected')).toBeInTheDocument();
+    expect(screen.queryByText('Off')).not.toBeInTheDocument();
   });
 
   /**

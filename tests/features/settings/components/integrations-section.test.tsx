@@ -50,6 +50,7 @@ vi.mock('@/lib/slack', () => ({
   clearSlackTokens: () => Promise.resolve(null),
   setSlackConfig: () => Promise.resolve(null),
   testSlackSocket: () => Promise.resolve(null),
+  readSlackSocketState: () => Promise.resolve(null),
   subscribeSlackSocketStatus: () => () => {},
 }));
 

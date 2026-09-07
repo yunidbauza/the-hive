@@ -200,6 +200,27 @@ export interface SlackTokensState {
   encryptionAvailable: boolean;
 }
 
+/**
+ * What the pane reads on mount, because neither half of it can be pushed
+ * (HIVE-124).
+ *
+ * Jira's `jira:status` is the precedent and the reason this exists: that pane
+ * reads `credential` + `encryptionAvailable` when it mounts, and this one had
+ * no equivalent — socket state was push-only (and `push` suppresses a repeat,
+ * so re-emitting on subscribe would be silently dropped), and token presence
+ * had no read verb at all. After a restart a fully configured, connected
+ * bridge therefore rendered as `off` with empty placeholders, and the
+ * `unresolved` list — which rides on the `connected` push — was unreachable in
+ * the one state a user actually opens the drawer in.
+ *
+ * Presence only, like every other Slack answer: {@link SlackTokensState}
+ * carries two booleans, and {@link SlackSocketStatus} never holds a token.
+ */
+export interface SlackSocketState {
+  tokens: SlackTokensState;
+  socket: SlackSocketStatus;
+}
+
 /** What `Test` answers with. */
 export type SlackSocketTestResult =
   | { kind: 'ok'; workspace: string; bot: string }

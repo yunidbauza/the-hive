@@ -124,6 +124,7 @@ import {
 } from '@shared/session-history-contract';
 import {
   SLACK_TOKENS_FILE,
+  type SlackSocketState,
   type SlackSocketStatus,
   type SlackSocketTestResult,
   type SlackStatus,
@@ -2785,6 +2786,25 @@ export function registerIpcHandlers(): void {
       result ?? { kind: 'error', message: 'The Slack bridge is not running.' }
     );
   });
+
+  /**
+   * What the pane cannot learn by subscribing (HIVE-124).
+   *
+   * `CH.slackSocketStatus` is a push, `send` buffers nothing and the bridge
+   * suppresses a repeat of the last status — so a status emitted at boot is
+   * gone before Settings is ever opened, and after a restart a connected
+   * bridge renders as `off` with the `unresolved` list unreachable. Token
+   * presence is worse: both writes answer with it and nothing answers on
+   * mount.
+   *
+   * So one no-payload verb for the pair, the shape `CH.jiraStatus` already
+   * uses. It reads `state()`, never `read()`: the invariant above is that no
+   * `slack:` channel returns a token, and this is a channel.
+   */
+  handle(CH.slackSocketState, (): SlackSocketState => ({
+    tokens: slackTokens.state(),
+    socket: slackBridge?.status() ?? { kind: 'off' },
+  }));
 
   /**
    * Cloning a repository (story 102).

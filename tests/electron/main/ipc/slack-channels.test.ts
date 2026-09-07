@@ -332,6 +332,9 @@ const bridgeTest = vi.fn<() => Promise<SlackSocketTestResult>>(() =>
   Promise.resolve({ kind: 'ok', workspace: 'acme', bot: 'hive' }),
 );
 
+/** What `SlackBridge.status()` answers — the last status it pushed. */
+let bridgeStatus: SlackSocketStatus = { kind: 'off' };
+
 vi.mock('../../../../electron/main/integrations/slack/bridge', () => ({
   createSlackBridge: (deps: never) => {
     bridgeDeps = deps;
@@ -340,6 +343,7 @@ vi.mock('../../../../electron/main/integrations/slack/bridge', () => ({
       sync: () => {
         bridgeSyncs += 1;
       },
+      status: () => bridgeStatus,
       test: () => bridgeTest(),
       unresolved: () => [],
       stop: () => {
@@ -429,6 +433,7 @@ beforeEach(() => {
   teardownOrder.length = 0;
   bridgeSyncs = 0;
   bridgeDeps = null;
+  bridgeStatus = { kind: 'off' };
   stored = {};
   listedAgents = [{ name: 'pr-patrol', wake: { on: ['slack.channel:#eng'] } }];
   agentsChanged = undefined;
@@ -734,6 +739,42 @@ describe('socket mode channels (HIVE-124)', () => {
 
       expect(JSON.stringify(answer ?? null)).not.toContain('SECRET');
     }
+  });
+
+  /**
+   * The half the push cannot deliver (fix-round-2, HIVE-124).
+   *
+   * `CH.slackSocketStatus` fires when the socket changes, `send` buffers
+   * nothing and the bridge suppresses a repeat of the last status — so a pane
+   * that mounts after boot learns nothing by subscribing. Token presence had
+   * no read verb at all, so a fully configured bridge rendered as two empty
+   * placeholders after every restart. One verb answers both.
+   */
+  it('answers slack:socket-state with presence and the last status pushed', async () => {
+    await call(CH.slackSetTokens, {
+      appToken: 'xapp-1-SECRET',
+      botToken: 'xoxb-2-SECRET',
+    });
+    bridgeStatus = {
+      kind: 'connected',
+      workspace: 'acme',
+      bot: 'hive',
+      unresolved: ['#no-such-channel'],
+    };
+
+    const state = await call(CH.slackSocketState);
+
+    expect(state).toEqual({
+      tokens: { hasAppToken: true, hasBotToken: true, encryptionAvailable: true },
+      socket: {
+        kind: 'connected',
+        workspace: 'acme',
+        bot: 'hive',
+        unresolved: ['#no-such-channel'],
+      },
+    });
+    // Presence, never a value — the invariant every `slack:` channel keeps.
+    expect(JSON.stringify(state)).not.toContain('SECRET');
   });
 
   it('answers slack:socket-test from the bridge, which opens nothing', async () => {

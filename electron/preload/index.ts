@@ -127,6 +127,7 @@ import type {
   SkillsSnapshot,
 } from '@shared/skills-contract';
 import type {
+  SlackSocketState,
   SlackSocketStatus,
   SlackSocketTestResult,
   SlackStatus,
@@ -477,10 +478,10 @@ const bridge: HiveBridge = {
     signOut: (): Promise<SlackStatus> => ipcRenderer.invoke(CH.slackSignOut),
     test: (): Promise<SlackStatus> => ipcRenderer.invoke(CH.slackTest),
     /*
-      HIVE-124. Socket mode's own four: two writes of a secret, one
-      no-argument test, and a subscription. There is still no verb that returns
-      a token — both writes answer with presence alone, and `SlackTokens.read()`
-      has no channel at all.
+      HIVE-124. Socket mode's own five: two writes of a secret, one no-argument
+      test, one mount-time read of presence and status, and a subscription.
+      There is still no verb that returns a token — every one of them answers
+      with presence alone, and `SlackTokens.read()` has no channel at all.
     */
     setTokens: (request: SetSlackTokensRequest): Promise<SlackTokensState> =>
       ipcRenderer.invoke(CH.slackSetTokens, request),
@@ -488,6 +489,8 @@ const bridge: HiveBridge = {
       ipcRenderer.invoke(CH.slackClearTokens),
     socketTest: (): Promise<SlackSocketTestResult> =>
       ipcRenderer.invoke(CH.slackSocketTest),
+    socketState: (): Promise<SlackSocketState> =>
+      ipcRenderer.invoke(CH.slackSocketState),
     onSocketStatus: (callback: (status: SlackSocketStatus) => void) =>
       subscribe<SlackSocketStatus>(CH.slackSocketStatus, callback),
   },

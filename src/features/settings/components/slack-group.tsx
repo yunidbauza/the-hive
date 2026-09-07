@@ -11,6 +11,7 @@ import { SettingsGroup } from '@features/settings/components/settings-group';
 import { useProjectConfig } from '@hooks/use-project-config';
 import { installProjectConfig } from '@lib/project-config';
 import {
+  readSlackSocketState,
   readSlackStatus,
   setSlackConfig,
   setSlackTokens,
@@ -76,20 +77,18 @@ export interface SlackGroupAgent {
 
 interface SlackGroupProps {
   agents: SlackGroupAgent[];
-  /**
-   * Test-only seam for the two Hive-owned tokens' presence (HIVE-124).
-   *
-   * Unlike every other fact this pane shows, there is no channel that reads
-   * it back — `slack:set-tokens` and `slack:clear-tokens` answer with
-   * presence, but nothing answers on mount. Production always starts from
-   * {@link UNKNOWN_TOKENS} and only learns better once the pane itself sets
-   * or clears one; a test supplies this to exercise the "already stored"
-   * rendering without going through a save first.
-   */
-  tokens?: SlackTokensState;
 }
 
-/** Nothing known yet — the only honest starting point with no read channel. */
+/**
+ * What is rendered for the one frame before `slack:socket-state` answers.
+ *
+ * **Not** the permanent answer it used to be. Token presence had no read verb
+ * at all, so a fully configured bridge rendered as two empty `xapp-…`/`xoxb-…`
+ * placeholders after every restart; the mount read below is what retires that.
+ * `encryptionAvailable: true` is the optimistic half — assuming a keyring that
+ * turns out to be missing costs one wrong hint for a frame, whereas assuming
+ * none would tell a working machine it cannot store anything.
+ */
 const UNKNOWN_TOKENS: SlackTokensState = {
   hasAppToken: false,
   hasBotToken: false,
@@ -158,13 +157,39 @@ function StatePill({ kind, label }: { kind: PillKind; label?: string }) {
   );
 }
 
-/** The socket's own four states, read onto the same pill the connection uses. */
+/**
+ * The socket's own four states, read onto the same pill the connection uses.
+ *
+ * `off` is **"Not connected"**, not "Off". This pill only renders once the
+ * Socket Mode switch is on, so `● OFF` sat directly beneath a switch that was
+ * visibly on — technically honest about the socket, and read by the person
+ * driving the built app as the toggle not having taken. In that position `off`
+ * can only ever mean "the switch is on and the socket is not up".
+ */
 const SOCKET_PILL: Record<SlackSocketStatus['kind'], { kind: PillKind; label: string }> = {
-  off: { kind: 'off', label: 'Off' },
+  off: { kind: 'off', label: 'Not connected' },
   connecting: { kind: 'wait', label: 'Connecting…' },
   connected: { kind: 'ok', label: 'Connected' },
   failed: { kind: 'err', label: 'Failed' },
 };
+
+/**
+ * The same pill, told why it is off when the reason is a missing token.
+ *
+ * `sync()` refuses to connect without both tokens, so `off` beside an empty
+ * field is not a mystery to be reported as one — "Needs tokens" says what the
+ * user does next, in the one word of space the pill has.
+ */
+function socketPill(
+  socket: SlackSocketStatus,
+  tokens: SlackTokensState,
+): { kind: PillKind; label: string } {
+  if (socket.kind === 'off' && !(tokens.hasAppToken && tokens.hasBotToken)) {
+    return { kind: 'off', label: 'Needs tokens' };
+  }
+
+  return SOCKET_PILL[socket.kind];
+}
 
 /**
  * The promise the sign-in makes, on the one screen that offers it.
@@ -360,15 +385,25 @@ function appTokenHint(tokens: SlackTokensState): string {
   );
 }
 
-/** The bot token's hint: what it is for, and whether one is already stored. */
+/**
+ * The bot token's hint: what it is for, its scopes, and whether one is stored.
+ *
+ * The scopes are named because the code needs one the setup instructions did
+ * not ask for. `conversations.list` is called with
+ * `types: 'public_channel,private_channel'`, and Slack fails the **whole** call
+ * with `missing_scope` when `groups:read` is absent — so a user who granted
+ * only `channels:read` and `channels:history` got a socket that never opened.
+ * `clients.ts` now retries public-only, and this is where the fuller grant is
+ * asked for rather than discovered.
+ */
 function botTokenHint(tokens: SlackTokensState): string {
   const bothStored = tokens.hasAppToken && tokens.hasBotToken;
   return tokenHint(
     tokens.hasBotToken,
     bothStored,
     tokens.hasBotToken
-      ? 'Never posts. Paste a new one to replace it.'
-      : 'Never posts. Names the workspace and reads channel ids.',
+      ? 'Scopes channels:read, groups:read, channels:history. Paste a new one to replace it.'
+      : 'Never posts. Scopes channels:read, groups:read, channels:history.',
   );
 }
 
@@ -477,7 +512,7 @@ function RealTimeFields({
     setBotDraft('');
   };
 
-  const pill = SOCKET_PILL[socket.kind];
+  const pill = socketPill(socket, tokens);
   const storedNote = bothStoredNote(tokens);
 
   return (
@@ -671,7 +706,7 @@ function advancedSuffix(slack: SlackConfig): string | null {
   return slack.socketMode ? 'real-time events on' : null;
 }
 
-export function SlackGroup({ agents, tokens: tokensProp }: SlackGroupProps) {
+export function SlackGroup({ agents }: SlackGroupProps) {
   const [status, setStatus] = useState<SlackStatus | null>(null);
   /**
    * The last Test failure, held apart from {@link status}.
@@ -701,14 +736,10 @@ export function SlackGroup({ agents, tokens: tokensProp }: SlackGroupProps) {
   const slack = projectConfig?.slack ?? DEFAULT_SLACK;
 
   /**
-   * Presence of the two Hive-owned tokens. `tokensProp` is the test seam
-   * documented on {@link SlackGroupProps.tokens}; production has no channel
-   * that reads this back, so it always starts unknown and only improves once
-   * a save or a clear answers.
+   * Presence of the two Hive-owned tokens — read on mount, then kept current
+   * by whatever this pane itself saves or clears.
    */
-  const [tokens, setTokens] = useState<SlackTokensState>(
-    tokensProp ?? UNKNOWN_TOKENS,
-  );
+  const [tokens, setTokens] = useState<SlackTokensState>(UNKNOWN_TOKENS);
   const [socket, setSocket] = useState<SlackSocketStatus>({ kind: 'off' });
   const [socketTesting, setSocketTesting] = useState(false);
   const [socketTestResult, setSocketTestResult] =
@@ -724,8 +755,9 @@ export function SlackGroup({ agents, tokens: tokensProp }: SlackGroupProps) {
 
   /*
     Read on mount only — `claude mcp get slack`, parsed, answers in well under
-    a second and spends no model turn. This is the one effect in this
-    component; every other transition is a direct response to a click.
+    a second and spends no model turn. This and the socket read below are the
+    only two effects in this component; every other transition is a direct
+    response to a click.
   */
   useEffect(() => {
     let cancelled = false;
@@ -740,12 +772,38 @@ export function SlackGroup({ agents, tokens: tokensProp }: SlackGroupProps) {
   }, []);
 
   /*
-    The socket's own status is a push, not a poll (`lib/slack.ts`'s doc
-    comment on `subscribeSlackSocketStatus`) — main knows the moment it
-    changes, and this pane has nothing to gain by asking again.
+    Subscribe **and** read, in one effect.
+
+    The push alone is not enough and cannot be made so: `send` buffers nothing
+    and main suppresses a repeat of the last status, so a bridge that connected
+    at boot has already said everything it is going to say by the time this
+    pane mounts — leaving a working socket drawn as `off` with its `unresolved`
+    list unreachable, and both token fields drawn as though nothing were
+    stored. `slack:socket-state` answers both questions once, here; the
+    subscription takes over from then on.
+
+    Ordered subscribe-first so a status arriving between the two is kept: the
+    read's answer is applied only if the push has not already spoken.
   */
   useEffect(() => {
-    return subscribeSlackSocketStatus(setSocket);
+    let cancelled = false;
+    let pushed = false;
+    const unsubscribe = subscribeSlackSocketStatus((next) => {
+      pushed = true;
+      setSocket(next);
+    });
+
+    void readSlackSocketState().then((state) => {
+      if (cancelled || state === null) return;
+
+      setTokens(state.tokens);
+      if (!pushed) setSocket(state.socket);
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, []);
 
   /**

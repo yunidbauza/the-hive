@@ -4,6 +4,7 @@ import type {
   SetSlackTokensRequest,
 } from '@shared/config-contract';
 import type {
+  SlackSocketState,
   SlackSocketStatus,
   SlackSocketTestResult,
   SlackStatus,
@@ -91,6 +92,18 @@ export const setSlackConfig = (
  */
 export const testSlackSocket = (): Promise<SlackSocketTestResult | null> =>
   call('socketTest', (bridge) => bridge.slack.socketTest());
+
+/**
+ * Token presence and the last socket status, for a pane that just mounted.
+ *
+ * The half {@link subscribeSlackSocketStatus} cannot supply: the push is not
+ * buffered and main suppresses a repeat of the last status, so after a restart
+ * a subscriber alone learns nothing about a bridge that is already connected —
+ * and token presence has no push at all. Read it in the same effect that
+ * subscribes, exactly as `jira.ts`'s `readJiraStatus` is read on mount.
+ */
+export const readSlackSocketState = (): Promise<SlackSocketState | null> =>
+  call('socketState', (bridge) => bridge.slack.socketState());
 
 /**
  * What the socket is doing, as main reports it. Returns its own unsubscribe.

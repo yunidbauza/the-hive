@@ -125,6 +125,7 @@ import type {
   SkillsSnapshot,
 } from './skills-contract';
 import type {
+  SlackSocketState,
   SlackSocketStatus,
   SlackSocketTestResult,
   SlackStatus,
@@ -331,6 +332,20 @@ export const CH = {
    * {@link SlackSocketStatus}, which never holds a token.
    */
   slackSocketStatus: 'slack:socket-status',
+  /**
+   * The mount-time read the push above cannot be (HIVE-124).
+   *
+   * {@link CH.slackSocketStatus} fires when the socket changes, `send` buffers
+   * nothing, and the bridge suppresses a repeat of the last status — so a
+   * status emitted at boot is gone before Settings is ever opened, and no
+   * amount of re-pushing on subscribe would bring it back. Token presence is
+   * worse: the two writes answer with it, but nothing answers on mount.
+   *
+   * So one no-payload verb for both, exactly as {@link CH.jiraStatus} carries
+   * `credential` and `encryptionAvailable` for its own pane. Answers with a
+   * {@link SlackSocketState}: presence and a status, never a token.
+   */
+  slackSocketState: 'slack:socket-state',
   /**
    * The socket-mode Test button (HIVE-124).
    *
@@ -1676,6 +1691,16 @@ export interface HiveBridge {
      */
     socketTest(): Promise<SlackSocketTestResult>;
     /**
+     * Token presence and the last socket status, read on mount (HIVE-124).
+     *
+     * The half {@link HiveBridge.slack.onSocketStatus} cannot supply, for the
+     * reason {@link CH.slackSocketState} states: the push is not buffered and
+     * a repeat of the last status is suppressed, so a pane that mounts after
+     * boot learns nothing by subscribing alone. Presence and a status; still
+     * no verb here returns a token.
+     */
+    socketState(): Promise<SlackSocketState>;
+    /**
      * What the socket is doing, pushed (HIVE-124). Returns its own unsubscribe.
      *
      * A push rather than a verb because the connection changes state with
@@ -2386,19 +2411,21 @@ export const BRIDGE_JIRA_KEYS = [
  *
  * The count was the security story while there was no credential in this app to
  * return at all. HIVE-124 gives the app two of its own, so the story is now the
- * *shape* of the four it added: two writes, one no-argument test, one
- * subscription — and **still no verb that returns a token**. That is what this
- * list exists to make impossible to change quietly.
+ * *shape* of the five it added: two writes, one no-argument test, one
+ * presence-and-status read, one subscription — and **still no verb that returns
+ * a token**. That is what this list exists to make impossible to change quietly.
  */
 export const BRIDGE_SLACK_KEYS = [
   'status',
   'signIn',
   'signOut',
   'test',
-  // HIVE-124. Write and clear; the read has no channel, on purpose.
+  // HIVE-124. Write and clear; the token *values* have no channel, on purpose.
   'setTokens',
   'clearTokens',
   'socketTest',
+  // Presence and the last status — what a pane needs on mount, and no more.
+  'socketState',
   'onSocketStatus',
 ] as const;
 

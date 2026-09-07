@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   clearSlackTokens,
+  readSlackSocketState,
   readSlackStatus,
   setSlackConfig,
   setSlackTokens,
@@ -165,6 +166,7 @@ describe('socket mode (HIVE-124)', () => {
       await expect(clearSlackTokens()).resolves.toBeNull();
       await expect(setSlackConfig({ socketMode: true })).resolves.toBeNull();
       await expect(testSlackSocket()).resolves.toBeNull();
+      await expect(readSlackSocketState()).resolves.toBeNull();
 
       expect(spy).not.toHaveBeenCalled();
     });
@@ -245,6 +247,24 @@ describe('socket mode (HIVE-124)', () => {
 
       expect(seen).toEqual([{ kind: 'connecting' }]);
       expect(stop).toHaveBeenCalledOnce();
+    });
+
+    /**
+     * The mount-time read (fix-round-2, HIVE-124). The push it accompanies is
+     * not buffered and main suppresses a repeat of the last status, so this is
+     * the only way a pane that mounts after boot learns either fact.
+     */
+    it('reads presence and the last socket status in one call', async () => {
+      const socketState = vi.fn(() =>
+        Promise.resolve({ tokens: PRESENT, socket: { kind: 'off' as const } }),
+      );
+      bridge({ socketState });
+
+      await expect(readSlackSocketState()).resolves.toEqual({
+        tokens: PRESENT,
+        socket: { kind: 'off' },
+      });
+      expect(socketState).toHaveBeenCalledWith();
     });
 
     it('answers null and names the verb when a channel rejects', async () => {
