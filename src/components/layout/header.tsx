@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 
 import { BrandBlock } from '@components/layout/brand-block';
 import { DemoChip } from '@components/layout/demo-chip';
+import { ExposureChip } from '@components/layout/exposure-chip';
 import { ModelChip } from '@components/layout/model-chip';
 import { StatusCounts } from '@components/layout/status-counts';
 import { Badge } from '@components/ui/badge';
@@ -191,6 +192,7 @@ export function Header() {
         >
           <DemoChip />
           <ModelChip />
+          <ExposureChip />
         </div>
       </div>
 

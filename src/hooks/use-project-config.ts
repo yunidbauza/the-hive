@@ -7,7 +7,7 @@ import {
   subscribeProjectConfig,
   type ProjectAccess,
 } from '@lib/project-config';
-import type { ConfigSnapshot } from '@shared/config-contract';
+import { isLoopbackHost, type ConfigSnapshot } from '@shared/config-contract';
 
 
 /**
@@ -58,4 +58,23 @@ export function useProjectAccess(projectId: string): ProjectAccess {
     projectConfigSnapshot,
   );
   return projectAccess(projectId);
+}
+
+/**
+ * The address the receiver is exposed on, or `null` while it is not (HIVE-134).
+ *
+ * Derived, never stored — the codebase rule, and here it is also the whole
+ * safety argument: there is no `bind.enabled` flag that could say "off" while
+ * the socket was open. One predicate, `isLoopbackHost`, answers the question for
+ * main and for this hook alike.
+ *
+ * Returns the address rather than a boolean because the only consumer needs to
+ * print it, and a hook that returned `true` would make the caller reach back
+ * into the snapshot for the value it actually wanted.
+ */
+export function useReceiverExposure(): string | null {
+  const snapshot = useProjectConfig();
+  if (snapshot === null) return null;
+  const { host } = snapshot.receiver.bind;
+  return isLoopbackHost(host) ? null : host;
 }

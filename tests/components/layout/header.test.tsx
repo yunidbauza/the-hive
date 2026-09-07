@@ -1,8 +1,10 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { Header } from '@components/layout/header';
+import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
+import { DEFAULT_BIND, DEFAULT_RECEIVER, emptySnapshot } from '@shared/config-contract';
 import { useAppearanceStore } from '@stores/appearance-store';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
@@ -30,6 +32,13 @@ describe('Header', () => {
      */
     useAppearanceStore.getState().reset();
     useAppearanceStore.getState().setTheme('dark');
+  });
+
+  afterEach(() => {
+    // The real `@lib/project-config` module is a module-level singleton, so a
+    // snapshot one test installs would otherwise leak into whichever test runs
+    // next in this file.
+    resetProjectConfig();
   });
 
   it('renders as the page banner at the fixed 56px height', () => {
@@ -362,6 +371,39 @@ describe('Header', () => {
       expect(
         screen.getByRole('button', { name: 'Settings' }).className,
       ).toContain('[-webkit-app-region:no-drag]');
+    });
+  });
+
+  /**
+   * `ExposureChip`'s own states — loopback renders nothing, a widened bind
+   * names the address — belong to its own spec. What is pinned here is that it
+   * is actually mounted in the `header-chips` cluster, after `DemoChip` and
+   * `ModelChip` (HIVE-134).
+   */
+  describe('the exposure chip (HIVE-134)', () => {
+    it('is absent from the chips cluster on the default loopback bind', () => {
+      render(<Header />);
+
+      const chips = screen.getByTestId('header-chips');
+      expect(chips).not.toHaveTextContent('172.17.0.1');
+    });
+
+    it('joins the cluster, after DemoChip and ModelChip, once the bind widens', () => {
+      setProjectConfigForTest({
+        ...emptySnapshot('/Users/dev/.hive/config.json'),
+        receiver: {
+          ...DEFAULT_RECEIVER,
+          bind: { ...DEFAULT_BIND, host: '172.17.0.1' },
+        },
+      });
+
+      render(<Header />);
+
+      const chips = screen.getByTestId('header-chips');
+      expect(chips).toHaveTextContent('172.17.0.1');
+
+      const names = Array.from(chips.children).map((child) => child.textContent);
+      expect(names.indexOf('172.17.0.1')).toBeGreaterThan(names.indexOf('demo'));
     });
   });
 });
