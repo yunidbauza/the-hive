@@ -70,7 +70,10 @@ import { ticketKeyFromPrompt } from './ticket-intent';
  * A listening socket inside a desktop app deserves suspicion, so three things
  * are true of this one and are enforced below rather than documented:
  *
- * 1. It binds **`127.0.0.1`**, never `0.0.0.0` — unreachable from the network.
+ * 1. It binds **`127.0.0.1`** unless a user opts out in the config
+ *    (`receiver.bind`, HIVE-134) — and when they do, the header says so for as
+ *    long as it is true, and the guards in {@link reject} stop being belt and
+ *    braces and start being the only thing between this socket and the network.
  * 2. It requires a **per-session token**, keyed off a per-launch secret that
  *    is generated at start and never leaves this file — not on the
  *    {@link Receiver} interface, not in an environment variable, not in the
@@ -79,12 +82,11 @@ import { ticketKeyFromPrompt } from './ticket-intent';
  *    {@link tokenFor} applied to that one session's own id (HIVE-112) — so a
  *    session that leaks its token hands over only its own identity, not
  *    every other session's.
- * 3. It answers a **closed set of six paths** — the hook event, the status
- *    line's metrics (HIVE-79), `/done`, the boot-ready signal, and, since
- *    HIVE-111, a ledger post and a ledger read — and reads a **capped body**
- *    on each, so nothing about it is a general-purpose server. Every path
- *    checks the token against the session header it was issued for; several
- *    carry a smaller cap than the hook path.
+ * 3. It answers a **closed set of eight paths** — the hook event, the status
+ *    line's metrics (HIVE-79), `/done`, the boot-ready signal, a ledger post and
+ *    a ledger read (HIVE-111), the agents directory (HIVE-127) and `POST /mcp`
+ *    (HIVE-130) — and reads a **capped body** on each, so nothing about it is a
+ *    general-purpose server.
  *
  * Its authority is correspondingly wider than it once was: a valid POST can
  * still move a status dot or record usage percentages, but the ledger paths
@@ -235,6 +237,15 @@ export interface ReceiverOptions {
   onAgentEvent: (event: HookAgentEvent) => void;
   /** Overridable for tests; `0` asks the OS for any free port. */
   port?: number;
+  /**
+   * The address to listen on. Defaults to `127.0.0.1` (HIVE-134).
+   *
+   * A plain value, not a getter: a socket that is already listening cannot be
+   * moved, so re-reading this would promise a rebind that never happens.
+   * Changing it takes effect at the app's next launch, which is what Settings
+   * tells the user.
+   */
+  host?: string;
 }
 
 export interface Receiver {
@@ -470,6 +481,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     knowsAgent,
     onAgentEvent,
     port = 0,
+    host = '127.0.0.1',
   } = options;
 
   /**
@@ -1745,14 +1757,21 @@ export function createReceiver(options: ReceiverOptions): Receiver {
           }
         });
 
-        created.listen(port, '127.0.0.1', () => {
+        created.listen(port, host, () => {
           const address = created.address();
           if (address === null || typeof address === 'string') {
             resolve(null);
             return;
           }
           server = created;
-          origin = `http://127.0.0.1:${address.port}`;
+          /*
+            The same `host` the socket was given, never a re-spelling of it. The
+            literal used to appear twice — here and in `listen` above — and the
+            pair had to move together or this would announce an address nothing
+            was listening on, taking `metricsUrl`, `doneUrl` and `readyUrl` with
+            it.
+          */
+          origin = `http://${host}:${address.port}`;
           url = `${origin}${HOOK_PATH}`;
           resolve(url);
         });

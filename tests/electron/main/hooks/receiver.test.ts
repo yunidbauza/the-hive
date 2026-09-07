@@ -1950,6 +1950,11 @@ describe('hook receiver', () => {
     expect(response.status).toBe(500);
     await exploding.stop();
   });
+
+  it('binds loopback when no host is given, exactly as it always did', () => {
+    // The outer `beforeEach`'s receiver, built with no `host`.
+    expect(url.startsWith('http://127.0.0.1:')).toBe(true);
+  });
 });
 
 /**
@@ -3141,5 +3146,73 @@ describe('the MCP route', () => {
 
       expect(await behaviour(await approve('run-1'))).toBe('deny');
     });
+  });
+});
+
+/**
+ * `ReceiverOptions.host` (HIVE-134) — the socket binds where it is told,
+ * loopback by default. Its own top-level suite and its own receiver, not the
+ * `hook receiver` describe's, because every test in that one leans on the
+ * loopback receiver its `beforeEach` builds.
+ */
+describe('a widened bind', () => {
+  let widened: Receiver;
+  let widenedUrl: string;
+
+  beforeEach(async () => {
+    widened = createReceiver({
+      onCleared: () => {},
+      onEvent: () => {},
+      onTicketIntent: () => {},
+      onPromptName: () => {},
+      onDone: () => {},
+      onReady: () => {},
+      knowsSession: (entityId) => entityId !== 'sess-gone',
+      ...noAgents,
+      ...noLedger,
+      onMetrics: () => {},
+      /*
+        `0.0.0.0` rather than a bridge address: a unit test cannot know one,
+        and every machine has this. What is under test is that the host is
+        no longer hardcoded, not which address was chosen.
+      */
+      host: '0.0.0.0',
+    });
+    const started = await widened.start();
+    expect(started).not.toBeNull();
+    widenedUrl = started as string;
+  });
+
+  afterEach(async () => {
+    await widened.stop();
+  });
+
+  it('announces the address it was told to bind, not loopback', () => {
+    expect(widenedUrl.startsWith('http://0.0.0.0:')).toBe(true);
+    expect(widened.origin?.startsWith('http://0.0.0.0:')).toBe(true);
+  });
+
+  /*
+    The literal was duplicated — once in `listen` and once building `origin`
+    (receiver.ts, in `start`). If only one moved, the announced URL would name
+    an address nothing is listening on, and every derived URL with it.
+  */
+  it('derives every URL from the same address', () => {
+    for (const derived of [widened.metricsUrl, widened.doneUrl, widened.readyUrl]) {
+      expect(derived?.startsWith('http://0.0.0.0:')).toBe(true);
+    }
+  });
+
+  it('really is listening there', async () => {
+    const port = new URL(widenedUrl).port;
+    const response = await fetch(`http://127.0.0.1:${port}/ready`, {
+      method: 'POST',
+      headers: {
+        [HOOK_HEADER_TOKEN]: widened.tokenFor('sess-01'),
+        [HOOK_HEADER_SESSION]: 'sess-01',
+      },
+    });
+    // `/ready` answers `204`, the same no-body convention `/done` follows.
+    expect(response.status).toBe(204);
   });
 });
