@@ -2,7 +2,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { readCommand } from '../../../../../electron/main/integrations/slack/command';
-import type { SlackEvent } from '../../../../../electron/shared/slack-contract';
+import {
+  SLACK_EVENT_TEXT_MAX,
+  type SlackEvent,
+} from '../../../../../electron/shared/slack-contract';
 
 const KNOWN = ['pr-patrol', 'slack', 'acr'];
 const ALLOWED = ['U08BA712189'];
@@ -59,11 +62,44 @@ describe('readCommand', () => {
     ).toEqual({ kind: 'broadcast' });
   });
 
+  /**
+   * The title was right and the assertion was not (fix-round-3, HIVE-124).
+   *
+   * A `command` with `task: ''` is accepted by the scheduler's `isJob`
+   * (`'' !== undefined`) and reaches `waker.ts`, whose task-run prompt says "Do
+   * the job named above and nothing else" — with nothing named. That is a real
+   * model turn spent on an instruction to do nothing. `@hive pr-patrol` is
+   * somebody saying an agent's name, which is what a broadcast is for.
+   */
   it('broadcasts when an agent is named with no task, so the agent decides', () => {
     expect(readCommand(mention('<@U09HIVEBOT> pr-patrol'), KNOWN, ALLOWED)).toEqual({
+      kind: 'broadcast',
+    });
+  });
+
+  it('broadcasts when a named agent is followed only by whitespace', () => {
+    expect(readCommand(mention('<@U09HIVEBOT> pr-patrol   '), KNOWN, ALLOWED)).toEqual({
+      kind: 'broadcast',
+    });
+  });
+
+  /**
+   * The console path is bounded by `assertText`; this one was bounded by
+   * nothing, and it is the one that arrives from off the machine. A 40 KB Slack
+   * message became a 40 KB `extra` in an argv and in `agents.json`.
+   */
+  it('clips a task at the cap the rest of the feature uses', () => {
+    const long = 'x'.repeat(SLACK_EVENT_TEXT_MAX + 500);
+    const result = readCommand(
+      mention(`<@U09HIVEBOT> pr-patrol ${long}`),
+      KNOWN,
+      ALLOWED,
+    );
+
+    expect(result).toEqual({
       kind: 'command',
       agent: 'pr-patrol',
-      task: '',
+      task: `${'x'.repeat(SLACK_EVENT_TEXT_MAX)}\u2026`,
     });
   });
 

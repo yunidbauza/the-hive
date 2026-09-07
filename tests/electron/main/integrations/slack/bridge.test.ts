@@ -679,6 +679,24 @@ describe('commands', () => {
     expect((h.wakes[0].entry as { kind: string }).kind).toBe('slack.app_mention');
   });
 
+  /**
+   * The end of the same story `command.test.ts` tells: no job run is started
+   * with no job in it. A named agent and nothing else buffers as a broadcast —
+   * debounced, floored, `job: false` — rather than spending a task run on "do
+   * the job named above" with nothing named above it.
+   */
+  it('does not start a job run for a named agent with no task', async () => {
+    const h = harness();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+
+    h.deliver(mention('1757012400.002100', '<@U09HIVEBOT> pr-patrol'));
+    await vi.advanceTimersByTimeAsync(SLACK_EVENT_DEBOUNCE_MS);
+
+    expect(h.wakes.every((wake) => !wake.job)).toBe(true);
+    expect(h.wakes.map((wake) => wake.name)).toEqual(['acr']);
+  });
+
   it('drops a mention from an author who is not allow-listed', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const h = harness();
