@@ -23,6 +23,25 @@ import { REMOTE_PROTOCOL_VERSION, type AttachRefused } from '@shared/remote-cont
  * what a refusal *is*, the host decides when to send one.
  */
 export function refuseProtocol(clientProtocol: number): AttachRefused {
+  /*
+    Equal versions are not a mismatch, and the caller has made a mistake rather
+    than the client. Worth handling rather than declaring unreachable: this is
+    the one refusal every future path funnels through, and the version that a
+    two-way comparison produces for the equal case — "client speaks 1, server
+    speaks 1. Update the server." — is worse than useless to whoever reads it at
+    two in the morning.
+  */
+  if (clientProtocol === REMOTE_PROTOCOL_VERSION) {
+    return {
+      kind: 'attach-refused',
+      code: 'protocol-mismatch',
+      protocol: REMOTE_PROTOCOL_VERSION,
+      message:
+        `Protocol ${String(REMOTE_PROTOCOL_VERSION)} matches on both sides; ` +
+        'this handshake was refused for another reason.',
+    };
+  }
+
   const side = clientProtocol < REMOTE_PROTOCOL_VERSION ? 'client' : 'server';
   return {
     kind: 'attach-refused',

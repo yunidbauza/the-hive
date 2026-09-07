@@ -373,6 +373,40 @@ const CASES = [
     },
   },
   {
+    name: 'zone: electron/remote-client/ may not import src/ — the cut is below preload',
+    rule: 'import/no-restricted-paths',
+    files: {
+      'src/utils/probe-target.ts': 'export const renderer = 1;\n',
+      'electron/remote-client/probe.ts':
+        "import { renderer } from '@/utils/probe-target';\nexport const probe = renderer;\n",
+    },
+  },
+  {
+    name: 'zone: electron/remote-host/ may not import electron/preload/',
+    rule: 'import/no-restricted-paths',
+    files: {
+      'electron/preload/probe-target.ts': 'export const preload = 1;\n',
+      'electron/remote-host/probe.ts':
+        "import { preload } from '../preload/probe-target';\nexport const probe = preload;\n",
+    },
+  },
+  /**
+   * The other direction of the same claim (HIVE-141 review).
+   *
+   * A zone restricts its own `target` only, so the four cases above prove
+   * `remote-* -> preload` and nothing about `preload -> remote-*`. The fence
+   * comment claims both, and this is what makes the second half true.
+   */
+  {
+    name: 'zone: electron/preload/ may not import electron/remote-client/',
+    rule: 'import/no-restricted-paths',
+    files: {
+      'electron/remote-client/probe-target.ts': 'export const client = 1;\n',
+      'electron/preload/probe.ts':
+        "import { client } from '../remote-client/probe-target';\nexport const probe = client;\n",
+    },
+  },
+  {
     name: 'zone: src/ may not import electron/remote-host/',
     rule: 'import/no-restricted-paths',
     files: {
@@ -477,6 +511,25 @@ const CASES = [
       'electron/shared/probe-target.ts': 'export const contract = 1;\n',
       'src/utils/probe.ts':
         "import { contract } from '@shared/probe-target';\nexport const probe = contract;\n",
+    },
+  },
+  /**
+   * The deliberate hole in the remote fences (HIVE-141).
+   *
+   * Unlike `pty-host` and `mcp-host`, the remote halves are NOT cut off from
+   * `electron/main/**`: `remote-host` reuses the hook receiver's timing-safe
+   * compare and its Origin/Host allowlist rather than growing a second copy, and
+   * `remote-client` is driven by the router that lives in main. A negative case
+   * cannot express that, and without this the allowance looks like an oversight
+   * to the next person tightening the zones.
+   */
+  {
+    name: 'ALLOWED: electron/remote-host/ may import electron/main/ (HIVE-134 reuse)',
+    rule: null,
+    files: {
+      'electron/main/probe-target.ts': 'export const main = 1;\n',
+      'electron/remote-host/probe.ts':
+        "import { main } from '../main/probe-target';\nexport const probe = main;\n",
     },
   },
 ];

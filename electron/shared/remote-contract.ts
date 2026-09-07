@@ -84,7 +84,7 @@ export type Authorization = 'read' | 'mutate' | 'execute';
  * One correction that assertion forced: `EVENT_CHANNELS` lists 18 channels, but
  * 22 are pushed. `slack:socket-status` and the three `notifications:*` pushes
  * are subscribed in the bridge without appearing in that array — the three go
- * out through the hub's own loops at `ipc/index.ts:872-892`, deliberately
+ * out through the hub's own loops at `ipc/index.ts:887-899`, deliberately
  * bypassing the tapped fan-out so the notifier's output cannot re-enter its
  * input (HIVE-75). They are pushes all the same, and a remote client that only
  * forwarded `EVENT_CHANNELS` would lose every notification.
@@ -220,25 +220,68 @@ export const FRAME_KIND = {
  * it, which is `read` for all 22: a client cannot cause an event, only observe
  * one.
  *
- * The sixteen `execute` entries, each with its reason:
+ * That reasoning covers the 22 pushes and **nothing else**. It does not extend
+ * to the 6 client-sent `notify` channels, which look passive and are not — see
+ * `pty:ack` and `pty:prompt` above. Grading a channel by the tone of its name is
+ * how both of those came out wrong on the first pass.
  *
- * - `pty:spawn`, `pty:write`, `pty:kill`, `pty:restart` — drive a real process.
+ * The twenty-six `execute` entries, each with its reason. The list is long
+ * because the rule was applied by reading each handler rather than by trusting
+ * the channel's name, and a surprising number of innocuously-named reads spawn a
+ * process:
+ *
+ * - `pty:spawn`, `pty:write`, `pty:restart` — start a process, or type into one.
+ *   `pty:kill` is deliberately NOT here: it can only ever stop something, which
+ *   is `mutate`, and that is the same reading that keeps `agents:kill` and
+ *   `agents:pause` out. If killing were `execute` the rule would stop being
+ *   re-derivable from the grades.
+ * - `pty:prompt` — reads as a passive report of what the input box holds, and is
+ *   not one. `deliver.onPrompt` treats an `empty` transition as a flush trigger
+ *   (`ledger/deliver.ts:242`), writing held ledger nudges into the running PTY.
+ *   A forged report therefore delivers text into a session of the caller's
+ *   choosing, which is the same capability `ledger:post` is graded for.
  * - `fs:write-file`, `skills:write`, `agents:write` — write content the host
  *   later executes. A skill file and an `AGENT.md` are instructions a model
  *   follows with tools in hand; they are code with a friendlier extension.
  * - `config:set-runtime`, `config:set-project-runtime` — name the command a
  *   session spawns. Whoever writes this writes what `pty:spawn` runs.
  * - `config:clone-start` — runs `git clone` against a caller-supplied URL.
- * - `agents:run`, `agents:resume` — start a headless `claude` run. `kill` and
- *   `pause` only ever stop one, so they stay `mutate`.
+ * - `config:diagnose-command` — runs its probe through `/bin/sh -c` on the host
+ *   (`config/runtime.ts:195`). `tests/e2e/electron/security.spec.ts` already
+ *   says of it: "the first payload on this bridge that main executes at all
+ *   outside a session's own terminal".
+ * - `config:diagnose-env` — spawns the configured shell **login and
+ *   interactive** with `cwd` set to the project's own directory
+ *   (`config/env-diagnostic.ts:218`). That sources `.zshrc`, and anything
+ *   directory-keyed that a shell startup consults. Grading this `read` left a
+ *   real escalation: `config:add-project` is `mutate` and takes a path, so a
+ *   `mutate`-granted device could point a project at a directory it controls and
+ *   then call a "read" to get code execution as the user on the server.
+ * - `github:prs`, `github:search-prs`, `integrations:status` — spawn `gh`. The
+ *   handler comment at `ipc/index.ts:1064` says of the third that it
+ *   "**executes `gh`**", which is as clear a statement as the codebase offers.
+ * - `integrations:login-env` — spawns the login shell to snapshot its
+ *   environment. It takes no payload, which bounds the injection surface but not
+ *   the fact that a process runs.
+ * - `slack:status`, `slack:test`, `slack:sign-in`, `slack:sign-out` — all
+ *   resolve and spawn the `claude` binary and run model turns with tools in
+ *   hand. `slack:socket-state` and `slack:socket-test` do not, and stay `read`
+ *   and `mutate`: the first is two property reads, the second exercises the
+ *   Slack socket over the network without starting anything locally.
+ * - `agents:run`, `agents:resume` — start a headless `claude` run.
  * - `ledger:post`, `ledger:answer` — deliver text into a live session's context.
- *   A model that reads it has tools, so this is prompt injection with a
- *   delivery mechanism, and it is classified for what it can cause rather than
- *   for the row it appends.
+ *   A model that reads it has tools, so this is prompt injection with a delivery
+ *   mechanism, graded for what it can cause rather than for the row it appends.
  * - `notifications:act` — carries out a queued action, which includes answering
  *   a permission prompt. Answering one authorises a tool call.
  * - `updates:check` — can download and install a new binary over the running
  *   application.
+ *
+ * Two channels that read like `read` and are `mutate`: `session:pr` returns
+ * `void` and calls `history.record` (`ipc/index.ts:2162`), a persistent write —
+ * it is `session:note`'s sibling and had to be graded like it; and `pty:ack` is
+ * a client-sent `notify` that releases per-session backpressure
+ * (`sessions/index.ts`), so a client can ack sequences it never received.
  */
 export const CHANNEL_AUTHORIZATION = {
 [CH.configGet]: 'read',
@@ -252,13 +295,13 @@ export const CHANNEL_AUTHORIZATION = {
   [CH.configSetProjectKey]: 'mutate',
   [CH.configSetRuntime]: 'execute',
   [CH.configSetProjectRuntime]: 'execute',
-  [CH.configDiagnoseCommand]: 'read',
-  [CH.configDiagnoseEnv]: 'read',
+  [CH.configDiagnoseCommand]: 'execute',
+  [CH.configDiagnoseEnv]: 'execute',
   [CH.configSetNotifications]: 'mutate',
   [CH.configReveal]: 'read',
   [CH.configReset]: 'mutate',
-  [CH.integrationsStatus]: 'read',
-  [CH.integrationsLoginEnv]: 'read',
+  [CH.integrationsStatus]: 'execute',
+  [CH.integrationsLoginEnv]: 'execute',
   [CH.configSetJira]: 'mutate',
   [CH.configSetSlack]: 'mutate',
   [CH.configSetReceiver]: 'mutate',
@@ -273,17 +316,17 @@ export const CHANNEL_AUTHORIZATION = {
   [CH.jiraComments]: 'read',
   [CH.jiraLinks]: 'read',
   [CH.jiraAddComment]: 'mutate',
-  [CH.slackStatus]: 'read',
-  [CH.slackSignIn]: 'mutate',
-  [CH.slackSignOut]: 'mutate',
-  [CH.slackTest]: 'read',
+  [CH.slackStatus]: 'execute',
+  [CH.slackSignIn]: 'execute',
+  [CH.slackSignOut]: 'execute',
+  [CH.slackTest]: 'execute',
   [CH.slackSetTokens]: 'mutate',
   [CH.slackClearTokens]: 'mutate',
   [CH.slackSocketStatus]: 'read',
   [CH.slackSocketState]: 'read',
   [CH.slackSocketTest]: 'read',
-  [CH.githubPrs]: 'read',
-  [CH.githubSearchPrs]: 'read',
+  [CH.githubPrs]: 'execute',
+  [CH.githubSearchPrs]: 'execute',
   [CH.notificationsActivate]: 'read',
   [CH.notificationsNew]: 'read',
   [CH.notificationsList]: 'read',
@@ -306,9 +349,9 @@ export const CHANNEL_AUTHORIZATION = {
   [CH.ptySpawn]: 'execute',
   [CH.ptyWrite]: 'execute',
   [CH.ptyResize]: 'mutate',
-  [CH.ptyKill]: 'execute',
-  [CH.ptyAck]: 'read',
-  [CH.ptyPrompt]: 'mutate',
+  [CH.ptyKill]: 'mutate',
+  [CH.ptyAck]: 'mutate',
+  [CH.ptyPrompt]: 'execute',
   [CH.ptyData]: 'read',
   [CH.ptyExit]: 'read',
   [CH.ptyLost]: 'read',
@@ -323,7 +366,7 @@ export const CHANNEL_AUTHORIZATION = {
   [CH.sessionMetrics]: 'read',
   [CH.sessionHistory]: 'read',
   [CH.sessionNote]: 'mutate',
-  [CH.sessionPr]: 'read',
+  [CH.sessionPr]: 'mutate',
   [CH.fsReadDir]: 'read',
   [CH.fsRoot]: 'read',
   [CH.fsReadFile]: 'read',
@@ -376,9 +419,14 @@ export interface AttachRequest {
   token: string;
   /**
    * Last sequence seen per session, so the server can replay from `Scrollback`
-   * rather than the client re-rendering a transcript it already has. Empty on a
-   * first attach. See `electron/pty-host/scrollback.ts` for what backs it, and
-   * the existing gap notice for what happens when the buffer no longer reaches.
+   * rather than the client re-rendering a transcript it already has.
+   *
+   * **Absent** on a first attach, never `{}`. The two are different questions —
+   * "I have never been here" versus "I have been here and hold nothing" — and a
+   * server that branches on one while the client sends the other replays the
+   * wrong thing. `electron/remote-client/index.ts` omits the key for this
+   * reason. See `electron/pty-host/scrollback.ts` for what backs it, and the
+   * existing gap notice for what happens when the buffer no longer reaches.
    */
   resumeFrom?: Readonly<Record<string, number>>;
 }
@@ -511,11 +559,43 @@ const RANK: Readonly<Record<Authorization, number>> = {
 /**
  * Whether a caller granted `granted` may use `channel`.
  *
- * Unknown channel is refused. That is the whole of the default-deny rule, and it
- * lives in one function so a future listener cannot implement a second, laxer
- * version of it by accident.
+ * Unknown channel is refused. That is the whole of the default-deny rule for
+ * *privilege*, and it lives in one function so a future listener cannot
+ * implement a second, laxer version of it by accident.
+ *
+ * **It is not the whole gate, and must not be used as one.** It answers a
+ * question about privilege and says nothing about direction: every push is
+ * graded `read`, so `isAuthorized('pty:data', 'read')` is `true` — correct, and
+ * useless to a dispatcher deciding whether a *client* may send a frame naming
+ * `pty:data`. Use {@link isClientFrameAllowed} on the receive path.
  */
 export function isAuthorized(channel: string, granted: Authorization): boolean {
   const required = authorizationOf(channel);
   return required !== null && RANK[granted] >= RANK[required];
+}
+
+/**
+ * The gate a server's receive path actually wants: may a client send this frame,
+ * naming this channel, holding this grant?
+ *
+ * Three ways to fail, and the middle one is the reason this function exists
+ * rather than being left to each caller to remember:
+ *
+ * 1. The channel is not a channel — {@link frameKindOf} returns `null`.
+ * 2. The frame kind does not match the channel's direction. A `call` may only
+ *    name a `call` channel and a `notify` only a `notify` channel; a client may
+ *    never send a frame naming one of the 22 server-to-client `event` channels.
+ *    Privilege alone cannot catch this, because those 22 are graded `read` and
+ *    `read` is the grant every attached device has.
+ * 3. The grant does not reach what the channel costs.
+ *
+ * `FRAME_KIND` held the information needed for (2) from the first commit; the
+ * gap was that nothing consulted it.
+ */
+export function isClientFrameAllowed(
+  frame: 'call' | 'notify',
+  channel: string,
+  granted: Authorization,
+): boolean {
+  return frameKindOf(channel) === frame && isAuthorized(channel, granted);
 }

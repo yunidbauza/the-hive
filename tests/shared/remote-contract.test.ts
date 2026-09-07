@@ -11,6 +11,7 @@ import {
   authorizationOf,
   frameKindOf,
   isAuthorized,
+  isClientFrameAllowed,
 } from '@shared/remote-contract';
 
 /**
@@ -123,11 +124,91 @@ describe('remote contract: authorization', () => {
     expect(authorizationOf(channel)).toBe('execute');
   });
 
-  it('grades the 114 as 61 read, 37 mutate and 16 execute', () => {
+  it('grades the 114 as 51 read, 37 mutate and 26 execute', () => {
     const tally = { read: 0, mutate: 0, execute: 0 };
     for (const authz of Object.values(CHANNEL_AUTHORIZATION)) tally[authz] += 1;
 
-    expect(tally).toEqual({ read: 61, mutate: 37, execute: 16 });
+    expect(tally).toEqual({ read: 51, mutate: 37, execute: 26 });
+  });
+
+  /**
+   * The regrades review forced, pinned so they cannot quietly slide back.
+   *
+   * Every one of these reads like a `read` and runs a process on the host. The
+   * first pass graded them by the tone of the channel name; these assertions are
+   * keyed to what the handler actually does, named in the comment beside each
+   * entry in the table.
+   */
+  it.each([
+    CH.configDiagnoseCommand,
+    CH.configDiagnoseEnv,
+    CH.githubPrs,
+    CH.githubSearchPrs,
+    CH.integrationsStatus,
+    CH.integrationsLoginEnv,
+    CH.slackStatus,
+    CH.slackTest,
+    CH.slackSignIn,
+    CH.slackSignOut,
+  ])('%s spawns a host process and is execute', (channel) => {
+    expect(authorizationOf(channel)).toBe('execute');
+  });
+
+  /**
+   * The escalation that made the diagnose grades a real hole rather than a
+   * taxonomy quibble: `config:add-project` takes a path and is `mutate`, and
+   * `config:diagnose-env` runs a login+interactive shell with `cwd` set to a
+   * project's directory. Graded `read`, those two composed into arbitrary code
+   * execution for a caller holding only `mutate`.
+   */
+  it('does not let a mutate grant reach a shell through the diagnostics', () => {
+    expect(isAuthorized(CH.configAddProject, 'mutate')).toBe(true);
+    expect(isAuthorized(CH.configDiagnoseEnv, 'mutate')).toBe(false);
+    expect(isAuthorized(CH.configDiagnoseCommand, 'mutate')).toBe(false);
+  });
+
+  /** Two that read as passive and write. `session:pr` calls `history.record`. */
+  it.each([CH.sessionPr, CH.sessionNote, CH.ptyAck, CH.ptyResize])(
+    '%s changes host state and is at least mutate',
+    (channel) => {
+      expect(isAuthorized(channel, 'read')).toBe(false);
+    },
+  );
+
+  /** `session:pr` is `session:note`'s sibling and must be graded like it. */
+  it('grades session:pr exactly as session:note', () => {
+    expect(authorizationOf(CH.sessionPr)).toBe(authorizationOf(CH.sessionNote));
+  });
+
+  /**
+   * `pty:prompt` looks like a report of what the input box holds. It is also a
+   * flush trigger that writes held ledger nudges into a running PTY, which is
+   * the capability `ledger:post` is graded `execute` for.
+   */
+  it('grades pty:prompt like the other channels that deliver into a session', () => {
+    expect(authorizationOf(CH.ptyPrompt)).toBe('execute');
+    expect(authorizationOf(CH.ledgerPost)).toBe('execute');
+  });
+
+  /**
+   * Stopping something is never `execute`, or the rule stops being re-derivable
+   * from the grades. `pty:kill` and `agents:kill` must agree.
+   */
+  it('grades every kill as mutate, and every start as execute', () => {
+    expect(authorizationOf(CH.ptyKill)).toBe('mutate');
+    expect(authorizationOf(CH.agentsKill)).toBe('mutate');
+    expect(authorizationOf(CH.agentsPause)).toBe('mutate');
+
+    expect(authorizationOf(CH.ptySpawn)).toBe('execute');
+    expect(authorizationOf(CH.ptyRestart)).toBe('execute');
+    expect(authorizationOf(CH.agentsRun)).toBe('execute');
+    expect(authorizationOf(CH.agentsResume)).toBe('execute');
+  });
+
+  /** Network I/O is not process execution: these two really are what they say. */
+  it('leaves the slack channels that start nothing alone', () => {
+    expect(authorizationOf(CH.slackSocketState)).toBe('read');
+    expect(authorizationOf(CH.slackSocketTest)).toBe('read');
   });
 
   it('grades every push as read — a client observes an event, never causes one', () => {
@@ -186,6 +267,50 @@ describe('remote contract: the authorization ladder', () => {
     expect(isAuthorized(CH.configGet, 'read')).toBe(true);
     expect(isAuthorized(CH.configSetJira, 'read')).toBe(false);
     expect(isAuthorized(CH.fsWriteFile, 'read')).toBe(false);
+  });
+});
+
+/**
+ * The gap review found in the privilege check: it says nothing about direction.
+ *
+ * All 22 pushes are graded `read` and `read` is the grant every attached device
+ * holds, so `isAuthorized` alone would let a client send a `call` naming
+ * `pty:data`. `FRAME_KIND` always held what was needed to refuse that; nothing
+ * consulted it.
+ */
+describe('remote contract: direction', () => {
+  it('lets a client call a call channel and notify a notify channel', () => {
+    expect(isClientFrameAllowed('call', CH.configGet, 'read')).toBe(true);
+    expect(isClientFrameAllowed('notify', CH.ptyAck, 'mutate')).toBe(true);
+  });
+
+  it('refuses a client frame naming a server-to-client event channel', () => {
+    expect(isAuthorized(CH.ptyData, 'read')).toBe(true);
+    expect(isClientFrameAllowed('call', CH.ptyData, 'execute')).toBe(false);
+    expect(isClientFrameAllowed('notify', CH.ptyData, 'execute')).toBe(false);
+  });
+
+  it('refuses every one of the 22 pushes as a client frame', () => {
+    for (const [channel, kind] of Object.entries(FRAME_KIND)) {
+      if (kind !== 'event') continue;
+      expect(isClientFrameAllowed('call', channel, 'execute')).toBe(false);
+      expect(isClientFrameAllowed('notify', channel, 'execute')).toBe(false);
+    }
+  });
+
+  it('refuses a call that names a notify channel, and the reverse', () => {
+    expect(isClientFrameAllowed('call', CH.ptyWrite, 'execute')).toBe(false);
+    expect(isClientFrameAllowed('notify', CH.configGet, 'execute')).toBe(false);
+  });
+
+  it('still enforces privilege on a correctly-directed frame', () => {
+    expect(isClientFrameAllowed('call', CH.ptySpawn, 'mutate')).toBe(false);
+    expect(isClientFrameAllowed('call', CH.ptySpawn, 'execute')).toBe(true);
+  });
+
+  it('refuses an unlisted channel whatever the frame says', () => {
+    expect(isClientFrameAllowed('call', 'toString', 'execute')).toBe(false);
+    expect(isClientFrameAllowed('notify', 'pty:spwan', 'execute')).toBe(false);
   });
 });
 

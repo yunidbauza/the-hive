@@ -332,7 +332,26 @@ export default tseslint.config(
             },
             {
               target: './electron/preload/**/*',
-              from: ['./src/**/*', './electron/main/**/*'],
+              from: [
+                './src/**/*',
+                './electron/main/**/*',
+                /*
+                  The other half of the remote fence below (HIVE-141 review).
+
+                  That fence stopped `remote-* -> preload`, and its comment
+                  claimed the bridge and the remote halves could not reach each
+                  other — but a zone restricts only its own `target`, so
+                  `preload -> remote-client` still linted clean and would have
+                  bundled socket-client code into the sandboxed bridge. A rule
+                  is one-directional; a claim about two directions needs two.
+
+                  `pty-host` and `mcp-host` have the same gap and are left
+                  alone here: closing them is right, and it is not this
+                  ticket's diff.
+                */
+                './electron/remote-host/**/*',
+                './electron/remote-client/**/*',
+              ],
               message:
                 'preload is a bridge, not a participant. It may import electron/shared/ only.',
             },
@@ -392,21 +411,30 @@ export default tseslint.config(
                 'The MCP host is a client of the receiver, not a peer of main. It may import electron/shared/ only — reaching into main would mean a second writer on the ledger.',
             },
             /**
-             * TWO HALVES, TWO MACHINES (HIVE-141).
+             * TWO HALVES, ONE CUT (HIVE-141).
              *
              * `remote-host` runs on the server and `remote-client` on the
-             * laptop, and the whole design rests on their being separable — one
-             * process may hold either, never both. So neither may import the
-             * other: a shared helper that drifted across the cut would be a
-             * dependency that compiles on one machine and is dead weight on the
-             * other, and the first symptom would be a bundle, not an error.
-             * Anything genuinely common goes in `electron/shared/`, which is
-             * what that directory is for.
+             * laptop. Neither may import the other: a shared helper that
+             * drifted across the cut would be a dependency that compiles on one
+             * machine and is dead weight on the other, and the first symptom
+             * would be a bundle, not an error. Anything genuinely common goes
+             * in `electron/shared/`, which is what that directory is for.
              *
-             * Neither may reach the renderer or the bridge. The cut goes
-             * *below* preload precisely so `window.hive` never learns anything
-             * changed; a remote module importing `src/**` or
-             * `electron/preload/**` would be that knowledge leaking upward.
+             * **What this proves, stated honestly.** It proves the two modules
+             * do not reference each other. It does NOT prove they end up in
+             * different processes: `electron/main/**` may import both — HIVE-144
+             * will, from `router.ts` — and electron-vite emits one `out/main`
+             * bundle regardless. Separability is a property of what main
+             * chooses to load at boot, which no lint zone can see. An earlier
+             * draft of this comment claimed "one process may hold either, never
+             * both", which the rule below does not enforce and never could.
+             *
+             * Neither may reach the renderer or the bridge, and the preload
+             * zone above carries the matching half of that so the claim holds
+             * in both directions. The cut goes *below* preload precisely so
+             * `window.hive` never learns anything changed; a remote module
+             * importing `src/**` or `electron/preload/**` — or the bridge
+             * importing one of them — would be that knowledge leaking upward.
              *
              * `electron/main/**` is deliberately NOT fenced off. `remote-host`
              * reuses the receiver's timing-safe compare and its Origin/Host
