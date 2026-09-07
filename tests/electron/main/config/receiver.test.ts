@@ -85,6 +85,94 @@ describe('receiver resolution', () => {
 });
 
 /**
+ * HIVE-134's nested `bind` block, read but not yet resolved — that is Task 3.
+ * `parsed.receiver?.bind` is `optionalBind`'s raw, per-field-salvaged output;
+ * `resolved(parsed).bind` is what the block becomes once `DEFAULT_BIND` is
+ * merged under it, which is the only way to see a dropped field's fallback
+ * from this layer.
+ */
+describe('the bind block', () => {
+  it('defaults to loopback when the file names no bind', () => {
+    const parsed = parseConfig(doc({ receiver: { hostAlias: 'gateway' } }), 'config');
+
+    expect(resolved(parsed).bind).toEqual(DEFAULT_BIND);
+    expect(parsed.fatal).toBe(false);
+  });
+
+  /* The acceptance criterion a hand-written bind used to fail. */
+  it('no longer calls a hand-written bind an unknown key', () => {
+    const parsed = parseConfig(
+      doc({
+        receiver: {
+          bind: {
+            host: '172.17.0.1',
+            port: 63999,
+            allowedOrigins: ['http://localhost:5173'],
+          },
+        },
+      }),
+      'config',
+    );
+
+    expect(parsed.receiver?.bind).toEqual({
+      host: '172.17.0.1',
+      port: 63999,
+      allowedOrigins: ['http://localhost:5173'],
+    });
+    expect(parsed.errors).toEqual([]);
+  });
+
+  it('reports an unknown key inside bind without losing the block', () => {
+    const parsed = parseConfig(
+      doc({ receiver: { bind: { host: '172.17.0.1', enabled: true } } }),
+      'config',
+    );
+
+    expect(parsed.receiver?.bind?.host).toBe('172.17.0.1');
+    expect(parsed.errors.join(' ')).toContain('unknown key "enabled"');
+  });
+
+  /*
+    Per-field salvage, the discipline `optionalNotifications` uses: one bad
+    field is no reason to silently restore the default for the other two, which
+    is a change the user did not make and would not see.
+  */
+  it('keeps the good fields when one is wrong', () => {
+    const parsed = parseConfig(
+      doc({ receiver: { bind: { host: '10.0.0.5?', port: 63999 } } }),
+      'config',
+    );
+
+    expect(resolved(parsed).bind.host).toBe('127.0.0.1');
+    expect(resolved(parsed).bind.port).toBe(63999);
+    expect(parsed.errors.join(' ')).toContain('receiver.bind.host');
+  });
+
+  it('refuses a port outside the range and an origin that is not one', () => {
+    const parsed = parseConfig(
+      doc({
+        receiver: { bind: { port: 70000, allowedOrigins: ['http://ok.test', 'nope'] } },
+      }),
+      'config',
+    );
+
+    expect(resolved(parsed).bind.port).toBe(0);
+    // A bad entry costs that entry, not the list — `commanders`' rule.
+    expect(resolved(parsed).bind.allowedOrigins).toEqual(['http://ok.test']);
+    expect(parsed.errors.join(' ')).toContain('receiver.bind.port');
+    expect(parsed.errors.join(' ')).toContain('receiver.bind.allowedOrigins[1]');
+  });
+
+  it('drops a bind that is not an object', () => {
+    const parsed = parseConfig(doc({ receiver: { bind: '172.17.0.1' } }), 'config');
+
+    expect(resolved(parsed).bind).toEqual(DEFAULT_BIND);
+    expect(parsed.errors.join(' ')).toContain('receiver.bind: expected an object');
+    expect(parsed.fatal).toBe(false);
+  });
+});
+
+/**
  * The writer, tested against real files — because every property worth proving
  * here is a property of the *file*, the way `jira.test.ts` argues it.
  *

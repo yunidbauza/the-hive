@@ -1,4 +1,5 @@
 import {
+  BIND_KEYS,
   JIRA_KEYS,
   NOTIFICATION_KEYS,
   RECEIVER_KEYS,
@@ -9,11 +10,13 @@ import {
   isContainerProbe,
   isEnvArgTemplate,
   isHostAlias,
+  isOrigin,
   unsafeEnvReason,
   type ContainerConfig,
   type JiraConfig,
   type NotificationPrefs,
   type ProjectOrigin,
+  type ReceiverBindConfig,
   type ReceiverConfig,
   type SlackConfig,
 } from '@shared/config-contract';
@@ -129,8 +132,14 @@ export interface ParsedConfig {
    * `jira` is: the write path must be able to tell "the user chose this" from
    * "the file said nothing", which is what keeps an untouched file from growing
    * a block it never asked for.
+   *
+   * `bind` is partial one level down too (HIVE-134): a file that names the
+   * block but only one of its three fields must not have the other two
+   * silently promoted to "the user chose the default", which is exactly what a
+   * fully-resolved `ReceiverBindConfig` here would do the next time the file is
+   * written back.
    */
-  receiver?: Partial<ReceiverConfig>;
+  receiver?: Partial<Omit<ReceiverConfig, 'bind'>> & { bind?: Partial<ReceiverBindConfig> };
   /**
    * HIVE-124's slack block, exactly as the file declared it.
    *
@@ -417,10 +426,10 @@ function optionalContainer(
   };
 }
 
-const ORIGINS: readonly string[] = ['local', 'cloned'];
+const PROJECT_ORIGINS: readonly string[] = ['local', 'cloned'];
 
-function isOrigin(value: unknown): value is ProjectOrigin {
-  return typeof value === 'string' && ORIGINS.includes(value);
+function isProjectOrigin(value: unknown): value is ProjectOrigin {
+  return typeof value === 'string' && PROJECT_ORIGINS.includes(value);
 }
 
 /**
@@ -664,6 +673,103 @@ function optionalJira(
 }
 
 /**
+ * A TCP port from the file, or `null` for the caller's default.
+ *
+ * The first numeric value in this file, so it defines the shape rather than
+ * following one: reported and ignored on a wrong type, exactly as
+ * {@link optionalString} and {@link optionalBoolean} treat theirs, because one
+ * mistyped key must not stop the app launching.
+ *
+ * `0` is legal and means "ask the OS", which is why the range starts there
+ * rather than at 1.
+ */
+function optionalPort(
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+  errors: string[],
+): number | null {
+  const value = record[key];
+  if (value === undefined) return null;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 65_535) {
+    errors.push(`${label}.${key}: expected a port from 0 to 65535 — using the default`);
+    return null;
+  }
+  return value;
+}
+
+/**
+ * HIVE-134's nested bind block.
+ *
+ * Per-field salvage, like {@link optionalNotifications} and unlike
+ * {@link optionalEnv}: three independent settings, so a typo in one is no
+ * reason to restore the defaults for the other two. A bad `allowedOrigins`
+ * entry costs that entry and not the list, which is `optionalSlack`'s rule for
+ * `commanders` and for its reason — someone who typed one origin wrong should
+ * not lose the other three, and losing the whole list silently turns the
+ * allowlist into "refuse every origin", a failure that looks exactly like the
+ * feature being broken.
+ */
+function optionalBind(
+  record: Record<string, unknown>,
+  label: string,
+  errors: string[],
+): Partial<ReceiverBindConfig> | undefined {
+  const value = record.bind;
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    errors.push(`${label}.bind: expected an object — ignored`);
+    return undefined;
+  }
+
+  const at = `${label}.bind`;
+
+  for (const key of Object.keys(value)) {
+    if (FORBIDDEN_KEYS.has(key)) {
+      errors.push(`${at}: forbidden key "${key}" — bind ignored`);
+      return undefined;
+    }
+  }
+
+  if (!checkKeys(value, BIND_KEYS, at, errors)) return undefined;
+
+  const bind: Partial<ReceiverBindConfig> = {};
+
+  const host = value.host;
+  if (host !== undefined) {
+    if (isHostAlias(host)) {
+      bind.host = host;
+    } else {
+      errors.push(`${at}.host: expected a hostname or an IPv4 address — using the default`);
+    }
+  }
+
+  const port = optionalPort(value, 'port', at, errors);
+  if (port !== null) bind.port = port;
+
+  const origins = value.allowedOrigins;
+  if (origins !== undefined) {
+    if (!Array.isArray(origins)) {
+      errors.push(`${at}.allowedOrigins: expected an array — using the default`);
+    } else {
+      const kept: string[] = [];
+      (origins as unknown[]).forEach((entry, index) => {
+        if (isOrigin(entry)) {
+          kept.push(entry);
+          return;
+        }
+        errors.push(
+          `${at}.allowedOrigins[${index}]: expected an origin like http://localhost:5173 — entry ignored`,
+        );
+      });
+      bind.allowedOrigins = kept;
+    }
+  }
+
+  return bind;
+}
+
+/**
  * HIVE-131's receiver block.
  *
  * Structurally identical to {@link optionalJira}, including its block-scoped
@@ -674,7 +780,9 @@ function optionalReceiver(
   record: Record<string, unknown>,
   label: string,
   errors: string[],
-): Partial<ReceiverConfig> | undefined {
+):
+  | (Partial<Omit<ReceiverConfig, 'bind'>> & { bind?: Partial<ReceiverBindConfig> })
+  | undefined {
   const value = record.receiver;
   if (value === undefined) return undefined;
   if (!isPlainObject(value)) {
@@ -693,7 +801,8 @@ function optionalReceiver(
 
   if (!checkKeys(value, RECEIVER_KEYS, at, errors)) return undefined;
 
-  const receiver: Partial<ReceiverConfig> = {};
+  const receiver: Partial<Omit<ReceiverConfig, 'bind'>> & { bind?: Partial<ReceiverBindConfig> } =
+    {};
   const raw = value.hostAlias;
   if (raw !== undefined) {
     if (isHostAlias(raw)) {
@@ -704,6 +813,10 @@ function optionalReceiver(
       );
     }
   }
+
+  const bind = optionalBind(value, at, errors);
+  if (bind !== undefined) receiver.bind = bind;
+
   return receiver;
 }
 
@@ -950,7 +1063,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
 
     let origin: ProjectOrigin | undefined;
     if (entry.origin !== undefined) {
-      if (!isOrigin(entry.origin)) {
+      if (!isProjectOrigin(entry.origin)) {
         errors.push(`${at}.origin: expected "local" or "cloned"`);
         return;
       }
