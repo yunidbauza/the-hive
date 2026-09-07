@@ -49,10 +49,10 @@ import { useReceiverExposure } from '@hooks/use-project-config';
  * the product identity. This chip describes a fact about the **running
  * process** instead, resolved at launch rather than baked into the binary, so
  * it belongs with the other chip that reads process state rather than the one
- * that reads a build flag. That the value cannot itself change again before
- * the next launch (see `AppInfo.receiverBoundHost`) is exactly why one read is
- * enough — it does not need to belong to a live subscription to earn this
- * position.
+ * that reads a build flag. That the value, once main's own bind has resolved,
+ * cannot change again before the next launch (see `AppInfo.receiverBoundHost`
+ * for exactly what "resolved" means here) is why one read is enough — it does
+ * not need to belong to a live subscription to earn this position.
  */
 export function ExposureChip() {
   const address = useReceiverExposure();

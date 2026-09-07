@@ -332,6 +332,42 @@ describe('createHookRuntime — sweep ordering (HIVE-133)', () => {
     expect(originDuringSweep).toBeNull();
   });
 
+  /**
+   * `boundHost` mid-sweep, the review finding on this exact window (HIVE-134).
+   *
+   * `originDuringSweep` above is expected `null` mid-sweep — `containerOrigin`
+   * is legitimately gated on `receiver`, which is not assigned yet. `boundHost`
+   * is the opposite case on purpose: the socket bound the instant `start()`
+   * resolved, several lines above the sweep, so it must already be reachable
+   * mid-sweep — a `null` here would be the exact false-safe signal this story
+   * exists to remove, just relocated to a narrower window than the one that
+   * shipped first. Proven directly rather than inferred from the end-to-end
+   * `createHookRuntime — boundHost` tests below, which only ever observe
+   * `boundHost()` after `start()`'s whole promise — sweep, both settings
+   * writes, everything — has already resolved, and so cannot tell a fixed
+   * implementation from the one that read through `receiver` and just got
+   * lucky that nothing asked during the gap.
+   */
+  it('reports the bound host mid-sweep, before `receiver` itself is assigned', async () => {
+    let boundHostDuringSweep: string | null | undefined;
+
+    sweepSpy.mockImplementation(async (...args) => {
+      boundHostDuringSweep = runtime?.boundHost();
+      return realSweep(...args);
+    });
+
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      bind: { host: '0.0.0.0', port: 0, allowedOrigins: [] },
+      ledger,
+    });
+    await runtime.start(noopHandlers);
+
+    expect(sweepSpy).toHaveBeenCalled();
+    expect(boundHostDuringSweep).toBe('0.0.0.0');
+  });
+
   it('still keeps nothing, because no session can exist yet', async () => {
     runtime = createHookRuntime({ userDataPath: dir, sessionMetrics: () => false, ledger });
     await runtime.start(noopHandlers);

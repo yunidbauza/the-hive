@@ -1268,10 +1268,18 @@ export interface AppInfo {
    * running process, read once. What makes a one-shot read sufficient, rather
    * than something the renderer would need to subscribe to and keep live, is
    * the same fact that makes `receiver.bind` say "takes effect at next
-   * launch" in Settings: a listening socket cannot be moved, so this value is
-   * fixed for the life of the session that reads it. It cannot go stale
-   * between the read and the moment it is displayed, because nothing on this
-   * side of a relaunch can change it.
+   * launch" in Settings: a listening socket cannot be moved, so **once the
+   * bind has resolved** — succeeded or failed, during main's own boot — this
+   * value cannot change again before a relaunch. That is deliberately narrower
+   * than "fixed for the life of the session": before that resolution the value
+   * genuinely is `null`, because genuinely nothing is listening yet, so a read
+   * that lands there is correct, not stale. What a one-shot reader must never
+   * see is a *wrong* answer at the moment it reads — this value transiently
+   * doing exactly that, for the length of a settings-file write that had
+   * nothing to do with the socket, was a real review finding on this field's
+   * first pass; see `createHookRuntime`'s own doc comment on `boundHost` for
+   * how main now captures it the instant its bind resolves, rather than behind
+   * anything else still in flight.
    *
    * Deliberately **not** `receiver.bind.host` off the config snapshot, which
    * says what will be bound at the *next* launch, not what is bound *now* —

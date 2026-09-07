@@ -3295,6 +3295,49 @@ describe('boundHost (HIVE-134)', () => {
     // signal in the other direction from the one this story fixes.
     expect(fresh.boundHost).toBeNull();
   });
+
+  /**
+   * `boundHost` reports what the kernel actually bound, not the string the
+   * config named (review finding, HIVE-134). `host` names a hostname here,
+   * not a literal address — the same shape a `/etc/hosts` entry pointing a
+   * custom hostname at a loopback IP would take, which is the reviewer's
+   * `local.test` example. Using `localhost` instead proves the identical
+   * mechanism (Node resolves a hostname to a concrete bound address before
+   * `boundHost` is set) without touching `/etc/hosts`: if this field ever
+   * regressed to reporting the requested `host` string verbatim, this would
+   * see the literal `'localhost'` rather than a loopback IP, and
+   * `isLoopbackHost('localhost')` happens to already return `true` — so the
+   * assertion below is deliberately a stronger one than "not exposed": it
+   * pins the *actual* IP literal `listen()` bound, proving the field holds an
+   * address and not a hostname at all.
+   */
+  it('reports the address the kernel bound, not the hostname the config named', async () => {
+    const fresh = createReceiver({
+      onCleared: () => {},
+      onEvent: () => {},
+      onTicketIntent: () => {},
+      onPromptName: () => {},
+      onDone: () => {},
+      onReady: () => {},
+      knowsSession: () => false,
+      ...noAgents,
+      ...noLedger,
+      onMetrics: () => {},
+      host: 'localhost',
+    });
+
+    const started = await fresh.start();
+    expect(started).not.toBeNull();
+
+    // Node resolves `localhost` to a concrete loopback literal before the
+    // socket binds — `127.0.0.1` or `::1` depending on this machine's
+    // resolver order — never the bare string `'localhost'` itself.
+    expect(fresh.boundHost).not.toBeNull();
+    expect(fresh.boundHost).not.toBe('localhost');
+    expect(['127.0.0.1', '::1']).toContain(fresh.boundHost);
+
+    await fresh.stop();
+  });
 });
 
 /**

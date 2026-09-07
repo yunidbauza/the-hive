@@ -235,15 +235,24 @@ export interface HookRuntime {
    * when nothing is listening — before the bind, after a failed one, or after
    * `stop()` (HIVE-134).
    *
-   * Reads straight through to {@link Receiver.boundHost} rather than being
-   * gated on `settingsPath` the way {@link HookRuntime.doneUrl} is: `doneUrl`
-   * cares whether a session has a token to present, but this answers a
-   * narrower, purely socket-shaped question — is the process reachable off
+   * Not gated on `settingsPath` the way {@link HookRuntime.doneUrl} is:
+   * `doneUrl` cares whether a session has a token to present, but this answers
+   * a narrower, purely socket-shaped question — is the process reachable off
    * loopback — that does not depend on whether the settings file also wrote
    * successfully. A receiver that bound but then had its container-file write
    * fail still had a real, listening, possibly-non-loopback socket for the
    * moments before `stop()` closed it; this getter reports exactly that
    * lifetime, no more and no less.
+   *
+   * **Not** a read through {@link HookRuntime}'s own `receiver` variable —
+   * that was the review-round bug (HIVE-134). `receiver` is not assigned until
+   * after a sweep and two settings-file writes have all resolved, so a socket
+   * bound wide could sit open for that whole window while a `receiver`-backed
+   * `boundHost()` still answered `null`, and a renderer's one-shot `AppInfo`
+   * read has no way to notice it changed underneath it. The implementation
+   * instead mirrors {@link Receiver.boundHost} into its own local the instant
+   * `start()` resolves, so this is truthful from the same tick the socket
+   * actually starts listening — independent of every write still to come.
    */
   boundHost(): string | null;
   /**
@@ -309,6 +318,19 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
   let receiver: Receiver | null = null;
   let settingsPath: string | null = null;
   let agentSettingsPath: string | null = null;
+  /**
+   * The receiver's `boundHost`, captured independently of `receiver` itself
+   * (HIVE-134 review). `boundHost()` used to read straight through `receiver`,
+   * which is not assigned until well after the bind succeeds — a sweep and two
+   * file writes still stand between `created.start()` resolving and
+   * `receiver = created` below. For that whole window the socket was already
+   * listening, possibly off loopback, while `boundHost()` answered `null`: the
+   * exact false-safe signal this story exists to remove, just moved one level
+   * up. Set the instant `start()` resolves, so a renderer that reads `AppInfo`
+   * during the sweep gets the truth instead of a `null` a one-shot fetch would
+   * then cache for the rest of the session.
+   */
+  let liveBoundHost: string | null = null;
 
   /**
    * The receiver's URLs as the *host* addresses them, gated on
@@ -395,6 +417,15 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       });
 
       const url = await created.start();
+      /*
+        Captured here, before anything else in this function runs — not after
+        `receiver = created` below, and not read lazily through `receiver` at
+        call time. `created.boundHost` is already correct the instant `start()`
+        resolves (`null` on a failed bind, the bound host on a successful one),
+        so mirroring it into a local now is what keeps `boundHost()` honest
+        during the sweep and the two settings writes still to come.
+      */
+      liveBoundHost = created.boundHost;
       if (url === null) {
         console.info(
           '[hive] hook receiver could not bind — session status falls back to pty activity',
@@ -544,6 +575,9 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
         await created.stop();
         settingsPath = null;
         agentSettingsPath = null;
+        // The socket really is closed now — `created.stop()` just ran — so
+        // `null` here is the true state, not a premature guess at it.
+        liveBoundHost = null;
         console.info(
           `[hive] hook settings could not be written — session status falls back to pty activity (${String(cause)})`,
         );
@@ -564,7 +598,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
     },
 
     boundHost(): string | null {
-      return receiver === null ? null : receiver.boundHost;
+      return liveBoundHost;
     },
 
     agentContainerSettingsPathFor(config) {
@@ -739,6 +773,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       receiver = null;
       settingsPath = null;
       agentSettingsPath = null;
+      liveBoundHost = null;
       if (running !== null) await running.stop();
     },
   };

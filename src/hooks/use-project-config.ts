@@ -78,11 +78,16 @@ export function useProjectAccess(projectId: string): ProjectAccess {
  * `readAppInfo` the diagnostics pane already uses, rather than the config
  * snapshot `useProjectConfig` exposes.
  *
- * One fetch on mount, not a subscription: `receiverBoundHost` cannot change
- * during a session (same premise as above, from the other side — nothing on
- * this side of a relaunch can move an already-open socket), so there is
- * nothing for a later render of this hook to catch that the first one missed.
- * Gated on `useProjectConfig` having resolved for the same reason
+ * One fetch on mount, not a subscription: once main's own bind has resolved —
+ * succeeded or failed — `receiverBoundHost` cannot change again before a
+ * relaunch (same premise as above, from the other side — nothing on this side
+ * of a relaunch can move an already-open socket), so there is nothing for a
+ * later render of this hook to catch that the first one missed. This mount's
+ * one read still has to land *after* that resolution to be trustworthy —
+ * `AppInfo.receiverBoundHost`'s own doc comment covers the review finding
+ * that made main careful about exactly when it captures the value, so a read
+ * from here never observes a live socket as `null`. Gated on `useProjectConfig`
+ * having resolved for the same reason
  * `AdvancedSection` gates its own `readAppInfo` call on it: a proxy for "the
  * bridge is actually up," which the browser demo (no bridge, `snapshot` stays
  * `null`) then correctly never crosses.

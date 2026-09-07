@@ -360,11 +360,18 @@ export interface Receiver {
    * reachable off-loopback has to read this field, not the config.
    *
    * Set in the same `listen` success callback that sets {@link Receiver.origin}
-   * and {@link Receiver.url}, from the same `host` local already in scope
-   * there — never re-parsed out of `origin`, which would just be two copies of
-   * the same fact free to drift. Cleared everywhere `origin` and `url` are
-   * cleared, for the same reason: a bind failure or a `stop()` means nothing is
-   * listening, and this field exists to say exactly that.
+   * and {@link Receiver.url} — but, deliberately, from `address.address`
+   * (Node's own report of what got bound), not from the `host` local those two
+   * fields use. `origin` and `url` are what this app *announces*, and have to
+   * stay the literal string the socket was told to bind, or every dependent
+   * URL points somewhere nothing dials. This field answers a different
+   * question — what did the kernel actually hand back — and `host` can lie
+   * about it: `localhost`, or a `/etc/hosts` entry pointing a hostname at a
+   * loopback address, both read as non-loopback to a string check like
+   * `isLoopbackHost` while the socket that bound is loopback-only. See the
+   * fuller comment at the `listen` call site. Cleared everywhere `origin` and
+   * `url` are cleared, for the same reason: a bind failure or a `stop()` means
+   * nothing is listening, and this field exists to say exactly that.
    */
   readonly boundHost: string | null;
   stop(): Promise<void>;
@@ -1924,7 +1931,24 @@ export function createReceiver(options: ReceiverOptions): Receiver {
           */
           origin = `http://${host}:${address.port}`;
           url = `${origin}${HOOK_PATH}`;
-          boundHost = host;
+          /*
+            `address.address`, not `host` — this is `boundHost`'s one deliberate
+            departure from the "never a re-spelling" rule just above, and for a
+            different reason than that rule guards against. `origin` and `url`
+            are what this app *announces*: a session's hooks, `/done`, the MCP
+            host all have to dial the literal string this process was told to
+            bind, so re-deriving that half from anything else is how those break.
+            `boundHost` answers a different question — what did the kernel
+            actually hand back — and `host` can lie about it: `localhost`
+            resolves to a loopback address nothing outside this machine can
+            reach, and a `/etc/hosts` entry can point a hostname at a loopback
+            IP while `isLoopbackHost` (a string check, not a DNS lookup) has no
+            way to know. `address.address` is Node's own answer to what got
+            bound — already destructured on the line above for `address.port` —
+            so the exposure chip built on it is telling the truth about the
+            socket, not about the config that requested it.
+          */
+          boundHost = address.address;
           resolve(url);
         });
       });
