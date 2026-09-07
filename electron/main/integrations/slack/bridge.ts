@@ -116,16 +116,37 @@ const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
 /**
- * The `slack_event` argument, unwrapped.
+ * The `slack_event` argument, reassembled into the envelope `readEnvelope` reads.
  *
- * `@slack/socket-mode` emits an object carrying `ack`, `body` and a few
- * conveniences; the adapter acks and forwards `{ body }`, and `readEnvelope`
- * wants the body. Tolerant of a bare envelope so the shape of the adapter is
- * not load-bearing here.
+ * **The SDK splits the frame, and this puts it back.** `SocketModeClient` does
+ * not hand a listener the WebSocket frame it received; it emits
+ *
+ * ```js
+ * this.emit('slack_event', { ack, envelope_id, type: event.type, body: event.payload, … });
+ * ```
+ *
+ * — so `type` (`'events_api'`) and `body` (the Events API payload,
+ * `{ type: 'event_callback', team_id, event: {…} }`) arrive as **siblings**,
+ * and `body` alone carries neither the discriminator nor the `payload` key.
+ * Handing `body` straight to `readEnvelope` therefore failed its first two
+ * checks for every real message, dropped it, and — because the adapter acks
+ * before forwarding — did so with no redelivery and nothing in the log. The
+ * pane read "Connected" and nothing ever woke.
+ *
+ * The reassembly is here rather than in `events.ts` because the *frame* is the
+ * right unit for that module: it is what Slack sends, what the fixtures under
+ * `tests/fixtures/slack/` record, and what the pure suite exercises. Only this
+ * seam knows that one SDK takes it apart.
+ *
+ * Still tolerant of a bare envelope, so a caller that already holds a frame —
+ * a fixture replayed straight into the bridge — is not a special case.
  */
 const bodyOf = (arg: unknown): unknown =>
   typeof arg === 'object' && arg !== null && 'body' in arg
-    ? (arg as { body: unknown }).body
+    ? {
+        type: (arg as { type?: unknown }).type,
+        payload: (arg as { body: unknown }).body,
+      }
     : arg;
 
 /** `#eng-code-review` — the key `readSubscriptions` indexes channels under. */

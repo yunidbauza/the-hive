@@ -70,7 +70,37 @@ function harness(over: Partial<Parameters<typeof createSlackBridge>[0]> = {}) {
     ...over,
   });
 
-  const deliver = (envelope: unknown) => listeners.get('slack_event')?.({ body: envelope });
+  /**
+   * One `slack_event`, in the shape `@slack/socket-mode` actually emits.
+   *
+   * Load-bearing, and the reason this comment is long. The SDK does **not**
+   * hand the listener the WebSocket frame: `SocketModeClient.js` splits it into
+   * siblings —
+   *
+   * ```js
+   * this.emit('slack_event', { ack, envelope_id, type: event.type, body: event.payload, … });
+   * ```
+   *
+   * — so `type` is `'events_api'` and `body` is the Events API payload alone.
+   * An earlier harness delivered `{ body: <the whole frame> }`, which no Slack
+   * installation ever produces, and it certified a `bodyOf` that unwrapped
+   * `.body` and handed `readEnvelope` a payload with no `type` on it. Every
+   * real event was dropped, silently, with the pane reading "Connected".
+   *
+   * The fixtures and `events.ts` speak the *frame*, which is the right unit for
+   * them — so this splits a frame the way the SDK does rather than the fixtures
+   * being rewritten around the SDK's split.
+   */
+  const deliver = (envelope: unknown) => {
+    const frame = envelope as { type?: unknown; payload?: unknown };
+
+    listeners.get('slack_event')?.({
+      ack: async () => undefined,
+      envelope_id: '1d3c8e00-0000-4000-8000-000000000009',
+      type: frame.type,
+      body: frame.payload,
+    });
+  };
 
   return { bridge, socket, web, wakes, statuses, opened, deliver, listeners };
 }
@@ -514,6 +544,43 @@ describe('channel resolution', () => {
     h.deliver(message('1757012345.000100', 'U08BA712189', 'C9OTHER'));
     await vi.advanceTimersByTimeAsync(SLACK_EVENT_DEBOUNCE_MS);
     expect(h.wakes).toHaveLength(0);
+  });
+
+  /**
+   * The emission shape, written out literally rather than through `deliver`.
+   *
+   * `deliver` builds it, so this is the one place a reader can see what the SDK
+   * hands over without following a helper: `type` and `body` as siblings, and
+   * `body` holding the Events API payload alone. Unwrapping `.body` and passing
+   * it on was the shipped bug — every real message dropped, no log line, pane
+   * reading "Connected" — and it survived eleven reviews because the harness
+   * spoke a shape Slack never sends.
+   */
+  it('reads the sibling type/body the SDK emits, not the frame it received', async () => {
+    const h = harness();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+
+    h.listeners.get('slack_event')?.({
+      ack: async () => undefined,
+      envelope_id: '1d3c8e00-0000-4000-8000-000000000003',
+      type: 'events_api',
+      body: {
+        type: 'event_callback',
+        team_id: 'T01ABCDEF',
+        event: {
+          type: 'message',
+          channel: 'C0123ABCD',
+          user: 'U08BA712189',
+          ts: '1757012345.000100',
+          text: 'can someone review 42',
+        },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(SLACK_EVENT_DEBOUNCE_MS);
+
+    expect(h.wakes).toHaveLength(1);
+    expect(h.wakes[0].name).toBe('pr-patrol');
   });
 
   it('ignores an envelope that is not a Slack event at all', async () => {
