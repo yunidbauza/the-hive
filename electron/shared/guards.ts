@@ -16,6 +16,7 @@ import {
   isContainerProbe,
   isEnvArgTemplate,
   isHostAlias,
+  isOrigin,
   isProjectKey,
   unsafeEnvReason,
 } from './config-contract';
@@ -25,6 +26,7 @@ import type {
   ContainerConfig,
   DiagnoseCommandRequest,
   DiagnoseEnvRequest,
+  ReceiverBindConfig,
   RemoveProjectRequest,
   RenameProjectRequest,
   ReorderProjectsRequest,
@@ -1209,14 +1211,95 @@ export function assertHostAlias(value: unknown, label: string): string {
   return raw;
 }
 
-/** Payload of `config:set-receiver` (HIVE-131). */
+/**
+ * A TCP port on the bridge.
+ *
+ * `0` is legal and means "ask the OS for any free port", which is the default
+ * and what shipped — so unlike {@link assertPrNumber} the range starts at 0.
+ * The bound is `optionalPort`'s in `config/parse.ts`, restated rather than
+ * imported because that module is main-process only; the two have to keep
+ * agreeing by inspection, the same discipline `assertHostAlias` documents for
+ * `isHostAlias`.
+ */
+function assertPort(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isInteger(value)) {
+    return fail(`${label}: expected an integer, got ${describe(value)}`);
+  }
+  if (value < 0 || value > 65_535) return fail(`${label}: expected a port from 0 to 65535`);
+  return value;
+}
+
+/**
+ * One {@link ReceiverBindConfig.allowedOrigins} entry.
+ *
+ * Shares {@link isOrigin} with the file reader for {@link assertHostAlias}'s
+ * stated reason: the set the reader accepts and the set the bridge accepts have
+ * to be the same one, or a value the UI stores is refused on the next load.
+ */
+function assertOrigin(value: unknown, label: string): string {
+  const raw = assertString(value, label);
+  if (!isOrigin(raw)) {
+    return fail(`${label}: expected an origin like http://localhost:5173`);
+  }
+  return raw;
+}
+
+/**
+ * Payload of `config:set-receiver` (HIVE-131, HIVE-134).
+ *
+ * `bind` validates the same way `hostAlias` does — one shared predicate per
+ * field with the file reader (`isHostAlias`, `isOrigin`; `assertPort` restates
+ * `optionalPort`'s bound) — but it does not *salvage* the way the reader does.
+ * `optionalBind` keeps two good fields when the third is bad, because a typo
+ * in a config file a user hand-edited must not cost the whole block. Here the
+ * three fields arrive from a live form, so `assertShape`'s ordinary rule holds:
+ * reject the request and name what was wrong, rather than silently keeping
+ * only the parts that parsed.
+ *
+ * An empty `bind: {}` is dropped rather than kept as a no-op key, so a request
+ * that touches nothing still falls into the "nothing to change" check below —
+ * `bind` is not a special case of that rule, it is a value that can itself be
+ * empty.
+ */
 export function parseSetReceiverRequest(input: unknown): SetReceiverRequest {
-  const raw = assertShape(input, [], 'setReceiver', ['hostAlias']);
+  const raw = assertShape(input, [], 'setReceiver', ['hostAlias', 'bind']);
+
+  let bind: Partial<ReceiverBindConfig> | undefined;
+  if (raw.bind !== undefined) {
+    const rawBind = assertShape(raw.bind, [], 'setReceiver.bind', [
+      'host',
+      'port',
+      'allowedOrigins',
+    ]);
+
+    let allowedOrigins: string[] | undefined;
+    if (rawBind.allowedOrigins !== undefined) {
+      if (!Array.isArray(rawBind.allowedOrigins)) {
+        return fail(
+          `setReceiver.bind.allowedOrigins: expected an array, got ${describe(rawBind.allowedOrigins)}`,
+        );
+      }
+      allowedOrigins = rawBind.allowedOrigins.map((entry, index) =>
+        assertOrigin(entry, `setReceiver.bind.allowedOrigins[${index}]`),
+      );
+    }
+
+    bind = {
+      ...(rawBind.host !== undefined
+        ? { host: assertHostAlias(rawBind.host, 'setReceiver.bind.host') }
+        : {}),
+      ...(rawBind.port !== undefined
+        ? { port: assertPort(rawBind.port, 'setReceiver.bind.port') }
+        : {}),
+      ...(allowedOrigins !== undefined ? { allowedOrigins } : {}),
+    };
+  }
 
   const request: SetReceiverRequest = {
     ...(raw.hostAlias !== undefined
       ? { hostAlias: assertHostAlias(raw.hostAlias, 'setReceiver.hostAlias') }
       : {}),
+    ...(bind !== undefined && Object.keys(bind).length > 0 ? { bind } : {}),
   };
 
   if (Object.keys(request).length === 0) {

@@ -1052,12 +1052,90 @@ describe('parseSetReceiverRequest (HIVE-131)', () => {
     expect(() => parseSetReceiverRequest({ hostAlias: at254 })).toThrow();
   });
 
-  it('rejects an unknown key', () => {
-    expect(() => parseSetReceiverRequest({ bind: {} })).toThrow();
+  /*
+    `bind` is a legal key from HIVE-134 on, so an empty block is not an unknown
+    key any more — it is a value that itself carries nothing, and falls into
+    the same "nothing to change" bucket as an entirely empty payload.
+  */
+  it('treats an empty bind block as nothing to change', () => {
+    expect(() => parseSetReceiverRequest({ bind: {} })).toThrow(/nothing to change/);
   });
 
   it('rejects a request that changes nothing', () => {
     expect(() => parseSetReceiverRequest({})).toThrow(/nothing to change/);
+  });
+});
+
+describe('parseSetReceiverRequest and the bind (HIVE-134)', () => {
+  it('accepts a full bind', () => {
+    expect(
+      parseSetReceiverRequest({
+        bind: { host: '172.17.0.1', port: 63999, allowedOrigins: ['http://localhost:5173'] },
+      }),
+    ).toEqual({
+      bind: { host: '172.17.0.1', port: 63999, allowedOrigins: ['http://localhost:5173'] },
+    });
+  });
+
+  it('accepts one field of it, so Settings can write a field at a time', () => {
+    expect(parseSetReceiverRequest({ bind: { host: '127.0.0.1' } })).toEqual({
+      bind: { host: '127.0.0.1' },
+    });
+  });
+
+  it('still accepts an alias alone, and both together', () => {
+    expect(parseSetReceiverRequest({ hostAlias: 'host.containers.internal' })).toEqual({
+      hostAlias: 'host.containers.internal',
+    });
+    expect(parseSetReceiverRequest({ hostAlias: 'gateway', bind: { port: 0 } })).toEqual({
+      hostAlias: 'gateway',
+      bind: { port: 0 },
+    });
+  });
+
+  /*
+    The authority-terminating delimiters `isHostAlias` was rewritten to refuse.
+    A bind host names a socket rather than a URL authority, but it is validated
+    by the same predicate, so the same set has to bounce here.
+  */
+  it('refuses a bind host that is not a hostname', () => {
+    for (const host of ['10.0.0.5?', 'evil.com/x', '10.0.0.5:80', 'a b', '', '::1']) {
+      expect(() => parseSetReceiverRequest({ bind: { host } })).toThrow(/setReceiver\.bind\.host/);
+    }
+  });
+
+  it('refuses a port that is not one', () => {
+    for (const port of [-1, 70_000, 1.5, '8080', null]) {
+      expect(() => parseSetReceiverRequest({ bind: { port } })).toThrow(/setReceiver\.bind\.port/);
+    }
+  });
+
+  it('refuses an origin that is not one, naming the entry', () => {
+    expect(() =>
+      parseSetReceiverRequest({ bind: { allowedOrigins: ['http://ok.test', 'nope'] } }),
+    ).toThrow(/setReceiver\.bind\.allowedOrigins\[1\]/);
+  });
+
+  it('refuses an allowedOrigins that is not an array', () => {
+    expect(() =>
+      parseSetReceiverRequest({ bind: { allowedOrigins: 'http://ok.test' } }),
+    ).toThrow(/setReceiver\.bind\.allowedOrigins/);
+  });
+
+  /* `assertShape`'s rule: an unlisted key means the two sides disagree. */
+  it('refuses an unexpected key at either level', () => {
+    expect(() => parseSetReceiverRequest({ nope: 1 })).toThrow(/unexpected key/);
+    expect(() => parseSetReceiverRequest({ bind: { enabled: true } })).toThrow(/unexpected key/);
+  });
+
+  it('refuses a forbidden key inside bind', () => {
+    expect(() =>
+      parseSetReceiverRequest(JSON.parse('{"bind":{"__proto__":{"host":"evil"}}}')),
+    ).toThrow(/forbidden key/);
+  });
+
+  it('refuses a bind that is not an object', () => {
+    expect(() => parseSetReceiverRequest({ bind: '172.17.0.1' })).toThrow(/setReceiver\.bind/);
   });
 });
 

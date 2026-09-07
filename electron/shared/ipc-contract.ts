@@ -243,11 +243,36 @@ export const CH = {
    */
   configSetSlack: 'config:set-slack',
   /**
-   * The container host alias (HIVE-131).
+   * The container host alias, and where the receiver listens (HIVE-131, HIVE-134).
    *
    * A `config:` channel because it writes the config file and returns the fresh
-   * snapshot, like every other settings verb. What it sets is a *name*, never an
-   * address with a port — the port is the receiver's, assigned at bind time.
+   * snapshot, like every other settings verb. Two fields, and they are not
+   * equally mild — read both, because an earlier draft of this comment claimed
+   * the whole verb was inert and that was simply false.
+   *
+   * `hostAlias` **names a network destination**, and was the first verb on this
+   * bridge to do so. It stores the hostname a containerised session uses to
+   * address this app; from HIVE-132 it is the host in `HIVE_RECEIVER_URL`, and
+   * `agents/waker.ts` hands a session `HIVE_HOOK_TOKEN` alongside that URL. So a
+   * renderer able to call this verb with `evil.com` redirects authenticated hook
+   * traffic. A well-formed hostname is enough; no delimiter trick is needed.
+   * What bounds it is `assertHostAlias`, sharing one per-label allowlist
+   * (`isHostAlias`) with the file reader, so no scheme, port, path, credentials
+   * or authority-terminating delimiter survives.
+   *
+   * `bind` **changes the listening surface**, which nothing on this bridge could
+   * do before HIVE-134. A renderer that sets `bind.host` to a routable address
+   * moves the receiver off loopback at the app's next launch — not immediately,
+   * because a socket already listening cannot be moved. Three things bound it:
+   * the same `isHostAlias` predicate, so the value is a host and never a URL; the
+   * next-launch delay, so the change is not silent to a user who is looking; and
+   * the header's exposure chip, which says the receiver is exposed for exactly as
+   * long as it is. The guards `reject` applies — a timing-safe token compare and
+   * an Origin and Host allowlist on every route — do not depend on this value and
+   * hold at every bind.
+   *
+   * Neither field names a *file*: the one file this bridge can write is still
+   * chosen by main, as for every verb on this list.
    */
   configSetReceiver: 'config:set-receiver',
   /**
