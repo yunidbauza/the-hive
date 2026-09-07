@@ -62,6 +62,22 @@ export function useProjectAccess(projectId: string): ProjectAccess {
 }
 
 /**
+ * One retry only, and only when the first read landed `null` (HIVE-134
+ * follow-up review). Long enough that a slow DNS lookup or an mDNS `.local`
+ * name has a real chance to finish — see this hook's own doc comment for why
+ * that lookup can outlast window creation, renderer boot and the first
+ * `readAppInfo` round trip. Short enough that the chip still appears well
+ * within the session if the bind was merely slow rather than failed or never
+ * configured — and a bind that is *still* not up after this either failed or
+ * was never widened, so a second miss is not chased with a third.
+ *
+ * Exported for the test that proves the retry actually fires — deliberately,
+ * so that test asserts against the real delay this hook waits on rather than
+ * a duplicated magic number that could silently drift out of sync with it.
+ */
+export const LATE_BIND_RETRY_MS = 2000;
+
+/**
  * The address the receiver is **actually** exposed on, or `null` while it is
  * not (HIVE-134).
  *
@@ -78,16 +94,26 @@ export function useProjectAccess(projectId: string): ProjectAccess {
  * `readAppInfo` the diagnostics pane already uses, rather than the config
  * snapshot `useProjectConfig` exposes.
  *
- * One fetch on mount, not a subscription: once main's own bind has resolved —
- * succeeded or failed — `receiverBoundHost` cannot change again before a
- * relaunch (same premise as above, from the other side — nothing on this side
- * of a relaunch can move an already-open socket), so there is nothing for a
- * later render of this hook to catch that the first one missed. This mount's
- * one read still has to land *after* that resolution to be trustworthy —
- * `AppInfo.receiverBoundHost`'s own doc comment covers the review finding
- * that made main careful about exactly when it captures the value, so a read
- * from here never observes a live socket as `null`. Gated on `useProjectConfig`
- * having resolved for the same reason
+ * ## One retry, not a subscription — and not a bare one-shot either
+ *
+ * A previous version of this comment claimed a one-shot read here "never
+ * observes a live socket as `null`," reasoning from `AppInfo.receiverBoundHost`'s
+ * own doc comment about exactly when *main* captures the value. That comment
+ * is correct about main's side and was still the wrong conclusion: it says
+ * nothing about whether *this hook's* read lands before or after main's bind
+ * resolves, and nothing enforces that ordering. `hooks.start()` is
+ * fire-and-forget from `createSessions`, and for a **hostname** bind (which
+ * `isHostAlias` accepts, and Settings lets a user type) `listen()` cannot
+ * succeed before a DNS lookup does — an mDNS `.local` name or a slow resolver
+ * can easily outlast window creation, renderer boot and this hook's own IPC
+ * round trip. A single `null` from that race is not proof nothing is
+ * listening, only that the bind had not settled *yet* — so this hook retries
+ * once, after {@link LATE_BIND_RETRY_MS}, when and only when the first read
+ * comes back `null`. A bind that is already up, or that fails outright, never
+ * pays for the retry: `receiverBoundHost` is non-null immediately, or stays
+ * `null` on both reads and this correctly reports "not exposed."
+ *
+ * Gated on `useProjectConfig` having resolved for the same reason
  * `AdvancedSection` gates its own `readAppInfo` call on it: a proxy for "the
  * bridge is actually up," which the browser demo (no bridge, `snapshot` stays
  * `null`) then correctly never crosses.
@@ -107,11 +133,29 @@ export function useReceiverExposure(): string | null {
     if (!hasSnapshot) return;
 
     let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
     void readAppInfo().then((info) => {
-      if (!cancelled) setBoundHost(info?.receiverBoundHost ?? null);
+      if (cancelled) return;
+      const host = info?.receiverBoundHost ?? null;
+      setBoundHost(host);
+
+      // See `LATE_BIND_RETRY_MS`'s own comment: a `null` here is ambiguous
+      // between "nothing is listening" and "the bind has not resolved yet,"
+      // and only a second read tells the two apart.
+      if (host === null) {
+        retryTimer = setTimeout(() => {
+          if (cancelled) return;
+          void readAppInfo().then((retryInfo) => {
+            if (!cancelled) setBoundHost(retryInfo?.receiverBoundHost ?? null);
+          });
+        }, LATE_BIND_RETRY_MS);
+      }
     });
+
     return () => {
       cancelled = true;
+      if (retryTimer !== undefined) clearTimeout(retryTimer);
     };
   }, [hasSnapshot]);
 

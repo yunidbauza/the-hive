@@ -1,7 +1,7 @@
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useReceiverExposure } from '@hooks/use-project-config';
+import { LATE_BIND_RETRY_MS, useReceiverExposure } from '@hooks/use-project-config';
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
 import {
   DEFAULT_BIND,
@@ -152,5 +152,103 @@ describe('useReceiverExposure', () => {
     // crosses that gate, so `readAppInfo` is never even asked.
     expect(readAppInfo).not.toHaveBeenCalled();
     expect(result.current).toBeNull();
+  });
+
+  /**
+   * The late-bind retry (HIVE-134 follow-up review).
+   *
+   * The bug this closes: a hostname bind resolves via DNS, which can outlast
+   * this hook's first `readAppInfo` round trip — a bare one-shot read then
+   * caches `null` for the rest of the session and the exposure chip never
+   * appears at all, even once the socket is genuinely listening. Fake timers
+   * throughout, so the retry's real-world delay (`LATE_BIND_RETRY_MS`) does
+   * not have to elapse in wall-clock time for this to run fast.
+   */
+  describe('the late-bind retry', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('retries once after a null answer and catches a bind that resolved just after', async () => {
+      setProjectConfigForTest(snapshot({ host: '172.17.0.1' }));
+      readAppInfo
+        .mockResolvedValueOnce(info(null))
+        .mockResolvedValueOnce(info('172.17.0.1'));
+
+      const { result } = renderHook(() => useReceiverExposure());
+
+      // The mounted effect's first `readAppInfo` call settles with `null` —
+      // flushed with no timer advance, so this is proven to be the *first*
+      // read's own answer, not a symptom of the retry firing early.
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(readAppInfo).toHaveBeenCalledTimes(1);
+      expect(result.current).toBeNull();
+
+      // Advancing by anything short of the retry delay must not fire it —
+      // the point of a *bounded* retry rather than a poll.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(LATE_BIND_RETRY_MS - 1);
+      });
+      expect(readAppInfo).toHaveBeenCalledTimes(1);
+      expect(result.current).toBeNull();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(readAppInfo).toHaveBeenCalledTimes(2);
+      expect(result.current).toBe('172.17.0.1');
+    });
+
+    it('does not retry a second time when the retry itself lands null', async () => {
+      setProjectConfigForTest(snapshot({ host: '172.17.0.1' }));
+      // Every call answers `null` — if this hook ever chased a third read,
+      // it would find one here to chase.
+      readAppInfo.mockResolvedValue(info(null));
+
+      const { result } = renderHook(() => useReceiverExposure());
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(readAppInfo).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(LATE_BIND_RETRY_MS);
+      });
+      expect(readAppInfo).toHaveBeenCalledTimes(2);
+      expect(result.current).toBeNull();
+
+      // Far past any bounded retry's own delay, a second retry would have
+      // fired by now if one were scheduled.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(LATE_BIND_RETRY_MS * 10);
+      });
+      expect(readAppInfo).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not retry when the first answer is already a live address', async () => {
+      setProjectConfigForTest(snapshot({ host: '172.17.0.1' }));
+      readAppInfo.mockResolvedValue(info('172.17.0.1'));
+
+      renderHook(() => useReceiverExposure());
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(readAppInfo).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(LATE_BIND_RETRY_MS * 10);
+      });
+      // A non-null first answer schedules nothing — there is no ambiguity to
+      // resolve, so no second read to skip.
+      expect(readAppInfo).toHaveBeenCalledTimes(1);
+    });
   });
 });

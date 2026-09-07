@@ -312,7 +312,8 @@ test('the off-loopback bind is off, and its fields are hidden, by default', asyn
 /**
  * The write half of the bind switch — the only test that drives the whole
  * chain a launch later depends on: switch → revealed field → `TextField`
- * commit → `config:set-receiver` → `assertReceiverBind` → disk.
+ * commit → `config:set-receiver` → `parseSetReceiverRequest`'s validation
+ * (`electron/shared/guards.ts`) → disk.
  *
  * Asserted against the **file**, not the DOM, because the file is what the
  * next launch binds to — a component that shows `0.0.0.0` in its own state

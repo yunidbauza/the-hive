@@ -576,7 +576,13 @@ export interface ReceiverBindConfig {
    * Prefer the bridge address a runtime names over `0.0.0.0`: binding every
    * interface is a wider surface than the problem needs. `0.0.0.0` is accepted
    * rather than refused, because a user whose runtime names no bridge has
-   * nothing else to write.
+   * nothing else to write — but it leaves the receiver reachable, not
+   * *addressable*: no real client ever names a server `0.0.0.0` in a `Host`
+   * header, so `guard()` refuses one just as it would any other name nobody
+   * legitimately sends (verified live — a request with `Host:
+   * 192.168.1.20:<port>` against a `0.0.0.0` bind is 403). The documented
+   * happy path is binding the bridge address specifically, or setting an
+   * alias alongside the wide bind, either of which the guard does admit.
    */
   host: string;
   /** 0 asks the OS for any free port, which is what shipped. */

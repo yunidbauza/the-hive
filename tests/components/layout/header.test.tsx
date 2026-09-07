@@ -397,8 +397,11 @@ describe('Header', () => {
   /**
    * `ExposureChip`'s own states — loopback renders nothing, a widened bind
    * names the address — belong to its own spec. What is pinned here is that it
-   * is actually mounted in the `header-chips` cluster, after `DemoChip` and
-   * `ModelChip` (HIVE-134).
+   * is actually mounted in the `header-chips` cluster, after `DemoChip`
+   * (HIVE-134). Not proven against `ModelChip` too: these tests render on the
+   * default tab, where `ModelChip` itself renders `null` (see "drops the
+   * model chip on the orchestrator tab" above), so there is nothing of
+   * `ModelChip`'s in the cluster for an ordering assertion to compare against.
    *
    * The chip is sourced from the receiver's **running** bind, read through
    * `readAppInfo` — see the mock at the top of this file — never from
@@ -406,14 +409,26 @@ describe('Header', () => {
    * would exercise nothing the chip actually reads.
    */
   describe('the exposure chip (HIVE-134)', () => {
-    it('is absent from the chips cluster on the default loopback bind', () => {
+    /*
+      No `setProjectConfigForTest` call here, so `useProjectConfig()` returns
+      `null` — the same "no bridge" state the browser demo starts in — and
+      `useReceiverExposure`'s gate means `readAppInfo` is never even called.
+      This is not a loopback-bind scenario at all despite the old title's
+      claim: it never installs a snapshot, so it cannot distinguish "bound
+      loopback" from "bound nowhere." That case is already covered by
+      `use-project-config.test.tsx`'s `useReceiverExposure` suite and by
+      `receiver.test.ts`'s own guard coverage; what this test actually pins is
+      the header's wiring — that the cluster renders nothing for the chip when
+      there is no config snapshot to read at all.
+    */
+    it('is absent from the chips cluster when there is no config snapshot', () => {
       render(<Header />);
 
       const chips = screen.getByTestId('header-chips');
       expect(chips).not.toHaveTextContent('172.17.0.1');
     });
 
-    it('joins the cluster, after DemoChip and ModelChip, once the running bind widens', async () => {
+    it('joins the cluster, after DemoChip, once the running bind widens', async () => {
       // A real snapshot, because `useReceiverExposure` gates its `readAppInfo`
       // fetch on one resolving — see its own doc comment for why, and
       // `use-project-config.test.tsx` for the "no snapshot" case this gate

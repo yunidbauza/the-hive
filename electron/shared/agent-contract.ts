@@ -450,6 +450,21 @@ export interface AgentSummary {
   parallel?: number;
   /** What is in flight right now (HIVE-128). Set by `agents:list`; absent is none. */
   live?: LiveRunSummary[];
+  /**
+   * `container` from the definition, verbatim (HIVE-134 follow-up).
+   *
+   * A *definition* fact like {@link AgentSummary.rotateAfter} and
+   * {@link AgentSummary.dailyUsd} beside it, and absent for the same reason
+   * they can be: a host agent, or one whose definition never parsed, has
+   * none. `ipc/index.ts` reads `container?.hostAlias` off this to keep the
+   * receiver's `Host` guard's alias set current with every agent that
+   * diverges from the global one — see `receiverHostAliases` in
+   * `config/runtime.ts`. `agentsDirectoryFor`'s peer projection does not
+   * whitelist this field, so it still never reaches another agent's context;
+   * this only ever travels to this app's own main process and, over
+   * `agents:list`, to this app's own renderer.
+   */
+  container?: AgentContainer;
 }
 
 export interface AgentProblem {

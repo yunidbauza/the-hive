@@ -255,14 +255,22 @@ export interface ReceiverOptions {
    */
   allowedOrigins?: readonly string[];
   /**
-   * The hostname a container reaches this machine by (HIVE-134).
+   * Every hostname a container may reach this machine by (HIVE-134; widened
+   * from a single alias in the follow-up review).
    *
-   * A getter, because this one genuinely can change under a config reload — it
-   * is the same value `ipc/index.ts` already passes to `createHookRuntime`. The
-   * guard needs it because a containerised session's `Host` header carries the
-   * alias, so a Host allowlist without it would 403 every HIVE-133 session.
+   * A getter, because this can change under a config reload or a folder
+   * change — it is the same set `ipc/index.ts` already keeps live for
+   * `knownAgents`. **A single alias is not enough.** This app has supported
+   * a project's `container.hostAlias` and an agent's `container.host_alias`
+   * diverging from the global one since HIVE-133/137, and each one that does
+   * writes its own generated hook/status/MCP files addressing this receiver
+   * by *that* alias — so the `Host` header a session actually sends can be
+   * any of them, not only the global setting. A guard that checked one alias
+   * 403'd every session running under a diverged one, silently, because the
+   * generated hooks are `curl -s -o /dev/null 2>/dev/null`. `guard()` tests
+   * membership in the whole set for exactly that reason.
    */
-  hostAlias?: () => string;
+  hostAliases?: () => ReadonlySet<string>;
 }
 
 export interface Receiver {
@@ -528,7 +536,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     port = 0,
     host = '127.0.0.1',
     allowedOrigins = [],
-    hostAlias = () => DEFAULT_RECEIVER.hostAlias,
+    hostAliases = () => new Set([DEFAULT_RECEIVER.hostAlias]),
   } = options;
 
   /**
@@ -779,12 +787,17 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     if (isLoopbackHost(bare)) return null;
     if (bare === host.toLowerCase()) return null;
     /*
-      And the alias, or every containerised session 403s: a container addresses
-      this app by `hostAlias`, so that is the `Host` it sends. Read through the
-      getter rather than captured, because the alias can change under a config
-      reload while this socket stays up.
+      And every alias, or a diverged session 403s: a containerised session
+      addresses this app by whichever alias *it* was generated with — the
+      global one, its project's, or its agent's — so the guard has to admit
+      all three, not just the global setting (see `hostAliases`'s own doc
+      comment above for why one was never enough). Read through the getter
+      rather than captured, because the set can change under a config reload
+      or a folder change while this socket stays up.
     */
-    if (bare === hostAlias().toLowerCase()) return null;
+    for (const alias of hostAliases()) {
+      if (bare === alias.toLowerCase()) return null;
+    }
 
     return 403;
   }
@@ -1757,9 +1770,11 @@ export function createReceiver(options: ReceiverOptions): Receiver {
           Eight paths now, and still nothing resembling a general-purpose
           server: the set is closed, every one of them is POST-only, each has
           its own body cap sized to the document it expects, and each
-          authenticates through the one `reject` that also decides whether the
-          request was addressed to this app at all. A request that is none of
-          them is 404 without reading a byte.
+          authenticates on POST through the one `reject` that also decides
+          whether the request was addressed to this app at all — a `GET` never
+          reaches it, or any handler: `/mcp`'s is 405 straight out of the
+          dispatcher, below, before `reject` is ever called. A request that is
+          none of these paths at all is 404 without reading a byte.
         */
         const routes: readonly Route[] = [
           { path: HOOK_PATH, cap: HOOK_MAX_BODY_BYTES, handle },

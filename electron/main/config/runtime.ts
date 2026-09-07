@@ -98,6 +98,57 @@ export function effectiveRuntime(
 }
 
 /**
+ * Every `Host` header the receiver's guard must admit, given one config
+ * snapshot (HIVE-134 follow-up).
+ *
+ * The guard used to check the request's `Host` against exactly one alias —
+ * `snapshot.receiver.hostAlias` — which is correct only for a fleet where no
+ * project and no agent ever diverges from the global setting. Both can: a
+ * project's `container.hostAlias` and an agent's `container.host_alias` each
+ * override the global value (see `AgentContainer.hostAlias` and
+ * `ContainerConfig.hostAlias`), and a containerised session addresses
+ * this app by whichever alias it actually got, not by the global one. A guard
+ * that only knew the global alias 403'd every session running under a
+ * diverged one — silently, because the generated hooks are
+ * `curl -s -o /dev/null 2>/dev/null`.
+ *
+ * So this resolves the **whole set** the guard must accept:
+ *
+ * - the global alias, always;
+ * - every project's *effective* alias, through {@link effectiveRuntime} —
+ *   the same resolution the spawn path uses, so this reports the alias a
+ *   session actually launches with rather than the raw (possibly absent)
+ *   field on the project's own config;
+ * - every agent's alias, via `agentAliases` — supplied by the caller rather
+ *   than read here, because listing agent definitions is asynchronous file
+ *   I/O (`AgentRegistry.list()`) and this module works only against an
+ *   already-loaded `ConfigSnapshot`. `ipc/index.ts` keeps that half live the
+ *   same way it already keeps `knownAgents` live: read off disk once per
+ *   folder change, not once per request.
+ *
+ * Pure and synchronous on purpose — the receiver's guard runs on every
+ * request and cannot await anything, so whatever composes this has to be
+ * cheap enough to call fresh each time. Iterating `snapshot.projects` and
+ * resolving each through `effectiveRuntime` is in-memory work against data
+ * already held in the snapshot; nothing here touches the filesystem.
+ */
+export function receiverHostAliases(
+  snapshot: ConfigSnapshot,
+  agentAliases: Iterable<string> = [],
+): ReadonlySet<string> {
+  const aliases = new Set<string>([snapshot.receiver.hostAlias]);
+
+  for (const project of snapshot.projects) {
+    const alias = effectiveRuntime(snapshot, project).container?.hostAlias;
+    if (alias !== undefined) aliases.add(alias);
+  }
+
+  for (const alias of agentAliases) aliases.add(alias);
+
+  return aliases;
+}
+
+/**
  * Explain where a command was looked for, and what was found (story 104).
  *
  * The epic asks for "a PATH diagnostic that says why `claude` was not found".

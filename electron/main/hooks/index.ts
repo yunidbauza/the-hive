@@ -98,6 +98,25 @@ export interface HookRuntimeOptions {
    */
   hostAlias?: () => string;
   /**
+   * Every hostname the receiver's `Host` guard must admit, or the default
+   * single-alias set when omitted (HIVE-134 follow-up).
+   *
+   * Deliberately **not** {@link HookRuntimeOptions.hostAlias} widened in
+   * place: that field is *the global alias*, used above to decide what a
+   * generated file's URLs are addressed to, and it stays singular because a
+   * project's or an agent's own generated set already carries its own
+   * diverged alias — there is nothing plural for file generation to do with
+   * a set. The guard's question is different: "does this `Host` header name
+   * *any* alias this app could have handed out", which is exactly what a set
+   * answers and a single string cannot. `ipc/index.ts` composes it with
+   * `receiverHostAliases(getConfig(), agentHostAliases)` from
+   * `config/runtime.ts`, folding in every project's effective alias and
+   * every agent's, on top of the global one this option's default falls back
+   * to. Passed straight through to `createReceiver`'s own `hostAliases` — see
+   * its doc comment on `ReceiverOptions` for why one alias was never enough.
+   */
+  hostAliases?: () => ReadonlySet<string>;
+  /**
    * A project's resolved container block, or `undefined` for a host project
    * (HIVE-133).
    *
@@ -117,7 +136,7 @@ export interface HookRuntimeOptions {
    * Where the receiver listens, from `receiver.bind` (HIVE-134).
    *
    * A value rather than a getter, unlike {@link HookRuntimeOptions.hostAlias}
-   * beside it — see {@link ReceiverOptions.host} for why the two differ. Partial
+   * beside it — see `ReceiverOptions.host` for why the two differ. Partial
    * so a caller may name one field; the rest come from {@link DEFAULT_BIND}.
    */
   bind?: Partial<ReceiverBindConfig>;
@@ -310,6 +329,13 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
     port,
     sessionMetrics = () => true,
     hostAlias = () => DEFAULT_RECEIVER.hostAlias,
+    // Falls back to a set of exactly the global alias, through the same
+    // getter file generation already reads — not `DEFAULT_RECEIVER.hostAlias`
+    // directly, so a caller that supplies `hostAlias` but not `hostAliases`
+    // (every test in this file predating this option, and any future one
+    // that only cares about the single-alias case) still gets a guard that
+    // admits the alias it actually configured.
+    hostAliases = () => new Set([hostAlias()]),
     containerFor,
     ledger,
     bind,
@@ -413,7 +439,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
         port: port ?? resolvedBind.port,
         host: resolvedBind.host,
         allowedOrigins: resolvedBind.allowedOrigins,
-        hostAlias,
+        hostAliases,
       });
 
       const url = await created.start();

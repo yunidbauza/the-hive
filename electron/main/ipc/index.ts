@@ -173,7 +173,7 @@ import {
 } from '../config';
 import { diagnoseEnv } from '../config/env-diagnostic';
 import { loginEnvStatus } from '../config/login-env';
-import { diagnoseCommand, effectiveRuntime } from '../config/runtime';
+import { diagnoseCommand, effectiveRuntime, receiverHostAliases } from '../config/runtime';
 import { isSafeExternalUrl } from '../external-links';
 import {
   createFsWatchLayer,
@@ -439,6 +439,39 @@ const agentSchedules = new Map<
  */
 const agentParallel = new Map<string, number>();
 /**
+ * Every valid agent's own `container.host_alias`, for the receiver's `Host`
+ * guard (HIVE-134 follow-up).
+ *
+ * A cache beside the three above and filled in the same pass, for the same
+ * reason: the guard is consulted **synchronously**, on every request the
+ * receiver serves, and `agents.list()` is a promise that re-reads and
+ * re-parses every definition on disk. An agent with no `container.host_alias`
+ * of its own contributes nothing here — it inherits the global alias, which
+ * `hostAliases` below always includes on its own.
+ *
+ * Absent from `AgentSummary` until this cache needed it, hence
+ * `AgentSummary.container` (HIVE-134 follow-up): a definition fact like
+ * `rotateAfter` and `dailyUsd` beside it, carried from `registry.list()` the
+ * same way they are.
+ */
+const agentHostAliases = new Set<string>();
+/**
+ * Every hostname the receiver's guard must admit as a `Host` header
+ * (HIVE-134 follow-up), read fresh on every call.
+ *
+ * A getter passed straight to `createHookRuntime`, exactly as
+ * `hostAlias: () => getConfig().receiver.hostAlias` beside it always has
+ * been — a config reload has to be picked up while the socket stays open,
+ * which is the whole reason that one was a getter rather than a captured
+ * value. `receiverHostAliases` itself is pure and cheap (it only iterates
+ * `getConfig().projects`, already in memory), so there is nothing to memoise
+ * on this side; the one genuinely expensive input — every agent's alias — is
+ * `agentHostAliases` above, already kept live off the folder watcher rather
+ * than reread here.
+ */
+const hostAliases = (): ReadonlySet<string> =>
+  receiverHostAliases(getConfig(), agentHostAliases);
+/**
  * Whether {@link agentSchedules} has been filled at least once.
  *
  * An empty map means two very different things, and the scheduler must not
@@ -480,6 +513,7 @@ function refreshKnownAgents(): void {
       ledgerAgents.clear();
       agentSchedules.clear();
       agentParallel.clear();
+      agentHostAliases.clear();
 
       for (const agent of snapshot.agents) {
         if (agent.invalid !== undefined) continue;
@@ -502,6 +536,13 @@ function refreshKnownAgents(): void {
           agent.name,
           agent.parallel ?? AGENT_LIMIT_DEFAULTS.parallel,
         );
+        // The receiver's `Host` guard (HIVE-134 follow-up), asked just as
+        // synchronously as the two above. Absent means this agent inherits
+        // the global alias, which `hostAliases` always admits on its own —
+        // nothing to add here for the common case.
+        if (agent.container?.hostAlias !== undefined) {
+          agentHostAliases.add(agent.container.hostAlias);
+        }
       }
 
       for (const name of runs?.live() ?? []) knownAgents.add(name);
@@ -1346,6 +1387,9 @@ export function registerIpcHandlers(): void {
     sessionMetrics: () => getConfig().sessionMetrics,
     // The same, for the hostname a container reaches this machine by (HIVE-132).
     hostAlias: () => getConfig().receiver.hostAlias,
+    // Every hostname the guard admits, not just the global one — see
+    // `hostAliases`'s own doc comment above for why (HIVE-134 follow-up).
+    hostAliases,
     /*
       Read once, not per call like `hostAlias` above it. A socket that is already
       listening cannot be moved, so a getter here would imply a rebind that never

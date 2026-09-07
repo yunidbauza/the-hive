@@ -109,7 +109,10 @@ const ROUTES: {
     refused: 204,
   },
   {
-    name: '/metrics',
+    // `METRICS_PATH` is `/statusline` (`metrics-contract.ts`) — the name here
+    // is a label for `it.each` titles, not a URL, so it should say what the
+    // route is actually reached at rather than the field it was named after.
+    name: '/statusline',
     url: (r) => r.metricsUrl as string,
     body: VALID_METRICS,
     ok: 204,
@@ -3611,6 +3614,12 @@ describe('the Origin and Host guard', () => {
 
   it.each(ROUTES)('admits a request that carries no Origin, on $name', async (route) => {
     expect(await send(route)).toBe(route.ok);
+    // `/hook`'s `ok` is 204 — the same 204 a refusal on that route also
+    // returns (HIVE-138) — so the status alone cannot tell an admit from a
+    // silent refuse there. Its sibling test above (the present-Origin arm)
+    // already proves refusal by this side effect; an admit needs the same
+    // proof, or inverting the guard on `/hook` would leave this arm green.
+    if (route.name === '/hook') expect(events).not.toEqual([]);
   });
 
   it('refuses the opaque origin', async () => {
@@ -3663,6 +3672,100 @@ describe('the Origin and Host guard', () => {
 
     // 403 from the guard, not the 404 an unknown-but-well-addressed session gets.
     expect(status).toBe(403);
+  });
+});
+
+/**
+ * A diverged host alias (HIVE-134 follow-up).
+ *
+ * The shared receiver above proves `guard()` admits *one* alias — the default
+ * `host.docker.internal` — which is exactly the coverage gap the follow-up
+ * review found: a project's `container.hostAlias` or an agent's
+ * `container.host_alias` can diverge from the global setting, and a session
+ * running under a diverged alias sends *that* alias as `Host`, not the
+ * global one. `ipc/index.ts` composes the full set through
+ * `receiverHostAliases` in `config/runtime.ts`; this proves the guard's own
+ * half of the fix — that it checks membership in whatever set `hostAliases()`
+ * returns, not equality against a single string.
+ *
+ * Load-bearing: reverting `guard()`'s membership loop back to
+ * `bare === hostAliases().toLowerCase()` (a single value, the shape before
+ * this fix) makes `TypeError`s aside, `bridge` no longer match and the first
+ * test below fails, while every other guard test in this file — all of which
+ * exercise a one-member set — stays green. That is precisely the blind spot
+ * this suite closes.
+ *
+ * Its own receiver, for the same reason `an allowlisted origin` below has
+ * one: the alias set is read through a getter but never reconfigured on a
+ * live receiver, so a set with more than one member needs a fresh instance.
+ */
+describe('a diverged host alias (HIVE-134 follow-up)', () => {
+  let diverged: Receiver;
+
+  beforeEach(async () => {
+    diverged = createReceiver({
+      onCleared: () => {},
+      onEvent: () => {},
+      onTicketIntent: () => {},
+      onPromptName: () => {},
+      onDone: () => {},
+      onReady: () => {},
+      onMetrics: () => {},
+      knowsSession: () => true,
+      ...noAgents,
+      ...noLedger,
+      // The shape `ipc/index.ts` composes in production: the global alias
+      // (`gateway`) plus one project's diverged alias (`bridge`).
+      hostAliases: () => new Set(['gateway', 'bridge']),
+    });
+    await diverged.start();
+  });
+
+  afterEach(async () => {
+    await diverged.stop();
+  });
+
+  const send = (host: string): Promise<number> => {
+    const target = new URL(diverged.readyUrl as string);
+    return new Promise((resolve, reject) => {
+      const req = httpRequest(
+        {
+          hostname: target.hostname,
+          port: target.port,
+          path: target.pathname,
+          method: 'POST',
+          headers: {
+            [HOOK_HEADER_TOKEN]: diverged.tokenFor('sess-01'),
+            [HOOK_HEADER_SESSION]: 'sess-01',
+            host,
+          },
+        },
+        (response) => {
+          response.resume();
+          response.on('end', () => resolve(response.statusCode ?? 0));
+        },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+  };
+
+  it('admits a Host naming the project alias, not just the global one', async () => {
+    const port = new URL(diverged.readyUrl as string).port;
+
+    expect(await send(`bridge:${port}`)).toBe(204);
+  });
+
+  it('still admits the global alias alongside it', async () => {
+    const port = new URL(diverged.readyUrl as string).port;
+
+    expect(await send(`gateway:${port}`)).toBe(204);
+  });
+
+  it('still refuses a Host naming neither', async () => {
+    const port = new URL(diverged.readyUrl as string).port;
+
+    expect(await send(`evil.test:${port}`)).toBe(403);
   });
 });
 

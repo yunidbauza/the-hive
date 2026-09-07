@@ -393,6 +393,10 @@ export function createAgentRegistry({
             parallel: def.limits.parallel,
             // The registry has never seen a run; `mergeRunState` fills this.
             runs: [],
+            // HIVE-134 follow-up: `ipc/index.ts` reads `container?.hostAlias`
+            // off every valid definition to keep the receiver's `Host` guard
+            // admitting whatever alias this agent actually runs under.
+            ...(def.container === undefined ? {} : { container: def.container }),
           });
           continue;
         }

@@ -1281,6 +1281,21 @@ export interface AppInfo {
    * how main now captures it the instant its bind resolves, rather than behind
    * anything else still in flight.
    *
+   * **That guarantee is about this value inside main, not about when a
+   * reader on the other side of the bridge asks for it.** `hooks.start()` is
+   * fire-and-forget, so nothing here promises a renderer's read lands *after*
+   * the bind has resolved — for a hostname bind (`isHostAlias` accepts one,
+   * and Settings lets a user configure one) `listen()` waits on a DNS lookup
+   * first, and a slow resolver or an mDNS `.local` name can outlast window
+   * creation, renderer boot and the read itself. A read that lands before
+   * resolution is not wrong, exactly as the paragraph above says — it is
+   * genuinely `null` at that instant — but a **one-shot** reader that never
+   * asks again has no way to learn the bind then finished, and would report
+   * "not exposed" for a socket that plainly is. `useReceiverExposure` is the
+   * one consumer and copes with this itself, with a single bounded retry
+   * when its first read comes back `null`; see its own doc comment for why
+   * once is enough.
+   *
    * Deliberately **not** `receiver.bind.host` off the config snapshot, which
    * says what will be bound at the *next* launch, not what is bound *now* —
    * the two can disagree for an entire running session (toggle the settings
