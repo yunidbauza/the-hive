@@ -24,7 +24,11 @@ import {
   testSlackSocket,
   type SlackWrite,
 } from '@lib/slack';
-import { DEFAULT_SLACK, type SlackConfig } from '@shared/config-contract';
+import {
+  DEFAULT_SLACK,
+  type SetSlackRequest,
+  type SlackConfig,
+} from '@shared/config-contract';
 import { grantsSlackTools, SLACK_CLIENT_ID, SLACK_MCP_URL } from '@shared/slack-contract';
 import type {
   SlackSocketStatus,
@@ -463,7 +467,16 @@ interface RealTimeFieldsProps {
   socket: SlackSocketStatus;
   testing: boolean;
   testResult: SlackSocketTestResult | null;
-  onChange: (next: SlackConfig) => void;
+  /**
+   * One field at a time, never the whole block (HIVE-124, fix-round-3).
+   *
+   * `setSlack` merges per field on disk, and sending both is a race that eats
+   * the very draft this pane works hardest to keep. Clicking the switch blurs
+   * the allow-list first, so the blur's commit and the switch's write are in
+   * flight together — and a switch that also carried `commanders` carried the
+   * *stale* ones, landing second and overwriting what had just been typed.
+   */
+  onChange: (patch: SetSlackRequest) => void;
   onSetAppToken: (value: string) => void;
   onSetBotToken: (value: string) => void;
   onClearTokens: () => void;
@@ -529,7 +542,7 @@ function RealTimeFields({
       .split(/[\s,]+/)
       .map((id) => id.trim())
       .filter((id) => id !== '');
-    onChange({ ...slack, commanders: next });
+    onChange({ commanders: next });
   };
 
   const commitAppToken = () => {
@@ -662,7 +675,8 @@ interface AdvancedFieldsProps {
    * showing the off-state paragraph or the on-state fields.
    */
   configError: string | null;
-  onChange: (next: SlackConfig) => void;
+  /** One field at a time — see {@link RealTimeFieldsProps.onChange}. */
+  onChange: (patch: SetSlackRequest) => void;
   onSetAppToken: (value: string) => void;
   onSetBotToken: (value: string) => void;
   onClearTokens: () => void;
@@ -722,7 +736,7 @@ function AdvancedFields({
         <Switch
           label="Socket Mode"
           checked={slack.socketMode}
-          onCheckedChange={(next) => onChange({ ...slack, socketMode: next })}
+          onCheckedChange={(next) => onChange({ socketMode: next })}
         />
 
         {configError !== null && (
@@ -897,11 +911,8 @@ export function SlackGroup({ agents }: SlackGroupProps) {
     setConfigError(result.message);
   };
 
-  const handleSlackChange = (next: SlackConfig) => {
-    void setSlackConfig({
-      socketMode: next.socketMode,
-      commanders: next.commanders,
-    }).then((result) => {
+  const handleSlackChange = (patch: SetSlackRequest) => {
+    void setSlackConfig(patch).then((result) => {
       applyWrite(result, installProjectConfig);
     });
   };

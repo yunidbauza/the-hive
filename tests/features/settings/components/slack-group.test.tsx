@@ -617,8 +617,14 @@ describe('real-time events (HIVE-124)', () => {
     await userEvent.type(field, 'U08BA712189 U0123ABCD');
     await userEvent.tab();
 
+    /*
+      The commanders alone. `setSlack` merges per field on disk, and carrying
+      `socketMode` here is a race that eats the draft: clicking the switch blurs
+      this field first, so the blur's write and the switch's are in flight
+      together — and whichever carries the *other* field carries a stale copy of
+      it (fix-round-3).
+    */
     expect(setSlackConfig).toHaveBeenCalledWith({
-      socketMode: true,
       commanders: ['U08BA712189', 'U0123ABCD'],
     });
   });
