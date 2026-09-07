@@ -113,12 +113,22 @@ mac:
   # manually downloaded copy.
   darkModeSupport: true
 
-# The fallback signature, for builds made without a Developer ID.
+# Two jobs, because electron-builder takes one hook path — see
+# `scripts/after-pack.mjs` for the order and why it matters.
 #
-# It **skips itself** when a real identity is available, so this is now the
-# unsigned-machine path only — see `scripts/adhoc-sign.mjs` for how it decides
-# and why it must not run in front of a certificate build.
-afterPack: scripts/adhoc-sign.mjs
+# **The gate**, `scripts/verify-packaged-modules.mjs`: walk the module graph
+# inside the packed `app.asar` and fail the build if anything the app will
+# require at runtime is not in there. v0.10.0 shipped without `undici`, which
+# `@slack/socket-mode` declares as a *peer* dependency — an edge pnpm satisfies
+# in the repo and electron-builder's collector never follows — and every copy
+# died on `Cannot find module 'undici'` before drawing a window. This runs
+# before the dmg, the zip and the upload exist.
+#
+# **The fallback signature**, `scripts/adhoc-sign.mjs`, for builds made without
+# a Developer ID. It **skips itself** when a real identity is available, so it
+# is the unsigned-machine path only — that file records how it decides and why
+# it must not run in front of a certificate build.
+afterPack: scripts/after-pack.mjs
 
 dmg:
   # Drag-to-Applications, which is what everyone expects and what avoids people

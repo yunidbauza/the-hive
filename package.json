@@ -31,6 +31,7 @@
     "desktop:publish": "pnpm run desktop:build && electron-builder --mac --arm64 --publish always",
     "lint": "eslint .",
     "verify:boundaries": "node scripts/verify-boundaries.mjs",
+    "verify:bundle": "node scripts/verify-packaged-modules.mjs",
     "type-check": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.electron.json",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -92,9 +93,11 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "tailwind-merge": "^3.6.0",
+    "undici": "^7.29.0",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@electron/asar": "^4.3.0",
     "@electron/rebuild": "4.2.0",
     "@eslint/js": "^9.39.5",
     "@playwright/test": "^1.62.1",

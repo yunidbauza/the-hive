@@ -55,4 +55,28 @@ describe('package.json', () => {
   it('points main at the built main process', () => {
     expect(manifest.main).toBe('out/main/index.js');
   });
+
+  it('declares undici, which @slack/socket-mode needs and only declares as a peer', () => {
+    // v0.10.0's launch crash. pnpm auto-installs peers, so every dev command
+    // resolved it; electron-builder walks `dependencies` and never packed it.
+    // `tests/scripts/module-closure.test.ts` fails on any future peer like it,
+    // and this pins the one that already cost a release.
+    expect(manifest.dependencies).toHaveProperty('undici');
+  });
+});
+
+/**
+ * The packaging gate, asserted where it is configured.
+ *
+ * electron-builder takes one `afterPack` path, so the module check and the
+ * ad-hoc signature are composed in `scripts/after-pack.mjs`. Pointing this
+ * back at `adhoc-sign.mjs` would still build, still sign, and silently give up
+ * the only check that reads the shipped `app.asar`.
+ */
+describe('electron-builder.yml', () => {
+  const config = readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8');
+
+  it('runs the composed afterPack hook, not the signer alone', () => {
+    expect(config).toMatch(/^afterPack: scripts\/after-pack\.mjs$/m);
+  });
 });

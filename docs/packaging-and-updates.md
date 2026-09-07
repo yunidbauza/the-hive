@@ -126,6 +126,57 @@ Unpacking also preserves the executable bit, which matters because the published
 is why CI's build step comes after a plain `pnpm install` rather than an
 `--ignore-scripts` one.
 
+## The modules that must be in the bundle, and one that was not
+
+v0.10.0 shipped an app that died before it drew a window:
+
+```
+Uncaught Exception:
+Error: Cannot find module 'undici'
+Require stack:
+- /Applications/The Hive.app/Contents/Resources/app.asar/
+  node_modules/@slack/socket-mode/dist/src/SocketModeClient.js
+```
+
+`@slack/socket-mode@3` needs `undici` and declares it as a **peer** dependency.
+pnpm auto-installs peers, so `pnpm dev`, `pnpm desktop:dev`, `pnpm test` and
+every live suite resolved it and nothing looked wrong anywhere. electron-builder
+collects production modules by walking `dependencies` and `optionalDependencies`
+— never `peerDependencies` — so it never saw `undici`, never packed it, and the
+first thing `electron/main/integrations/slack/clients.ts` imports at startup was
+a module that was not there.
+
+A peer dependency is the one edge in the graph that a dev tree satisfies and a
+packaged tree does not. **The fix is to declare it**: anything a shipped package
+requires goes in this project's own `dependencies`, whoever else calls it a
+peer. Two checks now make that non-optional.
+
+| Check | When | What it reads |
+| --- | --- | --- |
+| `tests/scripts/module-closure.test.ts` | every `pnpm test`, so also CI's Verify step | the repo's `node_modules`, walked the way the packager walks it |
+| `scripts/verify-packaged-modules.mjs` | electron-builder `afterPack` | the packed `app.asar` itself |
+
+Both walk `dependencies` from the root manifest, which is the set that lands in
+the bundle, and then ask every package in that set whether its **required** peers
+are *in* the set. Checking resolvability alone would have passed in the repo —
+pnpm put `undici` right next to `@slack/socket-mode` — which is exactly how this
+reached a release. Peers marked `peerDependenciesMeta.optional` are ignored, and
+`optionalDependencies` are followed but never reported missing.
+
+The second check exists because the first cannot see the gap between *declared*
+and *shipped*: `files`, `asarUnpack` and electron-builder's own pruning all sit
+in between. It reads the archive the dmg will carry, it also confirms the file
+named by `main` is in there, and it runs in `afterPack` — before the dmg, the
+zip and the upload exist. `scripts/after-pack.mjs` composes it in front of the
+ad-hoc signer, because there is no point signing a bundle that cannot launch.
+
+Run it against any build, or against an installed copy, without rebuilding:
+
+```
+pnpm verify:bundle                          # dist/mac-arm64/The Hive.app
+pnpm verify:bundle "/Applications/The Hive.app"
+```
+
 ## The app's name
 
 The screenshot that started this: the menu bar read **Electron**, and the
