@@ -6,6 +6,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
+import { WebClient } from '@slack/web-api';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
@@ -27,7 +28,13 @@ import { createWakeCommand } from '../../electron/main/agents/wake-command';
 import { createReceiver, type Receiver } from '../../electron/main/hooks/receiver';
 import { writeAgentSettings } from '../../electron/main/hooks/settings';
 import { runAsync } from '../../electron/main/integrations/github/run';
+import { createSlackBridge, type SlackBridge } from '../../electron/main/integrations/slack/bridge';
+import { openSlackSocket, openSlackWeb } from '../../electron/main/integrations/slack/clients';
 import { readSlackStatus } from '../../electron/main/integrations/slack/status';
+import {
+  readSubscriptions,
+  type SlackSubscriptions,
+} from '../../electron/main/integrations/slack/subscriptions';
 import { createLedger, type Ledger } from '../../electron/main/ledger';
 import { agentMcpConfigFile } from '../../electron/main/mcp';
 import { hiveServerSpec, mcpConfig } from '../../electron/main/mcp/config';
@@ -46,7 +53,11 @@ import {
 } from '../../electron/shared/hook-contract';
 import { CONFIG_PATH_ENV } from '../../electron/shared/config-contract';
 import { LEDGER_DIR, OVERMIND } from '../../electron/shared/ledger-contract';
-import { SLACK_TOOL_GLOB, SLACK_TOOL_PREFIX } from '../../electron/shared/slack-contract';
+import {
+  SLACK_TOOL_GLOB,
+  SLACK_TOOL_PREFIX,
+  SLACK_TRIGGER,
+} from '../../electron/shared/slack-contract';
 
 /**
  * What only a real `claude` can prove about a wake (HIVE-115).
@@ -114,6 +125,23 @@ import { SLACK_TOOL_GLOB, SLACK_TOOL_PREFIX } from '../../electron/shared/slack-
  */
 
 const LIVE = process.env['HIVE_LIVE_AGENT_PROOF'] === '1';
+
+/**
+ * The two Socket Mode tokens (HIVE-124), read explicitly rather than folded
+ * into whatever this shell already carries.
+ *
+ * `tests/live` composes every child process's environment from
+ * `process.env` verbatim (see `env: () => process.env` below), so a name this
+ * scenario shared with anything the developer's own running Hive might set
+ * would let that ambient value answer the request instead of the fixture —
+ * exactly the failure mode `readSlackStatus` above is careful to avoid by
+ * shelling out to a real `claude mcp get slack` rather than trusting a cached
+ * answer. These two names are unique to this scenario for the same reason,
+ * and their absence is what lets it skip rather than fail on a machine that
+ * has never pasted a Slack app's tokens in.
+ */
+const SOCKET_APP_TOKEN = process.env['HIVE_LIVE_SOCKET_APP_TOKEN'];
+const SOCKET_BOT_TOKEN = process.env['HIVE_LIVE_SOCKET_BOT_TOKEN'];
 
 /**
  * How long teardown waits for a signalled child to actually be gone.
@@ -271,6 +299,19 @@ const FANOUT = 'probe-fanout';
 /** The agent that must remember, with no memory, why it asked (HIVE-135). */
 const INTENT = 'probe-intent';
 
+/**
+ * The agent a real Socket Mode `app_mention` wakes (HIVE-124).
+ *
+ * Its own definition rather than a `wake.on` variant of {@link NAME}, for the
+ * same reason {@link SLACK} gets one: this is the only probe here whose
+ * subscription a real bridge — not this suite's `runs.run` — has to decide to
+ * wake. The scenario it drives skips (never fails) when this machine has
+ * neither Socket Mode token, and otherwise opens a real socket, posts a real
+ * `chat.postMessage` mentioning the bot, and waits for the run that socket
+ * event alone is responsible for starting.
+ */
+const SOCKET = 'probe-socket';
+
 const AGENTS = [
   NAME,
   ASKER,
@@ -284,6 +325,7 @@ const AGENTS = [
   SPECIALIST,
   FANOUT,
   INTENT,
+  SOCKET,
 ];
 
 const AGENT_MD = `---
@@ -638,6 +680,29 @@ ledger_done and end your turn.
 `;
 
 /**
+ * `wake.on: [slack.app_mention]` and nothing else — no `every`, no `at`. The
+ * only way to reach this probe is the bridge's own `onWake`, which is the
+ * point: an interval or a `wake('manual', SOCKET)` would prove the scheduler,
+ * not the socket.
+ */
+const SOCKET_MD = `---
+name: ${SOCKET}
+description: Proves a real Socket Mode app_mention starts a real run.
+icon: Ghost
+model: haiku
+wake:
+  on: [slack.app_mention]
+tools: [Read, Glob, Grep, TodoWrite]
+limits:
+  turns: 8
+  rotate_after: 50
+---
+This is a conformance probe. Do not read files, search the disk, or run
+commands — there is nothing here to find. After your ledger inbox, reply with
+the single sentence "socket probe reporting in" and end your turn.
+`;
+
+/**
  * The fence probe, as a definition (HIVE-119).
  *
  * `tools:` pins exactly the read-only set every other probe in this file
@@ -788,6 +853,7 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       [SPECIALIST, SPECIALIST_MD],
       [FANOUT, FANOUT_MD],
       [INTENT, INTENT_MD],
+      [SOCKET, SOCKET_MD],
     ] as const) {
       await mkdir(join(agentsRoot(), name), { recursive: true });
       await writeFile(join(agentsRoot(), name, 'AGENT.md'), body, 'utf8');
@@ -2223,6 +2289,115 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       expect(toolSearchAt).toBeGreaterThanOrEqual(0);
       expect(slackToolAt).toBeGreaterThanOrEqual(0);
       expect(toolSearchAt).toBeLessThan(slackToolAt);
+    },
+    300_000,
+  );
+
+  /**
+   * The push half of the story (HIVE-124): everything above wakes an agent
+   * from inside this suite — `wake()`, a ledger `answer`, the scheduler's own
+   * captured tick. This is the one scenario where nothing in this file calls
+   * `runs.run` at all. A real `@slack/socket-mode` client, opened with a real
+   * `xapp-` token, is the only thing that starts this run — which is what a
+   * fake socket could never prove, the same reason {@link SLACK} above needs a
+   * real `claude mcp get slack` rather than a recorded transcript.
+   *
+   * Skips rather than fails without both tokens, exactly as {@link SLACK}
+   * skips without a signed-in Slack — the shape `ctx.skip(condition, note)`
+   * gives every live scenario in this file that depends on a credential this
+   * suite cannot fabricate. `HIVE_LIVE_SOCKET_APP_TOKEN` and
+   * `HIVE_LIVE_SOCKET_BOT_TOKEN` are read once, at module scope, under names
+   * this scenario owns outright — see the docblock beside them.
+   *
+   * The mention is posted by the bot itself, mentioning itself, because
+   * nothing in this app can discover a real person's Slack id to post as
+   * (`command.ts`'s own docblock explains why) — so the bot's own resolved
+   * user id is what this scenario puts on the commander allow-list. That is
+   * a fact about what this test can drive unattended, not a claim about who a
+   * real deployment should allow-list.
+   */
+  it(
+    'wakes a real run when a real Socket Mode app_mention arrives',
+    async (ctx) => {
+      ctx.skip(
+        SOCKET_APP_TOKEN === undefined || SOCKET_BOT_TOKEN === undefined,
+        'Socket Mode is not configured on this machine (`HIVE_LIVE_SOCKET_APP_TOKEN` ' +
+          'and `HIVE_LIVE_SOCKET_BOT_TOKEN` are not both set) — this scenario needs ' +
+          'a real Slack app with both tokens and cannot fake a socket.',
+      );
+
+      const appToken = SOCKET_APP_TOKEN ?? '';
+      const botToken = SOCKET_BOT_TOKEN ?? '';
+
+      const web = openSlackWeb(botToken);
+      const { user: botUserId } = await web.authTest();
+      const channel = (await web.listChannels())[0];
+
+      ctx.skip(
+        channel === undefined,
+        'the bot token has no channel to post into — invite the app to at ' +
+          'least one channel before running this scenario.',
+      );
+
+      const channelId = channel?.id ?? '';
+
+      const subs: SlackSubscriptions = readSubscriptions([
+        { name: SOCKET, paused: false, valid: true, on: ['slack.app_mention'] },
+      ]);
+
+      let onConnected: (() => void) | undefined;
+      const untilConnected = new Promise<void>((resolve) => {
+        onConnected = resolve;
+      });
+
+      const bridge: SlackBridge = createSlackBridge({
+        tokens: { read: () => ({ appToken, botToken }) },
+        config: () => ({ socketMode: true, commanders: [botUserId] }),
+        subscriptions: () => subs,
+        openSocket: openSlackSocket,
+        openWeb: openSlackWeb,
+        // The one line this scenario exists to exercise: a real socket event
+        // reaching the real scheduler by the real route, `Scheduler.onEvent`.
+        onWake: (name, entry, opts) => scheduler?.onEvent(name, entry, opts),
+        onStatus: (status) => {
+          if (status.kind === 'connected') onConnected?.();
+        },
+        now: () => Date.now(),
+      });
+
+      try {
+        bridge.sync();
+        await untilConnected;
+
+        const before = spawns.length;
+        const finished = settled(SOCKET);
+
+        await new WebClient(botToken).chat.postMessage({
+          channel: channelId,
+          text: `<@${botUserId}> socket conformance probe`,
+        });
+
+        await finished;
+
+        // A real process was spawned, and this suite never called `runs.run`
+        // for it — the socket event is the only thing that could have.
+        expect(spawns.length).toBeGreaterThan(before);
+
+        const state = await persisted(SOCKET);
+
+        expect(state.runs.at(-1)?.outcome).not.toBe('failed');
+
+        // `runs.ts` writes `run.started — ${trigger}`, so this is the ledger
+        // saying the run it just recorded came in over `SLACK_TRIGGER` and
+        // not, say, `manual` — the one word that tells the two routes apart.
+        const bodies = (await onDisk())
+          .filter((entry) => entry['from'] === SOCKET)
+          .map((entry) => String(entry['body']));
+
+        expect(bodies).toContain(`run.started — ${SLACK_TRIGGER}`);
+      } finally {
+        bridge.stop();
+      }
     },
     300_000,
   );

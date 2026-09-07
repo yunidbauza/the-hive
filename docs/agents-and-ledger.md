@@ -532,9 +532,11 @@ standing `pendingWake`.** It is deliberately not gated on `wake.on: [ledger]`.
 That gate decides whether an entry *wakes* the agent; it does not decide whether
 the entry is a change worth waking for on a schedule the author did set — the
 field's own help promises a question "waits unread until the next scheduled
-wake", and this is that wake arriving to read it. HIVE-124's pending-event
-counter is a third source when it lands; Slack search-on-schedule agents set
-`check: always` because their change lives outside the log entirely.
+wake", and this is that wake arriving to read it. HIVE-124 needed no third
+source: a Socket Mode event queues as a `PendingWakeEntry` like anything else,
+so the `pendingWake` clause above is already what `check: onchange` consults
+for it. Slack search-on-schedule agents still set `check: always`, because
+their change lives outside the log entirely.
 
 **A refused wake arms the next time and leaves the skip count alone**, because a
 refusal is a wake deferred rather than a quiet tick. That refusal is also what
@@ -1070,7 +1072,8 @@ event name and is not one.
 | --- | --- |
 | `ledger` | An `ask` or `answer` whose `to` is this agent wakes it, whoever wrote it: the overmind through the console's `ask` verb, a terminal session through `ledger_ask`, or another agent through the same tools. A broadcast (no `to`) wakes nobody — parties read those on their own schedule. |
 | `slack.mention` | *Search my mentions on the wakes this agent already takes.* Slack's real `app_mention` fires for mentions of a Slack **app**, never of a person, so there is no push to subscribe to. It adds no wakes of its own. |
-| `slack.channel:#name` | A genuine push trigger, requiring the optional Socket Mode bridge and the app being a member of that channel. Inert without the bridge. |
+| `slack.app_mention` | A genuine push trigger (HIVE-124): Slack's own `app_mention`, for mentions of the Hive's app. Requires Socket Mode on and both tokens stored. An `@hive <agent> <task>` from an allow-listed author is a task run instead; see below. |
+| `slack.channel:#name` | A genuine push trigger, requiring Socket Mode and the app being a member of that channel. Inert without it. |
 
 `ledger` is the one worth understanding before turning it off, because its
 *absence* is easy to misread. Off does not mean "nobody can reach this agent" —
