@@ -1347,6 +1347,13 @@ export function registerIpcHandlers(): void {
     // The same, for the hostname a container reaches this machine by (HIVE-132).
     hostAlias: () => getConfig().receiver.hostAlias,
     /*
+      Read once, not per call like `hostAlias` above it. A socket that is already
+      listening cannot be moved, so a getter here would imply a rebind that never
+      happens — Settings tells the user it takes effect at next launch, and this
+      is why (HIVE-134).
+    */
+    bind: getConfig().receiver.bind,
+    /*
       Resolved through the same `effectiveRuntime` the spawn path uses
       (HIVE-133), so `writeContainerSession` writes for exactly the project a
       session would actually launch under — a diagnostic-style helper that

@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { mkdtempSync, rmSync } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
+import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -8,7 +9,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentContainer } from '../../../../electron/shared/agent-contract';
 import type { ResolvedContainer } from '../../../../electron/shared/config-contract';
-import { HOOK_ENV_TOKEN } from '../../../../electron/shared/hook-contract';
+import {
+  HOOK_ENV_TOKEN,
+  HOOK_HEADER_SESSION,
+  HOOK_HEADER_TOKEN,
+  READY_PATH,
+} from '../../../../electron/shared/hook-contract';
 
 import { createLedger, type Ledger } from '../../../../electron/main/ledger';
 import {
@@ -591,5 +597,141 @@ describe('createHookRuntime — an agent in a container (HIVE-137)', () => {
     expect(grants).not.toBeNull();
     expect(typeof grants?.set).toBe('function');
     expect(typeof grants?.delete).toBe('function');
+  });
+});
+
+/**
+ * `HookRuntimeOptions.bind` reaching `createReceiver` (HIVE-134).
+ *
+ * Before this block, `bind` was not a field this runtime read at all —
+ * `receiver.bind` in the config file had a reader and a resolver (Tasks 1-3)
+ * and the guard downstream of it already knew what to do with a non-default
+ * `host`/`allowedOrigins`/`hostAlias` (Task 5-7), but nothing carried those
+ * values from `createHookRuntime`'s caller into the `createReceiver` call
+ * this runtime makes. A user who set `receiver.hostAlias` to the
+ * podman-flavoured `host.containers.internal` had every containerised
+ * session's hooks and MCP calls silently refused by the guard, because the
+ * receiver was still checking against the default `host.docker.internal`.
+ */
+describe('the receiver bind comes from config', () => {
+  let dir: string;
+  let ledger: Ledger;
+  let runtime: HookRuntime | undefined;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'hive-hooks-bind-'));
+    ledger = createLedger({ dir, knowsParty: () => true });
+  });
+
+  afterEach(async () => {
+    await runtime?.stop();
+    runtime = undefined;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('binds loopback with an OS-assigned port when no bind is configured', async () => {
+    runtime = createHookRuntime({ userDataPath: dir, sessionMetrics: () => false, ledger });
+    await runtime.start(noopHandlers);
+
+    // The free regression check Task 8's own brief calls out: the default
+    // must not move.
+    expect(runtime.envFor('sess-a')['HIVE_RECEIVER_URL']).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+  });
+
+  it('passes the configured host through to the receiver', async () => {
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      bind: { host: '0.0.0.0', port: 0, allowedOrigins: ['http://localhost:5173'] },
+      ledger,
+    });
+    await runtime.start(noopHandlers);
+
+    expect(runtime.envFor('sess-a')['HIVE_RECEIVER_URL']).toMatch(/^http:\/\/0\.0\.0\.0:\d+$/);
+  });
+
+  it('fills in the default port when `bind` names only a host', async () => {
+    // `bind` arrives partial (`Partial<ReceiverBindConfig>`). Naming only
+    // `host` must not lose the default port — the resolved value has to
+    // still be `DEFAULT_BIND.port`, i.e. an OS-assigned free port, not
+    // `undefined` reaching `createReceiver` and breaking its own default.
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      bind: { host: '127.0.0.1' },
+      ledger,
+    });
+    await runtime.start(noopHandlers);
+
+    expect(runtime.envFor('sess-a')['HIVE_RECEIVER_URL']).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+  });
+
+  /*
+    `port` on the options object is the test override that predates this
+    block. It has to keep winning, or every existing spec that pins a port
+    starts fighting a config default.
+  */
+  it('lets the explicit `port` option win over the configured one', async () => {
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      port: 0,
+      bind: { host: '127.0.0.1', port: 63999, allowedOrigins: [] },
+      ledger,
+    });
+    await runtime.start(noopHandlers);
+
+    const url = new URL(runtime.envFor('sess-a')['HIVE_RECEIVER_URL'] as string);
+
+    expect(url.port).not.toBe('63999');
+  });
+
+  /**
+   * The end-to-end proof that `hostAlias` reaches the guard, not just that
+   * the option is threaded through: without this, an existing suite could
+   * pass load-bearing coverage of a field that never actually reaches
+   * `createReceiver`'s `Host` allowlist.
+   *
+   * Raw `node:http`, never `fetch` — `fetch` silently replaces a spoofed
+   * `Host` header with the socket's own authority before the request leaves
+   * the process, which would make this test pass without exercising the
+   * guard at all (see `receiver.test.ts`'s `'the Origin and Host guard'`
+   * describe, which this mirrors).
+   */
+  it('admits a request whose Host names the configured alias (HIVE-134)', async () => {
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      hostAlias: () => 'host.containers.internal',
+      ledger,
+    });
+    await runtime.start(noopHandlers);
+
+    const env = runtime.envFor('sess-a');
+    const target = new URL(env['HIVE_RECEIVER_URL'] as string);
+
+    const status = await new Promise<number>((resolve, reject) => {
+      const req = httpRequest(
+        {
+          hostname: target.hostname,
+          port: target.port,
+          path: READY_PATH,
+          method: 'POST',
+          headers: {
+            [HOOK_HEADER_TOKEN]: env['HIVE_HOOK_TOKEN'],
+            [HOOK_HEADER_SESSION]: 'sess-a',
+            host: `host.containers.internal:${target.port}`,
+          },
+        },
+        (response) => {
+          response.resume();
+          response.on('end', () => resolve(response.statusCode ?? 0));
+        },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+
+    expect(status).toBe(204);
   });
 });

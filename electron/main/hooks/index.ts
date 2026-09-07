@@ -1,7 +1,12 @@
 import { join } from 'node:path';
 
 import type { AgentContainer, AgentsDirectory } from '@shared/agent-contract';
-import { DEFAULT_RECEIVER, type ResolvedContainer } from '@shared/config-contract';
+import {
+  DEFAULT_BIND,
+  DEFAULT_RECEIVER,
+  type ReceiverBindConfig,
+  type ResolvedContainer,
+} from '@shared/config-contract';
 import {
   HOOK_ENV_RECEIVER_URL,
   HOOK_ENV_SESSION,
@@ -108,6 +113,14 @@ export interface HookRuntimeOptions {
   containerFor?: (projectId: string | null) => ResolvedContainer | undefined;
   /** Overridable for tests; `0` asks the OS for a free port. */
   port?: number;
+  /**
+   * Where the receiver listens, from `receiver.bind` (HIVE-134).
+   *
+   * A value rather than a getter, unlike {@link HookRuntimeOptions.hostAlias}
+   * beside it — see {@link ReceiverOptions.host} for why the two differ. Partial
+   * so a caller may name one field; the rest come from {@link DEFAULT_BIND}.
+   */
+  bind?: Partial<ReceiverBindConfig>;
 }
 
 /**
@@ -274,6 +287,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
     hostAlias = () => DEFAULT_RECEIVER.hostAlias,
     containerFor,
     ledger,
+    bind,
   } = options;
 
   let receiver: Receiver | null = null;
@@ -321,6 +335,12 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       onDone,
       onReady,
     }) {
+      /*
+        Resolved here rather than trusted: `bind` arrives partial, and a caller
+        naming only `host` must not lose the default port.
+      */
+      const resolvedBind = { ...DEFAULT_BIND, ...bind };
+
       const created = createReceiver({
         onEvent,
         onAgentEvent,
@@ -347,7 +367,15 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
         onAgentsList,
         knowsSession,
         knowsAgent,
-        ...(port === undefined ? {} : { port }),
+        /*
+          `port` stays the test override it has always been and wins when given,
+          so a spec that pins a port is not fighting a config default. Config
+          supplies it otherwise.
+        */
+        port: port ?? resolvedBind.port,
+        host: resolvedBind.host,
+        allowedOrigins: resolvedBind.allowedOrigins,
+        hostAlias,
       });
 
       const url = await created.start();
