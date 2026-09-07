@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http';
 import { StringDecoder } from 'node:string_decoder';
 
 import { AGENTS_PATH, type AgentsDirectory } from '@shared/agent-contract';
+import { DEFAULT_RECEIVER, isLoopbackHost } from '@shared/config-contract';
 import { parseLedgerPostBody, parseLedgerReadQuery } from '@shared/guards';
 import {
   CLEAR_REASON,
@@ -246,6 +247,22 @@ export interface ReceiverOptions {
    * tells the user.
    */
   host?: string;
+  /**
+   * Origins the guard admits. Empty refuses every request that carries one.
+   *
+   * Also a plain value: it is read on the same config pass as {@link host} and
+   * the two describe one decision.
+   */
+  allowedOrigins?: readonly string[];
+  /**
+   * The hostname a container reaches this machine by (HIVE-134).
+   *
+   * A getter, because this one genuinely can change under a config reload — it
+   * is the same value `ipc/index.ts` already passes to `createHookRuntime`. The
+   * guard needs it because a containerised session's `Host` header carries the
+   * alias, so a Host allowlist without it would 403 every HIVE-133 session.
+   */
+  hostAlias?: () => string;
 }
 
 export interface Receiver {
@@ -482,6 +499,8 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     onAgentEvent,
     port = 0,
     host = '127.0.0.1',
+    allowedOrigins = [],
+    hostAlias = () => DEFAULT_RECEIVER.hostAlias,
   } = options;
 
   /**
@@ -662,6 +681,85 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   const SESSION_ID_IN_PREFIX = /"session_id"\s*:\s*"([0-9a-fA-F-]+)"/;
 
   /**
+   * Where the request claims it was going, checked before who it claims to be.
+   *
+   * ## Why this is not conditioned on the bind
+   *
+   * The obvious shape is to run this only when `receiver.bind` is widened, since
+   * that is the exposure it answers. That shape was rejected: this app ships
+   * macOS only, where no user sets that config, so the guard would be code that
+   * never runs on the platform that ships — correct in a test and inert in the
+   * world. It also answers something real at the loopback bind. DNS rebinding
+   * points a hostile page's own hostname at `127.0.0.1`, and the browser then
+   * treats this socket as same-origin and will read the responses. The token
+   * still stops the page doing anything, so this is depth rather than a hole
+   * being closed — but Origin and Host are the standard, one-line-each defence,
+   * and there is no argument for owning the socket and skipping them.
+   *
+   * ## Why in `reject`, and before identity
+   *
+   * `reject` is the one function every handler already calls, which is what
+   * makes "every route" true by construction rather than by eight people
+   * remembering. Running before the token and session checks means a hostile
+   * page cannot read which sessions exist out of the difference between 403 and
+   * 404.
+   *
+   * `handleMcp` keeps a stricter Origin rule of its own on top of this one; see
+   * the comment there.
+   */
+  function guard(
+    headers: Record<string, string | string[] | undefined>,
+  ): number | null {
+    /*
+      Absent is the ordinary case and the only one a legitimate caller produces:
+      `claude`, the status line's `curl`, and the MCP host all send no `Origin`.
+      Present-and-listed exists for a local dev server someone points at this
+      app on purpose; with the default empty list, present is always a refusal —
+      which is exactly the rule `POST /mcp` has enforced alone since HIVE-130.
+    */
+    const origin = headers['origin'];
+    if (origin !== undefined) {
+      if (typeof origin !== 'string' || !allowedOrigins.includes(origin)) return 403;
+    }
+
+    /*
+      `Host` is `host[:port]`. Only the host part is compared: the port is this
+      receiver's own and is already settled by the connection having arrived, so
+      checking it would add nothing and would break the moment an ephemeral port
+      changed. An IPv6 literal keeps its brackets, which is how it arrives and
+      what `isLoopbackHost` strips.
+    */
+    const raw = headers['host'];
+    // HTTP/1.1 requires it. A request without one is hand-rolled, and no caller
+    // here is.
+    if (typeof raw !== 'string' || raw === '') return 403;
+    const claimed = raw.startsWith('[')
+      ? raw.slice(0, raw.indexOf(']') + 1)
+      : (raw.split(':')[0] ?? '');
+    const bare = claimed.toLowerCase();
+    if (bare === '') return 403;
+
+    /*
+      Loopback names are admitted whatever the bind, because a caller on this
+      machine legitimately addresses loopback and always has. That is wider than
+      the configured address deliberately: what a client may *claim* to have
+      reached is not the same set as what a user may *configure* as a listen
+      address, which is why `::1` is here and `isHostAlias` refuses it there.
+    */
+    if (isLoopbackHost(bare)) return null;
+    if (bare === host.toLowerCase()) return null;
+    /*
+      And the alias, or every containerised session 403s: a container addresses
+      this app by `hostAlias`, so that is the `Host` it sends. Read through the
+      getter rather than captured, because the alias can change under a config
+      reload while this socket stays up.
+    */
+    if (bare === hostAlias().toLowerCase()) return null;
+
+    return 403;
+  }
+
+  /**
    * Token, entity id, and "is this an identity this app still has".
    *
    * Shared by every path because they all need exactly this and in this order —
@@ -681,6 +779,10 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   function reject(
     headers: Record<string, string | string[] | undefined>,
   ): number | null {
+    // Before identity, so a status code leaks nothing about who exists.
+    const misrouted = guard(headers);
+    if (misrouted !== null) return misrouted;
+
     const entityId = headers[HOOK_HEADER_SESSION];
     if (typeof entityId !== 'string' || entityId === '') return 400;
 
@@ -699,9 +801,13 @@ export function createReceiver(options: ReceiverOptions): Receiver {
      *
      * Length is checked first, and separately: `timingSafeEqual` **throws** on
      * buffers of unequal length, and the presented value is attacker-controlled.
-     * A throw here is not a 403 for one caller, it is an unhandled rejection in
-     * the request handler every session shares. The leak that check admits is
-     * the length of a 64-character constant, which is already public.
+     * A throw here is not a crash — the per-request `try`/`catch` around every
+     * handler answers `500` for that one request and the receiver, and every
+     * other session, carries on — but a wrong-length token would then answer
+     * `500` instead of `403`, which tells a caller the app is broken when it
+     * was merely refused, and loses the refusal this route owes it. The leak
+     * that check admits is the length of a 64-character constant, which is
+     * already public.
      */
     const presented = headers[HOOK_HEADER_TOKEN];
     if (typeof presented !== 'string') return 403;
@@ -1028,12 +1134,13 @@ export function createReceiver(options: ReceiverOptions): Receiver {
    * - `GET` is `405`, handled in the dispatcher. A bare `404` there would tell
    *   a client there is no endpoint at all and send it off to the deprecated
    *   HTTP+SSE transport.
-   * - A **present** `Origin` is refused. This socket is loopback today, so no
-   *   browser can reach it; the check is here anyway because the spec makes it
-   *   a MUST and because HIVE-131 is about to make the bind configurable —
-   *   at which point a page in the user's browser could resolve a hostile name
-   *   to this address. A configurable allowlist is that story's; refusing every
-   *   browser-supplied origin is this one's.
+   * - A **present** `Origin` is refused, and still is here even though `reject`
+   *   now runs an allowlist for every route (HIVE-134). The two are not redundant:
+   *   the spec makes refusing a browser-supplied origin a MUST for this transport,
+   *   and this route's legitimate callers are `claude` processes, none of which
+   *   sends one. So a value a user allowlisted for their own dev server is
+   *   admitted on `/ready` and refused here, which is the stricter reading and the
+   *   right one for the route that can call tools.
    */
   async function handleMcp(
     headers: Record<string, string | string[] | undefined>,
@@ -1049,10 +1156,11 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     if (refusal !== null) return refusal;
 
     /*
-      Any `Origin` at all is a refusal, not merely an unrecognised one. The
-      legitimate callers here are `claude` processes, and none of them sends
-      one; a request that does came from something with a browser's request
-      model attached, which is exactly what the DNS-rebinding warning is about.
+      Stricter than `reject`'s allowlist, deliberately: any `Origin` at all is a
+      refusal here, listed or not. A request that carries one came from something
+      with a browser's request model attached, which is what the DNS-rebinding
+      warning is about, and nothing that legitimately calls a tool on this route
+      has one.
     */
     if (headers['origin'] !== undefined) return 403;
 
@@ -1612,10 +1720,12 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     start() {
       return new Promise<string | null>((resolve) => {
         /*
-          Seven paths now, and still nothing resembling a general-purpose
-          server: the set is closed, every one of them is POST-only, and each
-          has its own body cap sized to the document it expects. A request that
-          is none of them is 404 without reading a byte.
+          Eight paths now, and still nothing resembling a general-purpose
+          server: the set is closed, every one of them is POST-only, each has
+          its own body cap sized to the document it expects, and each
+          authenticates through the one `reject` that also decides whether the
+          request was addressed to this app at all. A request that is none of
+          them is 404 without reading a byte.
         */
         const routes: readonly Route[] = [
           { path: HOOK_PATH, cap: HOOK_MAX_BODY_BYTES, handle },
