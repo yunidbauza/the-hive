@@ -1461,6 +1461,20 @@ export interface SetJiraTokenRequest {
 }
 
 /**
+ * Payload of `slack:set-tokens` (HIVE-124). The other payload carrying secrets.
+ *
+ * Both fields optional and **merged** rather than replacing: the pane commits
+ * one field at a time, and a save that dropped the token the user was not
+ * editing would clear half the configuration on every keystroke they finished.
+ * Clearing is {@link CH.slackClearTokens}, which takes both together — they are
+ * acquired from one Slack app and are useless apart.
+ */
+export interface SetSlackTokensRequest {
+  appToken?: string;
+  botToken?: string;
+}
+
+/**
  * Payload of `jira:search` (HIVE-68).
  *
  * `jql` is optional, and absent means {@link JIRA_DEFAULT_JQL} rather than an

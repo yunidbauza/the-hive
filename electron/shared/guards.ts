@@ -43,6 +43,7 @@ import type {
   SetReceiverRequest,
   SetRuntimeRequest,
   SetSlackRequest,
+  SetSlackTokensRequest,
 } from './config-contract';
 import type {
   ReadDirRequest,
@@ -1275,10 +1276,47 @@ export function parseSetSlackRequest(input: unknown): SetSlackRequest {
   return request;
 }
 
-/** The token, on its way to `safeStorage`. The only payload carrying a secret. */
+/** The token, on its way to `safeStorage`. The first payload carrying a secret. */
 export function parseSetJiraTokenRequest(input: unknown): SetJiraTokenRequest {
   const raw = assertShape(input, ['token'], 'setJiraToken');
   return { token: assertJiraToken(raw.token, 'setJiraToken.token') };
+}
+
+/**
+ * The two socket-mode tokens, on their way to `safeStorage` (HIVE-124).
+ *
+ * {@link parseSetJiraTokenRequest} is the model, and {@link assertJiraToken} is
+ * reused rather than copied: "printable ASCII, no spaces, bounded" is a
+ * statement about *credentials in a payload*, not about Jira, and both `xapp-`
+ * and `xoxb-` are exactly that shape.
+ *
+ * Neither field is required and at least one must be present — the merge shape
+ * {@link SetSlackTokensRequest} describes. An empty payload is refused rather
+ * than treated as a clear: clearing has its own channel, and a write that
+ * silently erased both would be the one mistake this guard can prevent.
+ *
+ * The `xapp-` / `xoxb-` prefixes are deliberately **not** enforced. Slack has
+ * renamed token prefixes before, and a guard that refused a valid token would
+ * be a bug the user could not work around; a wrong one fails at `auth.test`
+ * with Slack's own message, which is the better report.
+ */
+export function parseSetSlackTokensRequest(input: unknown): SetSlackTokensRequest {
+  const raw = assertShape(input, [], 'setSlackTokens', ['appToken', 'botToken']);
+
+  const request: SetSlackTokensRequest = {
+    ...(raw.appToken === undefined
+      ? {}
+      : { appToken: assertJiraToken(raw.appToken, 'setSlackTokens.appToken') }),
+    ...(raw.botToken === undefined
+      ? {}
+      : { botToken: assertJiraToken(raw.botToken, 'setSlackTokens.botToken') }),
+  };
+
+  if (Object.keys(request).length === 0) {
+    return fail('setSlackTokens: nothing to change');
+  }
+
+  return request;
 }
 
 /**

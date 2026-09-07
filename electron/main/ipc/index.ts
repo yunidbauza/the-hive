@@ -80,6 +80,8 @@ import {
   parseSetJiraRequest,
   parseSetJiraTokenRequest,
   parseSetReceiverRequest,
+  parseSetSlackRequest,
+  parseSetSlackTokensRequest,
   parseDismissRequest,
   parseMarkReadRequest,
   parseNotificationAction,
@@ -120,7 +122,13 @@ import {
   SESSION_HISTORY_FILE,
   type SessionHistoryEntry,
 } from '@shared/session-history-contract';
-import type { SlackStatus } from '@shared/slack-contract';
+import {
+  SLACK_TOKENS_FILE,
+  type SlackSocketStatus,
+  type SlackSocketTestResult,
+  type SlackStatus,
+  type SlackTokensState,
+} from '@shared/slack-contract';
 import type { UpdateStatus } from '@shared/update-contract';
 
 import { createAgentsRuntime, type AgentRegistry } from '../agents';
@@ -160,6 +168,7 @@ import {
   setProjectRuntime,
   setReceiver,
   setRuntime,
+  setSlack,
 } from '../config';
 import { diagnoseEnv } from '../config/env-diagnostic';
 import { loginEnvStatus } from '../config/login-env';
@@ -182,9 +191,16 @@ import { createGithub } from '../integrations/github';
 import { runAsync, type RunAsync } from '../integrations/github/run';
 import { createJira } from '../integrations/jira';
 import { credentialFile } from '../integrations/jira/auth';
+import { createSlackBridge, type SlackBridge } from '../integrations/slack/bridge';
+import { openSlackSocket, openSlackWeb } from '../integrations/slack/clients';
 import { signInToSlack, signOutOfSlack } from '../integrations/slack/login';
 import { probeSlack } from '../integrations/slack/probe';
 import { readSlackStatus } from '../integrations/slack/status';
+import {
+  readSubscriptions,
+  type SubscribableAgent,
+} from '../integrations/slack/subscriptions';
+import { createSlackTokens } from '../integrations/slack/tokens';
 import { createLedger } from '../ledger';
 import { createDeliver } from '../ledger/deliver';
 import { createLedgerNotifier } from '../ledger/notify';
@@ -331,6 +347,16 @@ let slackChildren: AbortController | null = null;
  * of the verb instead of a property of a component, which is where it belongs.
  */
 const slackInFlight = new Map<string, Promise<SlackStatus>>();
+/**
+ * Slack Socket Mode, or `null` before registration (HIVE-124).
+ *
+ * Module scope for `scheduler`'s reason and half of `slackChildren`'s. It is
+ * reached from three places that never see each other: the composition that
+ * builds it, the handlers and the folder watcher that re-`sync()` it, and both
+ * teardown paths — which must stop it **before** `scheduler`, since it is the
+ * producer of wakes that scheduler consumes.
+ */
+let slackBridge: SlackBridge | null = null;
 /**
  * Live agent runs, or `null` before registration (HIVE-115).
  *
@@ -481,6 +507,20 @@ function refreshKnownAgents(): void {
 
       // Only now may the tick trust an absence — see `agentsListed`.
       agentsListed = true;
+
+      /*
+        And the socket, which is held open only for what an enabled agent
+        subscribes to (HIVE-124).
+
+        Here rather than in the `agents:write` / `agents:remove` / `agents:rename`
+        handlers, and that is the correct seam rather than a convenience:
+        {@link subscribableAgents} answers from the caches this pass has just
+        rebuilt, so a `sync()` fired from inside a write handler would read the
+        subscription set as it was *before* the write. The folder change is what
+        makes the new answer knowable, so it is what re-asks the question — and
+        it covers an edit made in a text editor as well as one made in the pane.
+      */
+      slackBridge?.sync();
     })
     .catch(() => {
       // Keep whatever we already knew — including, deliberately, whether the
@@ -488,6 +528,28 @@ function refreshKnownAgents(): void {
       // tick to clear the times a previous one established.
     });
 }
+/**
+ * Who the socket is held open for, as `subscriptions.ts` asks it (HIVE-124).
+ *
+ * Built from {@link agentSchedules} and {@link agentState}, and **synchronous**,
+ * because `SlackBridge.sync` is: it is called from an IPC handler and from a
+ * folder change, and both have to be able to decide whether to connect without
+ * waiting on a promise. `agents.list()` re-reads and re-parses every definition
+ * on disk, which is precisely why those caches exist.
+ *
+ * Every entry is `valid: true` by construction — `refreshKnownAgents` leaves an
+ * unparseable definition out of the map entirely, which is the same answer
+ * `readSubscriptions` would reach from the flag.
+ */
+function subscribableAgents(): SubscribableAgent[] {
+  return [...agentSchedules.entries()].map(([name, schedule]) => ({
+    name,
+    on: schedule.wake.on,
+    valid: true,
+    paused: agentState?.read(name).status === 'paused',
+  }));
+}
+
 /** The clone flow (story 102), or `null` before registration. */
 let cloneFlow: CloneFlow | null = null;
 /** The single project watcher, or `null` before registration. */
@@ -1712,6 +1774,60 @@ export function registerIpcHandlers(): void {
     write: (name, source) => agentRegistry.write(name, source),
   });
 
+  /**
+   * The two Hive-owned Slack tokens (HIVE-124).
+   *
+   * Composed exactly as Jira's credential is, a few hundred lines below —
+   * `safeStorage` and a file under `userData`, both injected, so `tokens.ts`
+   * can be answered by a unit test without a keyring. Built *here* rather than
+   * beside `jira` for one reason: the bridge below takes it as a value, and the
+   * bridge has to be built after `scheduler`.
+   *
+   * `read()` is main-internal and nothing below reaches it but the bridge. No
+   * IPC verb returns a token.
+   */
+  const slackTokens = createSlackTokens({
+    store: safeStorage,
+    file: credentialFile(join(app.getPath('userData'), SLACK_TOKENS_FILE)),
+  });
+
+  /**
+   * Slack Socket Mode, as a wake source (HIVE-124).
+   *
+   * Built after `scheduler` for the reason `permissions` is built here: it is
+   * the **producer** of what the scheduler consumes, and a producer composed
+   * before its consumer would have to be told about it afterwards. `onWake`
+   * reads the module binding at call time rather than closing over a value, the
+   * same way `buildWakeCommand` reads `permissions` above and `createRunTracker`
+   * reads `scheduler` — which is what lets the two be mutually referenced
+   * without either one taking the other as a constructor argument.
+   *
+   * Constructing it opens nothing. `sync()` is the only thing that connects,
+   * and the first one is fired behind `mcp.start()` below, with `scheduler`'s —
+   * because this can spawn a run, and a wake needs an argv `buildWakeCommand`
+   * refuses to build until the MCP config file is on disk.
+   */
+  slackBridge = createSlackBridge({
+    tokens: slackTokens,
+    // Read per call, like every other consumer of the config in this file: a
+    // switch flipped in Settings reaches the next `sync()` without a restart.
+    config: () => getConfig().slack,
+    subscriptions: () => readSubscriptions(subscribableAgents()),
+    openSocket: openSlackSocket,
+    openWeb: openSlackWeb,
+    /*
+      Through the queue, not around it (HIVE-124). `onEvent` is where a wake for
+      a busy or paused agent is remembered rather than dropped, and it is the
+      same door the ledger's own wakes go through.
+    */
+    onWake: (name, entry, options) => scheduler?.onEvent(name, entry, options),
+    // The pane's own channel, deliberately not `integrations:status` — see
+    // `CH.slackSocketStatus`. `send` applies the notifier tap and the
+    // destroyed-window guard, as it does to every other push.
+    onStatus: (status: SlackSocketStatus) => send(CH.slackSocketStatus, status),
+    now: () => Date.now(),
+  });
+
   /*
     Started behind `mcp.start()`, not beside it.
 
@@ -1725,6 +1841,13 @@ export function registerIpcHandlers(): void {
 
     A failure still arms the sweep: expiry does not spawn anything, and a queue
     that cannot flush yet is safer standing than dropped.
+
+    The bridge's first `sync()` rides along for the same reason, which is the
+    whole reason it is here rather than at construction (HIVE-124): a socket
+    opened before that write lands can deliver a Slack message into a wake whose
+    argv cannot be built yet, and the wake is then refused at the one moment it
+    is guaranteed to happen. Nothing is lost by waiting — Slack redelivers
+    nothing this app has not connected for.
   */
   void mcp
     .start()
@@ -1733,6 +1856,7 @@ export function registerIpcHandlers(): void {
     })
     .finally(() => {
       scheduler?.start();
+      slackBridge?.sync();
     });
 
   sessions = createSessions({
@@ -1901,6 +2025,17 @@ export function registerIpcHandlers(): void {
       the runs it knew about. Nothing would be left to signal it: the exact
       orphan this hook exists to prevent.
     */
+    /*
+      And before `scheduler.stop()`, for the same shape of reason (HIVE-124).
+
+      The bridge is a *producer* of wakes and the scheduler is what consumes
+      them: a live socket outliving its scheduler delivers a Slack message into
+      `onEvent`, which reaches an `agentState` this hook is three lines from
+      flushing and disposing. Stopping the producer first is what makes the rest
+      of this sequence's ordering hold — the same class of bug `slackChildren`
+      below was created to fix, arriving through a different door.
+    */
+    slackBridge?.stop();
     scheduler?.stop();
     runs?.closeAll('app-closed');
     agentState?.flush();
@@ -2432,6 +2567,21 @@ export function registerIpcHandlers(): void {
   handle(CH.configSetJira, (_event, payload): ConfigSnapshot =>
     setJira(parseSetJiraRequest(payload)),
   );
+  /**
+   * The socket-mode switch and the commander allow-list (HIVE-124).
+   *
+   * An ordinary settings write, and then a `sync()` — because the switch is one
+   * of the three things `SlackBridge.sync` reads, and this is the only moment
+   * the app learns it changed. Without the second line, turning Slack on in
+   * Settings would do nothing until an agent happened to be edited.
+   */
+  handle(CH.configSetSlack, (_event, payload): ConfigSnapshot => {
+    const snapshot = setSlack(parseSetSlackRequest(payload));
+
+    slackBridge?.sync();
+
+    return snapshot;
+  });
   // HIVE-131. The container host alias — an ordinary settings write.
   handle(CH.configSetReceiver, (_event, payload): ConfigSnapshot =>
     setReceiver(parseSetReceiverRequest(payload)),
@@ -2547,6 +2697,49 @@ export function registerIpcHandlers(): void {
   handle(CH.slackTest, (): Promise<SlackStatus> =>
     slackVerb(CH.slackTest, (claude) => probeSlack(claude, runSlack)),
   );
+
+  /**
+   * Socket mode's own verbs (HIVE-124) — and the invariant they must not break.
+   *
+   * Two writes and one test, and **none of them returns a token**. Both writes
+   * answer with `SlackTokens.state()`, which is assembled from presence alone;
+   * `read()` is main-internal and has no channel. That is Jira's design applied
+   * to a second credential, and `slack-channels.test.ts` asserts it by
+   * enumerating every `slack:` channel in the contract rather than a list.
+   *
+   * Each write is followed by a `sync()`, because the tokens are one of the
+   * three things `SlackBridge.sync` reads: pasting the pair is what makes a
+   * connection possible, and clearing them is what must close one.
+   */
+  handle(CH.slackSetTokens, (_event, payload): SlackTokensState => {
+    const state = slackTokens.save(parseSetSlackTokensRequest(payload));
+
+    slackBridge?.sync();
+
+    return state;
+  });
+  handle(CH.slackClearTokens, (): SlackTokensState => {
+    const state = slackTokens.clear();
+
+    slackBridge?.sync();
+
+    return state;
+  });
+  /**
+   * One `auth.test`, and no socket.
+   *
+   * Not deduped through {@link slackVerb}: that map guards verbs that spawn a
+   * `claude`, where a second click costs a second OAuth callback port or a
+   * second set of model turns. This is a single HTTPS request against a token
+   * already on disk.
+   */
+  handle(CH.slackSocketTest, async (): Promise<SlackSocketTestResult> => {
+    const result = await slackBridge?.test();
+
+    return (
+      result ?? { kind: 'error', message: 'The Slack bridge is not running.' }
+    );
+  });
 
   /**
    * Cloning a repository (story 102).
@@ -2825,6 +3018,17 @@ export function registerIpcHandlers(): void {
     const next = agentState.patch(name, { status });
 
     pushAgentStatus(name);
+    /*
+      And the socket (HIVE-124). A paused agent subscribes to nothing, so
+      pausing the last one that named a channel is what closes the connection —
+      and resuming it is what reopens it.
+
+      Here rather than in the two handlers because this is the choke point both
+      go through, exactly as `pushAgentStatus` is: a third verb that changed a
+      status without re-asking the question would be a socket left open for an
+      agent that no longer wants it, with nothing on screen to explain it.
+    */
+    slackBridge?.sync();
 
     return next.status;
   };
@@ -3307,6 +3511,20 @@ export function resetIpcHandlers(): void {
     real `claude` out of a unit test, and its finalizer would then write through
     an `agentState` disposed a few lines below.
   */
+  /*
+    Before `scheduler.stop()` and `runs.closeAll`, for the reason the rest of
+    this sequence is ordered (HIVE-124): the bridge produces wakes, and one that
+    outlives the scheduler calls `onEvent` into an `agentState` disposed a few
+    lines below. It is the same class of bug `slackChildren` was created to fix,
+    arriving through a different door.
+
+    The reference is dropped as well as stopped, so a next registration builds
+    its own rather than re-syncing this one's — a socket bound to a torn-down
+    composition would push status into a dead `send` and wake through a `null`
+    scheduler.
+  */
+  slackBridge?.stop();
+  slackBridge = null;
   scheduler?.stop();
   scheduler = null;
   // Holds no resources of its own — no `.stop()` — but a stale reference

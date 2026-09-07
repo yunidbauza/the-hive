@@ -96,6 +96,13 @@ const snapshot = {
   subscriptionAuth: true,
   projects: [],
   errors: [],
+  /*
+    Always present in a real snapshot, and now read by something these tests
+    reach: pausing an agent re-syncs the Slack bridge (HIVE-124), which asks the
+    config for its switch. `ConfigSnapshot.slack` is fully resolved by the
+    parser, so leaving it out here was a fixture that could not occur.
+  */
+  slack: { socketMode: false, commanders: [] },
 };
 
 vi.mock('../../../../electron/main/config/index', () => ({

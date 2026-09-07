@@ -1,7 +1,12 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { SlackStatus } from '../../../../electron/shared/slack-contract';
+import type {
+  SlackSocketStatus,
+  SlackSocketTestResult,
+  SlackStatus,
+  SlackTokensState,
+} from '../../../../electron/shared/slack-contract';
 
 /**
  * Slack's four channels (HIVE-123) — what `ipc/index.ts` *does with* the
@@ -77,9 +82,30 @@ vi.mock('../../../../electron/main/pty-host', () => ({
   }),
 }));
 
+/**
+ * The quit hooks, captured rather than swallowed (HIVE-124).
+ *
+ * `resetIpcHandlers` is the *test* teardown path; `onShutdown` is the
+ * production one, and the two orderings are independent facts. The socket-mode
+ * suite below runs the captured hooks to assert the second.
+ */
+const shutdownHooks: (() => void)[] = [];
+
 vi.mock('../../../../electron/main/shutdown', () => ({
-  onShutdown: vi.fn(),
+  onShutdown: (fn: () => void) => {
+    shutdownHooks.push(fn);
+  },
 }));
+
+/**
+ * Which teardown ran first, recorded by both participants (HIVE-124).
+ *
+ * The bridge produces wakes and the scheduler consumes them, so a bridge that
+ * outlives its scheduler calls `onEvent` into a disposed `agentState` — the
+ * class of bug `slackChildren` was created to fix. Ordering is the whole risk
+ * of this composition, which makes it worth an assertion rather than a comment.
+ */
+const teardownOrder: string[] = [];
 
 /**
  * `claudeCommand` deliberately not `'claude'` — a value the real config could
@@ -102,6 +128,8 @@ const snapshot = {
   claudeCommand: process.execPath,
   projects: [],
   errors: [],
+  // HIVE-124. The block the bridge reads its switch and allow-list from.
+  slack: { socketMode: false, commanders: [] as string[] },
 };
 
 vi.mock('../../../../electron/main/config/index', () => ({
@@ -113,6 +141,8 @@ vi.mock('../../../../electron/main/config/index', () => ({
   renameProject: vi.fn(() => snapshot),
   repointProject: vi.fn(() => snapshot),
   reorderProjects: vi.fn(() => snapshot),
+  // HIVE-124. The write verb `config:set-slack` calls; Task 2 shipped it.
+  setSlack: vi.fn(() => snapshot),
   configPath: vi.fn(() => '/tmp/config.json'),
 }));
 
@@ -138,6 +168,70 @@ vi.mock('../../../../electron/main/sessions/index', async (importOriginal) => {
     }),
   };
 });
+
+/**
+ * The registry and the run state, faked the way `agent-channels.test.ts` fakes
+ * them (HIVE-124).
+ *
+ * `agents:pause` goes through `requireAgent`, which asks the registry whether a
+ * definition exists, and then through `setAgentStatus`, which writes run state.
+ * Both are on the path from "a person paused an agent" to "the socket may no
+ * longer be needed", and neither should reach a real folder or a real file from
+ * a unit test.
+ */
+let listedAgents: { name: string; wake: { on: string[] } }[] = [];
+let agentsChanged: (() => void) | undefined;
+
+vi.mock('../../../../electron/main/agents', () => ({
+  createAgentsRuntime: () => ({
+    list: () =>
+      Promise.resolve({
+        agents: listedAgents.map((agent) => ({
+          name: agent.name,
+          wake: { on: agent.wake.on },
+          mcp: [],
+          parallel: 1,
+        })),
+        agentsRoot: '/tmp/.hive/agents',
+      }),
+    read: vi.fn(),
+    write: vi.fn(),
+    remove: vi.fn(),
+    rename: vi.fn(),
+    onChange: (fn: () => void) => {
+      agentsChanged = fn;
+
+      return () => {};
+    },
+    close: vi.fn(),
+  }),
+}));
+
+let runStates: Record<string, { status: string; runsSinceRotate: number; runs: [] }> =
+  {};
+
+vi.mock('../../../../electron/main/agents/state', () => ({
+  createAgentState: () => ({
+    all: () => ({ ...runStates }),
+    read: (name: string) =>
+      runStates[name] ?? { status: 'sleeping', runsSinceRotate: 0, runs: [] },
+    patch: (name: string, change: Record<string, unknown>) => {
+      const next = {
+        ...(runStates[name] ?? { status: 'sleeping', runsSinceRotate: 0, runs: [] }),
+        ...change,
+      };
+      runStates[name] = next as (typeof runStates)[string];
+
+      return next;
+    },
+    recordRun: vi.fn(),
+    forget: vi.fn(),
+    carry: vi.fn(),
+    clearSlackNeedsAuth: () => [],
+    flush: vi.fn(),
+    dispose: vi.fn(),
+  }),
+}));
 
 vi.mock('../../../../electron/main/ledger', () => ({
   createLedger: () => ({
@@ -171,6 +265,114 @@ vi.mock('../../../../electron/main/integrations/slack/login', () => ({
 vi.mock('../../../../electron/main/integrations/slack/probe', () => ({
   probeSlack: (claude: string, run: unknown) => probeSlack(claude, run),
 }));
+
+/* ------------------------------------------------- socket mode (HIVE-124) */
+
+/**
+ * The token store, in memory and holding the real values.
+ *
+ * Faked rather than driven for the reason `readSlackStatus` is: `tokens.ts` has
+ * its own suite, and the real one reaches `safeStorage` and a file under
+ * `userData`. What this fake keeps is the part the invariant needs — it really
+ * stores the secret — so a verb that leaked one would have something to leak.
+ */
+let stored: { appToken?: string; botToken?: string } = {};
+
+const tokensState = (): SlackTokensState => ({
+  hasAppToken: stored.appToken !== undefined,
+  hasBotToken: stored.botToken !== undefined,
+  encryptionAvailable: true,
+});
+
+vi.mock('../../../../electron/main/integrations/slack/tokens', () => ({
+  createSlackTokens: () => ({
+    state: tokensState,
+    read: () => stored,
+    save: (next: { appToken?: string; botToken?: string }) => {
+      stored = { ...stored, ...next };
+
+      return tokensState();
+    },
+    clear: () => {
+      stored = {};
+
+      return tokensState();
+    },
+  }),
+}));
+
+/**
+ * The bridge, counted rather than run.
+ *
+ * `bridge.ts` has its own suite driving a fake socket; what belongs here is
+ * *when* `ipc/index.ts` re-syncs it, and that is a count. The dependencies it
+ * was built with are kept so the composition — which config block it reads,
+ * which agents it asks about — can be asserted without opening anything.
+ */
+let bridgeSyncs = 0;
+let bridgeDeps: {
+  config: () => { socketMode: boolean; commanders: string[] };
+  subscriptions: () => { channels: Map<string, string[]>; mentions: string[]; known: string[] };
+  onStatus: (status: SlackSocketStatus) => void;
+} | null = null;
+
+const bridgeTest = vi.fn<() => Promise<SlackSocketTestResult>>(() =>
+  Promise.resolve({ kind: 'ok', workspace: 'acme', bot: 'hive' }),
+);
+
+vi.mock('../../../../electron/main/integrations/slack/bridge', () => ({
+  createSlackBridge: (deps: never) => {
+    bridgeDeps = deps;
+
+    return {
+      sync: () => {
+        bridgeSyncs += 1;
+      },
+      test: () => bridgeTest(),
+      unresolved: () => [],
+      stop: () => {
+        teardownOrder.push('bridge');
+      },
+    };
+  },
+}));
+
+/**
+ * The two SDK adapters, replaced so importing this layer does not pull
+ * `@slack/socket-mode` and `@slack/web-api` into every suite that touches
+ * `ipc/index.ts`. Nothing here is called: the bridge above never connects.
+ */
+vi.mock('../../../../electron/main/integrations/slack/clients', () => ({
+  openSlackSocket: vi.fn(),
+  openSlackWeb: vi.fn(),
+}));
+
+/**
+ * The real scheduler, with a `stop` that says when it ran.
+ *
+ * Wrapped rather than replaced: the composition below builds a live scheduler
+ * from the live tracker, and swapping in a stub would make the ordering
+ * assertion a statement about the stub.
+ */
+vi.mock('../../../../electron/main/agents/scheduler', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../../../electron/main/agents/scheduler')>();
+
+  return {
+    ...actual,
+    createScheduler: (deps: Parameters<typeof actual.createScheduler>[0]) => {
+      const real = actual.createScheduler(deps);
+
+      return {
+        ...real,
+        stop: () => {
+          teardownOrder.push('scheduler');
+          real.stop();
+        },
+      };
+    },
+  };
+});
 
 /**
  * The shared async runner, spied rather than executed.
@@ -211,6 +413,15 @@ const call = (channel: string, payload: unknown = undefined) =>
 beforeEach(() => {
   handlers.clear();
   vi.clearAllMocks();
+  shutdownHooks.length = 0;
+  teardownOrder.length = 0;
+  bridgeSyncs = 0;
+  bridgeDeps = null;
+  stored = {};
+  listedAgents = [{ name: 'pr-patrol', wake: { on: ['slack.channel:#eng'] } }];
+  agentsChanged = undefined;
+  runStates = {};
+  snapshot.slack = { socketMode: false, commanders: [] };
   registerIpcHandlers();
 });
 
@@ -439,5 +650,199 @@ describe('slack channels (HIVE-123)', () => {
     }
 
     expect(signOutOfSlack).toHaveBeenCalledWith(process.execPath, runCommand);
+  });
+});
+
+/**
+ * Socket mode (HIVE-124) — the five channels, and the composition behind them.
+ *
+ * Everything the bridge *does* is `bridge.ts`'s own suite. What belongs here is
+ * what only this file can get wrong:
+ *
+ * - **no verb returns a token**, enumerated over the contract rather than over
+ *   a list somebody remembered to extend;
+ * - the bridge is re-synced at every moment that changes the answer to "should
+ *   the socket be open" — the switch, the tokens, and an agent paused, written
+ *   or removed;
+ * - and it is **stopped before the scheduler is**, on both teardown paths,
+ *   because a wake producer that outlives its consumer calls `onEvent` into a
+ *   disposed `agentState`.
+ */
+describe('socket mode channels (HIVE-124)', () => {
+  it('saves tokens and answers with presence, never a value', async () => {
+    const state = await call(CH.slackSetTokens, {
+      appToken: 'xapp-1-SECRET',
+      botToken: 'xoxb-2-SECRET',
+    });
+
+    expect(state).toEqual({
+      hasAppToken: true,
+      hasBotToken: true,
+      encryptionAvailable: true,
+    });
+    expect(JSON.stringify(state)).not.toContain('SECRET');
+  });
+
+  it('clears both tokens together', async () => {
+    await call(CH.slackSetTokens, { appToken: 'xapp-1-SECRET' });
+
+    await expect(call(CH.slackClearTokens)).resolves.toEqual({
+      hasAppToken: false,
+      hasBotToken: false,
+      encryptionAvailable: true,
+    });
+  });
+
+  /**
+   * Enumerated over `CH`, not over a list — a sixth `slack:` channel added
+   * later is covered by this test on the day it is added, which is the only
+   * version of this assertion worth having.
+   */
+  it('has no verb that returns a token', async () => {
+    await call(CH.slackSetTokens, {
+      appToken: 'xapp-1-SECRET',
+      botToken: 'xoxb-2-SECRET',
+    });
+
+    const channels = Object.values(CH).filter((channel) =>
+      channel.startsWith('slack:'),
+    );
+
+    // The enumeration is the test. A filter that matched nothing would pass.
+    expect(channels.length).toBeGreaterThanOrEqual(7);
+
+    for (const channel of channels) {
+      const answer = await call(channel).catch(() => null);
+
+      expect(JSON.stringify(answer ?? null)).not.toContain('SECRET');
+    }
+  });
+
+  it('answers slack:socket-test from the bridge, which opens nothing', async () => {
+    bridgeTest.mockResolvedValueOnce({ kind: 'ok', workspace: 'acme', bot: 'hive' });
+
+    await expect(call(CH.slackSocketTest)).resolves.toEqual({
+      kind: 'ok',
+      workspace: 'acme',
+      bot: 'hive',
+    });
+  });
+
+  describe('every change that alters the answer re-syncs', () => {
+    it('re-syncs when the switch is written', async () => {
+      const before = bridgeSyncs;
+
+      await call(CH.configSetSlack, { socketMode: true, commanders: ['U1'] });
+
+      expect(bridgeSyncs).toBeGreaterThan(before);
+    });
+
+    it('re-syncs when a token is saved, and when both are cleared', async () => {
+      const before = bridgeSyncs;
+
+      await call(CH.slackSetTokens, { appToken: 'xapp-1-SECRET' });
+      const afterSave = bridgeSyncs;
+
+      expect(afterSave).toBeGreaterThan(before);
+
+      await call(CH.slackClearTokens);
+
+      expect(bridgeSyncs).toBeGreaterThan(afterSave);
+    });
+
+    it('re-syncs when an agent is paused', async () => {
+      const before = bridgeSyncs;
+
+      await call(CH.agentsPause, { name: 'pr-patrol' });
+
+      expect(bridgeSyncs).toBeGreaterThan(before);
+    });
+
+    it('re-syncs when an agent is resumed', async () => {
+      await call(CH.agentsPause, { name: 'pr-patrol' });
+      const before = bridgeSyncs;
+
+      await call(CH.agentsResume, { name: 'pr-patrol' });
+
+      expect(bridgeSyncs).toBeGreaterThan(before);
+    });
+
+    /**
+     * A definition written, renamed or removed reaches the bridge through the
+     * folder change, **not** from inside the handler — and that is the correct
+     * seam rather than a convenience. `subscriptions()` is answered from the
+     * cache `refreshKnownAgents` rebuilds, so a `sync()` fired from the write
+     * handler would read the set as it was *before* the write.
+     */
+    it('re-syncs once the folder change has been read back', async () => {
+      const before = bridgeSyncs;
+
+      listedAgents = [];
+      agentsChanged?.();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(bridgeSyncs).toBeGreaterThan(before);
+    });
+  });
+
+  describe('the composition', () => {
+    it('reads the switch from the config file, live', () => {
+      snapshot.slack = { socketMode: true, commanders: ['U9'] };
+
+      expect(bridgeDeps?.config()).toEqual({ socketMode: true, commanders: ['U9'] });
+    });
+
+    /**
+     * From the same cache the scheduler's tick reads, so the two can never
+     * disagree about which agents are enabled — and synchronously, because
+     * `sync()` is.
+     */
+    it('answers subscriptions from the agents the registry listed', async () => {
+      agentsChanged?.();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect([...(bridgeDeps?.subscriptions().channels.keys() ?? [])]).toEqual([
+        '#eng',
+      ]);
+      expect(bridgeDeps?.subscriptions().known).toEqual(['pr-patrol']);
+    });
+
+    it('drops a paused agent from what the socket is held open for', async () => {
+      agentsChanged?.();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      await call(CH.agentsPause, { name: 'pr-patrol' });
+
+      expect(bridgeDeps?.subscriptions().known).toEqual([]);
+      expect([...(bridgeDeps?.subscriptions().channels.keys() ?? [])]).toEqual([]);
+    });
+  });
+
+  describe('teardown stops the producer before its consumer', () => {
+    it('on the test path', () => {
+      resetIpcHandlers();
+
+      expect(teardownOrder).toEqual(['bridge', 'scheduler']);
+    });
+
+    it('on the quit path', () => {
+      for (const hook of shutdownHooks) hook();
+
+      expect(teardownOrder.indexOf('bridge')).toBeGreaterThanOrEqual(0);
+      expect(teardownOrder.indexOf('bridge')).toBeLessThan(
+        teardownOrder.indexOf('scheduler'),
+      );
+    });
+
+    it('drops the reference, so a next registration builds its own', () => {
+      resetIpcHandlers();
+      teardownOrder.length = 0;
+      resetIpcHandlers();
+
+      expect(teardownOrder).toEqual([]);
+    });
   });
 });
