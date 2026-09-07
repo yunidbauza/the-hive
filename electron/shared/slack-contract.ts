@@ -143,10 +143,18 @@ export const SLACK_EVENT_MIN_GAP_MS = 60_000;
 export const SLACK_EVENT_TEXT_MAX = 300;
 
 /**
- * How many `(channel, ts)` keys the dedupe cache holds.
+ * How many `(channel, ts, agent)` keys the dedupe cache holds.
  *
  * An `app_mention` also arrives as a `message` in the same channel, and one
- * Slack message must never produce two wakes.
+ * Slack message must never wake **the same agent** twice. The agent is part of
+ * the key rather than absent from it: a global `(channel, ts)` would let the
+ * mention's delivery to its own subscriber consume the key and drop the channel
+ * watcher's copy, so an agent watching that channel would silently stop seeing
+ * every message that mentioned the app.
+ *
+ * The cost of that correctness is here: N agents watching one channel spend N
+ * keys per message against this ceiling, so the window this bounds is "the last
+ * 500 deliveries", not "the last 500 messages".
  */
 export const SLACK_EVENT_DEDUPE_MAX = 500;
 

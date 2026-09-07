@@ -36,7 +36,12 @@ export const openSlackSocket = (appToken: string): SlackSocket => {
       }
 
       client.on('slack_event', (arg: SocketEventArg) => {
-        void arg.ack?.();
+        /*
+          `.catch` and not a bare `void`: a dropped WebSocket mid-ack rejects,
+          and under Node's default `--unhandled-rejections=throw` that is an
+          uncaught exception in the Electron main process.
+        */
+        void arg.ack?.().catch(() => undefined);
         fn(arg);
       });
     },
@@ -61,10 +66,15 @@ export const openSlackWeb = (botToken: string): SlackWeb => {
     listChannels: async () => {
       const channels: { name: string; id: string }[] = [];
 
+      /*
+        200, not the 1000 hard cap: Slack's own docs recommend it, and a large
+        workspace times the request out at the cap. `paginate` makes the extra
+        round trips invisible, and this runs once per connection.
+      */
       for await (const page of client.paginate('conversations.list', {
         types: 'public_channel,private_channel',
         exclude_archived: true,
-        limit: 1000,
+        limit: 200,
       })) {
         const listed = (page as { channels?: { id?: string; name?: string }[] }).channels;
         for (const item of listed ?? []) {

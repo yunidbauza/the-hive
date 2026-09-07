@@ -123,6 +123,34 @@ describe('connecting', () => {
     expect(h.socket.started).toBe(1);
   });
 
+  it('does not open a socket a sync turned off while the connect was in flight', async () => {
+    let socketMode = true;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = harness({
+      config: () => ({ socketMode, commanders: ['U08BA712189'] }),
+      openWeb: () => ({
+        authTest: async () => ({ team: 'behiques', user: 'hive' }),
+        listChannels: async () => {
+          await gate;
+
+          return [{ name: 'eng-code-review', id: 'C0123ABCD' }];
+        },
+      }),
+    });
+
+    h.bridge.sync();
+    socketMode = false;
+    h.bridge.sync();
+    release();
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(h.socket.started).toBe(0);
+    expect(h.statuses.at(-1)).toEqual({ kind: 'off' });
+  });
+
   it('disconnects when the last subscriber is paused', async () => {
     let paused = false;
     const h = harness({
@@ -177,7 +205,17 @@ describe('coalescing', () => {
     await vi.advanceTimersByTimeAsync(SLACK_EVENT_DEBOUNCE_MS);
     expect(h.wakes).toHaveLength(1);
 
-    await vi.advanceTimersByTimeAsync(SLACK_EVENT_MIN_GAP_MS);
+    /*
+      To the millisecond, because this is what tells a *remainder* re-arm apart
+      from a fresh-gap one. Wake #1 landed at t = DEBOUNCE, so the floor opens
+      at t = DEBOUNCE + MIN_GAP: the flush that found it closed must re-arm for
+      what is left of the gap, not start a whole new one. Advancing by MIN_GAP
+      from here would reach t = 2·DEBOUNCE + MIN_GAP and pass either way.
+    */
+    await vi.advanceTimersByTimeAsync(SLACK_EVENT_MIN_GAP_MS - SLACK_EVENT_DEBOUNCE_MS - 1);
+    expect(h.wakes).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(1);
     expect(h.wakes).toHaveLength(2);
   });
 
@@ -306,6 +344,7 @@ describe('commands', () => {
   });
 
   it('drops a mention from an author who is not allow-listed', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const h = harness();
     h.bridge.sync();
     await vi.runOnlyPendingTimersAsync();
@@ -313,6 +352,30 @@ describe('commands', () => {
     h.deliver(mention('1757012400.002100', '<@U09HIVEBOT> pr-patrol go', 'U0STRANGER'));
     await vi.advanceTimersByTimeAsync(SLACK_EVENT_DEBOUNCE_MS + SLACK_EVENT_MIN_GAP_MS);
     expect(h.wakes).toHaveLength(0);
+    warn.mockRestore();
+  });
+
+  it('rate-limits the refusal log rather than writing one line per message', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const h = harness();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+
+    for (let index = 0; index < 6; index += 1) {
+      h.deliver(
+        mention(`175701240${index}.002100`, '<@U09HIVEBOT> pr-patrol go', 'U0STRANGER'),
+      );
+    }
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    /* Past the window, the next refusal reports how many it swallowed. */
+    await vi.advanceTimersByTimeAsync(SLACK_EVENT_MIN_GAP_MS);
+    h.deliver(mention('1757012407.002100', '<@U09HIVEBOT> pr-patrol go', 'U0STRANGER'));
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(String(warn.mock.calls[1][0])).toContain('5 more');
+
+    expect(h.wakes).toHaveLength(0);
+    warn.mockRestore();
   });
 });
 
@@ -335,6 +398,54 @@ describe('channel resolution', () => {
     h.deliver({ type: 'hello' });
     await vi.advanceTimersByTimeAsync(SLACK_EVENT_DEBOUNCE_MS);
     expect(h.wakes).toHaveLength(0);
+  });
+
+  it('refreshes a stale index when an agent names a channel after connecting', async () => {
+    let listed = [{ name: 'eng-code-review', id: 'C0123ABCD' }];
+    let watching = ['slack.channel:#eng-code-review'];
+    const h = harness({
+      openWeb: () => ({
+        authTest: async () => ({ team: 'behiques', user: 'hive' }),
+        listChannels: async () => listed,
+      }),
+      subscriptions: () =>
+        readSubscriptions([
+          { name: 'pr-patrol', paused: false, valid: true, on: watching },
+        ]),
+    });
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+    expect(h.bridge.unresolved()).toEqual([]);
+
+    /* Named, but the workspace has no such room yet — reported, not dropped. */
+    watching = ['slack.channel:#eng-code-review', 'slack.channel:#new-room'];
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+    expect(h.bridge.unresolved()).toEqual(['#new-room']);
+    expect(h.statuses.at(-1)).toEqual({
+      kind: 'connected',
+      workspace: 'behiques',
+      bot: 'hive',
+      unresolved: ['#new-room'],
+    });
+
+    /* The room now exists. The socket is still up, so only a refresh can see it. */
+    listed = [...listed, { name: 'new-room', id: 'C9NEWROOM' }];
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+    expect(h.bridge.unresolved()).toEqual([]);
+    expect(h.statuses.at(-1)).toEqual({
+      kind: 'connected',
+      workspace: 'behiques',
+      bot: 'hive',
+      unresolved: [],
+    });
+
+    h.deliver(message('1757012345.000100', 'U08BA712189', 'C9NEWROOM'));
+    await vi.advanceTimersByTimeAsync(SLACK_EVENT_DEBOUNCE_MS);
+    expect(h.wakes).toHaveLength(1);
+    expect(h.wakes[0].name).toBe('pr-patrol');
+    expect(h.socket.started).toBe(1);
   });
 
   it('reports a channel name that resolves to nothing rather than dropping it silently', async () => {
@@ -400,7 +511,16 @@ describe('status and teardown', () => {
     await vi.runOnlyPendingTimersAsync();
 
     h.deliver(message('1757012345.000100'));
+    expect(vi.getTimerCount()).toBe(1);
+
     h.bridge.stop();
+    /*
+      The timer count, not only the absence of a wake: `flush` returns early on
+      `stopped`, so "no wake arrived" passes even if `teardown` never cleared a
+      thing. This is the assertion that holds the `clearTimeoutFn` loop.
+    */
+    expect(vi.getTimerCount()).toBe(0);
+
     await vi.advanceTimersByTimeAsync(SLACK_EVENT_DEBOUNCE_MS + SLACK_EVENT_MIN_GAP_MS);
 
     expect(h.socket.disconnected).toBe(1);
