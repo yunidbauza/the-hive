@@ -457,8 +457,20 @@ describe('real-time events (HIVE-124)', () => {
     expect(emitSocketStatus).not.toBeNull();
   });
 
-  /** A push that arrives first wins: the read must not overwrite fresher news. */
+  /**
+   * A push that arrives first wins: the read must not overwrite fresher news.
+   *
+   * Rendered directly rather than through {@link renderGroup}, because the
+   * whole point is a `slack:socket-state` that has *not* answered yet — so the
+   * two mocks `renderGroup` would set are set here instead, explicitly.
+   * `vi.clearAllMocks()` clears calls but not implementations, so a test that
+   * left `status` unset would inherit whichever value an earlier one happened
+   * to leave behind and pass only in file order (fix-round-3).
+   */
   it('keeps a status pushed before the mount read answered', async () => {
+    status.mockResolvedValue({ kind: 'connected' });
+    configSnapshot = { slack: { socketMode: true, commanders: [] } };
+
     let answer: (state: unknown) => void = () => {};
     readSlackSocketState.mockReturnValue(
       new Promise((resolve) => {
@@ -466,7 +478,6 @@ describe('real-time events (HIVE-124)', () => {
       }),
     );
     render(<SlackGroup agents={[]} />);
-    configSnapshot = { slack: { socketMode: true, commanders: [] } };
 
     await screen.findByRole('button', { name: /advanced/i });
     act(() => {
