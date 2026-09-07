@@ -47,6 +47,8 @@ function harness(over: Partial<Parameters<typeof createSlackBridge>[0]> = {}) {
 
   const wakes: { name: string; entry: unknown; job: boolean }[] = [];
   const statuses: unknown[] = [];
+  /** The app token each `openSocket` was handed, in order — one entry per attempt. */
+  const opened: string[] = [];
 
   const bridge = createSlackBridge({
     tokens: { read: () => ({ appToken: 'xapp-1-A', botToken: 'xoxb-2-B' }) },
@@ -56,7 +58,11 @@ function harness(over: Partial<Parameters<typeof createSlackBridge>[0]> = {}) {
         { name: 'pr-patrol', paused: false, valid: true, on: ['slack.channel:#eng-code-review'] },
         { name: 'acr', paused: false, valid: true, on: ['slack.app_mention'] },
       ]),
-    openSocket: () => socket,
+    openSocket: (appToken: string) => {
+      opened.push(appToken);
+
+      return socket;
+    },
     openWeb: () => web,
     onWake: (name, entry, opts) => wakes.push({ name, entry, job: opts.job }),
     onStatus: (status) => statuses.push(status),
@@ -66,7 +72,7 @@ function harness(over: Partial<Parameters<typeof createSlackBridge>[0]> = {}) {
 
   const deliver = (envelope: unknown) => listeners.get('slack_event')?.({ body: envelope });
 
-  return { bridge, socket, web, wakes, statuses, deliver, listeners };
+  return { bridge, socket, web, wakes, statuses, opened, deliver, listeners };
 }
 
 beforeEach(() => {
@@ -187,6 +193,88 @@ describe('connecting', () => {
     release();
     await vi.runOnlyPendingTimersAsync();
     expect(h.statuses.at(-1)).toEqual({ kind: 'off' });
+  });
+
+  /**
+   * A token *replaced* is not a token cleared, and only the second one used to
+   * work (fix-round-2, HIVE-124).
+   *
+   * `sync()` reads the tokens fresh but then returns early on `socket !== null`
+   * — so rotating the app token in Slack left the bridge holding a revoked one
+   * for the rest of the process's life, `failed` and unrecoverable without a
+   * restart or a toggle. Clearing was always handled (the token goes
+   * `undefined` and the whole thing tears down); replacing was the silent
+   * no-op, and nothing covered it.
+   */
+  it('reconnects with the new token when one is rotated under a live socket', async () => {
+    let appToken = 'xapp-1-OLD';
+    const h = harness({ tokens: { read: () => ({ appToken, botToken: 'xoxb-2-B' }) } });
+
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+    expect(h.opened).toEqual(['xapp-1-OLD']);
+
+    appToken = 'xapp-1-NEW';
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+
+    // The stale connection is closed, and the second one carries the new token.
+    expect(h.socket.disconnected).toBe(1);
+    expect(h.opened).toEqual(['xapp-1-OLD', 'xapp-1-NEW']);
+    expect(h.statuses.at(-1)).toEqual({
+      kind: 'connected',
+      workspace: 'behiques',
+      bot: 'hive',
+      unresolved: [],
+    });
+  });
+
+  /** The other half of the same claim: an *unchanged* token reconnects nothing. */
+  it('does not reconnect when a sync re-reads the same pair', async () => {
+    const h = harness();
+
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(h.opened).toEqual(['xapp-1-A']);
+    expect(h.socket.disconnected).toBe(0);
+  });
+
+  /**
+   * The same rotation one tick earlier, through `opening` rather than through
+   * `socket !== null` — the other early return, and the one a fix that only
+   * guarded the first would leave open.
+   */
+  it('reconnects when a token is replaced while the first handshake is still in flight', async () => {
+    let appToken = 'xapp-1-OLD';
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = harness({
+      tokens: { read: () => ({ appToken, botToken: 'xoxb-2-B' }) },
+      openWeb: () => ({
+        authTest: async () => ({ team: 'behiques', user: 'hive' }),
+        listChannels: async () => {
+          await gate;
+
+          return [{ name: 'eng-code-review', id: 'C0123ABCD' }];
+        },
+      }),
+    });
+
+    h.bridge.sync();
+    expect(h.opened).toEqual([]);
+
+    appToken = 'xapp-1-NEW';
+    h.bridge.sync();
+    release();
+    await vi.runOnlyPendingTimersAsync();
+
+    // The abandoned attempt never opened a socket; the replacement did, once.
+    expect(h.opened).toEqual(['xapp-1-NEW']);
   });
 
   it('disconnects when the last subscriber is paused', async () => {
@@ -511,6 +599,53 @@ describe('status and teardown', () => {
     h.bridge.sync();
     await vi.runOnlyPendingTimersAsync();
     expect(h.statuses.at(-1)).toEqual({
+      kind: 'connected',
+      workspace: 'behiques',
+      bot: 'hive',
+      unresolved: [],
+    });
+  });
+
+  /**
+   * The suppression, stated as a property rather than left implicit
+   * (fix-round-2, HIVE-124).
+   *
+   * `push` compares the serialised status against the last one and drops a
+   * repeat. That is what makes the pane's mount-time read (`slack:socket-state`)
+   * necessary rather than a convenience: "just push the last status again when
+   * somebody subscribes" is the obvious fix, it would compile, and it would be
+   * silently dropped by this line every time. Without a test naming it, the
+   * next person tries exactly that and believes it worked.
+   */
+  it('drops a repeat of the last status, so re-announcing it reaches nobody', async () => {
+    const h = harness();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+
+    const before = h.statuses.length;
+    const last = h.statuses.at(-1);
+
+    // The socket dropping and coming back re-announces the identical status.
+    h.listeners.get('connected')?.(undefined);
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(h.statuses).toHaveLength(before);
+    // Suppressed on the wire, but still the bridge's answer when it is *asked*.
+    expect(h.bridge.status()).toEqual(last);
+  });
+
+  /**
+   * The read half of the same story: a pane that mounts long after boot asks
+   * rather than waits, because the push it would wait for already happened.
+   */
+  it('answers with the last status pushed, and with off before there is one', async () => {
+    const h = harness();
+    expect(h.bridge.status()).toEqual({ kind: 'off' });
+
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(h.bridge.status()).toEqual({
       kind: 'connected',
       workspace: 'behiques',
       bot: 'hive',

@@ -77,6 +77,16 @@ export interface SlackWeb {
 export interface SlackBridge {
   /** Re-read config, tokens and subscriptions, and connect or disconnect. */
   sync(): void;
+  /**
+   * The last status pushed, for a pane that mounted after it (HIVE-124).
+   *
+   * `slack:socket-status` is push-only and `send` buffers nothing, so a status
+   * emitted at boot is gone long before Settings is opened. Without this the
+   * drawer renders a fully connected bridge as `off` — and the `unresolved`
+   * list, which rides on the `connected` push, is unreachable in exactly the
+   * state a user actually opens the drawer in.
+   */
+  status(): SlackSocketStatus;
   /** The pane's Test button. Opens no socket. */
   test(): Promise<SlackSocketTestResult>;
   /** Channel names from `wake.on` that resolved to no Slack channel id. */
@@ -133,6 +143,21 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
   let pushed: SlackSocketStatus | null = null;
   /** The web client of the live connection, kept so a refresh reuses it. */
   let web: SlackWeb | null = null;
+
+  /**
+   * The pair the current connection was opened with, or `null` when there is
+   * none in flight or live.
+   *
+   * Held because a token *change* is otherwise invisible to {@link sync}. The
+   * three-way test below reads the tokens fresh every time, but the early
+   * returns past it are "is a socket already open" — so clearing a token was
+   * handled (it becomes `undefined` and the whole thing tears down) and
+   * **replacing** one was not: the user rotates the app token in Slack, the
+   * SDK's reconnect starts failing with the revoked one, `slack:set-tokens`
+   * fires a `sync()` and it returns early on a socket that can never work
+   * again. Comparing against this is what turns that into a reconnect.
+   */
+  let openedWith: { appToken: string; botToken: string } | null = null;
 
   /**
    * Which connection attempt is the current one.
@@ -562,6 +587,7 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
     generation += 1;
     socket = null;
     web = null;
+    openedWith = null;
     opening = false;
     refreshing = false;
     nameToId = null;
@@ -599,6 +625,23 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
       return;
     }
 
+    /*
+      A rotated token is a *different* connection, so the live one has to go
+      before the early returns below can be reached.
+
+      Deliberately ahead of both of them, and not only the `socket !== null`
+      one: a token replaced while the handshake is still in flight is the same
+      situation one tick earlier, and `opening` would swallow it just as
+      silently. `teardown` bumps the generation, so whichever attempt was in
+      flight cleans up after itself and cannot push over the new one.
+    */
+    if (
+      openedWith !== null &&
+      (openedWith.appToken !== appToken || openedWith.botToken !== botToken)
+    ) {
+      teardown();
+    }
+
     if (socket !== null) {
       refreshChannels(subs);
 
@@ -607,6 +650,12 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
     if (opening) return;
 
     opening = true;
+    /*
+      Recorded before the await, not inside `connect`: `sync` can run again
+      while the handshake is in flight, and the comparison above has to be able
+      to see what that handshake is using.
+    */
+    openedWith = { appToken, botToken };
     push({ kind: 'connecting' });
     void connect(appToken, botToken);
   };
@@ -626,6 +675,13 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
 
   return {
     sync,
+    /*
+      `off` before anything has been pushed, which is the honest reading: no
+      socket has been opened, so nothing is arriving. The pane's own resting
+      state is the same value, so a read that races the first `sync()` renders
+      what it would have rendered anyway.
+    */
+    status: () => pushed ?? { kind: 'off' },
     test,
     unresolved,
     stop: () => {
