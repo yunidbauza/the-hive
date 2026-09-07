@@ -1,12 +1,22 @@
+import { WarningCircle } from '@phosphor-icons/react';
 import { useState } from 'react';
 
+import { Switch } from '@components/ui/switch';
 import { TextField } from '@components/ui/text-field';
 import { SettingsGroup } from '@features/settings/components/settings-group';
 import { setReceiverConfig } from '@lib/project-config';
-import { DEFAULT_RECEIVER, isHostAlias } from '@shared/config-contract';
+import {
+  DEFAULT_BIND,
+  DEFAULT_RECEIVER,
+  isHostAlias,
+  isLoopbackHost,
+  isOrigin,
+  type ReceiverBindConfig,
+} from '@shared/config-contract';
 
 /**
- * How a containerised session addresses this app (HIVE-131).
+ * How a containerised session addresses this app (HIVE-131), and where the
+ * receiver itself listens (HIVE-134).
  *
  * A container cannot reach `127.0.0.1` — inside one that is the container's own
  * loopback. Every mainstream runtime proxies the connection from the host side,
@@ -28,12 +38,35 @@ const HINT =
 const INVALID =
   'A hostname only — no scheme, port, path or credentials. Try host.docker.internal.';
 
+const BIND_HINT =
+  'Prefer the bridge address your runtime names over 0.0.0.0. Binding every interface is a wider surface than the problem needs.';
+const BIND_INVALID = 'A hostname or an IPv4 address only — no scheme, port or path.';
+const PORT_HINT = 'Leave empty for any free port, which is the default.';
+const PORT_INVALID = 'A port from 0 to 65535, or empty for any free port.';
+const ORIGINS_HINT =
+  'Comma separated, as in http://localhost:5173. Empty refuses every request from a browser.';
+const ORIGINS_INVALID = 'Each entry is a scheme and a host, as in http://localhost:5173.';
+const EXPOSED =
+  'Anything that can reach this address may attempt to talk to the receiver. A per-session token is still required.';
+
 interface ContainerAliasGroupProps {
   /** The resolved alias from the snapshot. Never empty — the block is defaulted. */
   hostAlias: string;
+  /**
+   * The resolved bind from the snapshot. Never partial — the block is
+   * defaulted.
+   *
+   * Optional only so the pre-existing alias-only tests in
+   * `container-alias-group.test.tsx` keep rendering unmodified; every real
+   * caller (`AdvancedSection`) always supplies the resolved snapshot value.
+   */
+  bind?: ReceiverBindConfig;
 }
 
-export function ContainerAliasGroup({ hostAlias }: ContainerAliasGroupProps) {
+export function ContainerAliasGroup({
+  hostAlias,
+  bind = DEFAULT_BIND,
+}: ContainerAliasGroupProps) {
   const [draft, setDraft] = useState(hostAlias);
   const [invalid, setInvalid] = useState(false);
 
@@ -92,6 +125,123 @@ export function ContainerAliasGroup({ hostAlias }: ContainerAliasGroupProps) {
     void setReceiverConfig({ hostAlias: next });
   };
 
+  /*
+    Whether the resolved bind is off-loopback at all — the one definition of
+    "exposed" (`isLoopbackHost`, HIVE-134), reused rather than re-derived so the
+    header chip and this pane never disagree about what counts as widened.
+  */
+  const exposed = !isLoopbackHost(bind.host);
+
+  /*
+    The switch is local UI state seeded from the config, not a stored boolean —
+    there is deliberately no `bind.enabled` field anywhere in this story.
+
+    Turning it ON only *reveals* the fields. It writes NOTHING, because the
+    address is the user's to choose: committing a bind they never typed would
+    expose the socket on a single click, with no undo before the next launch
+    (the bind is read once, at listen time, and cannot be moved once a session
+    is relying on it). So flipping the switch changes only what is shown, and
+    a value is written only once the user actually commits one of the three
+    fields below.
+
+    Turning it OFF writes loopback immediately (`{ bind: { host: '127.0.0.1' } }`),
+    because that direction is always safe — retreating to loopback never needs a
+    second confirming step the way widening does.
+
+    The `if (exposed && !open) setOpen(true)` below is the same "follow the
+    snapshot" idea as `seen` above, applied to visibility rather than to a
+    draft: if Reload or Reset (or another session) leaves the resolved config
+    genuinely widened, the fields must be showing regardless of what this
+    control last did locally — there is no such thing as a hidden exposed bind.
+    It never forces the switch closed, symmetrically: a user who has opened the
+    fields to type an address should not have them yanked shut out from under
+    them just because the file, at this instant, still reads loopback.
+  */
+  const [open, setOpen] = useState(exposed);
+  if (exposed && !open) setOpen(true);
+
+  const [hostDraft, setHostDraft] = useState(bind.host);
+  const [hostInvalid, setHostInvalid] = useState(false);
+  const [portDraft, setPortDraft] = useState(
+    bind.port === 0 ? '' : String(bind.port),
+  );
+  const [portInvalid, setPortInvalid] = useState(false);
+  const [originsDraft, setOriginsDraft] = useState(bind.allowedOrigins.join(', '));
+  const [originsInvalid, setOriginsInvalid] = useState(false);
+
+  /*
+    Same follow-the-snapshot reasoning as `seen` above, repeated for the three
+    bind fields: Reload and Reset change `bind` underneath this component, and
+    a stale draft would write the pre-reset value straight back into the file
+    the user just reset. Compared field-by-field rather than by object
+    identity, because the snapshot hands back a fresh object (and a fresh
+    array) on every read even when nothing actually changed.
+  */
+  const [seenBind, setSeenBind] = useState(bind);
+  const bindChanged =
+    seenBind.host !== bind.host ||
+    seenBind.port !== bind.port ||
+    seenBind.allowedOrigins.length !== bind.allowedOrigins.length ||
+    seenBind.allowedOrigins.some((origin, index) => origin !== bind.allowedOrigins[index]);
+  if (bindChanged) {
+    setSeenBind(bind);
+    setHostDraft(bind.host);
+    setHostInvalid(false);
+    setPortDraft(bind.port === 0 ? '' : String(bind.port));
+    setPortInvalid(false);
+    setOriginsDraft(bind.allowedOrigins.join(', '));
+    setOriginsInvalid(false);
+  }
+
+  const commitBindHost = () => {
+    const next = hostDraft.trim();
+    // Unlike the alias, there is no default to fall back to on empty — a bind
+    // address always needs a value, and there is no meaningful "unset" host.
+    if (next === '' || !isHostAlias(next)) {
+      setHostInvalid(true);
+      return;
+    }
+    setHostInvalid(false);
+    setHostDraft(next);
+    if (next === bind.host) return;
+    void setReceiverConfig({ bind: { host: next } });
+  };
+
+  const commitPort = () => {
+    const raw = portDraft.trim();
+    // Empty is 0, which is what "any free port" is spelled as on the wire.
+    const next = raw === '' ? 0 : Number(raw);
+    if (!Number.isInteger(next) || next < 0 || next > 65_535) {
+      setPortInvalid(true);
+      return;
+    }
+    setPortInvalid(false);
+    setPortDraft(next === 0 ? '' : String(next));
+    if (next === bind.port) return;
+    void setReceiverConfig({ bind: { port: next } });
+  };
+
+  const commitOrigins = () => {
+    const entries = originsDraft
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry !== '');
+    // A single bad entry refuses the whole write — a partial allowlist is a
+    // worse failure than a rejected edit, because it fails silently later,
+    // at request time, for whichever origin got dropped.
+    if (!entries.every((entry) => isOrigin(entry))) {
+      setOriginsInvalid(true);
+      return;
+    }
+    setOriginsInvalid(false);
+    setOriginsDraft(entries.join(', '));
+    const unchanged =
+      entries.length === bind.allowedOrigins.length &&
+      entries.every((entry, index) => entry === bind.allowedOrigins[index]);
+    if (unchanged) return;
+    void setReceiverConfig({ bind: { allowedOrigins: entries } });
+  };
+
   return (
     <SettingsGroup
       title="Containers"
@@ -108,6 +258,64 @@ export function ContainerAliasGroup({ hostAlias }: ContainerAliasGroupProps) {
         placeholder={DEFAULT_RECEIVER.hostAlias}
         hint={invalid ? INVALID : HINT}
       />
+
+      <Switch
+        label="Accept connections off loopback"
+        description="Only for a runtime with no alias that reaches the host, such as Docker on native Linux. Takes effect at next launch."
+        checked={open}
+        onCheckedChange={(next) => {
+          setOpen(next);
+          // See the long comment above `open`: this is the one write this
+          // whole sub-group makes on its own, and it only ever narrows.
+          if (!next && exposed) void setReceiverConfig({ bind: { host: DEFAULT_BIND.host } });
+        }}
+      />
+
+      {open ? (
+        <>
+          {exposed ? (
+            <p className="flex items-start gap-2 text-[12.5px]">
+              <WarningCircle size={14} className="mt-px shrink-0 text-amber" />
+              <span className="text-amber">{EXPOSED}</span>
+            </p>
+          ) : null}
+
+          <TextField
+            label="Bind address"
+            value={hostDraft}
+            onChange={(value) => {
+              setHostDraft(value);
+              if (hostInvalid) setHostInvalid(false);
+            }}
+            onCommit={commitBindHost}
+            hint={hostInvalid ? BIND_INVALID : BIND_HINT}
+          />
+
+          <TextField
+            label="Port"
+            value={portDraft}
+            onChange={(value) => {
+              setPortDraft(value);
+              if (portInvalid) setPortInvalid(false);
+            }}
+            onCommit={commitPort}
+            placeholder="Any free port"
+            hint={portInvalid ? PORT_INVALID : PORT_HINT}
+          />
+
+          <TextField
+            label="Allowed origins"
+            value={originsDraft}
+            onChange={(value) => {
+              setOriginsDraft(value);
+              if (originsInvalid) setOriginsInvalid(false);
+            }}
+            onCommit={commitOrigins}
+            placeholder="None"
+            hint={originsInvalid ? ORIGINS_INVALID : ORIGINS_HINT}
+          />
+        </>
+      ) : null}
     </SettingsGroup>
   );
 }

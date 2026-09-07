@@ -345,7 +345,10 @@ export function AdvancedSection() {
         )}
       </SettingsGroup>
 
-      <ContainerAliasGroup hostAlias={snapshot.receiver.hostAlias} />
+      <ContainerAliasGroup
+        hostAlias={snapshot.receiver.hostAlias}
+        bind={snapshot.receiver.bind}
+      />
 
       <SettingsGroup
         title="Reset"

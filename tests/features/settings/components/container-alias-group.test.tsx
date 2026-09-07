@@ -1,8 +1,10 @@
 import { fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ContainerAliasGroup } from '@features/settings/components/container-alias-group';
 import { setReceiverConfig } from '@lib/project-config';
+import type { ReceiverBindConfig } from '@shared/config-contract';
 
 vi.mock('@lib/project-config', () => ({
   setReceiverConfig: vi.fn(() => Promise.resolve()),
@@ -191,5 +193,134 @@ describe('ContainerAliasGroup', () => {
         'host.docker.internal',
       );
     });
+  });
+});
+
+const LOOPBACK = { host: '127.0.0.1', port: 0, allowedOrigins: [] } as const;
+
+describe('the off-loopback bind', () => {
+  beforeEach(() => {
+    vi.mocked(setReceiverConfig).mockClear();
+  });
+
+  const renderGroup = (bind: ReceiverBindConfig = LOOPBACK) =>
+    render(<ContainerAliasGroup hostAlias="host.docker.internal" bind={bind} />);
+
+  it('is off, and hides its fields, on the shipped default', () => {
+    renderGroup();
+
+    expect(screen.getByRole('switch', { name: /off loopback/i })).not.toBeChecked();
+    expect(screen.queryByLabelText(/bind address/i)).not.toBeInTheDocument();
+  });
+
+  it('is on, and shows the address, when the bind is widened', () => {
+    renderGroup({ host: '172.17.0.1', port: 0, allowedOrigins: [] });
+
+    expect(screen.getByRole('switch', { name: /off loopback/i })).toBeChecked();
+    expect(screen.getByLabelText(/bind address/i)).toHaveValue('172.17.0.1');
+  });
+
+  /*
+    Turning it on reveals the fields and writes NOTHING. Committing an address
+    the user has not chosen is the one mistake this control must not make — a
+    switch that exposed the socket the instant it was flipped would be a
+    one-click mistake with no undo before the next launch.
+  */
+  it('writes nothing when switched on', async () => {
+    renderGroup();
+
+    await userEvent.click(screen.getByRole('switch', { name: /off loopback/i }));
+
+    expect(screen.getByLabelText(/bind address/i)).toBeInTheDocument();
+    expect(setReceiverConfig).not.toHaveBeenCalled();
+  });
+
+  it('writes loopback back when switched off', async () => {
+    renderGroup({ host: '172.17.0.1', port: 0, allowedOrigins: [] });
+
+    await userEvent.click(screen.getByRole('switch', { name: /off loopback/i }));
+
+    expect(setReceiverConfig).toHaveBeenCalledWith({ bind: { host: '127.0.0.1' } });
+  });
+
+  it('commits an address on blur', async () => {
+    renderGroup({ host: '172.17.0.1', port: 0, allowedOrigins: [] });
+
+    const field = screen.getByLabelText(/bind address/i);
+    await userEvent.clear(field);
+    await userEvent.type(field, '10.0.0.5');
+    await userEvent.tab();
+
+    expect(setReceiverConfig).toHaveBeenCalledWith({ bind: { host: '10.0.0.5' } });
+  });
+
+  it('refuses to send an address the guard would reject', async () => {
+    renderGroup({ host: '172.17.0.1', port: 0, allowedOrigins: [] });
+
+    const field = screen.getByLabelText(/bind address/i);
+    await userEvent.clear(field);
+    await userEvent.type(field, '10.0.0.5?');
+    await userEvent.tab();
+
+    expect(setReceiverConfig).not.toHaveBeenCalled();
+    expect(screen.getByText(/hostname or an IPv4 address/i)).toBeInTheDocument();
+  });
+
+  it('commits an empty port as any free port', async () => {
+    renderGroup({ host: '172.17.0.1', port: 63999, allowedOrigins: [] });
+
+    const field = screen.getByLabelText(/^port$/i);
+    await userEvent.clear(field);
+    await userEvent.tab();
+
+    expect(setReceiverConfig).toHaveBeenCalledWith({ bind: { port: 0 } });
+  });
+
+  it('splits allowed origins on commas and drops the blanks', async () => {
+    renderGroup({ host: '172.17.0.1', port: 0, allowedOrigins: [] });
+
+    const field = screen.getByLabelText(/allowed origins/i);
+    await userEvent.type(field, 'http://localhost:5173, , https://a.test');
+    await userEvent.tab();
+
+    expect(setReceiverConfig).toHaveBeenCalledWith({
+      bind: { allowedOrigins: ['http://localhost:5173', 'https://a.test'] },
+    });
+  });
+
+  it('refuses to send an origin that is not one', async () => {
+    renderGroup({ host: '172.17.0.1', port: 0, allowedOrigins: [] });
+
+    const field = screen.getByLabelText(/allowed origins/i);
+    await userEvent.type(field, 'http://ok.test, nope');
+    await userEvent.tab();
+
+    expect(setReceiverConfig).not.toHaveBeenCalled();
+  });
+
+  it('says the change takes effect at next launch', () => {
+    renderGroup({ host: '172.17.0.1', port: 0, allowedOrigins: [] });
+
+    expect(screen.getByText(/next launch/i)).toBeInTheDocument();
+  });
+
+  it('warns only while the bind is actually widened', () => {
+    const { unmount } = renderGroup();
+    expect(screen.queryByText(/may attempt to talk to the receiver/i)).not.toBeInTheDocument();
+    unmount();
+
+    renderGroup({ host: '172.17.0.1', port: 0, allowedOrigins: [] });
+    expect(screen.getByText(/may attempt to talk to the receiver/i)).toBeInTheDocument();
+  });
+
+  it('still commits the host alias, unchanged by any of this', async () => {
+    renderGroup();
+
+    const field = screen.getByLabelText(/host alias/i);
+    await userEvent.clear(field);
+    await userEvent.type(field, 'host.containers.internal');
+    await userEvent.tab();
+
+    expect(setReceiverConfig).toHaveBeenCalledWith({ hostAlias: 'host.containers.internal' });
   });
 });
