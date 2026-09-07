@@ -550,6 +550,47 @@ export const SLACK_KEYS: readonly (keyof SlackConfig)[] = [
  * macOS only — has a namespace waiting rather than needing a second top-level
  * key later.
  */
+/**
+ * The address the receiver listens on (HIVE-134).
+ *
+ * Off by default in the only sense that matters: {@link DEFAULT_BIND} is
+ * byte-for-byte the behaviour that shipped before this block existed, so a user
+ * who never touches it has no new listening surface.
+ *
+ * **Read once, at bind time.** Unlike {@link ReceiverConfig.hostAlias}, which
+ * `ipc/index.ts` passes as a getter so a config reload is picked up, this cannot
+ * be re-read: a socket that is already listening cannot be moved, and rebinding
+ * would mint a new `launchSecret` and 403 every live session until its generated
+ * set was rewritten. Settings says "takes effect at next launch" for that reason.
+ *
+ * **What widening the bind does not buy.** Claude Code refuses an http hook to
+ * any non-loopback private or link-local address (`ERR_HTTP_HOOK_BLOCKED_ADDRESS`,
+ * measured on HIVE-133), which is why `container/generated.ts` spells its status
+ * hooks as `curl` command hooks. So this serves MCP over HTTP and command hooks,
+ * not http hooks.
+ */
+export interface ReceiverBindConfig {
+  /**
+   * A hostname or an IPv4 literal, validated by {@link isHostAlias}.
+   *
+   * Prefer the bridge address a runtime names over `0.0.0.0`: binding every
+   * interface is a wider surface than the problem needs. `0.0.0.0` is accepted
+   * rather than refused, because a user whose runtime names no bridge has
+   * nothing else to write.
+   */
+  host: string;
+  /** 0 asks the OS for any free port, which is what shipped. */
+  port: number;
+  /**
+   * Full origins, as {@link isOrigin} defines one.
+   *
+   * Empty refuses every request that carries an `Origin` at all — the rule
+   * `POST /mcp` has had since HIVE-130, now on every route. A non-empty list
+   * turns that into an allowlist.
+   */
+  allowedOrigins: readonly string[];
+}
+
 export interface ReceiverConfig {
   /**
    * The name a container resolves to reach the host.
@@ -563,15 +604,32 @@ export interface ReceiverConfig {
    * an alias containing `:`.
    */
   hostAlias: string;
+  /** Where the receiver listens (HIVE-134). */
+  bind: ReceiverBindConfig;
 }
+
+/** Exactly what shipped before the block existed: loopback, OS-assigned port. */
+export const DEFAULT_BIND: ReceiverBindConfig = {
+  host: '127.0.0.1',
+  port: 0,
+  allowedOrigins: [],
+};
 
 /** Docker Desktop, OrbStack and Rancher all answer to this one. */
 export const DEFAULT_RECEIVER: ReceiverConfig = {
   hostAlias: 'host.docker.internal',
+  bind: DEFAULT_BIND,
 };
 
 /** The block's keys, for the parser's exact-key check. */
-export const RECEIVER_KEYS: readonly (keyof ReceiverConfig)[] = ['hostAlias'];
+export const RECEIVER_KEYS: readonly (keyof ReceiverConfig)[] = ['hostAlias', 'bind'];
+
+/** The nested block's keys, for the same check one level down. */
+export const BIND_KEYS: readonly (keyof ReceiverBindConfig)[] = [
+  'host',
+  'port',
+  'allowedOrigins',
+];
 
 /**
  * How a containerised session's `${VAR}` references get their values (HIVE-132).
@@ -740,6 +798,61 @@ export function isHostAlias(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   if (value.length === 0 || value.length > MAX_HOST_ALIAS) return false;
   return value.split('.').every((label) => HOST_ALIAS_LABEL.test(label));
+}
+
+/** `127.0.0.0/8`, in the dotted-quad spelling `isHostAlias` admits. */
+const LOOPBACK_V4 = /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+
+/**
+ * Whether a bind address reaches only this machine (HIVE-134).
+ *
+ * **The one definition of "exposed"**, and the reason there is no
+ * `bind.enabled` boolean: exposure is a property of the address, so deriving it
+ * leaves nothing for a flag and a host to disagree about. Main uses it to decide
+ * what the Host guard admits; the renderer uses it to decide whether the header
+ * says anything at all.
+ *
+ * The whole `127.0.0.0/8` block counts, not just `127.0.0.1` — a bind to
+ * `127.0.0.2` is every bit as unreachable from off the machine, and treating it
+ * as exposure would put an amber chip in the header over nothing.
+ *
+ * Brackets are stripped so this reads a `Host` header's IPv6 literal
+ * (`[::1]:63999` arrives as `[::1]`) as well as a config value.
+ */
+export function isLoopbackHost(host: string): boolean {
+  const bare = host.trim().toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
+  if (bare === 'localhost' || bare === '::1' || bare === '::ffff:127.0.0.1') return true;
+  return LOOPBACK_V4.test(bare);
+}
+
+/**
+ * Whether a value is usable as a {@link ReceiverBindConfig.allowedOrigins} entry.
+ *
+ * A second predicate beside {@link isHostAlias}, which the ticket asked not to
+ * write. It is unavoidable: an origin carries a **scheme** and an optional
+ * **port**, and `isHostAlias` refuses both by design — it validates DNS labels,
+ * and `:` is not one. `bind.host` does reuse `isHostAlias`, which is the half of
+ * that instruction that survives.
+ *
+ * The check is `url.origin === value`, which is stricter than it looks and does
+ * the work of five separate rejections at once. `URL` normalises an origin to
+ * scheme, host and non-default port and nothing else, so a trailing slash, a
+ * path, a query, a fragment, embedded credentials and a redundant default port
+ * all fail the comparison rather than needing a clause each. That matters here
+ * for `isHostAlias`'s reason: a stored value that does not match what the
+ * browser actually sends in `Origin` is an allowlist entry that silently never
+ * fires, and the user cannot tell that from a working one.
+ */
+export function isOrigin(value: unknown): value is string {
+  if (typeof value !== 'string' || value === '') return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+  return parsed.origin === value;
 }
 
 /**

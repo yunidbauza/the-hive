@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  DEFAULT_BIND,
   emptySnapshot,
   type CommandDiagnostic,
   type ConfigSnapshot,
@@ -446,7 +447,7 @@ describe('RuntimeSection — the container group', () => {
   it('offers the receiver’s host alias as the blank field’s placeholder', async () => {
     const user = userEvent.setup();
     install({
-      receiver: { hostAlias: 'host.containers.internal' },
+      receiver: { hostAlias: 'host.containers.internal', bind: DEFAULT_BIND },
       projects: [
         entry({
           id: 'nova-web',

@@ -9,6 +9,7 @@ import { reloadConfig, setReceiver } from '../../../../electron/main/config';
 import { parseConfig } from '../../../../electron/main/config/parse';
 import {
   CONFIG_PATH_ENV,
+  DEFAULT_BIND,
   DEFAULT_RECEIVER,
 } from '../../../../electron/shared/config-contract';
 
@@ -22,9 +23,15 @@ import {
  * against the parser's output is what proves the two agree.
  */
 
-const resolved = (parsed: { receiver?: { hostAlias?: string } }) => ({
+const resolved = (parsed: {
+  receiver?: {
+    hostAlias?: string;
+    bind?: { host?: string; port?: number; allowedOrigins?: readonly string[] };
+  };
+}) => ({
   ...DEFAULT_RECEIVER,
   ...parsed.receiver,
+  bind: { ...DEFAULT_BIND, ...parsed.receiver?.bind },
 });
 
 const doc = (extra: object) =>
@@ -38,6 +45,7 @@ describe('receiver resolution', () => {
   it('a file with no block resolves to the default', () => {
     expect(resolved(parseConfig(doc({}), 'config'))).toEqual({
       hostAlias: 'host.docker.internal',
+      bind: DEFAULT_BIND,
     });
   });
 
@@ -47,19 +55,22 @@ describe('receiver resolution', () => {
       'config',
     );
 
-    expect(resolved(parsed)).toEqual({ hostAlias: 'host.containers.internal' });
+    expect(resolved(parsed)).toEqual({
+      hostAlias: 'host.containers.internal',
+      bind: DEFAULT_BIND,
+    });
   });
 
   it('a rejected alias falls back to the default rather than an empty string', () => {
     const parsed = parseConfig(doc({ receiver: { hostAlias: '' } }), 'config');
 
-    expect(resolved(parsed)).toEqual({ hostAlias: 'host.docker.internal' });
+    expect(resolved(parsed)).toEqual({ hostAlias: 'host.docker.internal', bind: DEFAULT_BIND });
   });
 
   it('a dropped block falls back to the default', () => {
     const parsed = parseConfig(doc({ receiver: 'nope' }), 'config');
 
-    expect(resolved(parsed)).toEqual({ hostAlias: 'host.docker.internal' });
+    expect(resolved(parsed)).toEqual({ hostAlias: 'host.docker.internal', bind: DEFAULT_BIND });
   });
 
   it('a version 1 file still loads and gets the default', () => {
@@ -69,7 +80,7 @@ describe('receiver resolution', () => {
     );
 
     expect(parsed.fatal).toBe(false);
-    expect(resolved(parsed)).toEqual({ hostAlias: 'host.docker.internal' });
+    expect(resolved(parsed)).toEqual({ hostAlias: 'host.docker.internal', bind: DEFAULT_BIND });
   });
 });
 
@@ -114,7 +125,10 @@ describe('setReceiver', () => {
 
     const snapshot = setReceiver({ hostAlias: 'host.containers.internal' });
 
-    expect(snapshot.receiver).toEqual({ hostAlias: 'host.containers.internal' });
+    expect(snapshot.receiver).toEqual({
+      hostAlias: 'host.containers.internal',
+      bind: DEFAULT_BIND,
+    });
     expect(onDisk().receiver).toEqual({ hostAlias: 'host.containers.internal' });
   });
 

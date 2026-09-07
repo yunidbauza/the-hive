@@ -505,18 +505,6 @@ describe('parseConfig — the receiver block (HIVE-131)', () => {
     ]);
   });
 
-  it('reports an unknown key inside the block and keeps the rest', () => {
-    const parsed = parseConfig(
-      doc({ receiver: { hostAlias: 'a.b', bind: {} } }),
-      'config',
-    );
-
-    expect(parsed.receiver).toEqual({ hostAlias: 'a.b' });
-    expect(parsed.errors).toEqual([
-      'config.receiver: unknown key "bind" — ignored',
-    ]);
-  });
-
   it('rejects a forbidden key by dropping the whole block', () => {
     const parsed = parseConfig(
       '{"version":2,"projects":[],"receiver":{"__proto__":"x"}}',

@@ -6,6 +6,7 @@ import { delimiter, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  DEFAULT_BIND,
   DEFAULT_CLAUDE_COMMAND,
   DEFAULT_JIRA,
   DEFAULT_RECEIVER,
@@ -348,7 +349,7 @@ describe('effectiveRuntime container (HIVE-133)', () => {
 
   it('inherits hostAlias from the receiver, which is the only layer that can', () => {
     const runtime = effectiveRuntime(
-      snapshot({ receiver: { hostAlias: 'gateway' } }),
+      snapshot({ receiver: { hostAlias: 'gateway', bind: DEFAULT_BIND } }),
       project({ id: 'p', container: minimal }),
     );
     expect(runtime.container?.hostAlias).toBe('gateway');
@@ -356,7 +357,7 @@ describe('effectiveRuntime container (HIVE-133)', () => {
 
   it('lets the project override the receiver alias', () => {
     const runtime = effectiveRuntime(
-      snapshot({ receiver: { hostAlias: 'gateway' } }),
+      snapshot({ receiver: { hostAlias: 'gateway', bind: DEFAULT_BIND } }),
       project({ id: 'p', container: { ...minimal, hostAlias: 'bridge' } }),
     );
     expect(runtime.container?.hostAlias).toBe('bridge');
