@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -297,11 +297,20 @@ describe('real-time events (HIVE-124)', () => {
     );
   });
 
+  /**
+   * Scoped to the drawer itself (`data-testid="advanced-drawer"`), not the
+   * whole document. The pre-existing top-level caption also says "token held
+   * by Claude Code" for any connected status, whether or not `Advanced` is
+   * even open — an unscoped query would pass on that markup alone and never
+   * exercise a word this drawer's own copy wrote (fix-round-1, HIVE-124).
+   */
   it('names the two custodies apart', async () => {
     renderGroup({ slack: { socketMode: true, commanders: ['U1'] } });
     await openAdvanced();
-    expect(screen.getByText(/held by claude code/i)).toBeInTheDocument();
-    expect(screen.getByText(/encrypted on this machine/i)).toBeInTheDocument();
+
+    const drawer = within(screen.getByTestId('advanced-drawer'));
+    expect(drawer.getByText(/held by claude code/i)).toBeInTheDocument();
+    expect(drawer.getByText(/encrypted on this machine/i)).toBeInTheDocument();
   });
 
   it('tells the user nobody can command yet when the list is empty', async () => {
@@ -319,6 +328,42 @@ describe('real-time events (HIVE-124)', () => {
     expect(screen.getByLabelText(/app-level token/i)).toHaveValue('');
     expect(screen.getByLabelText(/bot token/i)).toHaveValue('');
     expect(screen.getByText(/stored/i)).toBeInTheDocument();
+  });
+
+  /**
+   * The asymmetric case: only one of the two tokens is stored. Distinct from
+   * the both-true case above, which collapses the per-field "Stored." into
+   * one shared line instead — this proves that collapse does not also fire
+   * when only one is actually stored (fix-round-1, HIVE-124).
+   */
+  it('says only the stored one is stored, when just one of the two tokens is', async () => {
+    renderGroup({
+      slack: { socketMode: true, commanders: [] },
+      tokens: { hasAppToken: true, hasBotToken: false, encryptionAvailable: true },
+    });
+    await openAdvanced();
+
+    expect(screen.getByLabelText(/app-level token/i)).toHaveValue('');
+    expect(screen.getByLabelText(/bot token/i)).toHaveValue('');
+    expect(screen.getByText(/stored/i)).toBeInTheDocument();
+  });
+
+  /**
+   * `bridgeError()`'s own rule ("reported as an error rather than left to
+   * render nothing") applies to every write this drawer makes, not only the
+   * ones that predate HIVE-124 — a toggle that never reaches main must not
+   * look like a switch that silently declined to move (fix-round-1).
+   */
+  it('says so when Socket Mode cannot be saved, rather than moving silently', async () => {
+    setSlackConfig.mockResolvedValue(null);
+    renderGroup({ slack: { socketMode: false, commanders: [] } });
+    await openAdvanced();
+
+    await userEvent.click(screen.getByRole('switch', { name: /socket mode/i }));
+
+    expect(
+      await screen.findByText(/could not reach its own main process/i),
+    ).toBeInTheDocument();
   });
 
   /**

@@ -100,11 +100,16 @@ const UNKNOWN_TOKENS: SlackTokensState = {
  * `readSlackStatus`/`signIn`/`signOut`/`testSlack` all return `null` on a
  * broken bridge (`src/lib/slack.ts`) — reported as an error rather than left
  * to render nothing, the same choice `JiraCredentialGroup` makes for a failed
- * Jira verb.
+ * Jira verb. Named apart from `bridgeError()` (rather than read off its
+ * `.message`) because that function's return type is the whole `SlackStatus`
+ * union — TypeScript cannot narrow a call result to the one variant that
+ * carries a message, only a value already known to be that variant.
  */
+const BRIDGE_ERROR_MESSAGE = 'The app could not reach its own main process.';
+
 const bridgeError = (): SlackStatus => ({
   kind: 'error',
-  message: 'The app could not reach its own main process.',
+  message: BRIDGE_ERROR_MESSAGE,
 });
 
 type PillKind = 'off' | 'ok' | 'wait' | 'err';
@@ -320,16 +325,18 @@ function Actions({
  * where it matters most — beside the two fields it distinguishes from the
  * OAuth token above (HIVE-124).
  *
- * `TOKEN_HOLDER` (above) already makes the "held by Claude Code" claim about
- * the OAuth token, in the caption every connected state shows — so this
- * names only the *other* half rather than repeating it verbatim, which
- * would read as two different claims about the same token to anyone
- * (a screen reader included) hearing both in one pass.
+ * `TOKEN_HOLDER` (above) makes the same "held by Claude Code" claim about the
+ * OAuth token, in the caption every connected state shows — but that caption
+ * sits outside this drawer, and a reader who opens `Advanced` without having
+ * seen it should not have to go looking for it. So this restates it in full
+ * rather than assuming the top of the pane already said so; the test that
+ * pins this text is scoped to the drawer (`data-testid="advanced-drawer"`)
+ * precisely so it cannot be satisfied by that other caption instead.
  */
 const CUSTODY_NOTE =
-  'The token above stays with Claude Code — in ~/.claude/.credentials.json, ' +
-  'refreshed by it, never read by this app. These two are the Hive’s own, ' +
-  'encrypted on this machine.';
+  'The token above is held by Claude Code, in ~/.claude/.credentials.json, ' +
+  'and refreshed by it — this app never reads it. These two are the ' +
+  'Hive’s own, encrypted on this machine.';
 
 /**
  * Whether a hint may say "Stored." on its own — `false` once *both* tokens
@@ -471,6 +478,7 @@ function RealTimeFields({
   };
 
   const pill = SOCKET_PILL[socket.kind];
+  const storedNote = bothStoredNote(tokens);
 
   return (
     <>
@@ -487,8 +495,8 @@ function RealTimeFields({
       </div>
 
       <p className="text-[11.5px] text-subtle">{CUSTODY_NOTE}</p>
-      {bothStoredNote(tokens) !== null && (
-        <p className="text-[11.5px] text-subtle">{bothStoredNote(tokens)}</p>
+      {storedNote !== null && (
+        <p className="text-[11.5px] text-subtle">{storedNote}</p>
       )}
 
       <SecretField
@@ -556,6 +564,13 @@ interface AdvancedFieldsProps {
   socket: SlackSocketStatus;
   testing: boolean;
   testResult: SlackSocketTestResult | null;
+  /**
+   * A failed write from any of the three verbs below — the switch, the
+   * allow-list, or a token save — none of which otherwise leaves a trace.
+   * Rendered once, under the switch, so it is visible whether the drawer is
+   * showing the off-state paragraph or the on-state fields.
+   */
+  configError: string | null;
   onChange: (next: SlackConfig) => void;
   onSetAppToken: (value: string) => void;
   onSetBotToken: (value: string) => void;
@@ -581,13 +596,14 @@ function AdvancedFields({
   socket,
   testing,
   testResult,
+  configError,
   onChange,
   onSetAppToken,
   onSetBotToken,
   onTest,
 }: AdvancedFieldsProps) {
   return (
-    <div className="flex flex-col gap-4 pt-1">
+    <div className="flex flex-col gap-4 pt-1" data-testid="advanced-drawer">
       <div className="flex flex-col gap-2">
         <h5 className="font-mono text-[11px] font-semibold uppercase tracking-wide text-subtle">
           Slack app
@@ -615,6 +631,10 @@ function AdvancedFields({
           checked={slack.socketMode}
           onCheckedChange={(next) => onChange({ ...slack, socketMode: next })}
         />
+
+        {configError !== null && (
+          <p className="text-[11.5px] text-red">{configError}</p>
+        )}
 
         {!slack.socketMode ? (
           <p className="text-[11.5px] text-subtle">
@@ -693,6 +713,14 @@ export function SlackGroup({ agents, tokens: tokensProp }: SlackGroupProps) {
   const [socketTesting, setSocketTesting] = useState(false);
   const [socketTestResult, setSocketTestResult] =
     useState<SlackSocketTestResult | null>(null);
+  /**
+   * A failed write from the switch, the allow-list, or a token save — the
+   * three verbs below that otherwise do `if (result) …` and say nothing on
+   * the `else`. The module comment on {@link bridgeError} states the rule
+   * this pane follows everywhere else: a broken bridge is reported, never
+   * left to render as though nothing happened.
+   */
+  const [configError, setConfigError] = useState<string | null>(null);
 
   /*
     Read on mount only — `claude mcp get slack`, parsed, answers in well under
@@ -734,19 +762,34 @@ export function SlackGroup({ agents, tokens: tokensProp }: SlackGroupProps) {
       socketMode: next.socketMode,
       commanders: next.commanders,
     }).then((snapshot) => {
-      if (snapshot) installProjectConfig(snapshot);
+      if (snapshot) {
+        installProjectConfig(snapshot);
+        setConfigError(null);
+        return;
+      }
+      setConfigError(BRIDGE_ERROR_MESSAGE);
     });
   };
 
   const handleSetAppToken = (value: string) => {
     void setSlackTokens({ appToken: value }).then((next) => {
-      if (next) setTokens(next);
+      if (next) {
+        setTokens(next);
+        setConfigError(null);
+        return;
+      }
+      setConfigError(BRIDGE_ERROR_MESSAGE);
     });
   };
 
   const handleSetBotToken = (value: string) => {
     void setSlackTokens({ botToken: value }).then((next) => {
-      if (next) setTokens(next);
+      if (next) {
+        setTokens(next);
+        setConfigError(null);
+        return;
+      }
+      setConfigError(BRIDGE_ERROR_MESSAGE);
     });
   };
 
@@ -871,6 +914,7 @@ export function SlackGroup({ agents, tokens: tokensProp }: SlackGroupProps) {
             socket={socket}
             testing={socketTesting}
             testResult={socketTestResult}
+            configError={configError}
             onChange={handleSlackChange}
             onSetAppToken={handleSetAppToken}
             onSetBotToken={handleSetBotToken}
