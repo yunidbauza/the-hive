@@ -11,6 +11,7 @@ import {
   SLACK_EVENT_DEBOUNCE_MS,
   SLACK_EVENT_DEDUPE_MAX,
   SLACK_EVENT_MIN_GAP_MS,
+  SLACK_RECONNECT_DELAYS_MS,
 } from '../../../../../electron/shared/slack-contract';
 
 const message = (ts: string, user = 'U08BA712189', channel = 'C0123ABCD') => ({
@@ -305,6 +306,131 @@ describe('connecting', () => {
 
     // The abandoned attempt never opened a socket; the replacement did, once.
     expect(h.opened).toEqual(['xapp-1-NEW']);
+  });
+
+  /**
+   * A connect that failed used to be the end of it (fix-round-3, HIVE-124).
+   *
+   * `sync()` pushed `failed`, cleared `opening` and scheduled nothing — so a
+   * laptop that woke before its Wi-Fi did stayed disconnected for the whole
+   * session with the config still saying Socket Mode was on, and the only cure
+   * was a config change nobody had a reason to make.
+   */
+  it('retries a failed connect, and connects when the network comes back', async () => {
+    let offline = true;
+    const h = harness({
+      openWeb: () => ({
+        authTest: async () => ({ team: 'behiques', user: 'hive' }),
+        listChannels: async () => {
+          if (offline) throw new Error('getaddrinfo ENOTFOUND slack.com');
+
+          return [{ name: 'eng-code-review', id: 'C0123ABCD' }];
+        },
+      }),
+    });
+
+    h.bridge.sync();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.socket.started).toBe(0);
+    expect(h.statuses.at(-1)).toEqual({
+      kind: 'failed',
+      message: 'getaddrinfo ENOTFOUND slack.com',
+    });
+
+    offline = false;
+    await vi.advanceTimersByTimeAsync(SLACK_RECONNECT_DELAYS_MS[0]);
+
+    expect(h.socket.started).toBe(1);
+    expect(h.statuses.at(-1)).toEqual({
+      kind: 'connected',
+      workspace: 'behiques',
+      bot: 'hive',
+      unresolved: [],
+    });
+  });
+
+  /**
+   * The other half: bounded, so a genuinely revoked token is not retried until
+   * the process dies. `failed` is left standing on the pane, and the user's own
+   * next action — any `sync()` — is the retry.
+   */
+  it('climbs the ladder once and then stops, rather than retrying forever', async () => {
+    let attempts = 0;
+    const h = harness({
+      openWeb: () => ({
+        authTest: async () => ({ team: 'behiques', user: 'hive' }),
+        listChannels: async () => {
+          attempts += 1;
+
+          throw new Error('invalid_auth');
+        },
+      }),
+    });
+
+    h.bridge.sync();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(attempts).toBe(1);
+
+    for (const delay of SLACK_RECONNECT_DELAYS_MS) {
+      await vi.advanceTimersByTimeAsync(delay);
+    }
+    expect(attempts).toBe(SLACK_RECONNECT_DELAYS_MS.length + 1);
+
+    /* Nothing is armed past the last rung — the count is what proves it. */
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(SLACK_RECONNECT_DELAYS_MS.length * 300_000);
+    expect(attempts).toBe(SLACK_RECONNECT_DELAYS_MS.length + 1);
+    expect(h.statuses.at(-1)).toEqual({ kind: 'failed', message: 'invalid_auth' });
+  });
+
+  /**
+   * A drop is now the bridge's to answer (fix-round-3, HIVE-124).
+   *
+   * `clients.ts` turns the SDK's own reconnect off, because with it on a
+   * revoked app token is retried forever with nothing emitted and the pane
+   * stuck on `Connected`. The price of that honesty is this: `disconnected`
+   * has to reconnect, or `connecting` becomes a state the socket never leaves.
+   */
+  it('reconnects after the socket drops, and resets the ladder when it comes back', async () => {
+    const h = harness();
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+    expect(h.socket.started).toBe(1);
+
+    h.listeners.get('disconnected')?.(undefined);
+    expect(h.statuses.at(-1)).toEqual({ kind: 'connecting' });
+
+    await vi.advanceTimersByTimeAsync(SLACK_RECONNECT_DELAYS_MS[0]);
+    expect(h.socket.started).toBe(2);
+    expect(h.statuses.at(-1)).toEqual({
+      kind: 'connected',
+      workspace: 'behiques',
+      bot: 'hive',
+      unresolved: [],
+    });
+
+    /* Reset, not climbed: the second drop waits the *first* rung again. */
+    h.listeners.get('disconnected')?.(undefined);
+    await vi.advanceTimersByTimeAsync(SLACK_RECONNECT_DELAYS_MS[0]);
+    expect(h.socket.started).toBe(3);
+  });
+
+  it('takes a pending retry with it when the bridge stops', async () => {
+    const h = harness({
+      openWeb: () => ({
+        authTest: async () => ({ team: 'behiques', user: 'hive' }),
+        listChannels: async () => {
+          throw new Error('invalid_auth');
+        },
+      }),
+    });
+
+    h.bridge.sync();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.getTimerCount()).toBe(1);
+
+    h.bridge.stop();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('disconnects when the last subscriber is paused', async () => {

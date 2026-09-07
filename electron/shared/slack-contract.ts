@@ -158,6 +158,39 @@ export const SLACK_EVENT_TEXT_MAX = 300;
  */
 export const SLACK_EVENT_DEDUPE_MAX = 500;
 
+/**
+ * How long the bridge waits before trying a connection again, per attempt.
+ *
+ * ## Why the bridge reconnects at all, rather than the SDK
+ *
+ * `@slack/socket-mode` reconnects itself, and that is precisely the problem:
+ * it does so **silently and forever**. Revoke the app token and
+ * `apps.connections.open` starts answering `invalid_auth`; the retry throws out
+ * of `delayReconnectAttempt`'s own callback, which nothing awaits, so no state
+ * is emitted, no listener fires, and the pane keeps whatever it last said. The
+ * one event that reaches a listener in that hole is `reconnecting`, which is
+ * indistinguishable from a healthy blip.
+ *
+ * So `clients.ts` passes `autoReconnectEnabled: false` and this app owns the
+ * loop. A drop then arrives as `disconnected` — an event the SDK really does
+ * emit — and a retry whose `start()` rejects rejects *into* `connect`, where
+ * the existing catch pushes `failed` with Slack's own words in it. That is the
+ * whole of the fix: the pane can say Failed because the failure now has a path
+ * to it.
+ *
+ * ## Why a ladder, and why it ends
+ *
+ * A laptop that wakes before its Wi-Fi does must not need the switch toggled,
+ * so the first rungs are seconds. A token that is genuinely revoked must not be
+ * retried until the process dies, so the ladder is finite: ~6½ minutes in five
+ * attempts, then `failed` stands. Every `sync()` — a config change, a token
+ * saved, an agent enabled — starts a fresh attempt anyway, so "ended" means
+ * "stopped retrying on its own", not "unreachable until restart".
+ */
+export const SLACK_RECONNECT_DELAYS_MS: readonly number[] = [
+  1_000, 5_000, 15_000, 60_000, 300_000,
+];
+
 /** The encrypted file under `userData`, beside Jira's `jira-credential.bin`. */
 export const SLACK_TOKENS_FILE = 'slack-tokens.bin';
 

@@ -5,6 +5,7 @@ import {
   SLACK_EVENT_DEDUPE_MAX,
   SLACK_EVENT_MIN_GAP_MS,
   SLACK_MENTION_KIND,
+  SLACK_RECONNECT_DELAYS_MS,
   type SlackEvent,
   type SlackSocketStatus,
   type SlackSocketTestResult,
@@ -228,6 +229,24 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
   const lastEventWakeAt = new Map<string, number>();
 
   /**
+   * The bridge's own reconnect, because the SDK's is silent (fix-round-3).
+   *
+   * `clients.ts` turns `autoReconnectEnabled` off and says why. What that buys
+   * is a **reported** failure; what it costs is this, and the two rules that go
+   * with it: the timer is cancelled by {@link teardown} — so `stop()`, a
+   * rotated token and the switch going off all take it with them — and every
+   * attempt goes back through {@link sync}, which re-reads the switch, the
+   * tokens and the subscriptions rather than assuming the reason to be
+   * connected still holds a minute later.
+   *
+   * `attempt` indexes {@link SLACK_RECONNECT_DELAYS_MS} and is reset by a
+   * connection that comes up and by Slack being turned off — never by a
+   * failure, which is what makes the ladder climb.
+   */
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let retryAttempt = 0;
+
+  /**
    * Is `era` still the connection this bridge is running?
    *
    * The one question every continuation past an `await` has to ask. `stopped`
@@ -260,6 +279,35 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
   const pushFor = (era: number, status: SlackSocketStatus): void => {
     if (!isCurrent(era)) return;
     push(status);
+  };
+
+  const cancelRetry = (): void => {
+    if (retryTimer === null) return;
+
+    clearTimeoutFn(retryTimer);
+    retryTimer = null;
+  };
+
+  /**
+   * Try again, later, unless the ladder is spent.
+   *
+   * Deliberately schedules **nothing** past the last rung: a token that is
+   * genuinely revoked should leave `failed` standing on the pane rather than
+   * spending an API call every five minutes for the life of the process. Any
+   * `sync()` still starts a fresh attempt, so the user's own next action is
+   * always a retry.
+   */
+  const scheduleRetry = (): void => {
+    if (stopped || retryTimer !== null) return;
+
+    const delay = SLACK_RECONNECT_DELAYS_MS[retryAttempt];
+    if (delay === undefined) return;
+
+    retryAttempt += 1;
+    retryTimer = setTimeoutFn(() => {
+      retryTimer = null;
+      sync();
+    }, delay);
   };
 
   const unresolved = (): string[] => {
@@ -537,13 +585,36 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
         if (live()) onSocketEvent(arg);
       });
       opened.on('connected', () => {
-        if (live()) void announceConnected(client, era);
+        if (!live()) return;
+
+        /* A connection that came up retires the ladder the last one climbed. */
+        cancelRetry();
+        retryAttempt = 0;
+        void announceConnected(client, era);
       });
       /*
-        The client reconnects itself, so a drop is `connecting` rather than
-        `failed`: nothing is broken, and nothing is arriving either.
+        A drop is `connecting` rather than `failed` — nothing is broken, and
+        nothing is arriving either — but it is now this bridge's job to make
+        that true. `clients.ts` turns the SDK's own reconnect off (and says
+        why), so without the retry below `connecting` would be a state the
+        socket never left.
+
+        Torn down first, and only then re-scheduled: the era bump is what stops
+        the dead socket's late events being read, and `teardown` cancels the
+        retry timer, so the order here is the one that leaves one armed.
       */
-      opened.on('disconnected', () => pushFor(era, { kind: 'connecting' }));
+      opened.on('disconnected', () => {
+        if (!live()) return;
+
+        teardown();
+        push({ kind: 'connecting' });
+        scheduleRetry();
+      });
+      /*
+        A WebSocket-level error — `SlackWebSocket` emits this one, having
+        already closed the socket under it, so the `disconnected` above follows
+        and carries the retry. This says what went wrong while it does.
+      */
       opened.on('error', (arg) =>
         pushFor(era, { kind: 'failed', message: messageOf(arg) }),
       );
@@ -562,6 +633,14 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
       if (socket === opened) socket = null;
       if (opened !== null) void opened.disconnect().catch(() => undefined);
       pushFor(era, { kind: 'failed', message: messageOf(error) });
+      /*
+        A laptop that booted before its Wi-Fi did must not stay disconnected
+        for the session with the config still saying Socket Mode is on. This
+        used to schedule nothing at all: `opening` was cleared, `failed` was
+        pushed, and the next attempt waited on a config change nobody had a
+        reason to make.
+      */
+      scheduleRetry();
     } finally {
       /* Never clear a *later* attempt's flag: this one may already be stale. */
       if (era === generation) opening = false;
@@ -606,6 +685,12 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
   const teardown = (): void => {
     const open = socket;
     generation += 1;
+    /*
+      The retry belongs to the connection being torn down, so it goes with it.
+      A caller that wants one *after* a teardown arms it afterwards — the
+      `disconnected` handler is the only one that does.
+    */
+    cancelRetry();
     socket = null;
     web = null;
     openedWith = null;
@@ -641,6 +726,8 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
       !needsSocket(subs)
     ) {
       teardown();
+      /* Off is a resting state, not a failure: the next attempt starts clean. */
+      retryAttempt = 0;
       push({ kind: 'off' });
 
       return;

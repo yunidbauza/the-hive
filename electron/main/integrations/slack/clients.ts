@@ -25,8 +25,28 @@ interface SocketEventArg {
   ack?: () => Promise<void>;
 }
 
+/**
+ * Reconnection is `bridge.ts`'s, not the SDK's (fix-round-3, HIVE-124).
+ *
+ * Left on — the default — the client retries `apps.connections.open` forever
+ * and reports nothing when the retries cannot succeed. A revoked app token
+ * throws out of `delayReconnectAttempt`'s own un-awaited callback: no state is
+ * emitted, no listener fires, and the pane sits on `Connected` describing a
+ * socket that will never carry another message.
+ *
+ * Off, a drop surfaces as `disconnected` and a failing reconnect rejects out of
+ * `start()` into `connect`'s catch, where it becomes `failed` with Slack's own
+ * error text. The cost is that this app now owns the retry ladder — see
+ * {@link SLACK_RECONNECT_DELAYS_MS} — which is the same trade `bridge.ts`
+ * already makes for every other decision in this folder.
+ */
+const AUTO_RECONNECT = false;
+
 export const openSlackSocket = (appToken: string): SlackSocket => {
-  const client = new SocketModeClient({ appToken });
+  const client = new SocketModeClient({
+    appToken,
+    autoReconnectEnabled: AUTO_RECONNECT,
+  });
 
   return {
     start: async () => {

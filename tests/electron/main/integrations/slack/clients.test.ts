@@ -34,8 +34,15 @@ const platformError = (error: string): Error =>
     data: { ok: false, error },
   });
 
+/** Every `new SocketModeClient(...)` argument, in order. */
+const socketOptions: Record<string, unknown>[] = [];
+
 vi.mock('@slack/socket-mode', () => ({
   SocketModeClient: class {
+    constructor(options: Record<string, unknown>) {
+      socketOptions.push(options);
+    }
+
     start = vi.fn();
     disconnect = vi.fn();
     on = vi.fn();
@@ -58,7 +65,7 @@ vi.mock('@slack/web-api', () => ({
   },
 }));
 
-const { openSlackWeb } = await import(
+const { openSlackSocket, openSlackWeb } = await import(
   '../../../../../electron/main/integrations/slack/clients'
 );
 
@@ -67,6 +74,7 @@ const PRIVATE = [{ id: 'G1', name: 'eng-secret' }];
 
 beforeEach(() => {
   calls.length = 0;
+  socketOptions.length = 0;
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 });
 
@@ -150,5 +158,27 @@ describe('openSlackWeb().listChannels', () => {
     pages = () => [{ channels: [{ id: 'C1' }, { name: 'nameless' }, ...PUBLIC] }, {}];
 
     await expect(openSlackWeb('xoxb-2-B').listChannels()).resolves.toEqual(PUBLIC);
+  });
+});
+
+/**
+ * The second decision in this file that is the app's and not the SDK's
+ * (fix-round-3, HIVE-124).
+ *
+ * Left at its default, `autoReconnectEnabled` retries `apps.connections.open`
+ * forever and reports *nothing* when the retries cannot succeed: a revoked app
+ * token throws out of the SDK's own un-awaited reconnect callback, so no state
+ * is emitted, no listener fires, and the pane keeps saying `Connected` about a
+ * socket that will never carry another message. Off, a drop arrives as
+ * `disconnected` and a failing reconnect rejects into `connect`'s catch, where
+ * it becomes `failed` with Slack's own words. `bridge.ts` owns the ladder.
+ */
+describe('openSlackSocket', () => {
+  it('turns the SDK reconnect off, so a failure has a path to the pane', () => {
+    openSlackSocket('xapp-1-A');
+
+    expect(socketOptions).toEqual([
+      { appToken: 'xapp-1-A', autoReconnectEnabled: false },
+    ]);
   });
 });
