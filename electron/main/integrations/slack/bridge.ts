@@ -137,13 +137,21 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
   /**
    * Which connection attempt is the current one.
    *
-   * Bumped by every {@link teardown}, and captured by anything that awaits.
-   * `stopped` alone is not enough: `connect` awaits `listChannels`, and during
-   * that await a `sync()` can turn the switch off or watch the last agent be
-   * paused. Without this, that `sync()` tears down a socket that does not exist
-   * yet, `connect` resumes, opens one anyway, and pushes `connected` over the
-   * `off` the user just caused — a socket delivering wakes after Slack was
-   * turned off, self-healing only on a next `sync()` nothing schedules.
+   * Bumped by every {@link teardown}. `stopped` alone is not enough: `connect`
+   * awaits `listChannels` and `announceConnected` awaits `auth.test`, and
+   * during either await a `sync()` can turn the switch off or watch the last
+   * agent be paused. Without this, that `sync()` tears down a connection that
+   * is still arriving, the continuation resumes, opens a socket anyway and
+   * pushes `connected` over the `off` the user just caused — a socket
+   * delivering wakes after Slack was turned off, self-healing only on a next
+   * `sync()` nothing schedules.
+   *
+   * There are exactly three places an `era` is captured — `connect`,
+   * `announceConnected` (which takes it as a parameter, because it is resumed
+   * from a socket event rather than started by one) and `refreshChannels` — and
+   * two guards that read it: {@link isCurrent} for control flow, and
+   * {@link pushFor} for anything the pane is told. Every `await` in this module
+   * is followed by one of them; a new one must be too.
    */
   let generation = 0;
 
@@ -173,10 +181,39 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const lastEventWakeAt = new Map<string, number>();
 
+  /**
+   * Is `era` still the connection this bridge is running?
+   *
+   * The one question every continuation past an `await` has to ask. `stopped`
+   * is folded in because a stopped bridge is nobody's current connection.
+   */
+  const isCurrent = (era: number): boolean => !stopped && era === generation;
+
+  /**
+   * Say something to the pane.
+   *
+   * **Synchronous callers only.** Anything speaking from the far side of an
+   * `await` must use {@link pushFor} instead: by then the user may have turned
+   * Slack off, and a stale `connected` landing on top of the `off` they caused
+   * is the exact bug the generation counter exists to prevent.
+   */
   const push = (status: SlackSocketStatus): void => {
     if (pushed !== null && JSON.stringify(pushed) === JSON.stringify(status)) return;
     pushed = status;
     deps.onStatus(status);
+  };
+
+  /**
+   * A push from a continuation, dropped if its connection has been torn down.
+   *
+   * Era-aware rather than "is there a socket": teardown followed by a *new*
+   * connection leaves a socket in place, and the stale continuation's answer —
+   * an older workspace, an older unresolved list — must still not overwrite the
+   * live one's. The generation is the only thing that tells those apart.
+   */
+  const pushFor = (era: number, status: SlackSocketStatus): void => {
+    if (!isCurrent(era)) return;
+    push(status);
   };
 
   const unresolved = (): string[] => {
@@ -193,11 +230,11 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
    * the pane holds arrived on a status push, so a refresh that resolves a name
    * has to send one or the verb and the pane disagree until the next reconnect.
    */
-  const repushUnresolved = (): void => {
+  const repushUnresolved = (era: number): void => {
     const last = pushed;
     if (last === null || last.kind !== 'connected') return;
 
-    push({
+    pushFor(era, {
       kind: 'connected',
       workspace: last.workspace,
       bot: last.bot,
@@ -395,10 +432,22 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
     idToName = new Map(channels.map((item) => [item.id, channelKey(item.name)]));
   };
 
-  const announceConnected = async (client: SlackWeb): Promise<void> => {
+  /**
+   * `auth.test`, and the `connected` the pane draws from it.
+   *
+   * `era` is not decoration. This awaits, and a `sync()` during that await can
+   * turn Slack off — so both pushes go through {@link pushFor}, or the answer
+   * to a question asked before the user said stop lands on the pane after.
+   */
+  const announceConnected = async (client: SlackWeb, era: number): Promise<void> => {
     try {
       const { team, user } = await client.authTest();
-      push({ kind: 'connected', workspace: team, bot: user, unresolved: unresolved() });
+      pushFor(era, {
+        kind: 'connected',
+        workspace: team,
+        bot: user,
+        unresolved: unresolved(),
+      });
     } catch (error) {
       /*
         The socket is up; only the identity call failed — a bot token without
@@ -407,13 +456,18 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
         they are, and the log line is what stops the two nulls being a mystery.
       */
       console.warn(`[hive] slack: auth.test failed — ${messageOf(error)}`);
-      push({ kind: 'connected', workspace: null, bot: null, unresolved: unresolved() });
+      pushFor(era, {
+        kind: 'connected',
+        workspace: null,
+        bot: null,
+        unresolved: unresolved(),
+      });
     }
   };
 
   const connect = async (appToken: string, botToken: string): Promise<void> => {
     const era = generation;
-    const live = (): boolean => !stopped && era === generation;
+    const live = (): boolean => isCurrent(era);
     let opened: SlackSocket | null = null;
 
     try {
@@ -437,18 +491,16 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
         if (live()) onSocketEvent(arg);
       });
       opened.on('connected', () => {
-        if (live()) void announceConnected(client);
+        if (live()) void announceConnected(client, era);
       });
       /*
         The client reconnects itself, so a drop is `connecting` rather than
         `failed`: nothing is broken, and nothing is arriving either.
       */
-      opened.on('disconnected', () => {
-        if (live()) push({ kind: 'connecting' });
-      });
-      opened.on('error', (arg) => {
-        if (live()) push({ kind: 'failed', message: messageOf(arg) });
-      });
+      opened.on('disconnected', () => pushFor(era, { kind: 'connecting' }));
+      opened.on('error', (arg) =>
+        pushFor(era, { kind: 'failed', message: messageOf(arg) }),
+      );
 
       socket = opened;
       await opened.start();
@@ -463,7 +515,7 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
 
       if (socket === opened) socket = null;
       if (opened !== null) void opened.disconnect().catch(() => undefined);
-      push({ kind: 'failed', message: messageOf(error) });
+      pushFor(era, { kind: 'failed', message: messageOf(error) });
     } finally {
       /* Never clear a *later* attempt's flag: this one may already be stale. */
       if (era === generation) opening = false;
@@ -491,10 +543,10 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
     void (async () => {
       try {
         const channels = await client.listChannels();
-        if (stopped || era !== generation) return;
+        if (!isCurrent(era)) return;
 
         setChannelIndex(channels);
-        repushUnresolved();
+        repushUnresolved(era);
       } catch (error) {
         console.warn(
           `[hive] slack: could not refresh the channel index — ${messageOf(error)}`,

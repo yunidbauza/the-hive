@@ -151,6 +151,44 @@ describe('connecting', () => {
     expect(h.statuses.at(-1)).toEqual({ kind: 'off' });
   });
 
+  /*
+    The sibling of the test above, through the other await. `connect` is not the
+    only continuation: `announceConnected` awaits `auth.test` after the socket
+    is already up, so an answer to a question asked before the user said stop
+    can land on the pane afterwards and paint `connected` over their `off`.
+  */
+  it('does not report connected when a sync turned Slack off mid auth.test', async () => {
+    let socketMode = true;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = harness({
+      config: () => ({ socketMode, commanders: ['U08BA712189'] }),
+      openWeb: () => ({
+        authTest: async () => {
+          await gate;
+
+          return { team: 'behiques', user: 'hive' };
+        },
+        listChannels: async () => [{ name: 'eng-code-review', id: 'C0123ABCD' }],
+      }),
+    });
+
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+    expect(h.socket.started).toBe(1);
+    expect(h.statuses.at(-1)).toEqual({ kind: 'connecting' });
+
+    socketMode = false;
+    h.bridge.sync();
+    expect(h.statuses.at(-1)).toEqual({ kind: 'off' });
+
+    release();
+    await vi.runOnlyPendingTimersAsync();
+    expect(h.statuses.at(-1)).toEqual({ kind: 'off' });
+  });
+
   it('disconnects when the last subscriber is paused', async () => {
     let paused = false;
     const h = harness({
