@@ -649,14 +649,14 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
      * inside a container that has to be told them, not paths this process
      * opens, and `envArg`/`freshness` are shape, not destinations.
      *
-     * `probe` is not that mild, and does not belong in the same clause
-     * (final-review fix, HIVE-134 has been told to lean on this paragraph):
-     * `diagnoseCommand` runs it via `/bin/sh -c` on the **host**, from a
-     * settings handler — this is the first payload on this bridge that main
-     * executes at all outside a session's own terminal, where the user can at
-     * least see what ran. That the value only takes effect when Settings asks
-     * for a diagnostic, and is otherwise inert on disk, is HIVE-134's premise
-     * to weigh, not this test's to assert away.
+     * `probe` is not that mild, and HIVE-134 weighed it rather than assert it
+     * away: `diagnoseCommand` runs it via `/bin/sh -c` on the **host**, from a
+     * settings handler, which is a strictly larger capability than anything
+     * `setReceiver` carries — a bind names where a socket listens, a probe names
+     * a program to run. It stays in this list on the ground the earlier comment
+     * gave: it takes effect only when Settings asks for a diagnostic and is
+     * otherwise inert on disk. That is a real bound and not the same as harmless,
+     * and it is the next thing on this bridge worth narrowing.
      */
     /**
       * Story 106's `setNotifications` — a capability, and the mildest one on
@@ -685,8 +685,7 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'setProjectRuntime',
     /**
      * HIVE-131's `setReceiver`, and it **does name a network destination** —
-     * the first verb on the config bridge that does. Read that plainly, because
-     * the follow-up bind story will lean on whatever this paragraph says.
+     * the first verb on the config bridge that does. Read that plainly.
      *
      * It stores the hostname a containerised session uses to address this app.
      * Nothing consumes it on this branch, but HIVE-132 routes
@@ -706,16 +705,33 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
      *   survives it — an earlier blocklist let `?`, `#`, `@` and `\` through,
      *   each of which silently re-pointed the address at port 80 of another
      *   host.
-     * - It names no *file*: the one file the bridge can write is still chosen by
-     *   main, as for every verb above.
-     * - It opens **no socket and changes no bind**. The receiver still binds
-     *   `127.0.0.1`, and nothing on this bridge can widen that. The opt-in
-     *   non-loopback bind was deliberately left out of HIVE-131 — which is why
-     *   this verb adds no listening surface, and why that claim, unlike the
-     *   destination one, holds.
+     * - It named no *file* and opened no socket, and only the first half still
+     *   holds. HIVE-134 added `bind` to this payload, so this verb **can** move
+     *   the receiver off loopback — at the next launch, because a listening
+     *   socket cannot be moved. What bounds it is no longer "it cannot": it is
+     *   the same `isHostAlias` predicate, the next-launch delay that keeps the
+     *   change from being silent, and the header chip that says the receiver is
+     *   exposed for exactly as long as it is.
+     * - What does *not* depend on the bind, and is the reason widening it is not
+     *   a cliff: `reject` compares the hook token with `timingSafeEqual` and
+     *   checks `Origin` and `Host` on all eight routes, at every bind. Those
+     *   were conditioned on the bind in HIVE-134's ticket and deliberately are
+     *   not in the code — a guard that engages only on a config no user of the
+     *   shipped platform sets is a guard nothing exercises.
      */
     'setReceiver',
     'setRuntime',
+    /*
+      HIVE-124 added `setSlack` to `CONFIG_KEYS` and to the preload, but not to
+      this list, so this assertion has been failing since that story merged —
+      the same gap the `ledger`/`slack` note above `surface.top` already
+      records, and there is no PR CI here to have caught either. The
+      socket-mode switch and the commander allow-list, written through the same
+      guarded path as every other config verb; the two tokens are not here,
+      because they have their own namespace (`slack.setTokens`) rather than
+      being config.
+    */
+    'setSlack',
     'startClone',
   ]);
   /**

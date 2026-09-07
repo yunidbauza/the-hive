@@ -272,3 +272,115 @@ test('typing an alias writes it to the file and preserves the rest', async ({}, 
 
   await app.close();
 });
+
+/**
+ * HIVE-134's bind sub-group, on a config that names no `receiver.bind` at
+ * all — so the switch reading **off** can only have come from
+ * `DEFAULT_BIND.host` (`127.0.0.1`) travelling the whole read path, the same
+ * way the alias test above proves for `hostAlias`.
+ *
+ * The fields are asserted `toBeHidden()`, not merely unchecked, because
+ * `ContainerAliasGroup` renders them conditionally (`open ? <> … </> : null`)
+ * — a regression that always rendered them, just visually collapsed, would
+ * still pass a plain `not.toBeVisible()` on an element Playwright never found
+ * absent, but not this.
+ */
+test('the off-loopback bind is off, and its fields are hidden, by default', async ({}, testInfo) => {
+  const { configPath } = seed((name) => testInfo.outputPath(name));
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+  const page = await app.firstWindow();
+  await page.waitForSelector('header');
+
+  await openAdvanced(page);
+
+  const toggle = page.getByRole('switch', { name: /off loopback/i });
+  await expect(toggle).toBeVisible();
+  await expect(toggle).not.toBeChecked();
+  await expect(page.getByLabel(/bind address/i)).toBeHidden();
+  await expect(page.getByLabel(/^port$/i)).toBeHidden();
+  await expect(page.getByLabel(/allowed origins/i)).toBeHidden();
+
+  // Nothing is claimed in the header, because nothing is exposed.
+  await expect(page.getByTestId('header-chips').getByText('127.0.0.1')).toHaveCount(0);
+
+  await app.close();
+});
+
+/**
+ * The write half of the bind switch — the only test that drives the whole
+ * chain a launch later depends on: switch → revealed field → `TextField`
+ * commit → `config:set-receiver` → `assertReceiverBind` → disk.
+ *
+ * Asserted against the **file**, not the DOM, because the file is what the
+ * next launch binds to — a component that shows `0.0.0.0` in its own state
+ * without having written it would leave the app still listening on loopback
+ * at the next launch, silently.
+ */
+test('turning the bind switch on reveals the fields and writes an address', async ({}, testInfo) => {
+  const { configPath } = seed((name) => testInfo.outputPath(name));
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+  const page = await app.firstWindow();
+  await page.waitForSelector('header');
+
+  await openAdvanced(page);
+
+  await page.getByRole('switch', { name: /off loopback/i }).click();
+
+  const field = page.getByLabel(/bind address/i);
+  await expect(field).toBeVisible();
+  await field.fill('0.0.0.0');
+  await field.blur();
+
+  // The file, not the DOM: this is what the next launch will bind.
+  await expect
+    .poll(() => (read(configPath).receiver as Record<string, unknown> | undefined)
+      ?.bind as Record<string, unknown> | undefined)
+    .toMatchObject({ host: '0.0.0.0' });
+
+  await expect(page.getByText(/may attempt to talk to the receiver/i)).toBeVisible();
+
+  await app.close();
+});
+
+/**
+ * The header chip, on a config that seeds `receiver.bind.host` already
+ * non-loopback — proving the chip end to end from a *file* rather than from
+ * whatever state the switch test above left behind, since each spec launches
+ * its own app against its own seed.
+ */
+test('the header names the address when the app starts exposed', async ({}, testInfo) => {
+  const configPath = testInfo.outputPath('hive-config.json');
+  writeFileSync(
+    configPath,
+    JSON.stringify(
+      {
+        version: 2,
+        shell: '/bin/sh',
+        projects: [],
+        receiver: {
+          hostAlias: 'host.docker.internal',
+          bind: { host: '0.0.0.0', port: 0, allowedOrigins: [] },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+  const page = await app.firstWindow();
+  await page.waitForSelector('header');
+
+  await expect(page.getByTestId('header-chips').getByText('0.0.0.0')).toBeVisible();
+
+  await app.close();
+});
