@@ -216,7 +216,18 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
   const seen = new Set<string>();
 
   /**
-   * Per agent: what has arrived since its last wake.
+   * Per `(agent, channel)`: what has arrived since that agent's last wake.
+   *
+   * **The channel is in the key, and it has to be.** `describeBurst` names one
+   * place — it derives it from the newest event in the buffer — so an agent
+   * watching `#a` and `#b` with a buffer keyed on its name alone was told
+   * "`#b` · 12 messages" when six of them were in `#a`. The count was right and
+   * the room was wrong, which is worse than either being missing: the agent
+   * reads `#b`, finds six messages, and never learns `#a` said anything.
+   *
+   * The floor below is deliberately **not** split this way. It is per agent,
+   * because it bounds how often an agent runs, and an agent watching three
+   * rooms must not get three times the runs.
    *
    * Bounded in practice rather than by a cap. A buffer lives at most one
    * {@link SLACK_EVENT_MIN_GAP_MS} — the flush that finds the floor closed
@@ -226,7 +237,11 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
    */
   const buffers = new Map<string, SlackEvent[]>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Per **agent**, not per buffer — see above. */
   const lastEventWakeAt = new Map<string, number>();
+
+  const bufferKey = (agent: string, channel: string): string =>
+    `${agent}\u0000${channel}`;
 
   /**
    * The bridge's own reconnect, because the SDK's is silent (fix-round-3).
@@ -360,36 +375,44 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
    * exactly the channel where the wake matters most. This is a fixed window
    * from the first buffered message, so a burst always resolves.
    */
-  const arm = (name: string, delay: number): void => {
-    if (timers.has(name)) return;
+  const arm = (name: string, channel: string, delay: number): void => {
+    const key = bufferKey(name, channel);
+    if (timers.has(key)) return;
     timers.set(
-      name,
+      key,
       setTimeoutFn(() => {
-        timers.delete(name);
-        flush(name);
+        timers.delete(key);
+        flush(name, channel);
       }, delay),
     );
   };
 
-  const flush = (name: string): void => {
+  const flush = (name: string, channel: string): void => {
     if (stopped) return;
 
-    const queued = buffers.get(name);
+    const key = bufferKey(name, channel);
+    const queued = buffers.get(key);
     if (queued === undefined || queued.length === 0) {
-      buffers.delete(name);
+      buffers.delete(key);
 
       return;
     }
 
+    /*
+      The floor is read and written per **agent**, while the buffer above is
+      per `(agent, channel)`. That asymmetry is the point: the buffer exists so
+      a burst is described as the room it happened in, and the floor exists so
+      an agent watching three rooms does not get three times the runs.
+    */
     const since = deps.now() - (lastEventWakeAt.get(name) ?? Number.NEGATIVE_INFINITY);
     if (since < SLACK_EVENT_MIN_GAP_MS) {
-      arm(name, SLACK_EVENT_MIN_GAP_MS - since);
+      arm(name, channel, SLACK_EVENT_MIN_GAP_MS - since);
 
       return;
     }
 
     const newest = queued.reduce((best, item) => (item.ts > best.ts ? item : best));
-    buffers.delete(name);
+    buffers.delete(key);
     lastEventWakeAt.set(name, deps.now());
 
     deps.onWake(
@@ -398,7 +421,7 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
         kind: newest.kind,
         id: newest.ts,
         from: newest.user,
-        text: describeBurst(queued, idToName.get(newest.channel) ?? null),
+        text: describeBurst(queued, idToName.get(channel) ?? null),
       },
       { job: false },
     );
@@ -407,11 +430,12 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
   const buffer = (name: string, event: SlackEvent): void => {
     if (!claim(event, name)) return;
 
-    const queued = buffers.get(name);
-    if (queued === undefined) buffers.set(name, [event]);
+    const key = bufferKey(name, event.channel);
+    const queued = buffers.get(key);
+    if (queued === undefined) buffers.set(key, [event]);
     else queued.push(event);
 
-    arm(name, SLACK_EVENT_DEBOUNCE_MS);
+    arm(name, event.channel, SLACK_EVENT_DEBOUNCE_MS);
   };
 
   /* ------------------------------------------------------------- the reads */

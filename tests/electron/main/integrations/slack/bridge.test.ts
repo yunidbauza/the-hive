@@ -474,6 +474,60 @@ describe('coalescing', () => {
     expect((h.wakes[0].entry as { text: string }).text).toContain('#eng-code-review');
   });
 
+  /**
+   * A burst belongs to a room (fix-round-3, HIVE-124).
+   *
+   * `buffers` was keyed on the agent alone and `describeBurst` names the place
+   * the *newest* event happened in — so an agent watching `#eng-code-review`
+   * and `#eng-releases` was told "`#eng-releases` · 3 messages" when two of
+   * them were in `#eng-code-review`. The count was right and the room was
+   * wrong, which is worse than either being absent: the agent reads the room it
+   * was pointed at, finds one message, and never learns the other said
+   * anything.
+   *
+   * The floor stays per agent, which is what the second half of this test
+   * pins: two rooms are still not two runs' worth of budget.
+   */
+  it('describes each room’s burst as its own, rather than folding both into the newest', async () => {
+    const h = harness({
+      openWeb: () => ({
+        authTest: async () => ({ team: 'behiques', user: 'hive' }),
+        listChannels: async () => [
+          { name: 'eng-code-review', id: 'C0123ABCD' },
+          { name: 'eng-releases', id: 'C9RELEASE' },
+        ],
+      }),
+      subscriptions: () =>
+        readSubscriptions([
+          {
+            name: 'pr-patrol',
+            paused: false,
+            valid: true,
+            on: ['slack.channel:#eng-code-review', 'slack.channel:#eng-releases'],
+          },
+        ]),
+    });
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+
+    h.deliver(message('1757012345.000100', 'U08BA712189', 'C0123ABCD'));
+    h.deliver(message('1757012345.000200', 'U08BA712189', 'C0123ABCD'));
+    h.deliver(message('1757012345.000900', 'U08BA712189', 'C9RELEASE'));
+    await vi.advanceTimersByTimeAsync(SLACK_EVENT_DEBOUNCE_MS);
+
+    /* One run, because the floor is per agent — and it names its own room. */
+    expect(h.wakes).toHaveLength(1);
+    expect((h.wakes[0].entry as { text: string }).text).toContain('#eng-code-review');
+    expect((h.wakes[0].entry as { text: string }).text).toContain('2 messages');
+    expect((h.wakes[0].entry as { id: string }).id).toBe('1757012345.000200');
+
+    /* The other room is held, not merged, and arrives when the gap opens. */
+    await vi.advanceTimersByTimeAsync(SLACK_EVENT_MIN_GAP_MS);
+    expect(h.wakes).toHaveLength(2);
+    expect((h.wakes[1].entry as { text: string }).text).toContain('#eng-releases');
+    expect((h.wakes[1].entry as { id: string }).id).toBe('1757012345.000900');
+  });
+
   it('holds the second wake behind the floor and delivers it when the gap opens', async () => {
     const h = harness();
     h.bridge.sync();
