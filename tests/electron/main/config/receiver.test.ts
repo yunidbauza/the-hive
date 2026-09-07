@@ -270,3 +270,69 @@ describe('setReceiver', () => {
     expect(onDisk().receiver).toEqual({ hostAlias: 'gateway' });
   });
 });
+
+describe('setReceiver and the bind block', () => {
+  it('creates a bind on a file that has none', () => {
+    seed('{\n  "version": 2\n}\n');
+
+    const snapshot = setReceiver({ bind: { host: '172.17.0.1' } });
+
+    // Resolved in memory…
+    expect(snapshot.receiver.bind).toEqual({
+      host: '172.17.0.1',
+      port: 0,
+      allowedOrigins: [],
+    });
+    // …but only what was asked for is written.
+    expect(onDisk().receiver).toEqual({ bind: { host: '172.17.0.1' } });
+  });
+
+  it('merges into an existing bind rather than replacing it', () => {
+    seed(
+      '{\n  "version": 2,\n  "receiver": { "bind": { "host": "172.17.0.1", "port": 63999 } }\n}\n',
+    );
+
+    setReceiver({ bind: { allowedOrigins: ['http://localhost:5173'] } });
+
+    expect(onDisk().receiver).toEqual({
+      bind: {
+        host: '172.17.0.1',
+        port: 63999,
+        allowedOrigins: ['http://localhost:5173'],
+      },
+    });
+  });
+
+  it('leaves the bind alone when only the alias is set', () => {
+    seed('{\n  "version": 2,\n  "receiver": { "bind": { "host": "172.17.0.1" } }\n}\n');
+
+    setReceiver({ hostAlias: 'host.containers.internal' });
+
+    expect(onDisk().receiver).toEqual({
+      hostAlias: 'host.containers.internal',
+      bind: { host: '172.17.0.1' },
+    });
+  });
+
+  /* The retreat the Settings switch takes when it is turned off. */
+  it('writes loopback back over an exposed bind', () => {
+    seed('{\n  "version": 2,\n  "receiver": { "bind": { "host": "172.17.0.1" } }\n}\n');
+
+    const snapshot = setReceiver({ bind: { host: '127.0.0.1' } });
+
+    expect(snapshot.receiver.bind.host).toBe('127.0.0.1');
+    expect(onDisk().receiver).toEqual({ bind: { host: '127.0.0.1' } });
+  });
+
+  it('preserves a sibling inside bind that this build does not know', () => {
+    seed(
+      '{\n  "version": 2,\n  "receiver": { "bind": { "host": "172.17.0.1", "futureKey": 1 } }\n}\n',
+    );
+
+    setReceiver({ bind: { port: 63999 } });
+
+    expect(onDisk().receiver).toEqual({
+      bind: { host: '172.17.0.1', futureKey: 1, port: 63999 },
+    });
+  });
+});

@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path';
 
 import {
   CONFIG_VERSION,
+  DEFAULT_BIND,
   DEFAULT_CLAUDE_COMMAND,
   DEFAULT_IMPORT_LOGIN_ENV,
   DEFAULT_SESSION_METRICS,
@@ -291,7 +292,16 @@ export function writeConfig(
         block resolved on only the read path would leave every settings write
         answering with a partial `receiver`.
       */
-      receiver: { ...DEFAULT_RECEIVER, ...validated.receiver },
+      receiver: {
+        ...DEFAULT_RECEIVER,
+        ...validated.receiver,
+        /*
+          Two levels, because `bind` is a block and a one-level spread would let
+          a file naming only `bind.host` erase the default port and origin list.
+          `jira` and `notifications` are flat and need only one.
+        */
+        bind: { ...DEFAULT_BIND, ...validated.receiver?.bind },
+      },
       /*
         Resolved here as well as in `loadConfig` (HIVE-124), for the same
         reason `receiver` is: this snapshot is the one every mutating verb

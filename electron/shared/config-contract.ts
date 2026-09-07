@@ -1547,6 +1547,17 @@ export interface SetReceiverRequest {
    * {@link DEFAULT_RECEIVER}'s value rather than removing the key.
    */
   hostAlias?: string;
+
+  /**
+   * Where the receiver listens. Absent leaves it untouched (HIVE-134).
+   *
+   * `Partial`, and every field independently optional, because Settings
+   * commits one field at a time — a text field on blur writes only itself,
+   * and a payload that had to carry all three would make committing the host
+   * reset the port. `setReceiver` merges rather than replaces for the same
+   * reason.
+   */
+  bind?: Partial<ReceiverBindConfig>;
 }
 
 /**

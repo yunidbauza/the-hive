@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 
 import {
+  DEFAULT_BIND,
   DEFAULT_CLAUDE_COMMAND,
   DEFAULT_IMPORT_LOGIN_ENV,
   DEFAULT_JIRA,
@@ -142,8 +143,17 @@ export function loadConfig(): ConfigSnapshot {
     // still answers for both fields (HIVE-67).
     jira: { ...DEFAULT_JIRA, ...parsed.jira },
     // Defaults *under* whatever the file named, exactly as `jira` does above
-    // (HIVE-131). A plain spread suffices — there is no legacy shape to migrate.
-    receiver: { ...DEFAULT_RECEIVER, ...parsed.receiver },
+    // (HIVE-131).
+    receiver: {
+      ...DEFAULT_RECEIVER,
+      ...parsed.receiver,
+      /*
+        Two levels, because `bind` is a block and a one-level spread would let a
+        file naming only `bind.host` erase the default port and origin list.
+        `jira` and `notifications` are flat and need only one.
+      */
+      bind: { ...DEFAULT_BIND, ...parsed.receiver?.bind },
+    },
     // Defaults *under* whatever the file named, exactly as `jira` and
     // `receiver` do above (HIVE-124). A plain spread suffices here too.
     slack: { ...DEFAULT_SLACK, ...parsed.slack },
@@ -826,16 +836,16 @@ export function setJira(request: SetJiraRequest): ConfigSnapshot {
 }
 
 /**
- * Change the container host alias (HIVE-131).
+ * Change the container host alias and/or the bind block (HIVE-131, HIVE-134).
  *
  * The block is spread, never rebuilt, for the same reason every other verb
- * spreads its target: a key this build has not heard of — the opt-in `bind`
- * this story deferred, hand-written in the meantime — must survive a save made
- * by this one.
+ * spreads its target: a key this build has not heard of — hand-written in the
+ * meantime — must survive a save made by this one. `bind` gets the same
+ * treatment one level down: see the comment at its merge below.
  *
- * There is no clearing arm. An unset alias is not a meaningful state, so the
- * renderer sends {@link DEFAULT_RECEIVER}'s value when the field is emptied
- * rather than asking for the key to be removed.
+ * There is no clearing arm for `hostAlias`. An unset alias is not a meaningful
+ * state, so the renderer sends {@link DEFAULT_RECEIVER}'s value when the field
+ * is emptied rather than asking for the key to be removed.
  */
 export function setReceiver(request: SetReceiverRequest): ConfigSnapshot {
   return commit(
@@ -851,6 +861,23 @@ export function setReceiver(request: SetReceiverRequest): ConfigSnapshot {
           : {};
 
       if (request.hostAlias !== undefined) current.hostAlias = request.hostAlias;
+
+      /*
+        Merged into, not replaced. The same promise the block-level spread
+        above makes and for the same reason: a key this build has not heard of
+        — hand-written inside `bind` — must survive a save made by this one.
+        Settings writes one field at a time, so replacing the block would
+        silently drop the other two.
+      */
+      if (request.bind !== undefined) {
+        const currentBind =
+          typeof current.bind === 'object' &&
+          current.bind !== null &&
+          !Array.isArray(current.bind)
+            ? { ...(current.bind as Record<string, unknown>) }
+            : {};
+        current.bind = { ...currentBind, ...request.bind };
+      }
 
       return { ...draft, receiver: current };
     }),
