@@ -22,6 +22,7 @@ import {
   parseSetProjectRuntimeRequest,
   parseSetReceiverRequest,
   parseSetSlackRequest,
+  parseSetSlackTokensRequest,
   parseSpawnRequest,
   parseWriteRequest,
 } from '../../../electron/shared/guards';
@@ -1105,6 +1106,90 @@ describe('parseSetSlackRequest (HIVE-124)', () => {
 
   it('rejects a request that changes nothing', () => {
     expect(() => parseSetSlackRequest({})).toThrow(/nothing to change/);
+  });
+});
+
+/**
+ * The two socket-mode tokens (HIVE-124) — the second payload in the app that
+ * carries a secret, and so the second guard whose refusals are worth pinning.
+ *
+ * `parseSetJiraTokenRequest` is the model, in `guards.jira.test.ts`. The
+ * differences from it are the decisions this block exists to hold still: both
+ * fields are optional because the pane commits one at a time and main merges;
+ * an empty payload is refused rather than read as a clear, because clearing has
+ * its own channel and a write that silently erased both is the one mistake a
+ * guard can prevent here; and `assertJiraToken`'s bounds are reused, because
+ * "printable ASCII, no spaces, bounded" is a statement about credentials in a
+ * payload rather than about Jira.
+ */
+describe('parseSetSlackTokensRequest (HIVE-124)', () => {
+  it('accepts either token alone', () => {
+    expect(parseSetSlackTokensRequest({ appToken: 'xapp-1-A' })).toEqual({
+      appToken: 'xapp-1-A',
+    });
+    expect(parseSetSlackTokensRequest({ botToken: 'xoxb-2-B' })).toEqual({
+      botToken: 'xoxb-2-B',
+    });
+  });
+
+  it('accepts both together', () => {
+    expect(
+      parseSetSlackTokensRequest({ appToken: 'xapp-1-A', botToken: 'xoxb-2-B' }),
+    ).toEqual({ appToken: 'xapp-1-A', botToken: 'xoxb-2-B' });
+  });
+
+  /** Absent is untouched, which is what makes the merge in main safe. */
+  it('leaves an absent field off the request entirely', () => {
+    expect(parseSetSlackTokensRequest({ appToken: 'xapp-1-A' })).not.toHaveProperty(
+      'botToken',
+    );
+  });
+
+  it('refuses an empty payload rather than reading it as a clear', () => {
+    expect(() => parseSetSlackTokensRequest({})).toThrow(/nothing to change/);
+  });
+
+  it('refuses an unknown key', () => {
+    expect(() =>
+      parseSetSlackTokensRequest({ appToken: 'xapp-1-A', socketMode: true }),
+    ).toThrow();
+  });
+
+  it('refuses an empty, oversized, or whitespace-bearing token', () => {
+    expect(() => parseSetSlackTokensRequest({ appToken: '' })).toThrow();
+    expect(() =>
+      parseSetSlackTokensRequest({ botToken: 'x'.repeat(1025) }),
+    ).toThrow();
+    expect(() => parseSetSlackTokensRequest({ appToken: 'xapp 1' })).toThrow();
+    expect(() => parseSetSlackTokensRequest({ botToken: 'xoxb\n1' })).toThrow();
+  });
+
+  it('refuses a non-string', () => {
+    expect(() => parseSetSlackTokensRequest({ appToken: 7 })).toThrow();
+  });
+
+  /**
+   * The prefixes are deliberately not enforced — Slack has renamed token
+   * prefixes before, and a guard that refused a valid token would be a bug the
+   * user could not work around. A wrong one fails at `auth.test` with Slack's
+   * own message, which is the better report.
+   */
+  it('does not enforce the xapp-/xoxb- prefixes', () => {
+    expect(parseSetSlackTokensRequest({ appToken: 'whatever-1' })).toEqual({
+      appToken: 'whatever-1',
+    });
+  });
+
+  /** A refusal that quoted the value would put a token in a log. */
+  it('never echoes the value it refused', () => {
+    const secret = 'sup3rsecret!'.repeat(200);
+
+    try {
+      parseSetSlackTokensRequest({ appToken: secret });
+      expect.unreachable('should have refused');
+    } catch (cause) {
+      expect(String(cause)).not.toContain('sup3rsecret');
+    }
   });
 });
 

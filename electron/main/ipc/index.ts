@@ -1803,9 +1803,26 @@ export function registerIpcHandlers(): void {
    * without either one taking the other as a constructor argument.
    *
    * Constructing it opens nothing. `sync()` is the only thing that connects,
-   * and the first one is fired behind `mcp.start()` below, with `scheduler`'s —
-   * because this can spawn a run, and a wake needs an argv `buildWakeCommand`
-   * refuses to build until the MCP config file is on disk.
+   * and the one this composition schedules is fired behind `mcp.start()` below,
+   * with `scheduler.start()` — because this can spawn a run, and a wake needs
+   * an argv `buildWakeCommand` refuses to build until the MCP config file is on
+   * disk.
+   *
+   * ## That is a preference, not a guarantee, and the difference matters
+   *
+   * `registerIpcHandlers` also calls `refreshKnownAgents()` above, and *that*
+   * pass syncs too — the folder walk and the MCP config write are two unrelated
+   * promises, so whichever settles first fires the first `sync()`. Ordering
+   * them would be a false comfort anyway: the config file is read at boot, so a
+   * socket can be live before either resolves.
+   *
+   * The composition is safe without the ordering, which is why it is left as a
+   * race rather than gated. A wake arriving early reaches `RunTracker.run`
+   * through `Scheduler.onEvent` like every other; the command builder refuses
+   * it for want of an argv, `onEvent` enqueues it in `agents.json` rather than
+   * dropping it, and `scheduler.start()` — which runs *after* `mcp.start()`
+   * precisely so this holds — flushes the queue. The `.finally()` below is
+   * therefore the cheapest arm, not the load-bearing one.
    */
   slackBridge = createSlackBridge({
     tokens: slackTokens,
@@ -1842,12 +1859,14 @@ export function registerIpcHandlers(): void {
     A failure still arms the sweep: expiry does not spawn anything, and a queue
     that cannot flush yet is safer standing than dropped.
 
-    The bridge's first `sync()` rides along for the same reason, which is the
-    whole reason it is here rather than at construction (HIVE-124): a socket
-    opened before that write lands can deliver a Slack message into a wake whose
-    argv cannot be built yet, and the wake is then refused at the one moment it
-    is guaranteed to happen. Nothing is lost by waiting — Slack redelivers
-    nothing this app has not connected for.
+    A bridge `sync()` rides along, for the same reason and with a weaker claim
+    (HIVE-124): a socket opened before that write lands can deliver a Slack
+    message into a wake whose argv cannot be built yet. This is not the *only*
+    sync at boot — `refreshKnownAgents()` above syncs from its own promise — so
+    it makes an early connection less likely rather than impossible. See the
+    note on `slackBridge` for why the composition does not need it to be
+    impossible: an early wake is enqueued and flushed by the `start()` on the
+    line above, not lost.
   */
   void mcp
     .start()
@@ -2178,7 +2197,20 @@ export function registerIpcHandlers(): void {
       to know that a filesystem cache exists. This handler already owns both.
     */
     forgetProbedRoots();
-    return reloadConfig();
+    const snapshot = reloadConfig();
+
+    /*
+      And the socket, for the same shape of reason (HIVE-124).
+
+      The config file is meant to be hand-editable — `CH.configSetJira` says so
+      of its own block — so `slack.socketMode` can change without any verb in
+      this file having written it, and Reload is the moment the app learns that
+      happened. Without this, turning socket mode on by hand and pressing Reload
+      connects nothing until some unrelated agent edit happens to sync.
+    */
+    slackBridge?.sync();
+
+    return snapshot;
   });
 
   /**
@@ -2401,7 +2433,20 @@ export function registerIpcHandlers(): void {
     shell.showItemInFolder(configPath());
   });
 
-  handle(CH.configReset, (): ConfigSnapshot => resetConfig());
+  /**
+   * Reset writes {@link DEFAULT_SLACK} over whatever was there, which turns
+   * socket mode **off** — so it is a change to the switch like any other, and
+   * the one with the worst failure if it is missed (HIVE-124). Without the
+   * `sync()`, a live socket survives the reset and keeps waking agents from a
+   * setting the user has just erased.
+   */
+  handle(CH.configReset, (): ConfigSnapshot => {
+    const snapshot = resetConfig();
+
+    slackBridge?.sync();
+
+    return snapshot;
+  });
 
   /**
    * Integrations status (story 106) — read-only, and **takes no payload**.

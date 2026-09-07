@@ -7,6 +7,7 @@ import type {
   AgentsSnapshot,
   LiveRunSummary,
 } from '../../../../electron/shared/agent-contract';
+import { DEFAULT_SLACK } from '../../../../electron/shared/config-contract';
 import {
   OVERMIND,
   type LedgerEntry,
@@ -101,8 +102,11 @@ const snapshot = {
     reach: pausing an agent re-syncs the Slack bridge (HIVE-124), which asks the
     config for its switch. `ConfigSnapshot.slack` is fully resolved by the
     parser, so leaving it out here was a fixture that could not occur.
+
+    Spread from `DEFAULT_SLACK` rather than written out, so a third field on
+    `SlackConfig` reaches this fixture instead of re-creating the same drift.
   */
-  slack: { socketMode: false, commanders: [] },
+  slack: { ...DEFAULT_SLACK },
 };
 
 vi.mock('../../../../electron/main/config/index', () => ({

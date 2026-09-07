@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { DEFAULT_SLACK } from '../../../../electron/shared/config-contract';
 import type {
   SlackSocketStatus,
   SlackSocketTestResult,
@@ -128,8 +129,13 @@ const snapshot = {
   claudeCommand: process.execPath,
   projects: [],
   errors: [],
-  // HIVE-124. The block the bridge reads its switch and allow-list from.
-  slack: { socketMode: false, commanders: [] as string[] },
+  /*
+    HIVE-124. The block the bridge reads its switch and allow-list from —
+    spread from `DEFAULT_SLACK` rather than written out, so a third field on
+    `SlackConfig` reaches this fixture rather than drifting from it. Mutable, so
+    the composition tests below can move the switch.
+  */
+  slack: { ...DEFAULT_SLACK } as { socketMode: boolean; commanders: string[] },
 };
 
 vi.mock('../../../../electron/main/config/index', () => ({
@@ -143,6 +149,12 @@ vi.mock('../../../../electron/main/config/index', () => ({
   reorderProjects: vi.fn(() => snapshot),
   // HIVE-124. The write verb `config:set-slack` calls; Task 2 shipped it.
   setSlack: vi.fn(() => snapshot),
+  /*
+    The other two paths that change `slack.socketMode` without any Slack verb
+    having been called: a hand edit read back by Reload, and Reset writing
+    `DEFAULT_SLACK` over whatever was there.
+  */
+  resetConfig: vi.fn(() => snapshot),
   configPath: vi.fn(() => '/tmp/config.json'),
 }));
 
@@ -421,7 +433,7 @@ beforeEach(() => {
   listedAgents = [{ name: 'pr-patrol', wake: { on: ['slack.channel:#eng'] } }];
   agentsChanged = undefined;
   runStates = {};
-  snapshot.slack = { socketMode: false, commanders: [] };
+  snapshot.slack = { ...DEFAULT_SLACK };
   registerIpcHandlers();
 });
 
@@ -708,8 +720,14 @@ describe('socket mode channels (HIVE-124)', () => {
       channel.startsWith('slack:'),
     );
 
-    // The enumeration is the test. A filter that matched nothing would pass.
-    expect(channels.length).toBeGreaterThanOrEqual(7);
+    /*
+      The enumeration is the test, and the floor is what makes it one: a filter
+      that matched nothing would otherwise pass. Eight — `status`, `sign-in`,
+      `sign-out`, `test`, `set-tokens`, `clear-tokens`, `socket-status`,
+      `socket-test` — so a channel *deleted* fails here too, not only a filter
+      that stopped matching.
+    */
+    expect(channels.length).toBeGreaterThanOrEqual(8);
 
     for (const channel of channels) {
       const answer = await call(channel).catch(() => null);
@@ -748,6 +766,41 @@ describe('socket mode channels (HIVE-124)', () => {
       await call(CH.slackClearTokens);
 
       expect(bridgeSyncs).toBeGreaterThan(afterSave);
+    });
+
+    /**
+     * The config file is meant to be hand-editable — `CH.configSetJira` says so
+     * of its own block — so `slack.socketMode` changes with no verb in
+     * `ipc/index.ts` having written it, and Reload is the moment the app learns
+     * that happened. Without a `sync()` here, turning socket mode on by hand
+     * and pressing Reload connects nothing until some unrelated agent edit
+     * happens to sync.
+     */
+    it('re-syncs when the file is reloaded, so a hand edit lands', async () => {
+      const before = bridgeSyncs;
+      snapshot.slack = { socketMode: true, commanders: [] };
+
+      await call(CH.configReload);
+
+      expect(bridgeSyncs).toBeGreaterThan(before);
+      expect(bridgeDeps?.config().socketMode).toBe(true);
+    });
+
+    /**
+     * Reset writes `DEFAULT_SLACK` over whatever was there, so it turns socket
+     * mode **off** — the change with the worst failure if it is missed: a live
+     * socket surviving the reset keeps waking agents from a setting the user
+     * has just erased.
+     */
+    it('re-syncs when the settings are reset', async () => {
+      snapshot.slack = { socketMode: true, commanders: ['U1'] };
+      const before = bridgeSyncs;
+
+      snapshot.slack = { ...DEFAULT_SLACK };
+      await call(CH.configReset);
+
+      expect(bridgeSyncs).toBeGreaterThan(before);
+      expect(bridgeDeps?.config().socketMode).toBe(false);
     });
 
     it('re-syncs when an agent is paused', async () => {

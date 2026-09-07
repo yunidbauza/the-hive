@@ -1,4 +1,8 @@
-import type { ConfigSnapshot, SetSlackRequest } from '@shared/config-contract';
+import type {
+  ConfigSnapshot,
+  SetSlackRequest,
+  SetSlackTokensRequest,
+} from '@shared/config-contract';
 import type {
   SlackSocketStatus,
   SlackSocketTestResult,
@@ -58,7 +62,7 @@ export const testSlack = (): Promise<SlackStatus | null> =>
  * token back, because there is no channel that returns one.
  */
 export const setSlackTokens = (
-  request: { appToken?: string; botToken?: string },
+  request: SetSlackTokensRequest,
 ): Promise<SlackTokensState | null> =>
   call('setTokens', (bridge) => bridge.slack.setTokens(request));
 
