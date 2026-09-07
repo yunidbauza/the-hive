@@ -2642,8 +2642,18 @@ export const BRIDGE_CONFIG_KEYS = [
    * it, so the alias decides where authenticated hook traffic is addressed.
    * `assertHostAlias` bounds it to a hostname — per-label allowlist, shared with
    * the file reader, no scheme, port, path, credentials or delimiter — and it
-   * names no *file*, opens no socket and changes no bind. See the fuller
-   * justification beside `'setReceiver'` in `tests/e2e/electron/security.spec.ts`.
+   * names no *file*, the one file the bridge can write still chosen by main.
+   *
+   * HIVE-134 added `bind` to this same payload, and it is a larger claim than
+   * the alias: it **does** change the listening surface, which nothing on this
+   * bridge could do before, taking effect at next launch because a listening
+   * socket cannot be moved. What bounds it: the same `isHostAlias` predicate,
+   * the next-launch delay that keeps the change from being silent, and the
+   * header chip that says the receiver is exposed for exactly as long as it
+   * is. `reject`'s `timingSafeEqual` token compare and the `Origin`/`Host`
+   * checks on all eight routes hold at every bind, which is why widening it is
+   * not a cliff. See the fuller justification beside `'setReceiver'` in
+   * `tests/e2e/electron/security.spec.ts`.
    */
   'setReceiver',
 ] as const;
