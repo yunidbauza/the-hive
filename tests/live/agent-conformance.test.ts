@@ -57,6 +57,7 @@ import {
   SLACK_TOOL_GLOB,
   SLACK_TOOL_PREFIX,
   SLACK_TRIGGER,
+  type SlackSocketStatus,
 } from '../../electron/shared/slack-contract';
 
 /**
@@ -142,6 +143,34 @@ const LIVE = process.env['HIVE_LIVE_AGENT_PROOF'] === '1';
  */
 const SOCKET_APP_TOKEN = process.env['HIVE_LIVE_SOCKET_APP_TOKEN'];
 const SOCKET_BOT_TOKEN = process.env['HIVE_LIVE_SOCKET_BOT_TOKEN'];
+
+/**
+ * A **third** credential, and the only thing that can drive the push scenario
+ * end to end (fix-round-2, HIVE-124).
+ *
+ * The first draft posted the mention with `chat.postMessage` on the *bot*
+ * token, so the message was authored by the app itself. That cannot work, for
+ * two independent reasons:
+ *
+ * 1. Slack dispatches a bot-authored mention as `app_mention` with
+ *    `subtype: 'bot_message'` — that variant is why `slackapi/java-slack-sdk`
+ *    #1279 exists at all ("No BoltEventHandler registered for event:
+ *    `app_mention:bot_message`"), and `slack-go`'s `AppMentionEvent.BotID` is
+ *    documented as "filled out when a bot triggers the app_mention event". So
+ *    the envelope carries both a `subtype` and a `bot_id`.
+ * 2. `readEnvelope` drops **any** event with either field set
+ *    (`events.ts:47-48`), unconditionally and by design: a `bot_id` drop is
+ *    what stops an agent's own Slack reply waking it to read its own words.
+ *
+ * So the bot cannot post the message this scenario needs, and the app must not
+ * accept it if it did. A `xoxp-` **user** token with `chat:write` is what posts
+ * as a person; nothing in this repo can mint one, so it is read from the
+ * environment and its absence skips, exactly as the two above do.
+ *
+ * The connection scenario below needs no such thing and is not gated on it —
+ * see the split.
+ */
+const SOCKET_USER_TOKEN = process.env['HIVE_LIVE_SOCKET_USER_TOKEN'];
 
 /**
  * How long teardown waits for a signalled child to actually be gone.
@@ -2294,30 +2323,79 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
   );
 
   /**
-   * The push half of the story (HIVE-124): everything above wakes an agent
-   * from inside this suite — `wake()`, a ledger `answer`, the scheduler's own
-   * captured tick. This is the one scenario where nothing in this file calls
-   * `runs.run` at all. A real `@slack/socket-mode` client, opened with a real
-   * `xapp-` token, is the only thing that starts this run — which is what a
-   * fake socket could never prove, the same reason {@link SLACK} above needs a
-   * real `claude mcp get slack` rather than a recorded transcript.
+   * A real bridge over real Slack, and a promise that settles either way.
    *
-   * Skips rather than fails without both tokens, exactly as {@link SLACK}
-   * skips without a signed-in Slack — the shape `ctx.skip(condition, note)`
-   * gives every live scenario in this file that depends on a credential this
-   * suite cannot fabricate. `HIVE_LIVE_SOCKET_APP_TOKEN` and
+   * The reject branch is the part worth naming (fix-round-2, HIVE-124). With
+   * only a `connected` resolver, a revoked or mistyped `xapp-` left this
+   * awaiting forever and the scenario died at its 300 s timeout with no
+   * message — the least useful failure available for the most likely mistake.
+   * `failed` is terminal here (the SDK's own reconnect is what `connecting`
+   * means), so it rejects by name and in seconds.
+   */
+  const openSocketBridge = (
+    appToken: string,
+    botToken: string,
+    commanders: string[] = [],
+  ): {
+    bridge: SlackBridge;
+    untilConnected: Promise<Extract<SlackSocketStatus, { kind: 'connected' }>>;
+  } => {
+    const subs: SlackSubscriptions = readSubscriptions([
+      { name: SOCKET, paused: false, valid: true, on: ['slack.app_mention'] },
+    ]);
+
+    let settle:
+      | ((status: Extract<SlackSocketStatus, { kind: 'connected' }>) => void)
+      | undefined;
+    let reject: ((error: Error) => void) | undefined;
+    const untilConnected = new Promise<
+      Extract<SlackSocketStatus, { kind: 'connected' }>
+    >((resolve, fail) => {
+      settle = resolve;
+      reject = fail;
+    });
+
+    const bridge: SlackBridge = createSlackBridge({
+      tokens: { read: () => ({ appToken, botToken }) },
+      config: () => ({ socketMode: true, commanders }),
+      subscriptions: () => subs,
+      openSocket: openSlackSocket,
+      openWeb: openSlackWeb,
+      // The one line the push scenario exists to exercise: a real socket event
+      // reaching the real scheduler by the real route, `Scheduler.onEvent`.
+      onWake: (name, entry, opts) => scheduler?.onEvent(name, entry, opts),
+      onStatus: (status) => {
+        if (status.kind === 'connected') settle?.(status);
+        if (status.kind === 'failed') {
+          reject?.(new Error(`the Slack bridge failed to connect: ${status.message}`));
+        }
+      },
+      now: () => Date.now(),
+    });
+
+    return { bridge, untilConnected };
+  };
+
+  /**
+   * A real socket, opened against real Slack with the two Hive-owned tokens
+   * (HIVE-124).
+   *
+   * Split out from the wake scenario below in fix-round-2, because the two need
+   * different credentials and folding them together made the cheaper half
+   * unreachable. This one proves what the two tokens alone can prove:
+   * `openSlackWeb` reaches `auth.test` and `conversations.list`, `openSlackSocket`
+   * completes a real Socket Mode handshake, and `bridge.sync()` drives that to
+   * a `connected` carrying the workspace Slack actually named. None of it can
+   * be faked, and all of it fails on a revoked `xapp-` — which is the failure
+   * an operator is most likely to have.
+   *
+   * Skips rather than fails without both tokens, exactly as {@link SLACK} skips
+   * without a signed-in Slack. `HIVE_LIVE_SOCKET_APP_TOKEN` and
    * `HIVE_LIVE_SOCKET_BOT_TOKEN` are read once, at module scope, under names
    * this scenario owns outright — see the docblock beside them.
-   *
-   * The mention is posted by the bot itself, mentioning itself, because
-   * nothing in this app can discover a real person's Slack id to post as
-   * (`command.ts`'s own docblock explains why) — so the bot's own resolved
-   * user id is what this scenario puts on the commander allow-list. That is
-   * a fact about what this test can drive unattended, not a claim about who a
-   * real deployment should allow-list.
    */
   it(
-    'wakes a real run when a real Socket Mode app_mention arrives',
+    'opens a real Socket Mode connection with the two Hive-owned tokens',
     async (ctx) => {
       ctx.skip(
         SOCKET_APP_TOKEN === undefined || SOCKET_BOT_TOKEN === undefined,
@@ -2326,11 +2404,69 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
           'a real Slack app with both tokens and cannot fake a socket.',
       );
 
-      const appToken = SOCKET_APP_TOKEN ?? '';
+      const opened = openSocketBridge(SOCKET_APP_TOKEN ?? '', SOCKET_BOT_TOKEN ?? '');
+
+      try {
+        opened.bridge.sync();
+
+        const status = await opened.untilConnected;
+
+        expect(status.kind).toBe('connected');
+        // `auth.test` answered through the live socket's own web client.
+        expect(status.workspace).not.toBe('');
+        expect(status.bot).not.toBe('');
+      } finally {
+        opened.bridge.stop();
+      }
+    },
+    300_000,
+  );
+
+  /**
+   * The push half of the story (HIVE-124): everything above wakes an agent
+   * from inside this suite — `wake()`, a ledger `answer`, the scheduler's own
+   * captured tick. This is the one scenario where nothing in this file calls
+   * `runs.run` at all. A real `@slack/socket-mode` client, opened with a real
+   * `xapp-` token, is the only thing that starts this run — which is what a
+   * fake socket could never prove, the same reason {@link SLACK} above needs a
+   * real `claude mcp get slack` rather than a recorded transcript.
+   *
+   * ## Why a third credential, and why the first draft could not have passed
+   *
+   * The mention has to be posted by a **person**. Its first draft posted with
+   * `chat.postMessage` on the bot token — the bot mentioning itself — and that
+   * can never wake anything: Slack dispatches a bot-authored mention as
+   * `app_mention` with `subtype: 'bot_message'` and a `bot_id`, and
+   * `readEnvelope` drops any event carrying either (`events.ts:47-48`). The
+   * `bot_id` drop is not incidental, it is what stops an agent's own Slack
+   * reply waking it to read its own words — so the app is right and the test
+   * was wrong. See {@link SOCKET_USER_TOKEN} for the evidence.
+   *
+   * So this needs a `xoxp-` user token with `chat:write`, which nothing in this
+   * repo can mint, and it skips without one rather than pretending. The author
+   * of that message is a real human id, which is also what makes the commander
+   * allow-list below a realistic value rather than a workaround.
+   */
+  it(
+    'wakes a real run when a real Socket Mode app_mention arrives',
+    async (ctx) => {
+      ctx.skip(
+        SOCKET_APP_TOKEN === undefined ||
+          SOCKET_BOT_TOKEN === undefined ||
+          SOCKET_USER_TOKEN === undefined,
+        'the push scenario needs all three of `HIVE_LIVE_SOCKET_APP_TOKEN`, ' +
+          '`HIVE_LIVE_SOCKET_BOT_TOKEN` and `HIVE_LIVE_SOCKET_USER_TOKEN` — the ' +
+          'third is a xoxp- user token with chat:write, because a mention the ' +
+          'bot posts itself carries a bot_id and `readEnvelope` drops it by ' +
+          'design.',
+      );
+
       const botToken = SOCKET_BOT_TOKEN ?? '';
+      const userClient = new WebClient(SOCKET_USER_TOKEN ?? '');
 
       const web = openSlackWeb(botToken);
       const { user: botUserId } = await web.authTest();
+      const { user_id: authorId } = await userClient.auth.test();
       const channel = (await web.listChannels())[0];
 
       ctx.skip(
@@ -2340,39 +2476,20 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       );
 
       const channelId = channel?.id ?? '';
-
-      const subs: SlackSubscriptions = readSubscriptions([
-        { name: SOCKET, paused: false, valid: true, on: ['slack.app_mention'] },
+      const opened = openSocketBridge(SOCKET_APP_TOKEN ?? '', botToken, [
+        String(authorId),
       ]);
 
-      let onConnected: (() => void) | undefined;
-      const untilConnected = new Promise<void>((resolve) => {
-        onConnected = resolve;
-      });
-
-      const bridge: SlackBridge = createSlackBridge({
-        tokens: { read: () => ({ appToken, botToken }) },
-        config: () => ({ socketMode: true, commanders: [botUserId] }),
-        subscriptions: () => subs,
-        openSocket: openSlackSocket,
-        openWeb: openSlackWeb,
-        // The one line this scenario exists to exercise: a real socket event
-        // reaching the real scheduler by the real route, `Scheduler.onEvent`.
-        onWake: (name, entry, opts) => scheduler?.onEvent(name, entry, opts),
-        onStatus: (status) => {
-          if (status.kind === 'connected') onConnected?.();
-        },
-        now: () => Date.now(),
-      });
-
       try {
-        bridge.sync();
-        await untilConnected;
+        opened.bridge.sync();
+        await opened.untilConnected;
 
         const before = spawns.length;
         const finished = settled(SOCKET);
 
-        await new WebClient(botToken).chat.postMessage({
+        // Posted as the human the user token belongs to, so the envelope
+        // carries neither a `subtype` nor a `bot_id`.
+        await userClient.chat.postMessage({
           channel: channelId,
           text: `<@${botUserId}> socket conformance probe`,
         });
@@ -2396,7 +2513,7 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
 
         expect(bodies).toContain(`run.started — ${SLACK_TRIGGER}`);
       } finally {
-        bridge.stop();
+        opened.bridge.stop();
       }
     },
     300_000,

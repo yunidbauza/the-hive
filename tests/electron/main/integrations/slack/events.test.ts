@@ -94,13 +94,30 @@ describe('describeBurst', () => {
     );
   });
 
-  it('counts the burst and quotes the newest', () => {
+  /**
+   * Every event carries a **different** `threadTs`, which is the whole point.
+   *
+   * Spreading one fixture gave all three the same thread, so `newest.threadTs`
+   * and `events[0].threadTs` were the same string and the line the docblock
+   * calls load-bearing ("an agent that replies without reading lands in the
+   * right place") was untested (fix-round-2, HIVE-124).
+   */
+  it('counts the burst and quotes the newest, in the newest message’s thread', () => {
     const a = readEnvelope(fixture('message'))!;
-    const b = { ...a, ts: '1757012999.000100', text: 'and this one' };
-    const c = { ...a, ts: '1757012888.000100', text: 'middle' };
+    const b = {
+      ...a,
+      ts: '1757012999.000100',
+      threadTs: '1757012999.000100',
+      text: 'and this one',
+    };
+    const c = { ...a, ts: '1757012888.000100', threadTs: '1757012777.000100', text: 'middle' };
+
     expect(describeBurst([a, c, b], '#eng-code-review')).toBe(
       '#eng-code-review (C0123ABCD) · 3 messages · newest thread ' +
-        '1757012345.001200 from U08BA712189: and this one',
+        '1757012999.000100 from U08BA712189: and this one',
     );
+    // Neither the first event's thread nor the middle one's is what is named.
+    expect(describeBurst([a, c, b], '#eng-code-review')).not.toContain(a.threadTs);
+    expect(describeBurst([a, c, b], '#eng-code-review')).not.toContain(c.threadTs);
   });
 });
