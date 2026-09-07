@@ -11,15 +11,18 @@ import { SettingsGroup } from '@features/settings/components/settings-group';
 import { useProjectConfig } from '@hooks/use-project-config';
 import { installProjectConfig } from '@lib/project-config';
 import {
+  clearSlackTokens,
   readSlackSocketState,
   readSlackStatus,
   setSlackConfig,
   setSlackTokens,
   signIn,
   signOut,
+  SLACK_BRIDGE_ERROR,
   subscribeSlackSocketStatus,
   testSlack,
   testSlackSocket,
+  type SlackWrite,
 } from '@lib/slack';
 import { DEFAULT_SLACK, type SlackConfig } from '@shared/config-contract';
 import { grantsSlackTools, SLACK_CLIENT_ID, SLACK_MCP_URL } from '@shared/slack-contract';
@@ -99,16 +102,13 @@ const UNKNOWN_TOKENS: SlackTokensState = {
  * `readSlackStatus`/`signIn`/`signOut`/`testSlack` all return `null` on a
  * broken bridge (`src/lib/slack.ts`) — reported as an error rather than left
  * to render nothing, the same choice `JiraCredentialGroup` makes for a failed
- * Jira verb. Named apart from `bridgeError()` (rather than read off its
- * `.message`) because that function's return type is the whole `SlackStatus`
- * union — TypeScript cannot narrow a call result to the one variant that
- * carries a message, only a value already known to be that variant.
+ * Jira verb. The sentence itself lives in `lib/slack.ts` as
+ * {@link SLACK_BRIDGE_ERROR}, because the write wrappers there fall back to it
+ * too and two phrasings of "the app is broken" would read as two faults.
  */
-const BRIDGE_ERROR_MESSAGE = 'The app could not reach its own main process.';
-
 const bridgeError = (): SlackStatus => ({
   kind: 'error',
-  message: BRIDGE_ERROR_MESSAGE,
+  message: SLACK_BRIDGE_ERROR,
 });
 
 type PillKind = 'off' | 'ok' | 'wait' | 'err';
@@ -442,6 +442,21 @@ function SocketTestVerdict({ result }: { result: SlackSocketTestResult }) {
   return <p className="text-[11.5px] text-red">{result.message}</p>;
 }
 
+/**
+ * What the drawer says when the machine has no keyring (HIVE-124).
+ *
+ * `tokens.ts` throws rather than writing a token in plaintext, so with no
+ * `safeStorage` the two fields below are controls that cannot work. Absent
+ * beats disabled — the rule `JiraCredentialGroup` already follows for exactly
+ * this state, and the reason `encryptionAvailable` crosses IPC at all. Before
+ * this, the field accepted a paste, the save threw, `lib/slack.ts` swallowed
+ * the rejection, and the pane reported a broken IPC bridge.
+ */
+const NO_KEYRING =
+  'This system has no keyring, so the Hive will not store a Slack token — it ' +
+  'will not write one in plaintext instead. Real-time events stay off until ' +
+  'the operating system offers one.';
+
 interface RealTimeFieldsProps {
   slack: SlackConfig;
   tokens: SlackTokensState;
@@ -451,6 +466,7 @@ interface RealTimeFieldsProps {
   onChange: (next: SlackConfig) => void;
   onSetAppToken: (value: string) => void;
   onSetBotToken: (value: string) => void;
+  onClearTokens: () => void;
   onTest: () => void;
 }
 
@@ -470,6 +486,7 @@ function RealTimeFields({
   onChange,
   onSetAppToken,
   onSetBotToken,
+  onClearTokens,
   onTest,
 }: RealTimeFieldsProps) {
   const [appDraft, setAppDraft] = useState('');
@@ -481,18 +498,35 @@ function RealTimeFields({
     same reason: an effect would run one render late and let a blur commit
     the stale value straight back.
   */
-  const [seenCommanders, setSeenCommanders] = useState(slack.commanders);
-  const [commandersDraft, setCommandersDraft] = useState(() =>
-    slack.commanders.join(', '),
-  );
-  if (seenCommanders !== slack.commanders) {
-    setSeenCommanders(slack.commanders);
-    setCommandersDraft(slack.commanders.join(', '));
+  /*
+    Compared as a **string**, not by array identity. `container-alias-group.tsx`
+    holds a `string` prop, so `!==` is a value comparison there and copying the
+    shape without the type was the bug: every config parse builds a fresh
+    `commanders` array, so any unrelated write — flipping the Socket Mode switch
+    one field away — made `seenCommanders !== slack.commanders` true and threw
+    away whatever the user had half-typed here.
+  */
+  const savedCommanders = slack.commanders.join(', ');
+  const [seenCommanders, setSeenCommanders] = useState(savedCommanders);
+  const [commandersDraft, setCommandersDraft] = useState(savedCommanders);
+  if (seenCommanders !== savedCommanders) {
+    setSeenCommanders(savedCommanders);
+    setCommandersDraft(savedCommanders);
   }
 
+  /*
+    Split on whitespace as well as commas.
+
+    `U08BA712189 U0123ABCD` is what pasting two ids out of Slack looks like, and
+    splitting on `,` alone turned it into one entry with a space in it —
+    `assertCommanderId` then refused the *whole* write, so a plausible piece of
+    typing silently dropped the field and blamed the main process. The guard is
+    right to refuse an id with whitespace in it; the pane is what was wrong to
+    build one.
+  */
   const commitCommanders = () => {
     const next = commandersDraft
-      .split(',')
+      .split(/[\s,]+/)
       .map((id) => id.trim())
       .filter((id) => id !== '');
     onChange({ ...slack, commanders: next });
@@ -534,23 +568,45 @@ function RealTimeFields({
         <p className="text-[11.5px] text-subtle">{storedNote}</p>
       )}
 
-      <SecretField
-        label="App-level token"
-        value={appDraft}
-        onChange={setAppDraft}
-        onCommit={commitAppToken}
-        placeholder={tokens.hasAppToken ? 'Replace the stored token' : 'xapp-…'}
-        hint={appTokenHint(tokens)}
-      />
+      {/* A control that cannot work is absent rather than disabled — the rule
+          `JiraCredentialGroup` follows in this exact state, and the reason
+          `encryptionAvailable` is on the wire at all. */}
+      {tokens.encryptionAvailable ? (
+        <>
+          <SecretField
+            label="App-level token"
+            value={appDraft}
+            onChange={setAppDraft}
+            onCommit={commitAppToken}
+            placeholder={tokens.hasAppToken ? 'Replace the stored token' : 'xapp-…'}
+            hint={appTokenHint(tokens)}
+          />
 
-      <SecretField
-        label="Bot token"
-        value={botDraft}
-        onChange={setBotDraft}
-        onCommit={commitBotToken}
-        placeholder={tokens.hasBotToken ? 'Replace the stored token' : 'xoxb-…'}
-        hint={botTokenHint(tokens)}
-      />
+          <SecretField
+            label="Bot token"
+            value={botDraft}
+            onChange={setBotDraft}
+            onCommit={commitBotToken}
+            placeholder={tokens.hasBotToken ? 'Replace the stored token' : 'xoxb-…'}
+            hint={botTokenHint(tokens)}
+          />
+
+          {/* The only way to remove a stored token. Without it, turning Socket
+              Mode off left both on disk and deleting `slack-tokens.bin` by hand
+              was the sole remedy — the same control, and the same shape, as
+              `jira-credential-group.tsx`'s. Both go together: they come from
+              one Slack app and are useless apart. */}
+          {(tokens.hasAppToken || tokens.hasBotToken) && (
+            <div>
+              <Button variant="danger" onClick={onClearTokens}>
+                Clear tokens
+              </Button>
+            </div>
+          )}
+        </>
+      ) : (
+        <p className="text-[11.5px] text-subtle">{NO_KEYRING}</p>
+      )}
 
       <TextField
         label="Allowed to command"
@@ -609,6 +665,7 @@ interface AdvancedFieldsProps {
   onChange: (next: SlackConfig) => void;
   onSetAppToken: (value: string) => void;
   onSetBotToken: (value: string) => void;
+  onClearTokens: () => void;
   onTest: () => void;
 }
 
@@ -635,6 +692,7 @@ function AdvancedFields({
   onChange,
   onSetAppToken,
   onSetBotToken,
+  onClearTokens,
   onTest,
 }: AdvancedFieldsProps) {
   return (
@@ -687,6 +745,7 @@ function AdvancedFields({
             onChange={onChange}
             onSetAppToken={onSetAppToken}
             onSetBotToken={onSetBotToken}
+            onClearTokens={onClearTokens}
             onTest={onTest}
           />
         )}
@@ -815,39 +874,62 @@ export function SlackGroup({ agents }: SlackGroupProps) {
    * (that module names no Slack verb); `installProjectConfig` is the same
    * escape hatch a main-pushed clone snapshot uses, for the same reason.
    */
+  /**
+   * A refused write, reported in main's own words (HIVE-124, fix-round-3).
+   *
+   * These three verbs used to collapse every rejection into "The app could not
+   * reach its own main process." — which is true of a broken bridge and false
+   * of everything else that can reject here, and ordinary typing reaches the
+   * everything else: `assertCommanderId` refuses an id with whitespace in it,
+   * and `slackTokens.save` throws when the machine has no keyring. Both were
+   * reported as a plumbing fault, so the one person who could fix the input was
+   * sent to look at the wrong thing. {@link SlackWrite} keeps the sentence;
+   * this puts it on the screen.
+   */
+  const applyWrite = <T,>(result: SlackWrite<T>, onValue: (value: T) => void) => {
+    if (result.ok) {
+      onValue(result.value);
+      setConfigError(null);
+
+      return;
+    }
+
+    setConfigError(result.message);
+  };
+
   const handleSlackChange = (next: SlackConfig) => {
     void setSlackConfig({
       socketMode: next.socketMode,
       commanders: next.commanders,
-    }).then((snapshot) => {
-      if (snapshot) {
-        installProjectConfig(snapshot);
-        setConfigError(null);
-        return;
-      }
-      setConfigError(BRIDGE_ERROR_MESSAGE);
+    }).then((result) => {
+      applyWrite(result, installProjectConfig);
     });
   };
 
   const handleSetAppToken = (value: string) => {
-    void setSlackTokens({ appToken: value }).then((next) => {
-      if (next) {
-        setTokens(next);
-        setConfigError(null);
-        return;
-      }
-      setConfigError(BRIDGE_ERROR_MESSAGE);
+    void setSlackTokens({ appToken: value }).then((result) => {
+      applyWrite(result, setTokens);
     });
   };
 
   const handleSetBotToken = (value: string) => {
-    void setSlackTokens({ botToken: value }).then((next) => {
-      if (next) {
-        setTokens(next);
-        setConfigError(null);
-        return;
-      }
-      setConfigError(BRIDGE_ERROR_MESSAGE);
+    void setSlackTokens({ botToken: value }).then((result) => {
+      applyWrite(result, setTokens);
+    });
+  };
+
+  /**
+   * Forget both stored tokens (HIVE-124, fix-round-3).
+   *
+   * `CH.slackClearTokens` existed end to end — contract, preload, handler,
+   * `lib/slack.ts` wrapper — and nothing in `src/` called it, so the only way
+   * to remove a pasted token was deleting `slack-tokens.bin` by hand: turning
+   * Socket Mode off left both on disk. Clearing also re-syncs the bridge in
+   * main, so the socket comes down with them.
+   */
+  const handleClearTokens = () => {
+    void clearSlackTokens().then((result) => {
+      applyWrite(result, setTokens);
     });
   };
 
@@ -976,6 +1058,7 @@ export function SlackGroup({ agents }: SlackGroupProps) {
             onChange={handleSlackChange}
             onSetAppToken={handleSetAppToken}
             onSetBotToken={handleSetBotToken}
+            onClearTokens={handleClearTokens}
             onTest={handleSocketTest}
           />
         )}

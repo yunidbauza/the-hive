@@ -32,6 +32,7 @@ const subscribeSlackSocketStatus = vi.fn();
 const readSlackSocketState = vi.fn();
 
 vi.mock('@/lib/slack', () => ({
+  SLACK_BRIDGE_ERROR: 'The app could not reach its own main process.',
   readSlackStatus: () => status(),
   signIn: () => signIn(),
   signOut: () => signOut(),
@@ -66,9 +67,15 @@ beforeEach(() => {
       emitSocketStatus = null;
     };
   });
-  setSlackConfig.mockResolvedValue(null);
-  setSlackTokens.mockResolvedValue(null);
-  clearSlackTokens.mockResolvedValue(null);
+  /*
+    The three writes answer with a `SlackWrite` (HIVE-124, fix-round-3): a
+    refusal now carries main's own sentence rather than collapsing to `null`,
+    because `assertCommanderId` and a missing keyring are both reachable by
+    ordinary typing and neither is a broken IPC bridge.
+  */
+  setSlackConfig.mockResolvedValue({ ok: false, message: 'unused in this test' });
+  setSlackTokens.mockResolvedValue({ ok: false, message: 'unused in this test' });
+  clearSlackTokens.mockResolvedValue({ ok: false, message: 'unused in this test' });
   testSlackSocket.mockResolvedValue(null);
   readSlackSocketState.mockResolvedValue(null);
   configSnapshot = { slack: { socketMode: false, commanders: [] } };
@@ -525,7 +532,10 @@ describe('real-time events (HIVE-124)', () => {
    * look like a switch that silently declined to move (fix-round-1).
    */
   it('says so when Socket Mode cannot be saved, rather than moving silently', async () => {
-    setSlackConfig.mockResolvedValue(null);
+    setSlackConfig.mockResolvedValue({
+      ok: false,
+      message: 'The app could not reach its own main process.',
+    });
     renderGroup({ slack: { socketMode: false, commanders: [] } });
     await openAdvanced();
 
@@ -534,6 +544,129 @@ describe('real-time events (HIVE-124)', () => {
     expect(
       await screen.findByText(/could not reach its own main process/i),
     ).toBeInTheDocument();
+  });
+
+  /* ------------------------------------------------- HIVE-124, fix-round-3 */
+
+  /**
+   * The only way to remove a stored token.
+   *
+   * `CH.slackClearTokens` existed end to end — contract, preload, handler,
+   * `lib/slack.ts` wrapper — and nothing in `src/` called it, so turning Socket
+   * Mode off left both tokens on disk and deleting `slack-tokens.bin` by hand
+   * was the remedy. The control follows `jira-credential-group.tsx`'s.
+   */
+  it('offers a Clear control once a token is stored, and forgets both', async () => {
+    clearSlackTokens.mockResolvedValue({
+      ok: true,
+      value: { hasAppToken: false, hasBotToken: false, encryptionAvailable: true },
+    });
+    renderGroup({
+      slack: { socketMode: true, commanders: [] },
+      tokens: { hasAppToken: true, hasBotToken: true, encryptionAvailable: true },
+    });
+    await openAdvanced();
+
+    await userEvent.click(await screen.findByRole('button', { name: /clear tokens/i }));
+
+    expect(clearSlackTokens).toHaveBeenCalledTimes(1);
+    // The presence answer it returns is applied, so the hints stop saying Stored.
+    expect(
+      await screen.findByPlaceholderText('xapp-\u2026'),
+    ).toBeInTheDocument();
+  });
+
+  it('does not offer a Clear control when there is nothing stored', async () => {
+    renderGroup({ slack: { socketMode: true, commanders: [] } });
+    await openAdvanced();
+
+    expect(await screen.findByLabelText(/app-level token/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /clear tokens/i })).not.toBeInTheDocument();
+  });
+
+  /**
+   * `encryptionAvailable` was plumbed all the way to this pane and never read.
+   * `tokens.ts` throws rather than writing a token in plaintext, so the fields
+   * accepted a paste, the save threw, and the pane blamed its own IPC bridge —
+   * on a machine whose only actual problem is a missing keyring.
+   */
+  it('hides the token fields when the machine has no keyring, and says why', async () => {
+    renderGroup({
+      slack: { socketMode: true, commanders: [] },
+      tokens: { hasAppToken: false, hasBotToken: false, encryptionAvailable: false },
+    });
+    await openAdvanced();
+
+    expect(await screen.findByText(/has no keyring/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/app-level token/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/bot token/i)).not.toBeInTheDocument();
+  });
+
+  /**
+   * `U08BA712189 U0123ABCD` is what pasting two ids out of Slack looks like.
+   * Split on `,` alone it became one entry with a space in it,
+   * `assertCommanderId` refused the **whole** write, and the pane reported a
+   * broken main process for a stray space in a text field.
+   */
+  it('accepts ids separated by spaces as well as commas', async () => {
+    setSlackConfig.mockResolvedValue({ ok: true, value: { slack: {} } });
+    renderGroup({ slack: { socketMode: true, commanders: [] } });
+    await openAdvanced();
+
+    const field = await screen.findByLabelText(/allowed to command/i);
+    await userEvent.type(field, 'U08BA712189 U0123ABCD');
+    await userEvent.tab();
+
+    expect(setSlackConfig).toHaveBeenCalledWith({
+      socketMode: true,
+      commanders: ['U08BA712189', 'U0123ABCD'],
+    });
+  });
+
+  /** And the refusal, when it comes, is main's sentence rather than the pane's. */
+  it('reports the guard’s own words rather than blaming the main process', async () => {
+    setSlackConfig.mockResolvedValue({
+      ok: false,
+      message: 'setSlack.commanders[0]: must not contain whitespace',
+    });
+    renderGroup({ slack: { socketMode: true, commanders: [] } });
+    await openAdvanced();
+
+    const field = await screen.findByLabelText(/allowed to command/i);
+    await userEvent.type(field, 'U08BA712189');
+    await userEvent.tab();
+
+    expect(await screen.findByText(/must not contain whitespace/)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/could not reach its own main process/i),
+    ).not.toBeInTheDocument();
+  });
+
+  /**
+   * The draft was compared by array **identity**, and every config parse builds
+   * a fresh `commanders` array — so any unrelated write, a switch one field
+   * away included, silently threw away what the user was half-way through
+   * typing. Compared on the joined string now, as `container-alias-group.tsx`
+   * compares its own (a `string` prop, which is why copying its shape without
+   * its type was the bug).
+   */
+  it('keeps a half-typed allow-list when an unrelated config write lands', async () => {
+    renderGroup({ slack: { socketMode: true, commanders: ['U08BA712189'] } });
+    await openAdvanced();
+
+    const field = await screen.findByLabelText(/allowed to command/i);
+    await userEvent.type(field, ', U0123ABCD');
+    expect(field).toHaveValue('U08BA712189, U0123ABCD');
+
+    /* A fresh parse of the *same* saved value: new array, identical contents. */
+    act(() => {
+      configSnapshot = { slack: { socketMode: true, commanders: ['U08BA712189'] } };
+      emitSocketStatus?.({ kind: 'connecting' });
+    });
+
+    expect(screen.getByLabelText(/allowed to command/i)).toHaveValue(
+      'U08BA712189, U0123ABCD',
+    );
   });
 
   /**

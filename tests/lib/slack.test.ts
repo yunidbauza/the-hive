@@ -8,6 +8,7 @@ import {
   setSlackTokens,
   signIn,
   signOut,
+  SLACK_BRIDGE_ERROR,
   subscribeSlackSocketStatus,
   testSlack,
   testSlackSocket,
@@ -146,10 +147,17 @@ describe('with a bridge', () => {
  *
  * The same two rules as the four above — no bridge is `null` and silent, a
  * rejection is `null` and logged once — applied to verbs that no longer all
- * answer with a `SlackStatus`. The subscription is the one shape that is not a
- * promise, and it has a rule of its own: with no bridge it must still hand back
- * a disposer, or a component's cleanup path differs between the app and the
- * browser demo.
+ * answer with a `SlackStatus`.
+ *
+ * The three **writes** are the exception (fix-round-3): they answer with a
+ * `SlackWrite`, keeping main's refusal rather than collapsing it. A read the
+ * pane could not fetch is a status it does not know; a write main *refused* is
+ * something the user typed, and `assertCommanderId` and a missing keyring are
+ * both reachable by ordinary typing.
+ *
+ * The subscription is the one shape that is not a promise, and it has a rule of
+ * its own: with no bridge it must still hand back a disposer, or a component's
+ * cleanup path differs between the app and the browser demo.
  */
 describe('socket mode (HIVE-124)', () => {
   const PRESENT: SlackTokensState = {
@@ -162,11 +170,20 @@ describe('socket mode (HIVE-124)', () => {
     it('answers null rather than throwing, and logs nothing', async () => {
       const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-      await expect(setSlackTokens({ appToken: 'xapp-1' })).resolves.toBeNull();
-      await expect(clearSlackTokens()).resolves.toBeNull();
-      await expect(setSlackConfig({ socketMode: true })).resolves.toBeNull();
       await expect(testSlackSocket()).resolves.toBeNull();
       await expect(readSlackSocketState()).resolves.toBeNull();
+
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    /** The writes say the same thing, in the shape a pane can render. */
+    it('answers the writes with the bridge sentence rather than null', async () => {
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const unreachable = { ok: false, message: SLACK_BRIDGE_ERROR };
+
+      await expect(setSlackTokens({ appToken: 'xapp-1' })).resolves.toEqual(unreachable);
+      await expect(clearSlackTokens()).resolves.toEqual(unreachable);
+      await expect(setSlackConfig({ socketMode: true })).resolves.toEqual(unreachable);
 
       expect(spy).not.toHaveBeenCalled();
     });
@@ -185,7 +202,10 @@ describe('socket mode (HIVE-124)', () => {
       const setTokens = vi.fn(() => Promise.resolve(PRESENT));
       bridge({ setTokens });
 
-      await expect(setSlackTokens({ appToken: 'xapp-1' })).resolves.toEqual(PRESENT);
+      await expect(setSlackTokens({ appToken: 'xapp-1' })).resolves.toEqual({
+        ok: true,
+        value: PRESENT,
+      });
       expect(setTokens).toHaveBeenCalledWith({ appToken: 'xapp-1' });
     });
 
@@ -226,6 +246,44 @@ describe('socket mode (HIVE-124)', () => {
         bot: 'hive',
       });
       expect(test).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The whole point of {@link SlackWrite}: `assertCommanderId` refuses an id
+     * with whitespace in it and ordinary typing reaches that guard, so the
+     * sentence the user needs is the one main wrote. `ipcRenderer.invoke` wraps
+     * it twice on the way back — the channel, then the error class — and both
+     * wrappers are peeled, or the guard's words arrive buried in what reads as
+     * a plumbing fault.
+     */
+    it('keeps main’s refusal, unwrapped from the invoke and class prefixes', async () => {
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const setSlack = vi.fn(() =>
+        Promise.reject(
+          new Error(
+            `Error invoking remote method 'config:set-slack': ` +
+              `IpcValidationError: setSlack.commanders[1]: must not contain whitespace`,
+          ),
+        ),
+      );
+      bridge({}, { setSlack: setSlack as never });
+
+      await expect(setSlackConfig({ commanders: ['a b'] })).resolves.toEqual({
+        ok: false,
+        message: 'setSlack.commanders[1]: must not contain whitespace',
+      });
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to the bridge sentence when a rejection carries no words', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const clearTokens = vi.fn(() => Promise.reject(new Error('')));
+      bridge({ clearTokens: clearTokens as never });
+
+      await expect(clearSlackTokens()).resolves.toEqual({
+        ok: false,
+        message: SLACK_BRIDGE_ERROR,
+      });
     });
 
     it('passes the push through and hands back the bridge’s own disposer', () => {
