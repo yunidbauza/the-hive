@@ -1,7 +1,10 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DEFAULT_SLACK } from '../../../../electron/shared/config-contract';
+import {
+  DEFAULT_SLACK,
+  emptySnapshot,
+} from '../../../../electron/shared/config-contract';
 import type {
   SlackSocketStatus,
   SlackSocketTestResult,
@@ -41,7 +44,9 @@ vi.mock('electron', () => ({
     getVersion: () => '0.0.0',
     on: vi.fn(),
     removeListener: vi.fn(),
-    getPath: () => '/tmp/hive-test',
+    // Per-spec, never shared: these specs really write a container set here,
+    // and vitest runs spec files in parallel worker processes (HIVE-139).
+    getPath: () => '/tmp/hive-test-slack-channels',
   },
   BrowserWindow: { fromWebContents: () => null, getAllWindows: () => [] },
   dialog: { showOpenDialog: vi.fn() },
@@ -121,19 +126,22 @@ const teardownOrder: string[] = [];
  * makes "the resolver ran" observable.
  *
  * Mutable, so the refusal test can point it somewhere that is not there.
+ *
+ * Built on the whole snapshot, so no getter reading a field this fixture forgot
+ * can throw into a swallowing catch (HIVE-139); `claudeCommand` stays this
+ * file's own for the reason above.
  */
 const snapshot = {
-  configPath: '/tmp/config.json',
-  templateWritten: false,
-  shell: '/bin/zsh',
+  ...emptySnapshot('/tmp/config.json', '/bin/zsh'),
   claudeCommand: process.execPath,
-  projects: [],
-  errors: [],
   /*
-    HIVE-124. The block the bridge reads its switch and allow-list from —
-    spread from `DEFAULT_SLACK` rather than written out, so a third field on
-    `SlackConfig` reaches this fixture rather than drifting from it. Mutable, so
-    the composition tests below can move the switch.
+    HIVE-124. The block the bridge reads its switch and allow-list from.
+
+    `emptySnapshot` already supplies a fully resolved `slack`, so this is not
+    filling a gap — it restates the field only to widen its type to a mutable
+    one, because the composition tests below move the switch and re-`sync()`.
+    Spread from `DEFAULT_SLACK` rather than written out, so a third field on
+    `SlackConfig` reaches this fixture rather than drifting from it.
   */
   slack: { ...DEFAULT_SLACK } as { socketMode: boolean; commanders: string[] },
 };

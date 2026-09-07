@@ -7,7 +7,7 @@ import type {
   AgentsSnapshot,
   LiveRunSummary,
 } from '../../../../electron/shared/agent-contract';
-import { DEFAULT_SLACK } from '../../../../electron/shared/config-contract';
+import { emptySnapshot } from '../../../../electron/shared/config-contract';
 import {
   OVERMIND,
   type LedgerEntry,
@@ -38,7 +38,9 @@ vi.mock('electron', () => ({
     getVersion: () => '0.0.0',
     on: vi.fn(),
     removeListener: vi.fn(),
-    getPath: () => '/tmp/hive-test',
+    // Per-spec, never shared: these specs really write a container set here,
+    // and vitest runs spec files in parallel worker processes (HIVE-139).
+    getPath: () => '/tmp/hive-test-agent-channels',
   },
   BrowserWindow: { fromWebContents: () => null, getAllWindows: () => windows },
   dialog: { showOpenDialog: vi.fn() },
@@ -89,25 +91,29 @@ vi.mock('../../../../electron/main/shutdown', () => ({
   },
 }));
 
-const snapshot = {
-  configPath: '/tmp/config.json',
-  templateWritten: false,
-  shell: '/bin/zsh',
-  claudeCommand: 'claude',
-  subscriptionAuth: true,
-  projects: [],
-  errors: [],
-  /*
-    Always present in a real snapshot, and now read by something these tests
-    reach: pausing an agent re-syncs the Slack bridge (HIVE-124), which asks the
-    config for its switch. `ConfigSnapshot.slack` is fully resolved by the
-    parser, so leaving it out here was a fixture that could not occur.
-
-    Spread from `DEFAULT_SLACK` rather than written out, so a third field on
-    `SlackConfig` reaches this fixture instead of re-creating the same drift.
-  */
-  slack: { ...DEFAULT_SLACK },
-};
+/**
+ * The whole snapshot, not a hand-picked corner of it.
+ *
+ * `registerIpcHandlers` builds the hook runtime with
+ * `hostAlias: () => getConfig().receiver.hostAlias` (`ipc/index.ts`), so a
+ * fixture missing `receiver` made that getter throw on every registration —
+ * swallowed by the container-write `catch` in `hooks/index.ts` as a console
+ * line, once per test. Fifty-nine of those forwards raced the worker's
+ * teardown and failed the *run* with no failing test (HIVE-139).
+ *
+ * `emptySnapshot` is what the real config module answers with, and it is
+ * *typed*, which is the durable half: a field added to `ConfigSnapshot` later
+ * cannot silently go missing here again — which is exactly how `receiver` went
+ * missing when HIVE-132 added it.
+ *
+ * What this fixes is the console forwarding, which is what the rpc teardown
+ * error named. It does not make `hooks.start()` awaited — it is still
+ * fire-and-forget from `createSessions`, still binds a real receiver and still
+ * writes real files that can settle after the last test. Those do not travel
+ * over vitest's rpc, so they cannot reproduce *this* error, but a future
+ * unawaited console line here would.
+ */
+const snapshot = emptySnapshot('/tmp/config.json', '/bin/zsh');
 
 vi.mock('../../../../electron/main/config/index', () => ({
   getConfig: vi.fn(() => snapshot),

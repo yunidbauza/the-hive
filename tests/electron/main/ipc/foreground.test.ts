@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { emptySnapshot } from '../../../../electron/shared/config-contract';
+
 /**
  * `ui:foreground` (HIVE-81) — main records the id and computes the predicate.
  * The notifier's re-arm (`reevaluateForeground`) is one of its consumers now;
@@ -39,7 +41,9 @@ const emitAppEvent = (event: string): void => {
 vi.mock('electron', () => ({
   app: {
     getVersion: () => '0.0.0',
-    getPath: () => '/tmp/hive-test',
+    // Per-spec, never shared: these specs really write a container set here,
+    // and vitest runs spec files in parallel worker processes (HIVE-139).
+    getPath: () => '/tmp/hive-test-foreground',
     on: (event: string, listener: () => void) => {
       const existing = appListeners.get(event) ?? new Set<() => void>();
       existing.add(listener);
@@ -146,14 +150,9 @@ vi.mock('../../../../electron/main/notifications', async () => {
   };
 });
 
-const snapshot = {
-  configPath: '/tmp/config.json',
-  templateWritten: false,
-  shell: '/bin/zsh',
-  claudeCommand: 'claude',
-  projects: [],
-  errors: [],
-};
+// The whole snapshot, so no getter reading a field this fixture forgot can
+// throw into a swallowing catch (HIVE-139).
+const snapshot = emptySnapshot('/tmp/config.json', '/bin/zsh');
 
 vi.mock('../../../../electron/main/config/index', () => ({
   getConfig: vi.fn(() => snapshot),

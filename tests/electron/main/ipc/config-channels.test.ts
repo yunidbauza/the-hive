@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { emptySnapshot } from '../../../../electron/shared/config-contract';
+
 /**
  * Story 103's config channels.
  *
@@ -30,7 +32,9 @@ vi.mock('electron', () => ({
     // HIVE-81 review: `registerIpcHandlers` now wires app-level window focus
     // events, and `resetIpcHandlers` takes them off again.
     removeListener: vi.fn(),
-    getPath: () => '/tmp/hive-test',
+    // Per-spec, never shared: these specs really write a container set here,
+    // and vitest runs spec files in parallel worker processes (HIVE-139).
+    getPath: () => '/tmp/hive-test-config-channels',
   },
   BrowserWindow: { fromWebContents: () => null, getAllWindows: () => [] },
   dialog: { showOpenDialog: vi.fn() },
@@ -82,15 +86,13 @@ vi.mock('../../../../electron/main/shutdown', () => ({
   onShutdown: (hook: () => void) => shutdownHooks.push(hook),
 }));
 
-/** The one object every mocked verb answers with, so identity is assertable. */
-const snapshot = {
-  configPath: '/tmp/config.json',
-  templateWritten: false,
-  shell: '/bin/zsh',
-  claudeCommand: 'claude',
-  projects: [],
-  errors: [],
-};
+/**
+ * The one object every mocked verb answers with, so identity is assertable.
+ *
+ * The whole snapshot, so no getter reading a field this fixture forgot can
+ * throw into a swallowing catch (HIVE-139).
+ */
+const snapshot = emptySnapshot('/tmp/config.json', '/bin/zsh');
 
 vi.mock('../../../../electron/main/config/index', () => ({
   getConfig: vi.fn(() => snapshot),

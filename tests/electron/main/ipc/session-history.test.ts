@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { emptySnapshot } from '../../../../electron/shared/config-contract';
+
 /**
  * `session:history` says which records are still running (HIVE-88).
  *
@@ -23,7 +25,9 @@ vi.mock('electron', () => ({
     getVersion: () => '0.0.0',
     on: vi.fn(),
     removeListener: vi.fn(),
-    getPath: () => '/tmp/hive-test',
+    // Per-spec, never shared: these specs really write a container set here,
+    // and vitest runs spec files in parallel worker processes (HIVE-139).
+    getPath: () => '/tmp/hive-test-session-history',
   },
   BrowserWindow: { fromWebContents: () => null, getAllWindows: () => [] },
   dialog: { showOpenDialog: vi.fn() },
@@ -69,14 +73,9 @@ vi.mock('../../../../electron/main/shutdown', () => ({
   onShutdown: vi.fn(),
 }));
 
-const snapshot = {
-  configPath: '/tmp/config.json',
-  templateWritten: false,
-  shell: '/bin/zsh',
-  claudeCommand: 'claude',
-  projects: [],
-  errors: [],
-};
+// The whole snapshot, so no getter reading a field this fixture forgot can
+// throw into a swallowing catch (HIVE-139).
+const snapshot = emptySnapshot('/tmp/config.json', '/bin/zsh');
 
 vi.mock('../../../../electron/main/config/index', () => ({
   getConfig: vi.fn(() => snapshot),
