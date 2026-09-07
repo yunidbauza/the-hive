@@ -2800,11 +2800,25 @@ export function registerIpcHandlers(): void {
    * So one no-payload verb for the pair, the shape `CH.jiraStatus` already
    * uses. It reads `state()`, never `read()`: the invariant above is that no
    * `slack:` channel returns a token, and this is a channel.
+   *
+   * `unresolved` is read **live** rather than taken from the stored status
+   * (fix-round-3, HIVE-124). `status()` answers with the last value pushed, and
+   * that list can be older than the subscriptions it describes — an agent
+   * paused, or a `slack.channel:` line deleted, changes what is unresolved
+   * without changing anything the bridge pushes. Serving the stale copy meant a
+   * chip for a room nobody watches survived even a remount.
    */
-  handle(CH.slackSocketState, (): SlackSocketState => ({
-    tokens: slackTokens.state(),
-    socket: slackBridge?.status() ?? { kind: 'off' },
-  }));
+  handle(CH.slackSocketState, (): SlackSocketState => {
+    const socket = slackBridge?.status() ?? { kind: 'off' };
+
+    return {
+      tokens: slackTokens.state(),
+      socket:
+        socket.kind === 'connected'
+          ? { ...socket, unresolved: slackBridge?.unresolved() ?? [] }
+          : socket,
+    };
+  });
 
   /**
    * Cloning a repository (story 102).

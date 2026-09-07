@@ -821,6 +821,50 @@ describe('channel resolution', () => {
     expect(h.socket.started).toBe(1);
   });
 
+  /**
+   * The mirror of the test above, and the case it could not reach
+   * (fix-round-3, HIVE-124).
+   *
+   * `refreshChannels` returns before its repush when nothing is *missing* from
+   * the index — which is exactly what a subscription being **removed** looks
+   * like. So the chip for a room nobody watches any more never went away, and
+   * a remount could not clear it either: `slack:socket-state` served the
+   * stored status, whose `unresolved` was the same stale list.
+   */
+  it('clears the unresolved chip when the subscription that caused it is removed', async () => {
+    let watching = [
+      'slack.channel:#eng-code-review',
+      'slack.channel:#not-a-channel',
+    ];
+    const h = harness({
+      subscriptions: () =>
+        readSubscriptions([
+          { name: 'pr-patrol', paused: false, valid: true, on: watching },
+        ]),
+    });
+
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+    expect(h.statuses.at(-1)).toEqual({
+      kind: 'connected',
+      workspace: 'behiques',
+      bot: 'hive',
+      unresolved: ['#not-a-channel'],
+    });
+
+    watching = ['slack.channel:#eng-code-review'];
+    h.bridge.sync();
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(h.bridge.unresolved()).toEqual([]);
+    expect(h.statuses.at(-1)).toEqual({
+      kind: 'connected',
+      workspace: 'behiques',
+      bot: 'hive',
+      unresolved: [],
+    });
+  });
+
   it('reports a channel name that resolves to nothing rather than dropping it silently', async () => {
     const h = harness({
       subscriptions: () =>

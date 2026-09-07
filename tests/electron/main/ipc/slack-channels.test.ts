@@ -343,6 +343,13 @@ const bridgeTest = vi.fn<() => Promise<SlackSocketTestResult>>(() =>
 /** What `SlackBridge.status()` answers — the last status it pushed. */
 let bridgeStatus: SlackSocketStatus = { kind: 'off' };
 
+/**
+ * What `SlackBridge.unresolved()` answers — recomputed live from the current
+ * subscriptions, which is why it can disagree with the list inside
+ * {@link bridgeStatus}. Held apart here so a test can make them disagree.
+ */
+let bridgeUnresolved: string[] = [];
+
 vi.mock('../../../../electron/main/integrations/slack/bridge', () => ({
   createSlackBridge: (deps: never) => {
     bridgeDeps = deps;
@@ -353,7 +360,7 @@ vi.mock('../../../../electron/main/integrations/slack/bridge', () => ({
       },
       status: () => bridgeStatus,
       test: () => bridgeTest(),
-      unresolved: () => [],
+      unresolved: () => bridgeUnresolved,
       stop: () => {
         teardownOrder.push('bridge');
       },
@@ -442,6 +449,7 @@ beforeEach(() => {
   bridgeSyncs = 0;
   bridgeDeps = null;
   bridgeStatus = { kind: 'off' };
+  bridgeUnresolved = [];
   stored = {};
   listedAgents = [{ name: 'pr-patrol', wake: { on: ['slack.channel:#eng'] } }];
   agentsChanged = undefined;
@@ -769,6 +777,7 @@ describe('socket mode channels (HIVE-124)', () => {
       bot: 'hive',
       unresolved: ['#no-such-channel'],
     };
+    bridgeUnresolved = ['#no-such-channel'];
 
     const state = await call(CH.slackSocketState);
 
@@ -783,6 +792,45 @@ describe('socket mode channels (HIVE-124)', () => {
     });
     // Presence, never a value — the invariant every `slack:` channel keeps.
     expect(JSON.stringify(state)).not.toContain('SECRET');
+  });
+
+  /**
+   * The one field of the status that must not come from the status
+   * (fix-round-3, HIVE-124).
+   *
+   * `status()` answers with the last value *pushed*, and `unresolved` can go
+   * stale without anything being pushed: pausing an agent or deleting a
+   * `slack.channel:` line changes what is unresolved and changes nothing the
+   * bridge announces. Served from the stored copy, a chip naming a room nobody
+   * watches survived even a remount — the one moment the pane re-reads.
+   */
+  it('reads unresolved live rather than from the stored status', async () => {
+    bridgeStatus = {
+      kind: 'connected',
+      workspace: 'acme',
+      bot: 'hive',
+      unresolved: ['#deleted-from-wake-on'],
+    };
+    bridgeUnresolved = [];
+
+    await expect(call(CH.slackSocketState)).resolves.toMatchObject({
+      socket: {
+        kind: 'connected',
+        workspace: 'acme',
+        bot: 'hive',
+        unresolved: [],
+      },
+    });
+  });
+
+  /** …and a status that carries no such list is passed through untouched. */
+  it('leaves a status that is not connected exactly as the bridge gave it', async () => {
+    bridgeStatus = { kind: 'failed', message: 'invalid_auth' };
+    bridgeUnresolved = ['#ignored'];
+
+    await expect(call(CH.slackSocketState)).resolves.toMatchObject({
+      socket: { kind: 'failed', message: 'invalid_auth' },
+    });
   });
 
   it('answers slack:socket-test from the bridge, which opens nothing', async () => {

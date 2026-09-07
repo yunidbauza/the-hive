@@ -776,6 +776,18 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
 
     if (socket !== null) {
       refreshChannels(subs);
+      /*
+        Unconditionally, and *not* only from `refreshChannels`' continuation.
+
+        A subscription **removed** leaves nothing missing from the index, so
+        that function returns before it reaches its repush — and the pane went
+        on rendering an `unresolved` chip for a name no agent watches any more.
+        Nothing else could clear it either: `slack:socket-state` served
+        `status()`, whose stored `unresolved` was the same stale list, so even a
+        remount showed it. `push` drops a repeat, so calling this on every
+        sync costs a JSON compare and sends nothing when nothing changed.
+      */
+      repushUnresolved(generation);
 
       return;
     }
