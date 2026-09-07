@@ -39,7 +39,7 @@ const INVALID =
   'A hostname only — no scheme, port, path or credentials. Try host.docker.internal.';
 
 const BIND_HINT =
-  'Prefer the bridge address your runtime names over 0.0.0.0. Binding every interface is a wider surface than the problem needs, and no real client addresses a server as 0.0.0.0 — a container reaching this machine by its LAN address would still be refused unless an alias is also set.';
+  'Prefer the bridge address your runtime names over 0.0.0.0. Binding every interface is a wider surface than the problem needs, and a container reaching this machine by its real LAN or bridge address is still refused unless that address is also set as the alias.';
 const BIND_INVALID = 'A hostname or an IPv4 address only — no scheme, port or path.';
 const PORT_HINT = 'Leave empty for any free port, which is the default.';
 const PORT_INVALID = 'A port from 0 to 65535, or empty for any free port.';

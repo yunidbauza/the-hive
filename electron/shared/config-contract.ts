@@ -577,12 +577,15 @@ export interface ReceiverBindConfig {
    * interface is a wider surface than the problem needs. `0.0.0.0` is accepted
    * rather than refused, because a user whose runtime names no bridge has
    * nothing else to write — but it leaves the receiver reachable, not
-   * *addressable*: no real client ever names a server `0.0.0.0` in a `Host`
-   * header, so `guard()` refuses one just as it would any other name nobody
-   * legitimately sends (verified live — a request with `Host:
+   * *addressable*: binding it opens every interface, yet `guard()` still only
+   * admits a `Host` of loopback, the literal `0.0.0.0`, or a configured alias
+   * — no real client ever names a server by its listen address, so a
+   * container reaching this machine by its actual LAN or bridge address is
+   * refused all the same (verified live — a request with `Host:
    * 192.168.1.20:<port>` against a `0.0.0.0` bind is 403). The documented
-   * happy path is binding the bridge address specifically, or setting an
-   * alias alongside the wide bind, either of which the guard does admit.
+   * happy path is binding the bridge address specifically, or setting that
+   * real address as an alias alongside the wide bind, either of which the
+   * guard does admit.
    */
   host: string;
   /** 0 asks the OS for any free port, which is what shipped. */
