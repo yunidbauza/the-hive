@@ -18,13 +18,22 @@ vi.mock('@lib/project-config', () => ({
  * write per character (`text-field.tsx:24`).
  */
 
+/**
+ * `bind` is required on `ContainerAliasGroup` (HIVE-134): it renders a
+ * security-relevant switch, and a caller that forgot to pass it must fail to
+ * compile rather than silently render "not exposed" over a config that may
+ * say otherwise. The alias-only tests below predate the off-loopback bind
+ * and are not testing it, so they all pass this shared shipped-default value.
+ */
+const LOOPBACK: ReceiverBindConfig = { host: '127.0.0.1', port: 0, allowedOrigins: [] };
+
 describe('ContainerAliasGroup', () => {
   beforeEach(() => {
     vi.mocked(setReceiverConfig).mockClear();
   });
 
   it('renders the resolved alias', () => {
-    render(<ContainerAliasGroup hostAlias="host.docker.internal" />);
+    render(<ContainerAliasGroup hostAlias="host.docker.internal" bind={LOOPBACK} />);
 
     expect(screen.getByLabelText('Host alias')).toHaveValue(
       'host.docker.internal',
@@ -32,7 +41,7 @@ describe('ContainerAliasGroup', () => {
   });
 
   it('does not write on every keystroke', () => {
-    render(<ContainerAliasGroup hostAlias="host.docker.internal" />);
+    render(<ContainerAliasGroup hostAlias="host.docker.internal" bind={LOOPBACK} />);
 
     fireEvent.change(screen.getByLabelText('Host alias'), {
       target: { value: 'host.containers.internal' },
@@ -42,7 +51,7 @@ describe('ContainerAliasGroup', () => {
   });
 
   it('commits on blur', () => {
-    render(<ContainerAliasGroup hostAlias="host.docker.internal" />);
+    render(<ContainerAliasGroup hostAlias="host.docker.internal" bind={LOOPBACK} />);
     const field = screen.getByLabelText('Host alias');
 
     fireEvent.change(field, { target: { value: 'host.containers.internal' } });
@@ -54,7 +63,7 @@ describe('ContainerAliasGroup', () => {
   });
 
   it('commits on Enter', () => {
-    render(<ContainerAliasGroup hostAlias="host.docker.internal" />);
+    render(<ContainerAliasGroup hostAlias="host.docker.internal" bind={LOOPBACK} />);
     const field = screen.getByLabelText('Host alias');
 
     fireEvent.change(field, { target: { value: 'gateway' } });
@@ -64,7 +73,7 @@ describe('ContainerAliasGroup', () => {
   });
 
   it('does not write when the value did not change', () => {
-    render(<ContainerAliasGroup hostAlias="host.docker.internal" />);
+    render(<ContainerAliasGroup hostAlias="host.docker.internal" bind={LOOPBACK} />);
 
     fireEvent.blur(screen.getByLabelText('Host alias'));
 
@@ -72,7 +81,7 @@ describe('ContainerAliasGroup', () => {
   });
 
   it('trims before comparing, so re-committing padding writes nothing', () => {
-    render(<ContainerAliasGroup hostAlias="gateway" />);
+    render(<ContainerAliasGroup hostAlias="gateway" bind={LOOPBACK} />);
     const field = screen.getByLabelText('Host alias');
 
     fireEvent.change(field, { target: { value: '  gateway  ' } });
@@ -88,7 +97,7 @@ describe('ContainerAliasGroup', () => {
    * default rather than clearing the key.
    */
   it('restores the default when the field is emptied', () => {
-    render(<ContainerAliasGroup hostAlias="gateway" />);
+    render(<ContainerAliasGroup hostAlias="gateway" bind={LOOPBACK} />);
     const field = screen.getByLabelText('Host alias');
 
     fireEvent.change(field, { target: { value: '   ' } });
@@ -116,7 +125,7 @@ describe('ContainerAliasGroup', () => {
       ['credentials', 'user@evil.com'],
       ['a backslash', 'evil.com\\x'],
     ])('is not sent — %s', (_label, value) => {
-      render(<ContainerAliasGroup hostAlias="host.docker.internal" />);
+      render(<ContainerAliasGroup hostAlias="host.docker.internal" bind={LOOPBACK} />);
       const field = screen.getByLabelText('Host alias');
 
       fireEvent.change(field, { target: { value } });
@@ -126,7 +135,7 @@ describe('ContainerAliasGroup', () => {
     });
 
     it('says so, and keeps what was typed so it can be corrected', () => {
-      render(<ContainerAliasGroup hostAlias="host.docker.internal" />);
+      render(<ContainerAliasGroup hostAlias="host.docker.internal" bind={LOOPBACK} />);
       const field = screen.getByLabelText('Host alias');
 
       fireEvent.change(field, { target: { value: '10.0.0.5?' } });
@@ -137,7 +146,7 @@ describe('ContainerAliasGroup', () => {
     });
 
     it('clears the complaint as soon as the value is edited again', () => {
-      render(<ContainerAliasGroup hostAlias="host.docker.internal" />);
+      render(<ContainerAliasGroup hostAlias="host.docker.internal" bind={LOOPBACK} />);
       const field = screen.getByLabelText('Host alias');
 
       fireEvent.change(field, { target: { value: 'bad:1234' } });
@@ -161,10 +170,10 @@ describe('ContainerAliasGroup', () => {
    */
   describe('when the snapshot changes underneath it', () => {
     it('follows the new value', () => {
-      const { rerender } = render(<ContainerAliasGroup hostAlias="gateway" />);
+      const { rerender } = render(<ContainerAliasGroup hostAlias="gateway" bind={LOOPBACK} />);
       expect(screen.getByLabelText('Host alias')).toHaveValue('gateway');
 
-      rerender(<ContainerAliasGroup hostAlias="host.docker.internal" />);
+      rerender(<ContainerAliasGroup hostAlias="host.docker.internal" bind={LOOPBACK} />);
 
       expect(screen.getByLabelText('Host alias')).toHaveValue(
         'host.docker.internal',
@@ -172,22 +181,22 @@ describe('ContainerAliasGroup', () => {
     });
 
     it('does not write a stale draft back after a reset', () => {
-      const { rerender } = render(<ContainerAliasGroup hostAlias="gateway" />);
+      const { rerender } = render(<ContainerAliasGroup hostAlias="gateway" bind={LOOPBACK} />);
 
       // The reset lands while the field still shows the old value.
-      rerender(<ContainerAliasGroup hostAlias="host.docker.internal" />);
+      rerender(<ContainerAliasGroup hostAlias="host.docker.internal" bind={LOOPBACK} />);
       fireEvent.blur(screen.getByLabelText('Host alias'));
 
       expect(setReceiverConfig).not.toHaveBeenCalled();
     });
 
     it('drops a pending edit rather than resurrecting it', () => {
-      const { rerender } = render(<ContainerAliasGroup hostAlias="gateway" />);
+      const { rerender } = render(<ContainerAliasGroup hostAlias="gateway" bind={LOOPBACK} />);
       fireEvent.change(screen.getByLabelText('Host alias'), {
         target: { value: 'half-typed' },
       });
 
-      rerender(<ContainerAliasGroup hostAlias="host.docker.internal" />);
+      rerender(<ContainerAliasGroup hostAlias="host.docker.internal" bind={LOOPBACK} />);
 
       expect(screen.getByLabelText('Host alias')).toHaveValue(
         'host.docker.internal',
@@ -195,8 +204,6 @@ describe('ContainerAliasGroup', () => {
     });
   });
 });
-
-const LOOPBACK = { host: '127.0.0.1', port: 0, allowedOrigins: [] } as const;
 
 describe('the off-loopback bind', () => {
   beforeEach(() => {

@@ -56,17 +56,18 @@ interface ContainerAliasGroupProps {
    * The resolved bind from the snapshot. Never partial — the block is
    * defaulted.
    *
-   * Optional only so the pre-existing alias-only tests in
-   * `container-alias-group.test.tsx` keep rendering unmodified; every real
-   * caller (`AdvancedSection`) always supplies the resolved snapshot value.
+   * Required, deliberately. This component renders a security-relevant
+   * switch — whether the receiver accepts connections off loopback — and a
+   * default here would fail in the wrong direction: a caller that forgot to
+   * pass it would render the switch **off**, i.e. "not exposed", even if the
+   * resolved config says otherwise. Making the prop required turns that
+   * mistake into a compile error instead of a silently wrong security
+   * display.
    */
-  bind?: ReceiverBindConfig;
+  bind: ReceiverBindConfig;
 }
 
-export function ContainerAliasGroup({
-  hostAlias,
-  bind = DEFAULT_BIND,
-}: ContainerAliasGroupProps) {
+export function ContainerAliasGroup({ hostAlias, bind }: ContainerAliasGroupProps) {
   const [draft, setDraft] = useState(hostAlias);
   const [invalid, setInvalid] = useState(false);
 
