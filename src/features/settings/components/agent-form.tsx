@@ -811,9 +811,10 @@ export function AgentForm({
     );
 
   /*
-    The two fixed events, plus whatever channels the file already names — the
-    same rule the time chips follow. A channel is a value with a target in it,
-    so it can never be a preset; it has to arrive from the file or the adder.
+    The three fixed events (HIVE-124 added `slack.app_mention`), plus whatever
+    channels the file already names — the same rule the time chips follow. A
+    channel is a value with a target in it, so it can never be a preset; it has
+    to arrive from the file or the adder.
   */
   const wakeOnChips = [
     ...WAKE_ON_EVENTS,

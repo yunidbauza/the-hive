@@ -4,10 +4,30 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 import { Button } from '@components/ui/button';
+import { SecretField } from '@components/ui/secret-field';
+import { Switch } from '@components/ui/switch';
+import { TextField } from '@components/ui/text-field';
 import { SettingsGroup } from '@features/settings/components/settings-group';
-import { readSlackStatus, signIn, signOut, testSlack } from '@lib/slack';
+import { useProjectConfig } from '@hooks/use-project-config';
+import { installProjectConfig } from '@lib/project-config';
+import {
+  readSlackStatus,
+  setSlackConfig,
+  setSlackTokens,
+  signIn,
+  signOut,
+  subscribeSlackSocketStatus,
+  testSlack,
+  testSlackSocket,
+} from '@lib/slack';
+import { DEFAULT_SLACK, type SlackConfig } from '@shared/config-contract';
 import { grantsSlackTools, SLACK_CLIENT_ID, SLACK_MCP_URL } from '@shared/slack-contract';
-import type { SlackStatus } from '@shared/slack-contract';
+import type {
+  SlackSocketStatus,
+  SlackSocketTestResult,
+  SlackStatus,
+  SlackTokensState,
+} from '@shared/slack-contract';
 
 /**
  * The Slack provider group — variant B, the chosen design (HIVE-123).
@@ -56,7 +76,25 @@ export interface SlackGroupAgent {
 
 interface SlackGroupProps {
   agents: SlackGroupAgent[];
+  /**
+   * Test-only seam for the two Hive-owned tokens' presence (HIVE-124).
+   *
+   * Unlike every other fact this pane shows, there is no channel that reads
+   * it back — `slack:set-tokens` and `slack:clear-tokens` answer with
+   * presence, but nothing answers on mount. Production always starts from
+   * {@link UNKNOWN_TOKENS} and only learns better once the pane itself sets
+   * or clears one; a test supplies this to exercise the "already stored"
+   * rendering without going through a save first.
+   */
+  tokens?: SlackTokensState;
 }
+
+/** Nothing known yet — the only honest starting point with no read channel. */
+const UNKNOWN_TOKENS: SlackTokensState = {
+  hasAppToken: false,
+  hasBotToken: false,
+  encryptionAvailable: true,
+};
 
 /**
  * `readSlackStatus`/`signIn`/`signOut`/`testSlack` all return `null` on a
@@ -100,7 +138,8 @@ function pillKindOf(status: SlackStatus): PillKind {
   }
 }
 
-function StatePill({ kind }: { kind: PillKind }) {
+/** `label` overrides {@link PILL_LABEL} — the socket pill reports different states. */
+function StatePill({ kind, label }: { kind: PillKind; label?: string }) {
   return (
     <span
       className={cn(
@@ -109,10 +148,18 @@ function StatePill({ kind }: { kind: PillKind }) {
       )}
     >
       <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current" />
-      {PILL_LABEL[kind]}
+      {label ?? PILL_LABEL[kind]}
     </span>
   );
 }
+
+/** The socket's own four states, read onto the same pill the connection uses. */
+const SOCKET_PILL: Record<SlackSocketStatus['kind'], { kind: PillKind; label: string }> = {
+  off: { kind: 'off', label: 'Off' },
+  connecting: { kind: 'wait', label: 'Connecting…' },
+  connected: { kind: 'ok', label: 'Connected' },
+  failed: { kind: 'err', label: 'Failed' },
+};
 
 /**
  * The promise the sign-in makes, on the one screen that offers it.
@@ -269,44 +316,342 @@ function Actions({
 }
 
 /**
- * Read-only today — only the "Slack app" half. HIVE-124 adds a second,
- * `Real-time events` sub-group beneath it (a Socket Mode app-level token and
- * bot token, with its own switch); this drawer already holds more than one
- * sub-group's worth of vertical rhythm so that addition is a sibling `<div
- * className="grp">`, not a restructure.
+ * The one line of prose that answers "who holds which credential", stated
+ * where it matters most — beside the two fields it distinguishes from the
+ * OAuth token above (HIVE-124).
+ *
+ * `TOKEN_HOLDER` (above) already makes the "held by Claude Code" claim about
+ * the OAuth token, in the caption every connected state shows — so this
+ * names only the *other* half rather than repeating it verbatim, which
+ * would read as two different claims about the same token to anyone
+ * (a screen reader included) hearing both in one pass.
  */
-function AdvancedFields() {
-  return (
-    <div className="flex flex-col gap-2 pt-1">
-      <h5 className="font-mono text-[11px] font-semibold uppercase tracking-wide text-subtle">
-        Slack app
-      </h5>
-      <p className="text-[11.5px] text-subtle">
-        Only if your org runs its own. Changing either signs you out.
+const CUSTODY_NOTE =
+  'The token above stays with Claude Code — in ~/.claude/.credentials.json, ' +
+  'refreshed by it, never read by this app. These two are the Hive’s own, ' +
+  'encrypted on this machine.';
+
+/**
+ * Whether a hint may say "Stored." on its own — `false` once *both* tokens
+ * are, so the two SecretFields do not each repeat the word: two matches for
+ * one fact reads as two facts, to a screen reader and to a test alike.
+ */
+function tokenHint(has: boolean, bothStored: boolean, purpose: string): string {
+  if (!has) return purpose;
+  return bothStored ? purpose : `Stored. ${purpose}`;
+}
+
+/** The app-level token's hint: what it is for, and whether one is already stored. */
+function appTokenHint(tokens: SlackTokensState): string {
+  const bothStored = tokens.hasAppToken && tokens.hasBotToken;
+  return tokenHint(
+    tokens.hasAppToken,
+    bothStored,
+    tokens.hasAppToken
+      ? 'Scope connections:write. Paste a new one to replace it.'
+      : 'Opens the socket. Scope connections:write.',
+  );
+}
+
+/** The bot token's hint: what it is for, and whether one is already stored. */
+function botTokenHint(tokens: SlackTokensState): string {
+  const bothStored = tokens.hasAppToken && tokens.hasBotToken;
+  return tokenHint(
+    tokens.hasBotToken,
+    bothStored,
+    tokens.hasBotToken
+      ? 'Never posts. Paste a new one to replace it.'
+      : 'Never posts. Names the workspace and reads channel ids.',
+  );
+}
+
+/** Said once, above both fields, when the pair as a whole is already stored. */
+function bothStoredNote(tokens: SlackTokensState): string | null {
+  return tokens.hasAppToken && tokens.hasBotToken
+    ? 'Both tokens are already stored. Paste a new one below to replace it.'
+    : null;
+}
+
+/**
+ * The `@hive` half of the Wakes-on summary.
+ *
+ * Empty is the default (`SlackConfig.commanders`'s own doc comment), and an
+ * empty allow-list means `wake.on: [slack.app_mention]` produces no wakes at
+ * all — the one place that fact is surfaced, so it says so in words rather
+ * than rendering an empty chip that looks identical to "loading".
+ */
+function commanderSummary(commanders: string[]): string {
+  return commanders.length === 0
+    ? '@hive → nobody yet · add a Slack user id'
+    : `@hive → ${commanders.join(', ')}`;
+}
+
+/** What `Test` answers with, once it has answered. */
+function SocketTestVerdict({ result }: { result: SlackSocketTestResult }) {
+  if (result.kind === 'ok') {
+    return (
+      <p className="text-[11.5px] text-green">
+        Reached <span className="font-mono text-ink">{result.workspace}</span>{' '}
+        as <span className="font-mono text-ink">{result.bot}</span>.
       </p>
-      <div className="flex items-center justify-between gap-2 rounded-[6px] border border-border bg-bg px-2.5 py-1.5 font-mono text-[12px] text-subtle">
-        <span>{SLACK_MCP_URL}</span>
-        <span className="text-subtle">server</span>
+    );
+  }
+
+  return <p className="text-[11.5px] text-red">{result.message}</p>;
+}
+
+interface RealTimeFieldsProps {
+  slack: SlackConfig;
+  tokens: SlackTokensState;
+  socket: SlackSocketStatus;
+  testing: boolean;
+  testResult: SlackSocketTestResult | null;
+  onChange: (next: SlackConfig) => void;
+  onSetAppToken: (value: string) => void;
+  onSetBotToken: (value: string) => void;
+  onTest: () => void;
+}
+
+/**
+ * The fields Socket Mode needs, rendered only once it is on (HIVE-124).
+ *
+ * Order matches the design record: the state pill and the workspace
+ * `auth.test` actually returned, then the app-level token, the bot token, who
+ * may command with `@hive`, the Wakes-on summary, and `Test` last.
+ */
+function RealTimeFields({
+  slack,
+  tokens,
+  socket,
+  testing,
+  testResult,
+  onChange,
+  onSetAppToken,
+  onSetBotToken,
+  onTest,
+}: RealTimeFieldsProps) {
+  const [appDraft, setAppDraft] = useState('');
+  const [botDraft, setBotDraft] = useState('');
+  /*
+    Seeded once from the config and re-synced only when the *saved* value
+    changes underneath us (a config reload, a reset) — the same
+    render-time comparator `container-alias-group.tsx` uses, and for the
+    same reason: an effect would run one render late and let a blur commit
+    the stale value straight back.
+  */
+  const [seenCommanders, setSeenCommanders] = useState(slack.commanders);
+  const [commandersDraft, setCommandersDraft] = useState(() =>
+    slack.commanders.join(', '),
+  );
+  if (seenCommanders !== slack.commanders) {
+    setSeenCommanders(slack.commanders);
+    setCommandersDraft(slack.commanders.join(', '));
+  }
+
+  const commitCommanders = () => {
+    const next = commandersDraft
+      .split(',')
+      .map((id) => id.trim())
+      .filter((id) => id !== '');
+    onChange({ ...slack, commanders: next });
+  };
+
+  const commitAppToken = () => {
+    const value = appDraft.trim();
+    if (value === '') return;
+    onSetAppToken(value);
+    setAppDraft('');
+  };
+
+  const commitBotToken = () => {
+    const value = botDraft.trim();
+    if (value === '') return;
+    onSetBotToken(value);
+    setBotDraft('');
+  };
+
+  const pill = SOCKET_PILL[socket.kind];
+
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-2">
+        <StatePill kind={pill.kind} label={pill.label} />
+        {socket.kind === 'connected' && (
+          <span className="font-mono text-[11.5px] text-subtle">
+            {socket.workspace ?? '—'} · {socket.bot ?? '—'}
+          </span>
+        )}
+        {socket.kind === 'failed' && (
+          <span className="text-[11.5px] text-red">{socket.message}</span>
+        )}
       </div>
-      <div className="flex items-center justify-between gap-2 rounded-[6px] border border-border bg-bg px-2.5 py-1.5 font-mono text-[12px] text-muted">
-        <span>{SLACK_CLIENT_ID}</span>
-        <span className="text-subtle">client ID</span>
+
+      <p className="text-[11.5px] text-subtle">{CUSTODY_NOTE}</p>
+      {bothStoredNote(tokens) !== null && (
+        <p className="text-[11.5px] text-subtle">{bothStoredNote(tokens)}</p>
+      )}
+
+      <SecretField
+        label="App-level token"
+        value={appDraft}
+        onChange={setAppDraft}
+        onCommit={commitAppToken}
+        placeholder={tokens.hasAppToken ? 'Replace the stored token' : 'xapp-…'}
+        hint={appTokenHint(tokens)}
+      />
+
+      <SecretField
+        label="Bot token"
+        value={botDraft}
+        onChange={setBotDraft}
+        onCommit={commitBotToken}
+        placeholder={tokens.hasBotToken ? 'Replace the stored token' : 'xoxb-…'}
+        hint={botTokenHint(tokens)}
+      />
+
+      <TextField
+        label="Allowed to command"
+        value={commandersDraft}
+        onChange={setCommandersDraft}
+        onCommit={commitCommanders}
+        placeholder="U08BA712189, U0123ABCD"
+        hint="Comma-separated Slack user ids. Only these can command an agent with @hive."
+      />
+
+      <div className="flex flex-col gap-1">
+        <h5 className="font-mono text-[10.5px] font-semibold uppercase tracking-wide text-subtle">
+          Wakes on
+        </h5>
+        <div className="flex flex-wrap gap-1.5">
+          <span className="rounded-[4px] bg-chip px-1.5 py-0.5 font-mono text-[11px] text-muted">
+            {commanderSummary(slack.commanders)}
+          </span>
+          {socket.kind === 'connected' &&
+            socket.unresolved.map((name) => (
+              <span
+                key={name}
+                className="rounded-[4px] bg-chip px-1.5 py-0.5 font-mono text-[11px] text-amber"
+                title="Named in wake.on, but Slack could not resolve it to a channel."
+              >
+                {name} → unresolved
+              </span>
+            ))}
+        </div>
+      </div>
+
+      <div>
+        <Button onClick={onTest} disabled={testing}>
+          {testing ? 'Testing…' : 'Test'}
+        </Button>
+      </div>
+
+      {testResult !== null && <SocketTestVerdict result={testResult} />}
+    </>
+  );
+}
+
+interface AdvancedFieldsProps {
+  slack: SlackConfig;
+  tokens: SlackTokensState;
+  socket: SlackSocketStatus;
+  testing: boolean;
+  testResult: SlackSocketTestResult | null;
+  onChange: (next: SlackConfig) => void;
+  onSetAppToken: (value: string) => void;
+  onSetBotToken: (value: string) => void;
+  onTest: () => void;
+}
+
+/**
+ * Two sub-groups (HIVE-123, HIVE-124).
+ *
+ * `Real-time events` is a sibling `grp`, not a restructure, exactly as this
+ * comment promised before it existed.
+ *
+ * **Off is the resting state and the default, so it is the state that is
+ * optimised.** Off, the sub-group is a heading, the switch and one line naming
+ * both prerequisites; the token fields appear only once it is on. Staging them
+ * as two empty boxes was drawn and rejected: it doubles the drawer's height for
+ * a feature nobody has agreed to configure, and describing the cost reads
+ * better than pre-printing the forms for it.
+ */
+function AdvancedFields({
+  slack,
+  tokens,
+  socket,
+  testing,
+  testResult,
+  onChange,
+  onSetAppToken,
+  onSetBotToken,
+  onTest,
+}: AdvancedFieldsProps) {
+  return (
+    <div className="flex flex-col gap-4 pt-1">
+      <div className="flex flex-col gap-2">
+        <h5 className="font-mono text-[11px] font-semibold uppercase tracking-wide text-subtle">
+          Slack app
+        </h5>
+        <p className="text-[11.5px] text-subtle">
+          Only if your org runs its own. Changing either signs you out.
+        </p>
+        <div className="flex items-center justify-between gap-2 rounded-[6px] border border-border bg-bg px-2.5 py-1.5 font-mono text-[12px] text-subtle">
+          <span>{SLACK_MCP_URL}</span>
+          <span className="text-subtle">server</span>
+        </div>
+        <div className="flex items-center justify-between gap-2 rounded-[6px] border border-border bg-bg px-2.5 py-1.5 font-mono text-[12px] text-muted">
+          <span>{SLACK_CLIENT_ID}</span>
+          <span className="text-subtle">client ID</span>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <h5 className="font-mono text-[11px] font-semibold uppercase tracking-wide text-subtle">
+          Real-time events
+        </h5>
+
+        <Switch
+          label="Socket Mode"
+          checked={slack.socketMode}
+          onCheckedChange={(next) => onChange({ ...slack, socketMode: next })}
+        />
+
+        {!slack.socketMode ? (
+          <p className="text-[11.5px] text-subtle">
+            Off, agents reach Slack on their own schedule. On, they wake within
+            seconds and <span className="font-mono">@hive</span> can command one.
+            Needs a Slack app of your own, and two tokens the Hive stores.
+          </p>
+        ) : (
+          <RealTimeFields
+            slack={slack}
+            tokens={tokens}
+            socket={socket}
+            testing={testing}
+            testResult={testResult}
+            onChange={onChange}
+            onSetAppToken={onSetAppToken}
+            onSetBotToken={onSetBotToken}
+            onTest={onTest}
+          />
+        )}
       </div>
     </div>
   );
 }
 
 /**
- * `Advanced` reports an enabled feature rather than hiding it (HIVE-124's
- * requirement on this drawer). `suffix` is where that lives — always `null`
- * until the real-time-events sub-group exists to fill it with e.g. `real-time
- * events on`; the slot is here now so that addition needs no restructure.
+ * `Advanced` reports an enabled feature rather than hiding it (HIVE-124).
+ *
+ * A disclosure that hides a feature toggle can make the feature undiscoverable.
+ * Without this, a user who turned Socket Mode on cannot see that it is on
+ * without opening the drawer.
  */
-function advancedSuffix(): string | null {
-  return null;
+function advancedSuffix(slack: SlackConfig): string | null {
+  return slack.socketMode ? 'real-time events on' : null;
 }
 
-export function SlackGroup({ agents }: SlackGroupProps) {
+export function SlackGroup({ agents, tokens: tokensProp }: SlackGroupProps) {
   const [status, setStatus] = useState<SlackStatus | null>(null);
   /**
    * The last Test failure, held apart from {@link status}.
@@ -326,6 +671,29 @@ export function SlackGroup({ agents }: SlackGroupProps) {
   const [signingIn, setSigningIn] = useState(false);
   const [open, setOpen] = useState(false);
 
+  /**
+   * The socket-mode switch and allow-list, read from the workspace config
+   * (HIVE-124) — not local state, so a reload or a reset is reflected the
+   * same way every other settings field bound to {@link useProjectConfig}
+   * already is.
+   */
+  const projectConfig = useProjectConfig();
+  const slack = projectConfig?.slack ?? DEFAULT_SLACK;
+
+  /**
+   * Presence of the two Hive-owned tokens. `tokensProp` is the test seam
+   * documented on {@link SlackGroupProps.tokens}; production has no channel
+   * that reads this back, so it always starts unknown and only improves once
+   * a save or a clear answers.
+   */
+  const [tokens, setTokens] = useState<SlackTokensState>(
+    tokensProp ?? UNKNOWN_TOKENS,
+  );
+  const [socket, setSocket] = useState<SlackSocketStatus>({ kind: 'off' });
+  const [socketTesting, setSocketTesting] = useState(false);
+  const [socketTestResult, setSocketTestResult] =
+    useState<SlackSocketTestResult | null>(null);
+
   /*
     Read on mount only — `claude mcp get slack`, parsed, answers in well under
     a second and spends no model turn. This is the one effect in this
@@ -342,6 +710,58 @@ export function SlackGroup({ agents }: SlackGroupProps) {
       cancelled = true;
     };
   }, []);
+
+  /*
+    The socket's own status is a push, not a poll (`lib/slack.ts`'s doc
+    comment on `subscribeSlackSocketStatus`) — main knows the moment it
+    changes, and this pane has nothing to gain by asking again.
+  */
+  useEffect(() => {
+    return subscribeSlackSocketStatus(setSocket);
+  }, []);
+
+  /**
+   * Writes the switch or the allow-list, then installs the fresh snapshot
+   * main returns so every consumer of {@link useProjectConfig} — this pane
+   * included — renders it on the next tick. `setSlackConfig` (`lib/slack.ts`)
+   * answers with the same `ConfigSnapshot` every other settings write does,
+   * it just is not routed through `lib/project-config.ts`'s own `mutate`
+   * (that module names no Slack verb); `installProjectConfig` is the same
+   * escape hatch a main-pushed clone snapshot uses, for the same reason.
+   */
+  const handleSlackChange = (next: SlackConfig) => {
+    void setSlackConfig({
+      socketMode: next.socketMode,
+      commanders: next.commanders,
+    }).then((snapshot) => {
+      if (snapshot) installProjectConfig(snapshot);
+    });
+  };
+
+  const handleSetAppToken = (value: string) => {
+    void setSlackTokens({ appToken: value }).then((next) => {
+      if (next) setTokens(next);
+    });
+  };
+
+  const handleSetBotToken = (value: string) => {
+    void setSlackTokens({ botToken: value }).then((next) => {
+      if (next) setTokens(next);
+    });
+  };
+
+  const handleSocketTest = () => {
+    setSocketTesting(true);
+    void testSlackSocket().then((result) => {
+      setSocketTesting(false);
+      setSocketTestResult(
+        result ?? {
+          kind: 'error',
+          message: 'The app could not reach its own main process.',
+        },
+      );
+    });
+  };
 
   const applyResult = (result: SlackStatus | null) => {
     setStatus(result ?? bridgeError());
@@ -388,7 +808,7 @@ export function SlackGroup({ agents }: SlackGroupProps) {
     });
   };
 
-  const suffix = advancedSuffix();
+  const suffix = advancedSuffix(slack);
 
   return (
     <SettingsGroup
@@ -444,7 +864,19 @@ export function SlackGroup({ agents }: SlackGroupProps) {
           </button>
         </div>
 
-        {open && <AdvancedFields />}
+        {open && (
+          <AdvancedFields
+            slack={slack}
+            tokens={tokens}
+            socket={socket}
+            testing={socketTesting}
+            testResult={socketTestResult}
+            onChange={handleSlackChange}
+            onSetAppToken={handleSetAppToken}
+            onSetBotToken={handleSetBotToken}
+            onTest={handleSocketTest}
+          />
+        )}
       </div>
     </SettingsGroup>
   );

@@ -1,11 +1,18 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SlackGroup } from '@features/settings/components/slack-group';
+import type { SlackConfig } from '@shared/config-contract';
+import type { SlackSocketStatus, SlackStatus, SlackTokensState } from '@shared/slack-contract';
+
+import {
+  SlackGroup,
+  type SlackGroupAgent,
+} from '@features/settings/components/slack-group';
 
 /**
- * The Slack provider group — variant B (HIVE-123).
+ * The Slack provider group — variant B (HIVE-123), plus the real-time events
+ * sub-group it left a seam for (HIVE-124).
  *
  * One status row, one caption line with a strict precedence (a failed Test,
  * else a failed sign-in, else the approval sentence, else the sign-in promise,
@@ -17,17 +24,77 @@ const status = vi.fn();
 const signIn = vi.fn();
 const signOut = vi.fn();
 const testSlack = vi.fn();
+const setSlackTokens = vi.fn();
+const clearSlackTokens = vi.fn();
+const setSlackConfig = vi.fn();
+const testSlackSocket = vi.fn();
+const subscribeSlackSocketStatus = vi.fn();
 
 vi.mock('@/lib/slack', () => ({
   readSlackStatus: () => status(),
   signIn: () => signIn(),
   signOut: () => signOut(),
   testSlack: () => testSlack(),
+  setSlackTokens: (request: unknown) => setSlackTokens(request),
+  clearSlackTokens: () => clearSlackTokens(),
+  setSlackConfig: (request: unknown) => setSlackConfig(request),
+  testSlackSocket: () => testSlackSocket(),
+  subscribeSlackSocketStatus: (callback: (next: SlackSocketStatus) => void) =>
+    subscribeSlackSocketStatus(callback),
 }));
+
+/** The snapshot `useProjectConfig()` answers with — only `.slack` matters here. */
+let configSnapshot: { slack: SlackConfig } = {
+  slack: { socketMode: false, commanders: [] },
+};
+
+vi.mock('@hooks/use-project-config', () => ({
+  useProjectConfig: () => configSnapshot,
+}));
+
+/** The subscriber `SlackGroup` registered, so a test can push a socket status. */
+let emitSocketStatus: ((next: SlackSocketStatus) => void) | null = null;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  emitSocketStatus = null;
+  subscribeSlackSocketStatus.mockImplementation((callback: (next: SlackSocketStatus) => void) => {
+    emitSocketStatus = callback;
+    return () => {
+      emitSocketStatus = null;
+    };
+  });
+  setSlackConfig.mockResolvedValue(null);
+  setSlackTokens.mockResolvedValue(null);
+  clearSlackTokens.mockResolvedValue(null);
+  testSlackSocket.mockResolvedValue(null);
+  configSnapshot = { slack: { socketMode: false, commanders: [] } };
 });
+
+/**
+ * Renders `SlackGroup` with the connection status, the config snapshot's
+ * `slack` block, and (test-only — production has no channel to read it back)
+ * the stored-token presence, all pre-wired.
+ */
+function renderGroup(options?: {
+  agents?: SlackGroupAgent[];
+  slack?: SlackConfig;
+  tokens?: SlackTokensState;
+  status?: SlackStatus;
+}) {
+  status.mockResolvedValue(options?.status ?? { kind: 'connected' });
+  configSnapshot = {
+    slack: options?.slack ?? { socketMode: false, commanders: [] },
+  };
+  return render(
+    <SlackGroup agents={options?.agents ?? []} tokens={options?.tokens} />,
+  );
+}
+
+/** Opens the `Advanced` disclosure and waits for it to render. */
+async function openAdvanced() {
+  await userEvent.click(await screen.findByRole('button', { name: /advanced/i }));
+}
 
 describe('SlackGroup', () => {
   it('offers sign-in when the server has never been added', async () => {
@@ -192,5 +259,87 @@ describe('SlackGroup', () => {
     resolveSignIn({ kind: 'connected' });
 
     expect(await screen.findByRole('button', { name: 'Test' })).toBeInTheDocument();
+  });
+});
+
+describe('real-time events (HIVE-124)', () => {
+  it('shows the switch and the prerequisites, and no token fields, when off', async () => {
+    renderGroup({ slack: { socketMode: false, commanders: [] } });
+    await openAdvanced();
+
+    expect(screen.getByText('Real-time events')).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: /socket mode/i })).not.toBeChecked();
+    expect(screen.getByText(/needs a slack app of your own/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/app-level token/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/bot token/i)).not.toBeInTheDocument();
+  });
+
+  it('shows the fields, the commanders box and Test once it is on', async () => {
+    renderGroup({ slack: { socketMode: true, commanders: ['U08BA712189'] } });
+    await openAdvanced();
+
+    expect(screen.getByLabelText(/app-level token/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/bot token/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/allowed to command/i)).toHaveValue('U08BA712189');
+  });
+
+  it('reports the enabled feature on the collapsed line, so it is never invisible', () => {
+    renderGroup({ slack: { socketMode: true, commanders: [] } });
+    expect(screen.getByRole('button', { name: /advanced/i })).toHaveTextContent(
+      'real-time events on',
+    );
+  });
+
+  it('says nothing extra on the collapsed line when it is off', () => {
+    renderGroup({ slack: { socketMode: false, commanders: [] } });
+    expect(screen.getByRole('button', { name: /advanced/i })).not.toHaveTextContent(
+      'real-time events',
+    );
+  });
+
+  it('names the two custodies apart', async () => {
+    renderGroup({ slack: { socketMode: true, commanders: ['U1'] } });
+    await openAdvanced();
+    expect(screen.getByText(/held by claude code/i)).toBeInTheDocument();
+    expect(screen.getByText(/encrypted on this machine/i)).toBeInTheDocument();
+  });
+
+  it('tells the user nobody can command yet when the list is empty', async () => {
+    renderGroup({ slack: { socketMode: true, commanders: [] } });
+    await openAdvanced();
+    expect(screen.getByText(/nobody yet/i)).toBeInTheDocument();
+  });
+
+  it('never reads a stored token back into a field', async () => {
+    renderGroup({
+      slack: { socketMode: true, commanders: [] },
+      tokens: { hasAppToken: true, hasBotToken: true, encryptionAvailable: true },
+    });
+    await openAdvanced();
+    expect(screen.getByLabelText(/app-level token/i)).toHaveValue('');
+    expect(screen.getByLabelText(/bot token/i)).toHaveValue('');
+    expect(screen.getByText(/stored/i)).toBeInTheDocument();
+  });
+
+  /**
+   * The allow-list defaults to empty and a resolved channel is the only
+   * happy path this component can otherwise show — so a name from `wake.on`
+   * that Slack could not resolve to a channel id has exactly one place to
+   * surface, and it must not be dropped in silence.
+   */
+  it('reports an unresolved wake.on channel name rather than dropping it', async () => {
+    renderGroup({ slack: { socketMode: true, commanders: [] } });
+    await openAdvanced();
+
+    act(() => {
+      emitSocketStatus?.({
+        kind: 'connected',
+        workspace: 'behiques',
+        bot: 'hive',
+        unresolved: ['#no-such-channel'],
+      });
+    });
+
+    expect(await screen.findByText(/#no-such-channel/)).toBeInTheDocument();
   });
 });

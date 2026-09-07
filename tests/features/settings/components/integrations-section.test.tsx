@@ -46,6 +46,11 @@ vi.mock('@/lib/slack', () => ({
   signIn: () => Promise.resolve(null),
   signOut: () => Promise.resolve(null),
   testSlack: () => Promise.resolve(null),
+  setSlackTokens: () => Promise.resolve(null),
+  clearSlackTokens: () => Promise.resolve(null),
+  setSlackConfig: () => Promise.resolve(null),
+  testSlackSocket: () => Promise.resolve(null),
+  subscribeSlackSocketStatus: () => () => {},
 }));
 
 vi.mock('@/lib/project-config', async (importOriginal) => {
