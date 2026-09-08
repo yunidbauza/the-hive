@@ -1,3 +1,5 @@
+import { HIDDEN_ENTRIES } from './fs-contract';
+
 /**
  * Custom skills — the slash commands The Hive gives the sessions it starts
  * (HIVE-96).
@@ -133,4 +135,84 @@ export interface SkillWriteRequest {
    * bytes are.
    */
   body: string;
+}
+
+/**
+ * What a skill folder may carry into a session.
+ *
+ * The numbers are here rather than in the walk because the pane phrases its
+ * own copy from them — "over 5 MB" on a dimmed row has to be the same 5 MB
+ * main enforced, and two constants two processes apart is a rule that holds
+ * until someone edits one of them. `fs-contract.ts` holds `MAX_SEARCH_DEPTH`
+ * for the same reason.
+ */
+export const MAX_BUNDLE_FILES = 200;
+export const MAX_BUNDLE_FILE_BYTES = 5_000_000;
+export const MAX_BUNDLE_DEPTH = 4;
+
+/**
+ * Names the walk lists once and never descends into.
+ *
+ * `HIDDEN_ENTRIES` plus `.DS_Store`, rather than a list of this module's own.
+ * The explorer already had to decide what is noise in a directory a person
+ * keeps source in, and a skill folder is a directory a person keeps source in.
+ *
+ * The cost is knowingly accepted: a bundle that genuinely ships an `out/` or a
+ * `target/` has it skipped. That is why a skipped entry is *listed* rather
+ * than hidden — the user can see the decision and rename around it.
+ */
+export const SKILL_SKIP_ENTRIES: readonly string[] = [
+  ...HIDDEN_ENTRIES,
+  '.DS_Store',
+];
+
+/**
+ * One thing inside a skill folder, as both the mirror and the pane see it.
+ *
+ * Directories are entries in their own right rather than implied by their
+ * children. Without that, a folder created through `skills:file:mkdir` and not
+ * yet filled would vanish on the next read — which is exactly the "fictional
+ * until a file lands in it" problem that verb exists to prevent.
+ */
+/** Why an entry will not be copied. The pane's chip renders from this. */
+export type BundleExclusion = 'skipped' | 'too-large' | 'symlink';
+
+export interface BundleEntry {
+  /** POSIX-separated, relative to the skill folder. `scripts/build.py`. */
+  path: string;
+  kind: 'file' | 'directory';
+  /** Bytes. `0` for a directory. Reported even when excluded: it is the reason. */
+  size: number;
+  /** The source's owner-execute bit. Always `false` for a directory. */
+  executable: boolean;
+  /**
+   * Null when this is copied into the session; a code and a sentence when not.
+   *
+   * **Both**, and that is the point. `InvalidSkill.reason` is a bare sentence
+   * because the pane only ever prints it. This one is printed *and* branched
+   * on: the row shows a two-word chip and the panel shows the sentence. A pane
+   * deriving the chip by matching the sentence's first word would break
+   * silently the first time main reworded a reason, so the code is carried
+   * rather than recovered.
+   */
+  excluded: { code: BundleExclusion; reason: string } | null;
+}
+
+export interface BundleManifest {
+  entries: BundleEntry[];
+  /**
+   * Set once when the walk stopped at a bound, leaving the rest unlisted.
+   *
+   * Distinct from a per-entry `excluded`, and the distinction is the honest
+   * part: enumerating everything past a 200-file limit in order to report that
+   * it is past the limit is not a limit. `fs/search.ts` reports `capped` for
+   * the same reason.
+   *
+   * Two bounds set it: the file count, and a folder at the depth limit that
+   * still has something in it. The second is here rather than on that folder's
+   * own row because `excluded` means "listed, and not copied" — and a folder at
+   * depth 4 *is* copied. What is not copied is what is inside it, which by
+   * definition has no row to carry a reason.
+   */
+  capped: string | null;
 }
