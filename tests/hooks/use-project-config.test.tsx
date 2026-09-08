@@ -1,7 +1,11 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { LATE_BIND_RETRY_MS, useReceiverExposure } from '@hooks/use-project-config';
+import {
+  LATE_BIND_RETRY_MS,
+  useReceiverExposure,
+  useServerExposure,
+} from '@hooks/use-project-config';
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
 import {
   DEFAULT_BIND,
@@ -54,6 +58,18 @@ const info = (receiverBoundHost: string | null): AppInfo => ({
   serverBoundHost: null,
 });
 
+/** Same shape as {@link info}, but for `useServerExposure`'s field instead. */
+const serverInfo = (serverBoundHost: string | null): AppInfo => ({
+  version: '0.1.0',
+  electron: '38.0.0',
+  chrome: '140.0.0',
+  node: '22.0.0',
+  platform: 'darwin',
+  logPath: '/Users/dev/Library/Logs/The Hive',
+  receiverBoundHost: null,
+  serverBoundHost,
+});
+
 /**
  * Renders the hook and waits for the mounted effect's async `readAppInfo`
  * round-trip to settle and commit, then asserts the value it landed on.
@@ -69,6 +85,16 @@ const info = (receiverBoundHost: string | null): AppInfo => ({
  */
 async function renderValue(expected: string | null): Promise<string | null> {
   const { result } = renderHook(() => useReceiverExposure());
+  await waitFor(() => {
+    expect(readAppInfo).toHaveBeenCalled();
+    expect(result.current).toBe(expected);
+  });
+  return result.current;
+}
+
+/** Same shape as {@link renderValue}, but for `useServerExposure`. */
+async function renderServerValue(expected: string | null): Promise<string | null> {
+  const { result } = renderHook(() => useServerExposure());
   await waitFor(() => {
     expect(readAppInfo).toHaveBeenCalled();
     expect(result.current).toBe(expected);
@@ -251,5 +277,74 @@ describe('useReceiverExposure', () => {
       // resolve, so no second read to skip.
       expect(readAppInfo).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+/**
+ * `useServerExposure` (HIVE-142).
+ *
+ * Sourced from the server-mode socket's **running** bind
+ * (`AppInfo.serverBoundHost`), never from `snapshot.server.bind.host`, for
+ * the same "cannot rebind mid-session" reason `useReceiverExposure` reads
+ * `receiverBoundHost` instead of the config snapshot. No loopback filter
+ * here, unlike the receiver hook: a server-mode bind is opted into, not
+ * something that can widen by accident, so any bound address is worth
+ * reporting. Any `ConfigSnapshot` gates the fetch — `useServerExposure`
+ * does not care which block the snapshot came from, only that one resolved.
+ */
+describe('useServerExposure', () => {
+  it('is null when nothing is bound', async () => {
+    setProjectConfigForTest(snapshot({ host: '127.0.0.1' }));
+    readAppInfo.mockResolvedValue(serverInfo(null));
+    expect(await renderServerValue(null)).toBeNull();
+  });
+
+  it('is the address when the running bind is up', async () => {
+    setProjectConfigForTest(snapshot({ host: '127.0.0.1' }));
+    readAppInfo.mockResolvedValue(serverInfo('100.101.102.103'));
+    expect(await renderServerValue('100.101.102.103')).toBe('100.101.102.103');
+  });
+
+  /* The browser demo has no config and no bridge at all. */
+  it('is null with no snapshot', async () => {
+    setProjectConfigForTest(null);
+    readAppInfo.mockResolvedValue(serverInfo('100.101.102.103'));
+    const { result } = renderHook(() => useServerExposure());
+    // Gated on the snapshot resolving first — the browser demo target never
+    // crosses that gate, so `readAppInfo` is never even asked.
+    expect(readAppInfo).not.toHaveBeenCalled();
+    expect(result.current).toBeNull();
+  });
+
+  /**
+   * The same late-bind retry `useReceiverExposure` carries, proven here
+   * once rather than in full triplicate: `server.bind.host` accepts a
+   * hostname exactly as `receiver.bind.host` does, so the same DNS-outlasts-
+   * the-first-read race applies, and both hooks share {@link LATE_BIND_RETRY_MS}.
+   */
+  it('retries once after a null answer and catches a bind that resolved just after', async () => {
+    vi.useFakeTimers();
+    try {
+      setProjectConfigForTest(snapshot({ host: '127.0.0.1' }));
+      readAppInfo
+        .mockResolvedValueOnce(serverInfo(null))
+        .mockResolvedValueOnce(serverInfo('100.101.102.103'));
+
+      const { result } = renderHook(() => useServerExposure());
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(readAppInfo).toHaveBeenCalledTimes(1);
+      expect(result.current).toBeNull();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(LATE_BIND_RETRY_MS);
+      });
+      expect(readAppInfo).toHaveBeenCalledTimes(2);
+      expect(result.current).toBe('100.101.102.103');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
