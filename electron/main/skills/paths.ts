@@ -1,6 +1,6 @@
 import { lstat, readlink, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join, sep } from 'node:path';
 
 import { configPath } from '../config/paths';
 import { contains } from '../fs/contains';
@@ -95,9 +95,59 @@ export class OutsideSkillError extends Error {
 const MAX_LINK_HOPS = 10;
 
 /**
+ * Where the kernel will go next when it follows the link at `probe`, spelled
+ * exactly as the kernel spells it — **not** normalised.
+ *
+ * ## Why this is not `path.join`, and why that distinction is the whole bug
+ *
+ * POSIX resolves a relative symlink target against the directory holding the
+ * link, one component at a time, resolving each component *before* applying
+ * the next. `path.join` collapses `..` against the preceding component
+ * **lexically, before anything touches the disk**, which is a different
+ * operation on exactly the paths that matter here.
+ *
+ * With `esc -> <outside>` live inside the bundle and `hop -> ./esc/../X`
+ * dangling beside it, `join(root, './esc/../X')` is `root/X`: `join` cancels
+ * `esc` against `..` and the escaping component is never visited, so the
+ * containment check sees a path that never existed and approves it. The
+ * kernel does the opposite — it resolves `esc` to `<outside>` first, *then*
+ * applies `..` from there — and lands at `<outside>/../X`. Handing `join`'s
+ * answer to the check while the caller's next syscall gets the kernel's is
+ * how `writeFile('graphify', 'hop')` put an attacker-chosen body, mode 755
+ * for a `#!` one, outside the skill folder.
+ *
+ * So this concatenates and stops. The string it returns still contains
+ * `esc/..`, which is the point: `realpath` then resolves it for real, finds
+ * `<outside>`'s parent, and refuses. The one concession is not appending a
+ * separator when `dir` already ends in one — the filesystem-root case — which
+ * adds no component and cancels none.
+ *
+ * The invariant, stated once for the whole module: **containment is asserted
+ * only on a path the kernel resolved, never on one this code assembled.**
+ * Every assembled string in this file — this one, the `dirname` climb below,
+ * `resolveInSkill`'s `join(root, path)` — is either handed straight to
+ * `realpath`/`lstat` for the authoritative answer or is the very path the
+ * caller will pass to `fs`. The moment an assembled string is treated as a
+ * *proxy* for what the kernel would traverse, the check is checking fiction.
+ */
+function linkTargetPath(probe: string, linkTarget: string): string {
+  if (isAbsolute(linkTarget)) return linkTarget;
+  const dir = dirname(probe);
+  return dir.endsWith(sep) ? `${dir}${linkTarget}` : `${dir}${sep}${linkTarget}`;
+}
+
+/**
  * Follow `candidate` to wherever it actually resolves — including through a
  * chain of symlinks that never bottoms out in a real file — and throw
- * {@link OutsideSkillError} unless every hop lands inside `root`.
+ * {@link OutsideSkillError} unless it lands inside `root`.
+ *
+ * Read that as "lands", not "stays": a path is free to leave and come back,
+ * because the kernel's answer is the only one this asks for. `back ->
+ * ../graphify/ok.txt` climbs out of the bundle and straight back in, and is
+ * allowed — `realpath` returns `root/ok.txt` and that is inside. What is
+ * refused is a *resolution* that ends outside, and — for the links
+ * `realpath` cannot follow because they dangle — a declared target whose own
+ * resolution ends outside.
  *
  * ## The bug this exists to fix, and why a lexical check could not
  *
@@ -114,17 +164,20 @@ const MAX_LINK_HOPS = 10;
  * bit — the same primitive as the escape this module's first version closed,
  * reopened by a different route.
  *
- * The fix is to never trust a link's declared target as a string: every
- * candidate a link claims to point to is run back through this same
- * resolution, recursively, so a transiting link (`hop` through `esc`) is
- * caught the moment the recursive call reaches `esc` and finds it resolves
- * for real to somewhere outside `root`. A multi-link chain — `chainA ->
+ * So a link's declared target is never *interpreted* here. It is composed
+ * with the link's own directory exactly as the kernel composes it — see
+ * {@link linkTargetPath}, and note that composing it with `join` instead is
+ * the same defect one round later — and handed straight back into this
+ * function, which resolves it rather than reading it. A transiting link
+ * (`hop` through `esc`) is caught when that recursive call reaches `esc` and
+ * `realpath` says it is outside `root`. A multi-link chain — `chainA ->
  * chainB -> <outside>` — is caught the same way, one recursive hop per link,
  * because each hop is validated on its own account rather than assumed safe
  * because the *previous* hop's target string looked local.
  *
  * `hopsRemaining` bounds the recursion so a cycle (`a -> b -> a`) cannot spin
- * forever; see {@link MAX_LINK_HOPS}.
+ * forever; running out **refuses**, it does not fall through to allow. See
+ * {@link MAX_LINK_HOPS}.
  */
 async function assertWithinRoot(
   root: string,
@@ -163,16 +216,17 @@ async function assertWithinRoot(
           unclear (see the `EACCES` paragraph on {@link resolveInSkill}).
 
           A symlink gets followed rather than trusted: `readlink` gives its
-          raw, unfollowed target, resolved *lexically* against the directory
-          that contains it (the same relative-target semantics the kernel
-          itself uses) — but that lexical result is never the answer by
-          itself. It is handed straight back into this same function, one
-          hop lighter, so whatever *that* link claims gets the identical
-          scrutiny this one just did. A transiting link is caught when the
-          recursive call reaches it and finds its real target outside `root`;
-          a dangling chain that never leaves `root` climbs, at its end, to a
-          real ancestor that does resolve, exactly like the ordinary
-          not-created-yet case below.
+          raw, unfollowed target, composed with the link's own directory the
+          way the kernel composes one — {@link linkTargetPath}, and *not*
+          `path.join`, whose normalisation is what reopened this escape once
+          already. That composed string is never the answer by itself. It is
+          handed straight back into this same function, one hop lighter, so
+          whatever *that* link claims gets the identical scrutiny this one
+          just did — resolved by `realpath`, not read. A transiting link is
+          caught when the recursive call reaches it and finds its real target
+          outside `root`; a dangling chain that never leaves `root` climbs,
+          at its end, to a real ancestor that does resolve, exactly like the
+          ordinary not-created-yet case below.
         */
         if (!entry.isSymbolicLink()) throw new OutsideSkillError();
         if (hopsRemaining <= 0) throw new OutsideSkillError();
@@ -184,18 +238,26 @@ async function assertWithinRoot(
           throw new OutsideSkillError();
         }
 
-        const next = isAbsolute(linkTarget)
-          ? linkTarget
-          : join(dirname(probe), linkTarget);
-
-        await assertWithinRoot(root, next, hopsRemaining - 1);
+        await assertWithinRoot(
+          root,
+          linkTargetPath(probe, linkTarget),
+          hopsRemaining - 1,
+        );
         return;
       }
 
+      /*
+        Nothing here at all, so climb. `dirname` is the right tool and `join`
+        would be the wrong one for the same reason it is wrong above: this
+        drops the last component and normalises nothing, so a `..` a link
+        target put into `probe` is still there for `realpath` to resolve on
+        the next turn rather than cancelled behind its back.
+
+        `dirname('/')` is `'/'`. Unreachable, because the root itself resolved
+        a moment ago — but a loop that cannot terminate is worse than a
+        redundant guard.
+      */
       const parent = dirname(probe);
-      // `dirname('/')` is `'/'`. Unreachable, because the root itself resolved
-      // a moment ago — but a loop that cannot terminate is worse than a
-      // redundant guard.
       if (parent === probe) throw new OutsideSkillError();
       probe = parent;
       continue;
@@ -228,6 +290,15 @@ async function assertWithinRoot(
  * write-escape this repaired and why a lexical check on a link's target
  * could not.
  *
+ * `join(root, path)` is safe here where the same call is not safe inside that
+ * walk, and the difference is worth naming because it is subtle: this string
+ * is not a *prediction* of what the kernel will traverse, it is the exact
+ * string every caller then hands to `fs`. Whatever `join` normalises away is
+ * normalised away for the syscall too, so the check and the operation cannot
+ * disagree. A link's declared target is the opposite — the kernel traverses
+ * the link, not the string this module built from it — which is why
+ * {@link linkTargetPath} refuses to normalise.
+ *
  * ## What this check does *not* close, and why that is a documented choice
  *
  * This is a point-in-time assertion, checked once when the function returns
@@ -244,10 +315,18 @@ async function assertWithinRoot(
  * module otherwise defends against, which is a bundle's own on-disk shape.
  * `~/.hive/skills` is hand-editable and backed up with the user's dotfiles
  * (see the top of this file), so main is emphatically *not* the tree's only
- * writer; what makes the race low-value is not who else can write here, but
- * that winning it buys an attacker nothing beyond what they could already do
- * by writing the target file directly, in the same window, without needing a
- * symlink or this function's cooperation at all.
+ * writer.
+ *
+ * What is left unclosed is therefore a race, and only a race, against an
+ * **unconfined** same-user process: one that can already write anywhere the
+ * user can, for which planting a link here and winning the window buys
+ * nothing over writing the target file directly. It is deliberately *not*
+ * dismissed for a confined writer — an agent given the skills tree and
+ * nothing else — because for that writer the gap is real: this function is
+ * the fence, and stepping through it reaches past the tree. Everything the
+ * check *does* cover, above, is exactly what keeps that fence standing at
+ * the moment it is asked; the race is the one place it does not, and closing
+ * it means `O_NOFOLLOW`.
  *
  * ## Why `realpath` failing is not the same as "nothing is there"
  *

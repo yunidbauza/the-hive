@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MAX_BUNDLE_FILE_BYTES, type BundleManifest } from '@shared/skills-contract';
 
 import { createSkillsRuntime } from '../../../../electron/main/skills';
+import { resolveInSkill } from '../../../../electron/main/skills/paths';
 
 let userDataPath: string;
 let hiveDir: string;
@@ -613,6 +614,145 @@ describe('createSkillsRuntime file verbs', () => {
     } finally {
       await rm(outside, { recursive: true, force: true });
     }
+  });
+
+  it('refuses a write through a symlink whose target puts .. after a symlinked component', async () => {
+    /*
+      The round-3 repair's own mistake, and the third route to the same
+      escape: it built the next hop with `path.join`, which collapses `..`
+      against the preceding component **lexically, before anything touches
+      the disk**. `join(root, './esc/../PWNED.txt')` is `root/PWNED.txt` —
+      `esc` cancelled away and never visited, so the recursion never asked
+      where it really goes and approved a path that does not exist. The
+      kernel does the opposite: it resolves `esc` to `<outside>/live` first,
+      *then* applies `..`, landing at `<outside>/PWNED.txt`. The body starts
+      `#!`, so what landed there landed executable.
+
+      `hopdd` is IPC-legal — no dot segment, depth 1 — so `assertSkillPath`
+      admits it and this function is the only thing standing in the way.
+    */
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+    const outside = await mkdtemp(join(tmpdir(), 'hive-outside-'));
+    const landing = join(outside, 'PWNED.txt');
+    try {
+      const live = join(outside, 'live');
+      await mkdir(live, { recursive: true });
+      await symlink(live, join(skillsDir(), 'graphify', 'esc'));
+      await symlink('./esc/../PWNED.txt', join(skillsDir(), 'graphify', 'hopdd'));
+
+      await expect(
+        skills.writeFile('graphify', 'hopdd', '#!/bin/sh\necho PWNED\n'),
+      ).rejects.toThrow(/outside the skill folder/i);
+
+      await expect(readFile(landing, 'utf8')).rejects.toThrow();
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses the same .. escape when the symlinked component is a level down', async () => {
+    // The same collapse, one directory deeper, because a fix that only
+    // looked at the first component of a declared target would pass the test
+    // above and still leak here.
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+    const outside = await mkdtemp(join(tmpdir(), 'hive-outside-'));
+    const landing = join(outside, 'PWNED.txt');
+    try {
+      const live = join(outside, 'live');
+      await mkdir(live, { recursive: true });
+      await mkdir(join(skillsDir(), 'graphify', 'sub'), { recursive: true });
+      await symlink(live, join(skillsDir(), 'graphify', 'sub', 'esc'));
+      await symlink(
+        './sub/esc/../PWNED.txt',
+        join(skillsDir(), 'graphify', 'hopnested'),
+      );
+
+      await expect(
+        skills.writeFile('graphify', 'hopnested', '#!/bin/sh\necho PWNED\n'),
+      ).rejects.toThrow(/outside the skill folder/i);
+
+      await expect(readFile(landing, 'utf8')).rejects.toThrow();
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a write through a link whose .. climbs out of a symlinked directory', async () => {
+    /*
+      The same class from the other side: here the `..` is not in the request
+      or beside the link, it is in a link sitting *inside* a directory the
+      request reached through another link. `d -> ./inner`, so the kernel
+      resolves `d/xout`'s target `../../PWNED.txt` relative to `root/inner`
+      and lands one level above the bundle — in the skills tree itself, where
+      a planted file becomes another skill's content.
+    */
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+    await mkdir(join(skillsDir(), 'graphify', 'inner'), { recursive: true });
+    await symlink('./inner', join(skillsDir(), 'graphify', 'd'));
+    await symlink(
+      '../../PWNED.txt',
+      join(skillsDir(), 'graphify', 'inner', 'xout'),
+    );
+
+    await expect(skills.writeFile('graphify', 'd/xout', 'PWNED')).rejects.toThrow(
+      /outside the skill folder/i,
+    );
+    await expect(
+      readFile(join(skillsDir(), 'PWNED.txt'), 'utf8'),
+    ).rejects.toThrow();
+  });
+
+  it('refuses rather than falls through when the link-hop budget runs out', async () => {
+    /*
+      Exhaustion has to end in a refusal, never in an allow: a budget that
+      gave up by returning would hand an attacker the escape back for the
+      price of one extra link. Eleven dangling links ending at a name that
+      was never created — the eleventh hop is the one past `MAX_LINK_HOPS`.
+      The same chain one link shorter is admitted below, so this pins the
+      boundary from both sides rather than asserting a blanket refusal that
+      an over-strict implementation would also satisfy.
+    */
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+    for (let i = 1; i <= 11; i += 1) {
+      await symlink(
+        `./l${String(i + 1)}`,
+        join(skillsDir(), 'graphify', `l${String(i)}`),
+      );
+    }
+
+    await expect(skills.writeFile('graphify', 'l1', 'x')).rejects.toThrow(
+      /outside the skill folder/i,
+    );
+    // `l2` starts a ten-link walk: inside the budget, and still inside the
+    // bundle, so it is not the chain's shape that refused above.
+    await expect(resolveInSkill('graphify', 'l2')).resolves.toContain('l2');
+  });
+
+  it('allows a link that climbs out of the bundle and straight back in', async () => {
+    /*
+      The over-refusal side of the same check. `back -> ../graphify/ok.txt`
+      leaves the bundle lexically and returns, which is what a hand-written
+      dotfiles bundle looks like more often than an attack does. The rule is
+      where a path *lands*, not whether it stayed — so this is allowed both
+      while the target exists and while it dangles, and a fix that starts
+      refusing either one has over-tightened.
+    */
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+    await writeFile(join(skillsDir(), 'graphify', 'ok.txt'), 'fine', 'utf8');
+    await symlink('../graphify/ok.txt', join(skillsDir(), 'graphify', 'back'));
+
+    expect((await skills.readFile('graphify', 'back')).body).toBe('fine');
+
+    await rm(join(skillsDir(), 'graphify', 'ok.txt'));
+    await skills.writeFile('graphify', 'back', 'through the link');
+    expect(
+      await readFile(join(skillsDir(), 'graphify', 'ok.txt'), 'utf8'),
+    ).toBe('through the link');
   });
 
   it('refuses to remove SKILL.md through a symlink that resolves back to it', async () => {
