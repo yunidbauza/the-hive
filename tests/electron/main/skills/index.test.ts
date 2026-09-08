@@ -12,6 +12,8 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { BundleManifest } from '@shared/skills-contract';
+
 import { createSkillsRuntime } from '../../../../electron/main/skills';
 
 let userDataPath: string;
@@ -32,6 +34,23 @@ const writeSkill = async (name: string, body: string): Promise<void> => {
 
 const skill = (name: string): string =>
   `---\nname: ${name}\ndescription: does ${name}\n---\nBody.\n`;
+
+/**
+ * What `readBundle` reports for a folder holding nothing but the SKILL.md
+ * `skill()` wrote — a single admitted file, nothing skipped or capped.
+ */
+const oneFileManifest = (body: string): BundleManifest => ({
+  entries: [
+    {
+      path: 'SKILL.md',
+      kind: 'file',
+      size: Buffer.byteLength(body, 'utf8'),
+      executable: false,
+      excluded: null,
+    },
+  ],
+  capped: null,
+});
 
 beforeEach(async () => {
   const base = await mkdtemp(join(tmpdir(), 'hive-runtime-'));
@@ -148,7 +167,12 @@ describe('createSkillsRuntime', () => {
     const snapshot = await runtime().list();
 
     expect(snapshot.skills).toEqual([
-      { name: 'standup', description: 'does standup', valid: true },
+      {
+        name: 'standup',
+        description: 'does standup',
+        valid: true,
+        manifest: oneFileManifest(skill('standup')),
+      },
     ]);
     expect(snapshot.invalid[0]?.name).toBe('Bad Name');
     expect(snapshot.invalid[0]?.valid).toBe(false);
@@ -177,7 +201,12 @@ describe('createSkillsRuntime', () => {
     const snapshot = await runtime().write('standup', skill('standup'));
 
     expect(snapshot.skills).toEqual([
-      { name: 'standup', description: 'does standup', valid: true },
+      {
+        name: 'standup',
+        description: 'does standup',
+        valid: true,
+        manifest: oneFileManifest(skill('standup')),
+      },
     ]);
     expect(await pluginSkills()).toEqual(['done', 'standup']);
   });
