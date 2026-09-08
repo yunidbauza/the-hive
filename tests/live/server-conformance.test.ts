@@ -1,10 +1,11 @@
 // @vitest-environment node
+import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { get as httpGet } from 'node:http';
 import { createRequire } from 'node:module';
 import { connect as netConnect, createServer as createNetServer } from 'node:net';
-import { homedir, tmpdir } from 'node:os';
+import { homedir, networkInterfaces, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -47,8 +48,12 @@ import { REMOTE_PROTOCOL_VERSION } from '../../electron/shared/remote-contract';
  *    restart — the headline claim, and the one this file exists for.
  * 7. `config.json` is read back and contains no token — checked against the
  *    literal string the mint printed, not a shape assertion.
- * 8. A config asking for `0.0.0.0` fails to bind the wildcard, names why, and
- *    the app keeps running.
+ * 8. A config asking for `0.0.0.0` is refused with a message naming why, the
+ *    app keeps serving on the safe loopback fallback, and — skipped with a
+ *    stated reason if this machine has no non-loopback IPv4 address — a
+ *    connection to a real external address on this machine is genuinely
+ *    refused, which is the only observation that actually distinguishes a
+ *    refused wildcard from an honoured one (both answer on loopback).
  * 9. Pairing a second device from the CLI while the server runs does not
  *    erase the first — the data-loss half of the same freshness fix, added
  *    here because an earlier implementation of it replaced the whole roster
@@ -61,6 +66,20 @@ import { REMOTE_PROTOCOL_VERSION } from '../../electron/shared/remote-contract';
  * stdout marker that exists only so this file could read it would be
  * production code written to serve a test — `registerLifecycle`'s own unit
  * test already proves the window never opens.
+ *
+ * ## Case 6/9's one-shots share the running app's own profile, on purpose
+ *
+ * `electron/main/index.ts` runs a one-shot's whole body (`--pair`, `--revoke`,
+ * `--devices`) **before** `app.requestSingleInstanceLock()`, with a comment
+ * explaining why: on a served machine the app is always running, so a
+ * one-shot that requested the lock would lose it to the running server and
+ * quit before printing anything. That ordering is the entire mechanism that
+ * makes `--pair` work against a running server in production — and it can
+ * only be exercised by giving the one-shot the **same** `--user-data-dir` as
+ * the already-running app. A one-shot pointed at a *different* profile would
+ * never contend for that lock at all, so a regression that moved the
+ * one-shot check to *after* `requestSingleInstanceLock()` would not turn this
+ * suite red (HIVE-142 review, important 2).
  *
  * ## What is not proved here
  *
@@ -75,27 +94,35 @@ import { REMOTE_PROTOCOL_VERSION } from '../../electron/shared/remote-contract';
  * single-instance lock) — the workspace config lives at `~/.hive/config.json`
  * (`electron/main/config/paths.ts`) unless `HIVE_CONFIG_PATH` says otherwise
  * (`config-contract.ts`'s `CONFIG_PATH_ENV`), and nothing here ever spawns a
- * process without it explicitly set. {@link REAL_CONFIG_PATH} is asserted
- * against on every scratch path this file is about to write to, at the moment
- * it is computed — not as a formality, but because a mistake here writes a
- * real device credential into the person running this suite's actual config,
- * which is exactly how the brief for this task was written in the first
- * place. Every `HIVE_*` variable a spawned process gets is named explicitly by
- * {@link scrubbedEnv}, which strips whatever the same name happens to be set
- * to in this shell before applying the ones this file actually wants — so an
- * ambient `HIVE_CONFIG_PATH`, or a leftover `HIVE_LIVE_*_PROOF`, cannot leak
- * into a child and make this suite pass for the wrong reason.
+ * process without it explicitly set. That one variable relocates the *whole*
+ * `~/.hive` tree, not only the config file: `ledger-contract.ts` derives the
+ * ledger, agents and work directories from `dirname(configPath())`, so this
+ * suite cannot reach a developer's ledger or agent state either.
+ * {@link REAL_CONFIG_PATH} is asserted against on every scratch path this
+ * file is about to write to, at the moment it is computed — not as a
+ * formality, but because a mistake here writes a real device credential into
+ * the person running this suite's actual config, which is exactly how the
+ * brief for this task was written in the first place. Every `HIVE_*`
+ * variable a spawned process gets is named explicitly by {@link scrubbedEnv},
+ * which strips whatever the same name happens to be set to in this shell
+ * before applying the ones this file actually wants — so an ambient
+ * `HIVE_CONFIG_PATH`, or a leftover `HIVE_LIVE_*_PROOF`, cannot leak into a
+ * child and make this suite pass for the wrong reason.
  *
  * ## Evidence
  *
  * A `vitest run` off a TTY (a background shell) prints totals only, so a
  * failure here would otherwise be unreadable. Every spawned process's argv,
- * exit code and captured stdout/stderr is collected into {@link processLog}
- * and written once, at the very end, to `finding.json` inside
- * {@link evidenceDir} — which this file does **not** delete, on the same
- * reasoning `hook-context-conformance.test.ts` gives for leaving its own
- * evidence directory behind: a scratch dir in `os.tmpdir()` costs nothing to
- * leave and is the only place a failed background run's detail survives.
+ * exit code and captured stdout/stderr is collected into {@link processLog},
+ * and every attach attempt's frame and outcome into {@link attachLog} — the
+ * suite's most likely failure is frame-level (an `attach-refused` where
+ * `attach-accepted` was expected), which argv and exit codes alone would not
+ * show. Both, plus every scratch config path used, are written once, at the
+ * very end, to `finding.json` inside {@link evidenceDir} — which this file
+ * does **not** delete, on the same reasoning `hook-context-conformance.test.ts`
+ * gives for leaving its own evidence directory behind: a scratch dir in
+ * `os.tmpdir()` costs nothing to leave and is the only place a failed
+ * background run's detail survives.
  *
  * Gated behind `HIVE_LIVE_SERVER_PROOF=1` (`pnpm test:server`) because it
  * spawns real Electron processes and binds real sockets.
@@ -129,6 +156,24 @@ const electronBinary = createRequire(import.meta.url)('electron') as string;
 
 /** The built app's entry point — the same file `desktop:build` produces and `package.json`'s `main` names. */
 const MAIN_ENTRY = join(import.meta.dirname, '../../out/main/index.js');
+
+/**
+ * The first non-loopback IPv4 address this machine has, or `null` if it has
+ * none (no network interface up at all). The only observation that actually
+ * distinguishes "the wildcard bind was honoured" from "it was refused and
+ * fell back to loopback": both answer identically on `127.0.0.1`, since the
+ * wildcard *includes* loopback. Computed once, at module load — a real
+ * property of the machine running this suite, not something any scenario
+ * changes.
+ */
+const EXTERNAL_IPV4 = (() => {
+  for (const addrs of Object.values(networkInterfaces())) {
+    for (const addr of addrs ?? []) {
+      if (addr.family === 'IPv4' && !addr.internal) return addr.address;
+    }
+  }
+  return null;
+})();
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -169,6 +214,40 @@ async function waitForListener(host: string, port: number, deadlineMs: number): 
   throw new Error(`timed out waiting for ${host}:${String(port)} to accept connections`);
 }
 
+/**
+ * Attempts a raw TCP connect and reports how it resolved: `'connected'` or
+ * `'refused'`. Used for case 8b's actual discriminator (a bind that honoured
+ * the wildcard would accept this; one that fell back to loopback refuses it)
+ * — unlike {@link waitForListener}, this does not retry, because a retry loop
+ * here would blur exactly the distinction the case exists to draw.
+ *
+ * A silent timeout counts as `'refused'`, not as an inconclusive third state
+ * — measured against this machine's own non-loopback address, a real accept
+ * completes almost immediately (it never leaves the LAN), while a closed
+ * port on a non-loopback interface commonly gets no `RST` at all: macOS's
+ * Application Firewall defaults to "stealth mode", which drops an
+ * unsolicited `SYN` rather than answering it, and that is indistinguishable
+ * from "nothing is listening" for this test's purposes.
+ */
+function attemptConnect(host: string, port: number, timeoutMs: number): Promise<'connected' | 'refused'> {
+  return new Promise((resolve) => {
+    const socket = netConnect({ host, port });
+    const timer = setTimeout(() => {
+      socket.destroy();
+      resolve('refused');
+    }, timeoutMs);
+    socket.once('connect', () => {
+      clearTimeout(timer);
+      socket.end();
+      resolve('connected');
+    });
+    socket.once('error', () => {
+      clearTimeout(timer);
+      resolve('refused');
+    });
+  });
+}
+
 /** The HTTP status a plain GET gets back — proof the socket is a real HTTP(S) upgrade server, not merely an open file descriptor. */
 function httpStatus(url: string): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -192,6 +271,9 @@ interface ProcessRecord {
 
 const processLog: ProcessRecord[] = [];
 
+/** Every scratch `config.json` path this run wrote to — part of the evidence, and a second, independent confirmation that none of them is {@link REAL_CONFIG_PATH}. */
+const scratchConfigPaths: string[] = [];
+
 /**
  * `env`, with every `HIVE_*` key this shell happens to carry stripped first.
  *
@@ -213,7 +295,11 @@ function scrubbedEnv(overrides: Record<string, string>): NodeJS.ProcessEnv {
 }
 
 /** Spawns the app itself — a long-running process this file must stop with {@link stopApp}. */
-function spawnApp(extraArgs: readonly string[], configPath: string, userDataDir: string): ChildProcess {
+function spawnApp(
+  extraArgs: readonly string[],
+  configPath: string,
+  userDataDir: string,
+): { child: ChildProcess; record: ProcessRecord } {
   assertScratchPath(configPath);
   const args = [MAIN_ENTRY, `--user-data-dir=${userDataDir}`, ...extraArgs];
   const child = spawn(electronBinary, args, {
@@ -236,13 +322,25 @@ function spawnApp(extraArgs: readonly string[], configPath: string, userDataDir:
     record.code = code;
     record.signal = signal;
   });
-  return child;
+  /*
+    Unlike `runOneShot` below (which rejects a promise on a spawn error), this
+    process is long-running and handed back synchronously — there is no
+    promise left to reject into. Without this handler a missing or
+    non-executable binary (running this file without `desktop:build` first,
+    say) surfaces as an unhandled `ChildProcess` `error` event, which crashes
+    the whole Vitest worker rather than failing one test readably (HIVE-142
+    review, minor 3).
+  */
+  child.on('error', (err) => {
+    record.stderr += `\n[spawn error] ${err instanceof Error ? err.message : String(err)}`;
+  });
+  return { child, record };
 }
 
-/** Stops a process started by {@link spawnApp}: `SIGTERM` first, `SIGKILL` if it has not gone in 10s. */
-function stopApp(child: ChildProcess): Promise<void> {
+/** Stops a process started by {@link spawnApp}: `SIGTERM` first, `SIGKILL` if it has not gone in 10s. A no-op on `undefined`, so a teardown that runs after a `beforeAll` failed partway (before the app was even spawned) does not itself throw. */
+function stopApp(child: ChildProcess | undefined): Promise<void> {
   return new Promise((resolve) => {
-    if (child.exitCode !== null || child.signalCode !== null) {
+    if (!child || child.exitCode !== null || child.signalCode !== null) {
       resolve();
       return;
     }
@@ -255,11 +353,64 @@ function stopApp(child: ChildProcess): Promise<void> {
   });
 }
 
+interface BootedApp {
+  child: ChildProcess;
+  record: ProcessRecord;
+  port: number;
+}
+
+/**
+ * Boots the served app end to end: picks a free port, writes `configPath` via
+ * `buildConfig(port)`, spawns it with `--server`, waits for the socket, and
+ * health-checks it with a plain GET expecting `426`.
+ *
+ * Retried once, with a **fresh** port, if that health check does not come
+ * back `426`. This exists because of a disclosed, low-probability race in
+ * {@link freePort}: releasing the probe socket before this function's own
+ * `spawnApp` binds it leaves a window another process could steal the same
+ * port in. Reviewed concern: a stolen port would otherwise make the caller's
+ * own health assertion report "expected 426, got X" with nothing pointing at
+ * a collision (HIVE-142 review, minor 8). A genuine regression in the
+ * listener fails the health check identically on the retry — a fresh port
+ * changes nothing about whether the *code* is broken — so this cannot mask a
+ * real defect, only absorb the port race.
+ */
+async function bootServerApp(
+  configPath: string,
+  userDataDir: string,
+  buildConfig: (port: number) => unknown,
+): Promise<BootedApp> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const port = await freePort();
+    writeFileSync(configPath, JSON.stringify(buildConfig(port), null, 2), 'utf8');
+    const { child, record } = spawnApp(['--server'], configPath, userDataDir);
+    try {
+      await waitForListener('127.0.0.1', port, 30_000);
+      const status = await httpStatus(`http://127.0.0.1:${String(port)}/`);
+      if (status === 426) return { child, record, port };
+      throw new Error(
+        `boot health check on 127.0.0.1:${String(port)} got status ${String(status)}, not 426 ` +
+          `(attempt ${String(attempt)}/2 — possibly the disclosed freePort race). stderr:\n${record.stderr || '(empty)'}`,
+      );
+    } catch (err) {
+      lastError = err;
+      await stopApp(child);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 /**
  * Runs one of the CLI one-shots (`--pair`, `--revoke`, `--devices`) to
  * completion in its own, separate process — the exact shape `--pair` has in
  * production, and the only way to prove case 6's claim that a *second*
  * process reaches an *already-running* server with no restart.
+ *
+ * `userDataDir` must be the **same** profile as the already-running app —
+ * see the header comment's "Case 6/9's one-shots share the running app's own
+ * profile" section for why a separate one would remove the exact lock
+ * ordering this is meant to exercise.
  */
 function runOneShot(
   args: readonly string[],
@@ -311,6 +462,16 @@ interface AttachOutcome {
   frame?: Record<string, unknown>;
 }
 
+/** One call to {@link attach}, kept for `finding.json` regardless of pass/fail — the suite's most likely failure is frame-level, which argv/exit-code evidence alone cannot show. */
+interface AttachLogEntry {
+  at: string;
+  url: string;
+  frame: unknown;
+  outcome: AttachOutcome;
+}
+
+const attachLog: AttachLogEntry[] = [];
+
 /**
  * Sends one frame over a fresh `ws` connection and resolves with whatever
  * comes back — a JSON frame, or (for an Origin refused at the upgrade itself)
@@ -329,6 +490,7 @@ function attach(
     const settle = (outcome: AttachOutcome): void => {
       if (settled) return;
       settled = true;
+      attachLog.push({ at: new Date().toISOString(), url, frame, outcome });
       resolve(outcome);
     };
 
@@ -358,6 +520,9 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
   let evidenceDir: string;
 
   beforeAll(() => {
+    if (!existsSync(MAIN_ENTRY)) {
+      throw new Error(`${MAIN_ENTRY} is missing. Run \`pnpm desktop:build\` before \`pnpm test:server\`.`);
+    }
     evidenceDir = mkdtempSync(join(tmpdir(), 'hive-live-server-evidence-'));
   });
 
@@ -365,7 +530,16 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
     const findingPath = join(evidenceDir, 'finding.json');
     writeFileSync(
       findingPath,
-      JSON.stringify({ ranAt: new Date().toISOString(), processes: processLog }, null, 2),
+      JSON.stringify(
+        {
+          ranAt: new Date().toISOString(),
+          scratchConfigPaths,
+          processes: processLog,
+          attaches: attachLog,
+        },
+        null,
+        2,
+      ),
       'utf8',
     );
     console.info('EVIDENCE ', findingPath);
@@ -375,39 +549,38 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
     let dir: string;
     let configPath: string;
     let userDataDir: string;
-    let oneShotUserDataDir: string;
     let port: number;
     let url: string;
-    let app: ChildProcess;
+    let app: ChildProcess | undefined;
+    let appRecord: ProcessRecord | undefined;
     let active: MintedDevice;
     let revoked: MintedDevice;
     let liveA: { id: string; token: string } | null = null;
+    let liveB: { id: string; token: string } | null = null;
 
     beforeAll(async () => {
       dir = mkdtempSync(join(tmpdir(), 'hive-live-server-main-'));
       configPath = join(dir, 'config.json');
       userDataDir = join(dir, 'user-data');
-      oneShotUserDataDir = join(dir, 'one-shot-user-data');
       assertScratchPath(configPath);
+      scratchConfigPaths.push(configPath);
 
       active = mintDevice('Seed-Active');
       revoked = mintDevice('Seed-Revoked');
-      port = await freePort();
 
-      const config = {
+      const booted = await bootServerApp(configPath, userDataDir, (bootPort) => ({
         version: CONFIG_VERSION,
         projects: [],
         server: {
-          bind: { host: '127.0.0.1', port, allowedOrigins: [] },
+          bind: { host: '127.0.0.1', port: bootPort, allowedOrigins: [] },
           devices: [active.device, { ...revoked.device, revoked: true }],
         },
-      };
-      writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
-
-      app = spawnApp(['--server'], configPath, userDataDir);
+      }));
+      app = booted.child;
+      appRecord = booted.record;
+      port = booted.port;
       url = `ws://127.0.0.1:${String(port)}`;
-      await waitForListener('127.0.0.1', port, 30_000);
-    }, 45_000);
+    }, 90_000);
 
     afterAll(async () => {
       await stopApp(app);
@@ -421,7 +594,7 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       // `registerLifecycle`'s unit test, not this file — see the header
       // comment.
       const status = await httpStatus(`http://127.0.0.1:${String(port)}/`);
-      expect(status).toBe(426);
+      expect(status, `served app's stderr so far:\n${appRecord?.stderr || '(empty)'}`).toBe(426);
     });
 
     it('2. a raw ws client completes the attach handshake and is accepted', async () => {
@@ -513,7 +686,9 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
     });
 
     it('6. --pair in a second process is seen by the already-running server, with no restart', async () => {
-      const result = await runOneShot(['--pair', 'Live-Device-A'], configPath, oneShotUserDataDir);
+      // Same `userDataDir` as the already-running `app` — see the header
+      // comment's section on why that sharing is load-bearing here.
+      const result = await runOneShot(['--pair', 'Live-Device-A'], configPath, userDataDir);
       expect(result.code).toBe(0);
 
       // The token is the first of three lines `runPair` prints
@@ -545,10 +720,13 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
     }, 25_000);
 
     it('9. pairing a second device from the CLI does not erase the first', async () => {
-      expect(liveA).not.toBeNull();
+      assert(liveA !== null, 'case 6 must run before case 9 and set liveA');
 
-      const result = await runOneShot(['--pair', 'Live-Device-B'], configPath, oneShotUserDataDir);
+      const result = await runOneShot(['--pair', 'Live-Device-B'], configPath, userDataDir);
       expect(result.code).toBe(0);
+      const lines = result.stdout.trim().split('\n');
+      expect(lines).toHaveLength(3);
+      const token = lines[0] ?? '';
 
       const parsed = parseConfig(readFileSync(configPath, 'utf8'), 'config');
       const devices = parsed.server?.devices ?? [];
@@ -560,6 +738,7 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       expect(survivedA).toBeDefined();
       expect(survivedA?.revoked).toBe(false);
       expect(b).toBeDefined();
+      liveB = { id: b?.id ?? '', token };
 
       // The server, still the same process, still running, still answers for
       // A after B was added — the roster it re-read did not just gain B, it
@@ -567,22 +746,33 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       const outcome = await attach(url, {
         kind: 'attach',
         protocol: REMOTE_PROTOCOL_VERSION,
-        deviceId: liveA?.id ?? '',
-        token: liveA?.token ?? '',
+        deviceId: liveA.id,
+        token: liveA.token,
       });
       expect(outcome.frame).toMatchObject({ kind: 'attach-accepted' });
     }, 25_000);
 
     it('7. config.json never contains a literal token, checked against the exact strings the mints printed', () => {
+      // Explicit rather than a silent `if (liveA)` — a case-6 (or case-9)
+      // failure must fail this assertion too, not quietly drop a third of it
+      // (HIVE-142 review, minor 6). Declaration order inside this `describe`
+      // already makes 6 and 9 run first; this makes that dependency loud
+      // rather than load-bearing-but-invisible.
+      assert(liveA !== null, 'case 6 must have run and set liveA before this assertion is meaningful');
+      assert(liveB !== null, 'case 9 must have run and set liveB before this assertion is meaningful');
+
       const text = readFileSync(configPath, 'utf8');
       expect(text).not.toContain(active.token);
       expect(text).not.toContain(revoked.token);
-      if (liveA) expect(text).not.toContain(liveA.token);
+      expect(text).not.toContain(liveA.token);
+      expect(text).not.toContain(liveB.token);
       // The digest format the credential is stored as instead — proof the
-      // file legitimately describes these devices, rather than this
-      // assertion passing because the file is simply empty.
+      // file legitimately describes these four devices, rather than this
+      // assertion passing because the file is simply empty. Exact, not a
+      // floor: by this point the roster is known completely (active, revoked,
+      // A, B), so a fifth or a third digest is just as wrong as zero.
       expect(text).toMatch(/"kind":\s*"sha256"/u);
-      expect(text.match(/"digest":\s*"[0-9a-f]{64}"/gu)?.length).toBeGreaterThanOrEqual(3);
+      expect(text.match(/"digest":\s*"[0-9a-f]{64}"/gu)?.length).toBe(4);
     });
   });
 
@@ -590,31 +780,30 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
     let dir: string;
     let configPath: string;
     let userDataDir: string;
-    let oneShotUserDataDir: string;
     let port: number;
-    let app: ChildProcess;
+    let app: ChildProcess | undefined;
+    let appRecord: ProcessRecord | undefined;
 
     beforeAll(async () => {
       dir = mkdtempSync(join(tmpdir(), 'hive-live-server-wildcard-'));
       configPath = join(dir, 'config.json');
       userDataDir = join(dir, 'user-data');
-      oneShotUserDataDir = join(dir, 'one-shot-user-data');
       assertScratchPath(configPath);
+      scratchConfigPaths.push(configPath);
 
-      port = await freePort();
-      const config = {
+      const booted = await bootServerApp(configPath, userDataDir, (bootPort) => ({
         version: CONFIG_VERSION,
         projects: [],
-        server: { bind: { host: '0.0.0.0', port, allowedOrigins: [] } },
-      };
-      writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
-
-      app = spawnApp(['--server'], configPath, userDataDir);
-      // The fallback host — `127.0.0.1`, `DEFAULT_SERVER.bind`'s own value —
-      // not the refused wildcard: see the `it` below for why the parser
-      // guarantees this is what actually gets bound.
-      await waitForListener('127.0.0.1', port, 30_000);
-    }, 45_000);
+        server: { bind: { host: '0.0.0.0', port: bootPort, allowedOrigins: [] } },
+      }));
+      app = booted.child;
+      appRecord = booted.record;
+      port = booted.port;
+      // The health check inside `bootServerApp` already confirms the
+      // fallback host (`127.0.0.1`) answers — see the `it`s below for why
+      // that alone does not yet distinguish a refused wildcard from an
+      // honoured one.
+    }, 90_000);
 
     afterAll(async () => {
       await stopApp(app);
@@ -635,18 +824,35 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       expect(parsed.server?.bind?.host).toBeUndefined();
 
       // The behavioural half: with `host` refused, the block falls back to
-      // `DEFAULT_SERVER.bind.host` (`127.0.0.1`) — the wildcard is never
-      // asked of the OS at all, and the app is still serving on the address
-      // it fell back to.
+      // `DEFAULT_SERVER.bind.host` (`127.0.0.1`) — the app is still serving
+      // on the address it fell back to. This alone does **not** prove the
+      // wildcard itself was refused (a bind that genuinely honoured
+      // `0.0.0.0` also answers on `127.0.0.1`, since the wildcard includes
+      // loopback) — see case 8b for the assertion that actually tells the
+      // two apart.
       const status = await httpStatus(`http://127.0.0.1:${String(port)}/`);
-      expect(status).toBe(426);
+      expect(status, `served app's stderr so far:\n${appRecord?.stderr || '(empty)'}`).toBe(426);
 
       // And the app itself has not gone down over a config error — proved by
       // a second, independent process (the `--devices` one-shot) that
-      // reaches the very same file.
-      expect(app.exitCode).toBeNull();
-      const devices = await runOneShot(['--devices'], configPath, oneShotUserDataDir);
+      // reaches the very same file, on the same profile the running app
+      // uses.
+      expect(app?.exitCode).toBeNull();
+      const devices = await runOneShot(['--devices'], configPath, userDataDir);
       expect(devices.code).toBe(0);
     });
+
+    it.skipIf(EXTERNAL_IPV4 === null)(
+      '8b. the wildcard bind is genuinely refused, checked against a real non-loopback address',
+      async () => {
+        // The actual discriminator: a bind that honoured `0.0.0.0` would
+        // accept a connection here too, because the wildcard listens on
+        // every interface including this one. A refusal is what proves the
+        // fallback to `127.0.0.1` in case 8 was a real, narrower bind and not
+        // merely a coincidentally-reachable loopback address.
+        const outcome = await attemptConnect(EXTERNAL_IPV4 as string, port, 3_000);
+        expect(outcome).toBe('refused');
+      },
+    );
   });
 });
