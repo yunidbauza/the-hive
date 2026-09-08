@@ -369,7 +369,16 @@ test('adds a file to a skill bundle, on disk beside its SKILL.md', async ({}, te
       'build.py',
     ]);
 
-    // Created empty and opened, so the next keystroke edits the new file.
+    /*
+      Created empty and opened, so the next keystroke edits the new file — but
+      wait for the header to name it first. The editor is keyed on the path, so
+      creating a file remounts CodeMirror, and filling the old instance types
+      into a view that is about to be replaced: the write then lands empty and
+      the failure reads as "Save did nothing" rather than "we typed too early".
+    */
+    await expect(
+      page.getByText(join(skillsDir, 'graphify', 'scripts', 'build.py')),
+    ).toBeVisible();
     await page.getByLabel('Skill source').fill('print(1)\n');
     await page.getByRole('button', { name: 'Save' }).click();
 
