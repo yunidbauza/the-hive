@@ -5,10 +5,13 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createRemoteListener } from '@remote-host/listener';
-import { REMOTE_PROTOCOL_VERSION } from '@shared/remote-contract';
 import type { ServerDevice } from '@shared/config-contract';
+import { CH } from '@shared/ipc-contract';
+import { REMOTE_PROTOCOL_VERSION, type AttachRequest } from '@shared/remote-contract';
 
 import { mintDevice } from '../../../electron/main/server/devices';
+import type { RemoteDispatch } from '../../../electron/main/ipc/remote-dispatch';
+import type { AttachedSocket } from '../../../electron/main/ipc/socket-broadcaster';
 
 let listener: ReturnType<typeof createRemoteListener> | null = null;
 afterEach(async () => {
@@ -16,11 +19,24 @@ afterEach(async () => {
   listener = null;
 });
 
+/**
+ * `dispatch`/`onAttach`/`onDetach` a test does not care about — every
+ * pre-existing HIVE-142 case in this file only exercises the handshake, so
+ * these stand in wherever `createRemoteListener` is built without the
+ * post-attach frame loop (HIVE-143) itself under test.
+ */
+const noopDispatch: RemoteDispatch = { call: vi.fn(), notify: vi.fn() };
+const noopOnAttach = vi.fn();
+const noopOnDetach = vi.fn();
+
 const start = async (devices: readonly ServerDevice[], allowedOrigins: string[] = []) => {
   listener = createRemoteListener({
     bind: { host: '127.0.0.1', port: 0, allowedOrigins },
     devices: () => devices,
     serverName: 'test-mini',
+    dispatch: noopDispatch,
+    onAttach: noopOnAttach,
+    onDetach: noopOnDetach,
   });
   const address = await listener.start();
   expect(address).not.toBeNull();
@@ -159,6 +175,9 @@ describe('the attach handshake', () => {
       bind: { host: '127.0.0.1', port: 0, allowedOrigins: [] },
       devices: () => devices,
       serverName: 'test-mini',
+      dispatch: noopDispatch,
+      onAttach: noopOnAttach,
+      onDetach: noopOnDetach,
     });
     const url = (await listener.start()) as string;
     const { device, token } = mintDevice('LateBook');
@@ -350,6 +369,9 @@ describe('start()/stop() lifecycle', () => {
       bind: { host: '127.0.0.1', port, allowedOrigins: [] },
       devices: () => [],
       serverName: 'test-mini',
+      dispatch: noopDispatch,
+      onAttach: noopOnAttach,
+      onDetach: noopOnDetach,
     });
     const result = await listener.start();
     expect(result).toBeNull();
@@ -375,6 +397,9 @@ describe('start()/stop() lifecycle', () => {
       bind: { host: '127.0.0.1', port, allowedOrigins: [] },
       devices: () => [],
       serverName: 'test-mini',
+      dispatch: noopDispatch,
+      onAttach: noopOnAttach,
+      onDetach: noopOnDetach,
     });
     await listener.start();
 
@@ -403,6 +428,9 @@ describe('start()/stop() lifecycle', () => {
       bind: { host: '127.0.0.1', port, allowedOrigins: [] },
       devices: () => [],
       serverName: 'test-mini',
+      dispatch: noopDispatch,
+      onAttach: noopOnAttach,
+      onDetach: noopOnDetach,
     });
     await listener.start();
 
@@ -423,6 +451,9 @@ describe('start()/stop() lifecycle', () => {
       bind: { host: '127.0.0.1', port, allowedOrigins: [] },
       devices: () => [],
       serverName: 'test-mini',
+      dispatch: noopDispatch,
+      onAttach: noopOnAttach,
+      onDetach: noopOnDetach,
     });
     await failing.start();
     expect(failing.lastBindError).not.toBeNull();
@@ -434,6 +465,9 @@ describe('start()/stop() lifecycle', () => {
       bind: { host: '127.0.0.1', port: 0, allowedOrigins: [] },
       devices: () => [],
       serverName: 'test-mini',
+      dispatch: noopDispatch,
+      onAttach: noopOnAttach,
+      onDetach: noopOnDetach,
     });
     await listener.start();
     expect(listener.lastBindError).toBeNull();
@@ -444,6 +478,9 @@ describe('start()/stop() lifecycle', () => {
       bind: { host: '127.0.0.1', port: 0, allowedOrigins: [] },
       devices: () => [],
       serverName: 'test-mini',
+      dispatch: noopDispatch,
+      onAttach: noopOnAttach,
+      onDetach: noopOnDetach,
     });
     await expect(listener.stop()).resolves.toBeUndefined();
   });
@@ -477,4 +514,214 @@ describe('start()/stop() lifecycle', () => {
 
     await listener?.stop();
   }, 3_000);
+});
+
+/**
+ * Flushes every pending microtask — the `.then()` a `dispatch.call` answer
+ * travels through before it reaches `socketHandle.send()`. `setImmediate`
+ * runs after Node fully drains the microtask queue, regardless of how many
+ * `.then()`s are chained, which is what makes this reliable where a fixed
+ * number of `await Promise.resolve()`s would not be.
+ */
+const flushMicrotasks = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+/**
+ * Drives a real attach handshake against a `createRemoteListener` built with
+ * one stub device, then hands back the **server-side** connection object —
+ * not the client's — plus every frame the listener has sent on it since.
+ *
+ * The server-side object is captured off `WebSocketServer.prototype.emit`,
+ * which `listener.ts`'s own `'upgrade'` handler calls directly
+ * (`sockets.emit('connection', ws, req)`) — nothing else exposes it, since
+ * `onAttach` is handed a wrapper (`AttachedSocket`), not the socket itself.
+ * A real `ws.WebSocket` is an `EventEmitter` underneath, so calling
+ * `.emit('message', ...)` on this captured object invokes `listener.ts`'s own
+ * `.on('message', ...)` handler synchronously, in-process — the same handler
+ * a real frame would reach — without a second real round trip's
+ * non-deterministic tick count.
+ *
+ * `sent` is filled by a spy on this same socket's own `.send`, not by
+ * reading the real client's `'message'` event: a spy records the instant
+ * `listener.ts` calls it, while the real client only learns of a write after
+ * genuine loopback I/O completes, which is not bounded by a microtask flush.
+ *
+ * `.emit('close')` on the returned socket is real-`terminate()`d immediately
+ * after: firing only the synthetic event would run `listener.ts`'s `'close'`
+ * handler (what the test wants) while also running `ws`'s own internal
+ * `'close'` listener, which drops the socket from `WebSocketServer#clients`
+ * — the exact set `stop()` walks to tear down what is, underneath the fake
+ * event, still a genuinely open connection. Terminating for real keeps that
+ * bookkeeping honest so `afterEach`'s `listener.stop()` does not hang.
+ */
+const attachedSocket = async (
+  overrides: {
+    dispatch?: RemoteDispatch;
+    onAttach?: (socket: AttachedSocket, resumeFrom: Readonly<Record<string, number>> | undefined) => void;
+    onDetach?: (socket: AttachedSocket) => void;
+    attach?: Partial<AttachRequest>;
+  } = {},
+): Promise<{ socket: WebSocket; sent: unknown[] }> => {
+  const dispatch: RemoteDispatch = overrides.dispatch ?? { call: vi.fn(), notify: vi.fn() };
+  const onAttach = overrides.onAttach ?? vi.fn();
+  const onDetach = overrides.onDetach ?? vi.fn();
+  const { device, token } = mintDevice('MacBook');
+
+  const emitSpy = vi.spyOn(WebSocketServer.prototype, 'emit');
+
+  listener = createRemoteListener({
+    bind: { host: '127.0.0.1', port: 0, allowedOrigins: [] },
+    devices: () => [device],
+    serverName: 'test-mini',
+    dispatch,
+    onAttach,
+    onDetach,
+  });
+  const url = await listener.start();
+  expect(url).not.toBeNull();
+
+  const client = new WebSocket(url as string);
+  await new Promise<void>((resolve, reject) => {
+    client.on('open', () => resolve());
+    client.on('error', reject);
+  });
+
+  const accepted = new Promise<void>((resolve, reject) => {
+    client.once('message', (data) => {
+      const reply = JSON.parse(String(data)) as { kind: string };
+      if (reply.kind === 'attach-accepted') resolve();
+      else reject(new Error(`attach was refused: ${String(data)}`));
+    });
+  });
+  client.send(
+    JSON.stringify({
+      kind: 'attach',
+      protocol: REMOTE_PROTOCOL_VERSION,
+      deviceId: device.id,
+      token,
+      ...overrides.attach,
+    }),
+  );
+  await accepted;
+
+  const connectionCall = emitSpy.mock.calls.find((call) => call[0] === 'connection');
+  emitSpy.mockRestore();
+  const socket = connectionCall?.[1] as WebSocket;
+
+  const sent: unknown[] = [];
+  vi.spyOn(socket, 'send').mockImplementation((data: unknown) => {
+    sent.push(JSON.parse(String(data)));
+  });
+
+  const rawEmit = socket.emit.bind(socket);
+  socket.emit = ((event: string | symbol, ...args: unknown[]): boolean => {
+    const result = rawEmit(event, ...args);
+    if (event === 'close') socket.terminate();
+    return result;
+  }) as typeof socket.emit;
+
+  return { socket, sent };
+};
+
+describe('post-attach frames', () => {
+  it('answers a call frame with whatever dispatch returns', async () => {
+    const dispatch: RemoteDispatch = {
+      call: vi.fn(async () => ({ kind: 'result' as const, id: 'c1', payload: { ok: true } })),
+      notify: vi.fn(),
+    };
+    const { socket, sent } = await attachedSocket({ dispatch });
+
+    socket.emit('message', JSON.stringify({ kind: 'call', id: 'c1', channel: CH.configGet, payload: null }));
+    await flushMicrotasks();
+
+    expect(dispatch.call).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'call', id: 'c1', channel: CH.configGet }),
+    );
+    expect(sent).toContainEqual({ kind: 'result', id: 'c1', payload: { ok: true } });
+  });
+
+  it('routes a notify frame to dispatch and sends nothing back', async () => {
+    const dispatch = { call: vi.fn(), notify: vi.fn() };
+    const { socket, sent } = await attachedSocket({ dispatch });
+    const before = sent.length;
+
+    socket.emit('message', JSON.stringify({ kind: 'notify', channel: CH.ptyAck, payload: { seq: 1 } }));
+    await flushMicrotasks();
+
+    expect(dispatch.notify).toHaveBeenCalled();
+    expect(sent.length).toBe(before);
+  });
+
+  it('hands the socket a reporter whose destroyed listener fires on close', async () => {
+    const dispatch = { call: vi.fn(), notify: vi.fn() };
+    const { socket } = await attachedSocket({ dispatch });
+    socket.emit('message', JSON.stringify({ kind: 'notify', channel: CH.ptyPrompt, payload: { sessionId: 's1', input: 'empty' } }));
+    await flushMicrotasks();
+
+    const reporter = dispatch.notify.mock.calls[0][1] as { on: (e: string, l: () => void) => unknown };
+    const onDestroyed = vi.fn();
+    reporter.on('destroyed', onDestroyed);
+    socket.emit('close');
+
+    expect(onDestroyed).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports the socket attached, with resumeFrom, and detached on close', async () => {
+    const onAttach = vi.fn();
+    const onDetach = vi.fn();
+    const { socket } = await attachedSocket({
+      onAttach,
+      onDetach,
+      attach: { resumeFrom: { s1: 7 } },
+    });
+
+    expect(onAttach).toHaveBeenCalledWith(expect.anything(), { s1: 7 });
+
+    socket.emit('close');
+    expect(onDetach).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes resumeFrom as undefined when the client omitted it', async () => {
+    const onAttach = vi.fn();
+    await attachedSocket({ onAttach });
+
+    expect(onAttach).toHaveBeenCalledWith(expect.anything(), undefined);
+  });
+
+  it('drops a second attach frame rather than re-running the handshake', async () => {
+    const dispatch = { call: vi.fn(), notify: vi.fn() };
+    const { socket, sent } = await attachedSocket({ dispatch });
+    const before = sent.length;
+
+    socket.emit('message', JSON.stringify({ kind: 'attach', protocol: 1, deviceId: 'd', token: 't' }));
+    await flushMicrotasks();
+
+    /*
+      Dropped, not refused. `AttachRefusalCode` names four reasons and none of
+      them is "you already attached"; adding a fifth would change the wire and
+      force a protocol bump for a case only a buggy client can reach. Silence
+      costs that client nothing it did not already have.
+    */
+    expect(dispatch.call).not.toHaveBeenCalled();
+    expect(dispatch.notify).not.toHaveBeenCalled();
+    expect(sent.length).toBe(before);
+  });
+
+  it('drops a frame that is not JSON without killing the socket', async () => {
+    const dispatch = { call: vi.fn(), notify: vi.fn() };
+    const { socket } = await attachedSocket({ dispatch });
+
+    expect(() => socket.emit('message', 'not json')).not.toThrow();
+    expect(dispatch.call).not.toHaveBeenCalled();
+  });
+
+  it('drops a frame whose kind is not call or notify', async () => {
+    const dispatch = { call: vi.fn(), notify: vi.fn() };
+    const { socket } = await attachedSocket({ dispatch });
+
+    socket.emit('message', JSON.stringify({ kind: 'result', id: 'x', payload: null }));
+    await flushMicrotasks();
+
+    expect(dispatch.call).not.toHaveBeenCalled();
+    expect(dispatch.notify).not.toHaveBeenCalled();
+  });
 });

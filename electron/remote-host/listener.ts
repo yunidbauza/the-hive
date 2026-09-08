@@ -7,26 +7,33 @@ import {
   REMOTE_PROTOCOL_VERSION,
   type AttachRefused,
   type AttachRequest,
+  type CallFrame,
+  type NotifyFrame,
   type ServerFrame,
 } from '@shared/remote-contract';
 
 import { describe } from '../main/config/paths';
 import { createOriginGuard } from '../main/hooks/http-guard';
+import type { RemoteReporter } from '../main/ipc/registry';
+import type { RemoteDispatch } from '../main/ipc/remote-dispatch';
+import type { AttachedSocket } from '../main/ipc/socket-broadcaster';
 import { verifyDevice } from '../main/server/devices';
 
 import { refuseProtocol } from './index';
 
 /**
- * The listener half of server mode (HIVE-142): a second `node:http` server,
- * bound to `server.bind`, that accepts a `ws` upgrade and completes the attach
- * handshake. Nothing else.
+ * The listener half of server mode: a second `node:http` server, bound to
+ * `server.bind`, that accepts a `ws` upgrade, completes the attach handshake
+ * (HIVE-142), and — once attached — routes every `call` and `notify` frame
+ * to the `dispatch` it was given and reports the socket's lifetime through
+ * `onAttach`/`onDetach` (HIVE-143).
  *
  * **Scope, stated so the next story does not creep backward into this one.**
- * A socket that attaches successfully is handed nothing further — no call
- * routing, no event delivery, no PTY bytes. That is HIVE-143's `router.ts`,
- * wired in from `electron/main/**`, which this module may import but does not
- * yet need to. Building any of that here would be answering a question this
- * story was not asked.
+ * `dispatch`, `onAttach` and `onDetach` are injected, not imported — this
+ * file still does not import `electron/main/ipc/index.ts`, which is what
+ * constructs all three and wires this listener up. What crosses a channel and
+ * what a device is authorized to do live in `electron/main/ipc/remote-dispatch.ts`;
+ * this file only gets frames to and from the socket that carries them.
  *
  * **Everything below the guard is untrusted input, and stays untrusted until
  * `verifyDevice` says otherwise (HIVE-142 review).** The Origin/Host guard
@@ -104,10 +111,11 @@ function wsUrl(host: string, port: number): string {
 /**
  * Whether every value in `value` is a `number` — {@link AttachRequest.resumeFrom}'s
  * shape, checked so {@link isAttachShaped} does not claim a field it never
- * inspected. This story never reads `resumeFrom`, but the predicate's return
- * type says the whole `AttachRequest` is safe to use, and HIVE-143 is the
- * story that will actually consume this field — a predicate that skipped it
- * would be handing that story a lie it has no reason to suspect.
+ * inspected. `resumeFrom` is handed to `onAttach` unread by this file (HIVE-143)
+ * — replay is `electron/main/ipc/index.ts`'s decision to make, not this
+ * listener's — but the predicate's return type says the whole `AttachRequest`
+ * is safe to use, and a predicate that skipped this field would be handing
+ * that caller a lie it has no reason to suspect.
  */
 function isResumeFromShaped(value: unknown): value is Readonly<Record<string, number>> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -149,8 +157,27 @@ export function createRemoteListener(options: {
   devices: () => readonly ServerDevice[];
   /** What the client renders in its header indicator: "attached · <name>". */
   serverName: string;
+  /**
+   * Where a `call` or `notify` frame goes once a socket has attached
+   * (HIVE-143). The same `createRemoteDispatch(registry)` a renderer's own
+   * IPC would have reached, injected rather than imported — `listener.ts`
+   * importing `electron/main/ipc/index.ts` to build one itself would be the
+   * cycle `electron/main/ipc/index.ts` avoids by constructing this listener
+   * in the first place.
+   */
+  dispatch: RemoteDispatch;
+  /**
+   * Told about a socket the instant its handshake completes, with whatever
+   * `resumeFrom` it sent — `undefined` when it sent none, never `{}` (see
+   * {@link AttachRequest.resumeFrom}). This is how `electron/main/ipc/index.ts`
+   * learns a socket exists at all: nothing above this option tracks attached
+   * sockets for it.
+   */
+  onAttach: (socket: AttachedSocket, resumeFrom: Readonly<Record<string, number>> | undefined) => void;
+  /** Told when an attached socket is gone — closed, errored, or terminated. */
+  onDetach: (socket: AttachedSocket) => void;
 }): RemoteListener {
-  const { bind, devices, serverName } = options;
+  const { bind, devices, serverName, dispatch, onAttach, onDetach } = options;
 
   /*
     No host-alias concept here, unlike the hook receiver. `ServerBindConfig`
@@ -345,8 +372,93 @@ export function createRemoteListener(options: {
                 // empty snapshot is the honest answer, not a placeholder.
                 snapshot: {},
               });
-              // The socket now sits attached with nothing further wired to
-              // it. That is the whole surface this story owns.
+
+              const socketHandle: AttachedSocket = {
+                send(outgoing) {
+                  send(socket, outgoing);
+                },
+              };
+
+              /*
+                One reporter per socket, created at attach and reused for
+                every notify from it (HIVE-143).
+
+                `watchReporter` in `electron/main/ipc/index.ts` dedupes by
+                identity through a `WeakSet`, so handing it a fresh object per
+                frame would register a new set of listeners on every
+                keystroke report. It is the socket that has a lifetime, not
+                the frame, and this object is that lifetime given the shape
+                `watchReporter` already accepts.
+
+                Only `destroyed` is wired. A socket has no analogue of
+                `did-start-loading` or `render-process-gone` — it is either
+                open or it is gone — and firing a reset for events that
+                cannot happen would be inventing a lifecycle.
+              */
+              const closeListeners: (() => void)[] = [];
+              const reporter: RemoteReporter = {
+                on(event, listener) {
+                  if (event === 'destroyed') closeListeners.push(listener);
+                  return undefined;
+                },
+              };
+
+              onAttach(socketHandle, request.resumeFrom);
+
+              socket.once('close', () => {
+                for (const listener of closeListeners) listener();
+                onDetach(socketHandle);
+              });
+
+              /*
+                Everything past the handshake arrives here, one socket-level
+                `'message'` listener for the life of the connection — distinct
+                from the `once('message', ...)` above, which is the
+                handshake's own one-shot read and never fires again.
+              */
+              socket.on('message', (postAttachData: Buffer | ArrayBuffer | Buffer[]) => {
+                let postAttachFrame: unknown;
+                try {
+                  postAttachFrame = JSON.parse(String(postAttachData));
+                } catch {
+                  console.error('[hive] server mode dropped an unparsable frame from an attached client');
+                  return;
+                }
+
+                if (postAttachFrame === null || typeof postAttachFrame !== 'object') {
+                  console.error('[hive] server mode dropped a malformed frame from an attached client');
+                  return;
+                }
+                const kind = (postAttachFrame as Record<string, unknown>).kind;
+
+                if (kind === 'call') {
+                  /*
+                    Answered without awaiting the socket's readiness and
+                    without ordering against other calls: `id` is what
+                    correlates a result, which is exactly so that a slow
+                    channel cannot head-of-line block a fast one. Ordering
+                    matters for `notify` and is preserved there by handling
+                    those synchronously.
+                  */
+                  void dispatch.call(postAttachFrame as CallFrame).then((answer) => {
+                    socketHandle.send(answer);
+                  });
+                  return;
+                }
+                if (kind === 'notify') {
+                  dispatch.notify(postAttachFrame as NotifyFrame, reporter);
+                  return;
+                }
+                // A second `attach`, a `result`/`error`/`event` this server
+                // never expects a client to send, or anything else outside
+                // the two channel kinds a client may use — dropped, not
+                // refused. `AttachRefusalCode` names four reasons and none of
+                // them is "you already attached"; adding a fifth would
+                // change the wire and force a protocol bump for a case only
+                // a buggy client can reach. Silence costs that client
+                // nothing it did not already have.
+                console.error(`[hive] server mode dropped a ${String(kind)} frame from a client`);
+              });
             } catch {
               /*
                 Belt and suspenders under `isAttachShaped`'s own validation:

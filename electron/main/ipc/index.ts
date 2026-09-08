@@ -242,7 +242,10 @@ import {
 } from '../updates';
 
 import { createWindowBroadcaster, type Broadcaster } from './broadcaster';
+import { createIpcRegistry } from './registry';
+import { createRemoteDispatch } from './remote-dispatch';
 import { assertSender } from './sender';
+import type { AttachedSocket } from './socket-broadcaster';
 
 /**
  * Channel handlers (story 082).
@@ -1511,6 +1514,9 @@ export function registerIpcHandlers(
   */
   const serverBind = getConfig().server.bind;
   remoteListenerPort = serverBind.port;
+  // Fresh per registration, same as `slackChildren` above — the previous
+  // registration's sockets, if any, belong to a listener already replaced.
+  const remoteSockets = new Set<AttachedSocket>();
   remoteListener = createRemoteListener({
     bind: serverBind,
     /*
@@ -1534,6 +1540,30 @@ export function registerIpcHandlers(
     // The machine's own hostname identifies *which* served Mac a client is
     // looking at, which matters once more than one exists.
     serverName: hostname(),
+    /*
+      Provisional pending the rest of HIVE-143: `createIpcRegistry()` here is
+      fresh and empty, never populated by `registerIpcHandlers`, so every
+      `call` a socket sends answers `not-ready` rather than reaching a
+      handler — the honest state for "the registry exists but nothing has
+      registered into it yet" (`remote-dispatch.ts`'s own documented case),
+      not a silent no-op. The story that threads a shared, populated registry
+      through `registerIpcHandlers` replaces this line; `listener.ts`'s frame
+      loop and its routing rules do not change under it.
+    */
+    dispatch: createRemoteDispatch(createIpcRegistry()),
+    /*
+      Tracked, not yet delivered to: nothing broadcasts to `remoteSockets`
+      today, so an attached device sees events only once the story that wires
+      `createSocketBroadcaster` (`socket-broadcaster.ts`) into `broadcaster`
+      above adds it to the fan-out. Kept here, beside the socket whose
+      lifetime it mirrors, rather than invented fresh by that story.
+    */
+    onAttach: (socket) => {
+      remoteSockets.add(socket);
+    },
+    onDetach: (socket) => {
+      remoteSockets.delete(socket);
+    },
   });
   /*
     Registered here, immediately, rather than folded into the large combined
