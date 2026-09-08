@@ -1,6 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { digestOf, mintDevice, revokeNamed, verifyDevice } from '../../../../electron/main/server/devices';
+import type { MintedDevice } from '../../../../electron/main/server/devices';
+import {
+  MAX_MINT_ATTEMPTS,
+  digestOf,
+  mintDevice,
+  mintUniqueDevice,
+  revokeNamed,
+  verifyDevice,
+} from '../../../../electron/main/server/devices';
 
 describe('mintDevice', () => {
   it('returns a token in four readable groups of four', () => {
@@ -26,6 +34,42 @@ describe('mintDevice', () => {
     expect(device.name).toBe('MacBook');
     expect(device.paired).toBe('2026-09-07');
     expect(device.revoked).toBe(false);
+  });
+});
+
+describe('mintUniqueDevice', () => {
+  it('mints on the first try when nothing collides', () => {
+    const existing = mintDevice('iPad').device;
+    const minted = mintUniqueDevice('MacBook', [existing]);
+    expect(minted).not.toBeNull();
+    expect(minted?.device.name).toBe('MacBook');
+  });
+
+  it('re-mints when the id collides with an existing device, and stops once it does not', () => {
+    const existing = mintDevice('iPad').device;
+    const ids = [existing.id, 'd_ffff'];
+    let call = 0;
+    const mint = vi.fn(
+      (name: string): MintedDevice => ({
+        device: { ...mintDevice(name).device, id: ids[call++] ?? 'd_0000' },
+        token: 'K7QM-4XR2-9WFD-A3LP',
+      }),
+    );
+
+    const minted = mintUniqueDevice('MacBook', [existing], undefined, mint);
+
+    expect(mint).toHaveBeenCalledTimes(2);
+    expect(minted?.device.id).toBe('d_ffff');
+  });
+
+  it(`gives up after ${String(MAX_MINT_ATTEMPTS)} straight collisions`, () => {
+    const existing = mintDevice('iPad').device;
+    const mint = vi.fn(() => ({ device: { ...existing, name: 'MacBook' }, token: 'X' }));
+
+    const minted = mintUniqueDevice('MacBook', [existing], undefined, mint);
+
+    expect(minted).toBeNull();
+    expect(mint).toHaveBeenCalledTimes(MAX_MINT_ATTEMPTS);
   });
 });
 

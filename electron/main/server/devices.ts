@@ -94,6 +94,52 @@ export function mintDevice(name: string, now: Date = new Date()): MintedDevice {
   return { device, token };
 }
 
+/**
+ * How many times {@link mintUniqueDevice} re-mints on an id collision before
+ * giving up.
+ *
+ * `mintDevice`'s id is 16 bits of randomness (`d_` + 4 hex characters), so at
+ * realistic device counts the first draw essentially always misses every
+ * existing id — a handful of retries is generous headroom, not a real
+ * mitigation for a crowded namespace. Looping without a cap would turn a
+ * one-in-a-billion fluke into a hang instead of a clean refusal.
+ */
+export const MAX_MINT_ATTEMPTS = 8;
+
+/**
+ * Mints a device named `name`, retrying up to {@link MAX_MINT_ATTEMPTS} times
+ * if the freshly-minted id collides with one already in `devices` — the id
+ * space {@link mintDevice} draws from, not the credential.
+ *
+ * `mintDevice` itself takes no device list and so cannot check uniqueness; a
+ * collision is not an auth bypass (`verifyDevice`'s digest compare still
+ * gates access) but it silently strands the *second* device paired under a
+ * colliding id forever, because `verifyDevice` finds by id and returns only
+ * the first match. Every caller that mints and persists a device — the CLI's
+ * `--pair` and the tray's "Pair a device…" alike — goes through this rather
+ * than re-deriving the retry loop, so there is one implementation of the
+ * collision check rather than two that can drift (HIVE-142 review).
+ *
+ * `mint` is an injected seam over {@link mintDevice} purely so a test can
+ * force a collision without stubbing the CSPRNG; every real caller takes the
+ * default. Returns `null` after {@link MAX_MINT_ATTEMPTS} straight collisions
+ * — the caller decides what "could not pair" looks like to whoever asked.
+ */
+export function mintUniqueDevice(
+  name: string,
+  devices: readonly ServerDevice[],
+  now?: Date,
+  mint: (name: string, now?: Date) => MintedDevice = mintDevice,
+): MintedDevice | null {
+  for (let attempt = 0; attempt < MAX_MINT_ATTEMPTS; attempt += 1) {
+    const candidate = mint(name, now);
+    if (!devices.some((device) => device.id === candidate.device.id)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 /** SHA-256 of the rendered token string, hex-encoded. */
 export function digestOf(token: string): string {
   return createHash('sha256').update(token).digest('hex');

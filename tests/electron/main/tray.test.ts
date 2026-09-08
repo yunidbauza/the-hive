@@ -17,6 +17,7 @@ class FakeTray {
   static instances: FakeTray[] = [];
   icon: unknown;
   toolTip: string | undefined;
+  title: string | undefined;
   destroyed = false;
   handlers = new Map<string, () => void>();
   constructor(icon: unknown) {
@@ -25,6 +26,9 @@ class FakeTray {
   }
   setToolTip(tip: string): void {
     this.toolTip = tip;
+  }
+  setTitle(title: string): void {
+    this.title = title;
   }
   on(event: string, handler: () => void): void {
     this.handlers.set(event, handler);
@@ -37,16 +41,20 @@ class FakeTray {
 
 const showMessageBox = vi.fn(() => Promise.resolve({ response: 1 }));
 const writeText = vi.fn();
+// Mutable so a test can simulate "dev" (an icon resolves) versus "packaged"
+// (it does not) — `devIconPath` branches on `app.isPackaged`.
+const appMock = { isPackaged: true };
+const setTemplateImage = vi.fn();
 
 vi.mock('electron', () => ({
-  app: { isPackaged: true }, // packaged: `devIconPath` answers `undefined`, so no real file I/O.
+  app: appMock,
   Tray: FakeTray,
   Menu: { buildFromTemplate: vi.fn((template: unknown) => template) },
   dialog: { showMessageBox },
   clipboard: { writeText },
   nativeImage: {
     createEmpty: vi.fn(() => ({ isEmpty: () => true })),
-    createFromPath: vi.fn(() => ({ isEmpty: () => false })),
+    createFromPath: vi.fn(() => ({ isEmpty: () => false, setTemplateImage })),
   },
 }));
 
@@ -84,10 +92,11 @@ function makeDevices(): ServerDevice[] {
 function makeDeps(overrides: {
   devices?: () => ServerDevice[];
   boundAddress?: () => string | null;
+  onPair?: (name: string) => string | null;
 } = {}) {
   return {
     devices: overrides.devices ?? (() => makeDevices()),
-    onPair: vi.fn((_name: string) => 'K7QM-4XR2-9WFD-A3LP'),
+    onPair: vi.fn(overrides.onPair ?? ((_name: string) => 'K7QM-4XR2-9WFD-A3LP')),
     onRevoke: vi.fn(),
     onOpenConsole: vi.fn(),
     boundAddress: overrides.boundAddress ?? (() => '100.101.102.103:7433'),
@@ -96,6 +105,7 @@ function makeDeps(overrides: {
 
 beforeEach(() => {
   FakeTray.instances.length = 0;
+  appMock.isPackaged = true; // the default: no icon resolves, per `devIconPath`.
   vi.clearAllMocks();
   showMessageBox.mockResolvedValue({ response: 1 });
 });
@@ -142,6 +152,25 @@ describe('buildTrayTemplate', () => {
     await Promise.resolve();
     await Promise.resolve();
 
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it('refuses rather than silently pairing when onPair cannot mint a unique id', () => {
+    // `onPair` returns `null` when `mintUniqueDevice` gives up after every
+    // retry (HIVE-142 review) — nothing was stored, and the tray must not
+    // show a success dialog with a token that does not exist.
+    const deps = makeDeps({ onPair: () => null });
+    const template = buildTrayTemplate(deps) as MenuItem[];
+
+    template.find((item) => item.label === 'Pair a device…')?.click?.();
+
+    expect(deps.onPair).toHaveBeenCalledTimes(1);
+    expect(showMessageBox).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error' }),
+    );
+    expect(showMessageBox).not.toHaveBeenCalledWith(
+      expect.objectContaining({ buttons: ['Copy', 'Done'] }),
+    );
     expect(writeText).not.toHaveBeenCalled();
   });
 
@@ -251,6 +280,23 @@ describe('createServerTray', () => {
 
     tray.handlers.get('right-click')?.();
     expect(tray.popUpContextMenu).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to a text title when no icon could be resolved (packaged)', () => {
+    appMock.isPackaged = true; // `devIconPath` answers `undefined` once packaged.
+    createServerTray(makeDeps());
+
+    const tray = FakeTray.instances[0]!;
+    expect(tray.title).toBe('Hive');
+  });
+
+  it('uses a template image and sets no fallback title when an icon resolves (dev)', () => {
+    appMock.isPackaged = false; // `devIconPath` resolves the real `resources/icon.png`.
+    createServerTray(makeDeps());
+
+    expect(setTemplateImage).toHaveBeenCalledWith(true);
+    const tray = FakeTray.instances[0]!;
+    expect(tray.title).toBeUndefined();
   });
 
   it('destroy() destroys the underlying Tray', () => {

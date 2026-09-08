@@ -2,7 +2,7 @@ import type { ServerDevice } from '@shared/config-contract';
 
 import type { Invocation } from '../cli';
 
-import { mintDevice, revokeNamed, type MintedDevice } from './devices';
+import { MAX_MINT_ATTEMPTS, mintDevice, mintUniqueDevice, revokeNamed, type MintedDevice } from './devices';
 
 /**
  * The CLI one-shots' effects, factored out so `runOneShot` stays pure
@@ -19,17 +19,6 @@ export interface OneShotIo {
   writeDevices: (devices: readonly ServerDevice[]) => void;
   print: (line: string) => void;
 }
-
-/**
- * How many times `--pair` re-mints on an id collision before giving up.
- *
- * `mintDevice`'s id is 16 bits of randomness (`d_` + 4 hex characters), so at
- * realistic device counts the first draw essentially always misses every
- * existing id — a handful of retries is generous headroom, not a real
- * mitigation for a crowded namespace. Looping without a cap would turn a
- * one-in-a-billion fluke into a hang instead of a message.
- */
-const MAX_MINT_ATTEMPTS = 8;
 
 /**
  * Runs one of the pre-`whenReady` CLI verbs — `--pair`, `--revoke`,
@@ -78,14 +67,10 @@ function runPair(
     return 1;
   }
 
-  let minted: MintedDevice | undefined;
-  for (let attempt = 0; attempt < MAX_MINT_ATTEMPTS; attempt += 1) {
-    const candidate = mint(name, now);
-    if (!devices.some((device) => device.id === candidate.device.id)) {
-      minted = candidate;
-      break;
-    }
-  }
+  // The collision-safe retry loop lives in `devices.ts` (`mintUniqueDevice`),
+  // shared with the tray's own "Pair a device…" path (HIVE-142 review) — one
+  // implementation of the retry rather than two that can drift.
+  const minted = mintUniqueDevice(name, devices, now, mint);
 
   if (!minted) {
     io.print(`Could not mint a unique device id after ${MAX_MINT_ATTEMPTS} attempts. Try again.`);

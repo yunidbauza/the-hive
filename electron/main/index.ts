@@ -10,7 +10,7 @@ import { installContentSecurityPolicy } from './csp';
 import { remoteListenerBoundHost, startRemoteListener } from './ipc';
 import { registerIpc } from './ipc/router';
 import { registerLifecycle } from './lifecycle';
-import { mintDevice, revokeNamed } from './server/devices';
+import { mintUniqueDevice, revokeNamed } from './server/devices';
 import { fileBackedIo } from './server/file-backed-io';
 import { runOneShot } from './server/one-shot';
 import { createServerTray } from './tray';
@@ -202,11 +202,19 @@ if (!app.requestSingleInstanceLock()) {
           `bind` or drops a device paired by a concurrent `--pair` one-shot —
           the same wholesale-replace-of-`devices`-only shape `fileBackedIo`
           uses for the CLI path.
+
+          `mintUniqueDevice`, not a bare `mintDevice` call — the collision
+          check `--pair`'s own `runOneShot` path already has (HIVE-142
+          review). Nothing is written on `null`; the tray tells the user to
+          try again rather than pairing a device whose id shadows one already
+          stored, which `verifyDevice` would then never see past the first.
         */
         onPair: (name) => {
-          const { device, token } = mintDevice(name);
-          setServer({ devices: [...getConfig().server.devices, device] });
-          return token;
+          const devices = getConfig().server.devices;
+          const minted = mintUniqueDevice(name, devices);
+          if (!minted) return null;
+          setServer({ devices: [...devices, minted.device] });
+          return minted.token;
         },
         onRevoke: (name) => {
           const result = revokeNamed(getConfig().server.devices, name);

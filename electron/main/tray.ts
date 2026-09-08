@@ -19,13 +19,28 @@ import { devIconPath } from './app-icon';
  * Built the way `menu.ts` is: a pure `buildTrayTemplate` the tray's *content*
  * can be unit-tested against, and a thin `createServerTray` that is the only
  * piece touching real Electron (`Tray`, `Menu`, `dialog`, `clipboard`).
+ *
+ * **A proper packaged-build tray icon is still owed** (HIVE-142 review): no
+ * black-and-transparent template PNG exists in `resources/` today, and
+ * shipping one as a runtime resource would need an `electron-builder.yml`
+ * `extraResources` entry — both outside this module's own file list. See
+ * `trayIcon`'s doc comment for exactly what is missing and why, and
+ * `createServerTray`'s text-title fallback for what stands in for it until
+ * that asset exists.
  */
 
 export interface TrayDeps {
   /** Read fresh on every open, so a `--pair` or `--revoke` in another process shows up with no restart. */
   devices: () => readonly ServerDevice[];
-  /** Mints and stores a device named `name`, returning the plaintext token — once, never stored. */
-  onPair: (name: string) => string;
+  /**
+   * Mints and stores a device named `name`, returning the plaintext token —
+   * once, never stored — or `null` when a unique device id could not be
+   * minted after every retry (`mintUniqueDevice` in `server/devices.ts`; a
+   * 16-bit id space and a real if vanishingly unlikely collision, HIVE-142
+   * review). Nothing is stored on `null` — the caller refuses rather than
+   * silently pairing a device whose id shadows an existing one.
+   */
+  onPair: (name: string) => string | null;
   onRevoke: (name: string) => void;
   onOpenConsole: () => void;
   /** What `listener.start()` actually bound, or `null` before it has. */
@@ -75,11 +90,22 @@ export function buildTrayTemplate(deps: TrayDeps): MenuItemConstructorOptions[] 
         const name = autoPairingName();
         const token = deps.onPair(name);
         /*
-          No `BrowserWindow` argument: server mode's premise is that no
-          renderer runs, so there is no window to parent this to, and a
-          detached dialog is the correct (only) shape here — see the module
-          doc comment.
+          No `BrowserWindow` argument on either dialog below: server mode's
+          premise is that no renderer runs, so there is no window to parent
+          this to, and a detached dialog is the correct (only) shape here —
+          see the module doc comment.
         */
+        if (token === null) {
+          // `onPair` refused rather than pairing a device whose id shadows
+          // an existing one (HIVE-142 review) — nothing was stored, and the
+          // dialog says so plainly rather than showing a broken token.
+          void dialog.showMessageBox({
+            type: 'error',
+            title: 'Could not pair a device',
+            message: 'This Hive could not mint a unique device credential. Try again.',
+          });
+          return;
+        }
         void dialog
           .showMessageBox({
             type: 'info',
@@ -113,18 +139,31 @@ export function buildTrayTemplate(deps: TrayDeps): MenuItemConstructorOptions[] 
 /**
  * The icon shown in the menu bar.
  *
- * `devIconPath` answers `undefined` once packaged (see its own doc comment) —
- * a packaged tray icon is a build-resource question this story does not
- * reach, tracked rather than silently shipped broken. An empty image is a
- * valid `nativeImage` Electron accepts without throwing, and macOS still
- * shows a (blank) menu-bar item a user can click — better than a crash, and
- * honest about what remains a gap.
+ * `devIconPath` answers `undefined` once packaged (see its own doc comment),
+ * and a packaged build has nothing else to load: `nativeImage.createFromPath`
+ * supports only PNG and JPEG (checked against Electron's own docs, HIVE-142
+ * review) — the `.icns` electron-builder copies to `Contents/Resources/icon.icns`
+ * for the app's own Dock/Finder icon cannot be decoded by it, and no PNG is
+ * shipped as a runtime resource today (`electron-builder.yml` sets no
+ * `extraResources`). So this resolves an icon in dev and an empty
+ * `nativeImage` when packaged — a real gap, tracked rather than silently
+ * shipped broken (see `createServerTray`'s title fallback, which is what
+ * keeps a packaged tray from being invisible).
+ *
+ * `setTemplateImage(true)` on whatever does load: a menu-bar icon should be a
+ * template image so macOS re-tints it for light and dark menu bars rather
+ * than showing whatever colours the source PNG happens to carry. The app's
+ * icon art was drawn for the Dock, not as a monochrome silhouette, so this is
+ * an improvement over showing it untouched rather than a properly-designed
+ * template asset — that asset is still owed (see the module doc comment).
  */
 function trayIcon(): NativeImage {
   const path = devIconPath('icon.png');
   if (!path) return nativeImage.createEmpty();
   const image = nativeImage.createFromPath(path);
-  return image.isEmpty() ? nativeImage.createEmpty() : image;
+  if (image.isEmpty()) return image;
+  image.setTemplateImage(true);
+  return image;
 }
 
 /**
@@ -141,8 +180,20 @@ function trayIcon(): NativeImage {
  * this function ran.
  */
 export function createServerTray(deps: TrayDeps): { destroy: () => void } {
-  const tray = new Tray(trayIcon());
+  const icon = trayIcon();
+  const tray = new Tray(icon);
   tray.setToolTip('The Hive · serving');
+  /*
+    On the Mac mini this deployment targets there is no window and no dock
+    icon (HIVE-142 review) — the tray is the *only* way a human reaches Pair,
+    Open or Quit. An empty icon renders as an invisible menu-bar item, which
+    would make a served machine unreachable from its own screen even though
+    everything behind it works. A text title is a strictly worse look than a
+    real icon but a strictly better one than nothing, so it is the fallback
+    exactly when `trayIcon()` could not resolve a real one — see that
+    function's doc comment for what is still owed.
+  */
+  if (icon.isEmpty()) tray.setTitle('Hive');
 
   const showMenu = (): void => {
     tray.popUpContextMenu(Menu.buildFromTemplate(buildTrayTemplate(deps)));
