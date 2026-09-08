@@ -1,12 +1,23 @@
-import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readFile as readFileRaw,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
-import type {
-  SkillFile,
-  SkillsSnapshot,
+import {
+  MAX_BUNDLE_FILE_BYTES,
+  type SkillFile,
+  type SkillFileRead,
+  type SkillsSnapshot,
 } from '@shared/skills-contract';
 
-import { PLUGIN_DIR, skillsRoot } from './paths';
+import { PLUGIN_DIR, resolveInSkill, skillsRoot } from './paths';
 import { writePluginDir } from './plugin';
 import { readUserSkills, type SkillsRead } from './read';
 
@@ -48,6 +59,43 @@ export interface SkillsRuntime {
   write(name: string, body: string): Promise<SkillsSnapshot>;
   /** Remove the folder, regenerate, and answer with the fresh snapshot. */
   remove(name: string): Promise<SkillsSnapshot>;
+  /**
+   * One file inside a skill's bundle, for the editor (HIVE-148).
+   *
+   * `readOne` above is `SKILL.md` by another name — a fixed file, no path. This
+   * is its bundle sibling: any file `resolveInSkill` admits, refused rather
+   * than failed when it is too large or looks binary, the same two reasons and
+   * the same order `fs/read.ts` uses for the project explorer.
+   */
+  readFile(name: string, path: string): Promise<SkillFileRead>;
+  /**
+   * Write one file inside a bundle, creating its parent directories and
+   * regenerating the plugin (HIVE-148).
+   *
+   * Does **not** regenerate the skill's `SKILL.md` mirror logic or touch
+   * anything but the one file named — `write` above stays the only verb that
+   * can change a skill's declared name and body.
+   */
+  writeFile(name: string, path: string, body: string): Promise<SkillsSnapshot>;
+  /** Create a folder inside a bundle, regenerate, and answer with the fresh snapshot. */
+  makeDir(name: string, path: string): Promise<SkillsSnapshot>;
+  /**
+   * Remove a file or folder inside a bundle, regenerate, and answer with the
+   * fresh snapshot.
+   *
+   * Refuses `SKILL.md` itself — see the implementation for why deleting the
+   * skill is a different verb.
+   */
+  removeFile(name: string, path: string): Promise<SkillsSnapshot>;
+  /**
+   * Move or rename a file or folder inside a bundle, regenerate, and answer
+   * with the fresh snapshot.
+   *
+   * The bundle sibling of {@link SkillsRuntime.rename}: same refuse-rather-than-
+   * replace rule for a taken destination, scoped to one entry inside a folder
+   * instead of the folder itself.
+   */
+  moveFile(name: string, from: string, to: string): Promise<SkillsSnapshot>;
   /**
    * Move a skill's folder, regenerate, and answer with the fresh snapshot
    * (HIVE-99).
@@ -207,7 +255,7 @@ export function createSkillsRuntime({
 
     async readOne(name: string): Promise<SkillFile> {
       const path = fileFor(name);
-      return { name, body: await readFile(path, 'utf8'), path };
+      return { name, body: await readFileRaw(path, 'utf8'), path };
     },
 
     async write(name: string, body: string): Promise<SkillsSnapshot> {
@@ -220,6 +268,88 @@ export function createSkillsRuntime({
 
     async remove(name: string): Promise<SkillsSnapshot> {
       await rm(join(skillsRoot(), name), { recursive: true, force: true });
+      return snapshot(await sync());
+    },
+
+    async readFile(name: string, path: string): Promise<SkillFileRead> {
+      const absPath = await resolveInSkill(name, path);
+      const info = await stat(absPath);
+
+      /*
+        The same two refusals `fs/read.ts` makes, in the same order and for the
+        same reason: a 40 MB binary reads better as "too large" than as
+        "binary". Reusing `FsRefusalReason` rather than minting a second
+        vocabulary keeps one rendering in the editor for one distinction.
+      */
+      if (info.size > MAX_BUNDLE_FILE_BYTES) {
+        return { name, path, absPath, size: info.size, body: null, refused: 'too-large' };
+      }
+
+      const buffer = await readFileRaw(absPath);
+      if (buffer.includes(0)) {
+        return { name, path, absPath, size: info.size, body: null, refused: 'binary' };
+      }
+
+      return {
+        name,
+        path,
+        absPath,
+        size: info.size,
+        body: buffer.toString('utf8'),
+        refused: null,
+      };
+    },
+
+    async writeFile(name: string, path: string, body: string): Promise<SkillsSnapshot> {
+      const absPath = await resolveInSkill(name, path);
+      await mkdir(dirname(absPath), { recursive: true });
+      await writeFile(absPath, body, 'utf8');
+      /*
+        The content decides, and nothing else does (HIVE-148).
+
+        A blanket `+x` would show up in `~/.hive/skills` as a page of
+        `100644 -> 100755` with nothing behind it, and that directory is a
+        dotfiles directory for the people most likely to write skills. A
+        toggle would be a second thing to get wrong. `#!` is what the kernel
+        reads, so it is what this reads.
+      */
+      await chmod(absPath, body.startsWith('#!') ? 0o755 : 0o644);
+      return snapshot(await sync());
+    },
+
+    async makeDir(name: string, path: string): Promise<SkillsSnapshot> {
+      await mkdir(await resolveInSkill(name, path), { recursive: true });
+      return snapshot(await sync());
+    },
+
+    async removeFile(name: string, path: string): Promise<SkillsSnapshot> {
+      /*
+        SKILL.md is what makes the folder a skill. Deleting it through the file
+        tree would leave a folder that `readUserSkills` reports as invalid, a
+        row the pane cannot open, and no way back except a text editor — the
+        recovery trap HIVE-99's self review found and fixed. Deleting the
+        *skill* is `skills:remove`, which asks first and says what it removes.
+      */
+      if (path === 'SKILL.md') {
+        throw new Error('SKILL.md cannot be deleted — delete the skill instead.');
+      }
+      await rm(await resolveInSkill(name, path), { recursive: true, force: true });
+      return snapshot(await sync());
+    },
+
+    async moveFile(name: string, from: string, to: string): Promise<SkillsSnapshot> {
+      const source = await resolveInSkill(name, from);
+      const target = await resolveInSkill(name, to);
+
+      // Refused rather than left to `rename(2)`, for the reason the skill
+      // rename gives: the syscall replaces an empty directory silently and
+      // fails ENOTEMPTY on a full one, which is two outcomes and no refusal.
+      if (await exists(target)) {
+        throw new Error(`"${to}" already exists in this skill.`);
+      }
+
+      await mkdir(dirname(target), { recursive: true });
+      await rename(source, target);
       return snapshot(await sync());
     },
 

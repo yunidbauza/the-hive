@@ -3,7 +3,9 @@ import {
   mkdir,
   mkdtemp,
   readdir,
+  readFile,
   rm,
+  stat,
   symlink,
   writeFile,
 } from 'node:fs/promises';
@@ -357,5 +359,145 @@ describe('createSkillsRuntime.rename', () => {
     // Straight from `rename(2)`. Nothing to translate: the pane only ever names
     // a skill it has listed, so this is a bug or a hand-edit mid-save.
     await expect(runtime().rename('ghost', 'stand-up')).rejects.toThrow();
+  });
+});
+
+/**
+ * The five file verbs inside a bundle (HIVE-148): read, write, mkdir, remove
+ * and move, all scoped under one skill's folder rather than the folder itself.
+ */
+describe('createSkillsRuntime file verbs', () => {
+  const skillsDir = (): string => join(hiveDir, 'skills');
+
+  it('reads a file from inside the bundle', async () => {
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+    await mkdir(join(skillsDir(), 'graphify', 'scripts'), { recursive: true });
+    await writeFile(
+      join(skillsDir(), 'graphify', 'scripts', 'b.py'),
+      'print(1)\n',
+      'utf8',
+    );
+
+    const file = await skills.readFile('graphify', 'scripts/b.py');
+
+    expect(file.body).toBe('print(1)\n');
+    expect(file.refused).toBeNull();
+  });
+
+  it('refuses a binary file rather than failing on it', async () => {
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+    await writeFile(
+      join(skillsDir(), 'graphify', 'logo.png'),
+      Buffer.from([0, 1, 2, 0]),
+    );
+
+    const file = await skills.readFile('graphify', 'logo.png');
+
+    expect(file.refused).toBe('binary');
+    expect(file.body).toBeNull();
+  });
+
+  it('writes a file with a shebang as 755 and everything else as 644', async () => {
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+
+    await skills.writeFile('graphify', 'scripts/run.sh', '#!/bin/sh\necho hi\n');
+    await skills.writeFile('graphify', 'notes.md', 'plain\n');
+
+    const script = await stat(join(skillsDir(), 'graphify', 'scripts', 'run.sh'));
+    const notes = await stat(join(skillsDir(), 'graphify', 'notes.md'));
+
+    expect(script.mode & 0o777).toBe(0o755);
+    expect(notes.mode & 0o777).toBe(0o644);
+  });
+
+  it('creates parent directories on write', async () => {
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+
+    await skills.writeFile('graphify', 'a/b/c/deep.txt', 'x');
+
+    expect(
+      await readFile(join(skillsDir(), 'graphify', 'a/b/c/deep.txt'), 'utf8'),
+    ).toBe('x');
+  });
+
+  it('makes an empty folder that survives a re-read', async () => {
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+
+    await skills.makeDir('graphify', 'references');
+    const snapshot = await skills.list();
+
+    const skill = snapshot.skills.find((s) => s.name === 'graphify');
+    expect(skill?.manifest.entries.map((e) => e.path)).toContain('references');
+  });
+
+  it('removes a folder with what is under it', async () => {
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+    await skills.writeFile('graphify', 'scripts/a.py', 'x');
+
+    await skills.removeFile('graphify', 'scripts');
+
+    await expect(
+      stat(join(skillsDir(), 'graphify', 'scripts')),
+    ).rejects.toThrow();
+  });
+
+  it('refuses to remove SKILL.md, which would break the skill silently', async () => {
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+
+    await expect(skills.removeFile('graphify', 'SKILL.md')).rejects.toThrow();
+  });
+
+  it('moves a file inside the bundle', async () => {
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+    await skills.writeFile('graphify', 'a.py', 'x');
+
+    await skills.moveFile('graphify', 'a.py', 'scripts/b.py');
+
+    expect(
+      await readFile(join(skillsDir(), 'graphify', 'scripts/b.py'), 'utf8'),
+    ).toBe('x');
+    await expect(stat(join(skillsDir(), 'graphify', 'a.py'))).rejects.toThrow();
+  });
+
+  it('refuses a move onto a name that is taken', async () => {
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+    await skills.writeFile('graphify', 'a.py', 'a');
+    await skills.writeFile('graphify', 'b.py', 'b');
+
+    await expect(skills.moveFile('graphify', 'a.py', 'b.py')).rejects.toThrow();
+    expect(await readFile(join(skillsDir(), 'graphify', 'b.py'), 'utf8')).toBe(
+      'b',
+    );
+  });
+
+  it('refuses a path that escapes the skill root through a symlink', async () => {
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+    const outside = await mkdtemp(join(tmpdir(), 'hive-outside-'));
+    await writeFile(join(outside, 'secret.txt'), 'no', 'utf8');
+    await symlink(outside, join(skillsDir(), 'graphify', 'escape'));
+
+    /*
+      The escape must fail *because it escapes*, not because the target is
+      missing: `secret.txt` is written before the symlink exists, so a
+      resolveInSkill that only checked ENOENT would find the file and read it
+      straight through the link. The message assertion is what pins this down
+      to `OutsideSkillError` rather than any other rejection — a bare
+      `.rejects.toThrow()` would pass just as well on ENOENT and prove nothing.
+    */
+    await expect(
+      skills.readFile('graphify', 'escape/secret.txt'),
+    ).rejects.toThrow(/outside the skill folder/i);
+
+    await rm(outside, { recursive: true, force: true });
   });
 });
