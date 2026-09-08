@@ -47,7 +47,10 @@
       "@shared/*": ["./electron/shared/*"],
       /* Shared test scaffolding. Test code only — an import from `src/` or
          `electron/` through this trips the ESLint zone. */
-      "@tests/*": ["./tests/*"]
+      "@tests/*": ["./tests/*"],
+      /* The server half of server mode (HIVE-142). `electron/main/*` may use
+         this too; `src/*` may not — the renderer zone forbids it. */
+      "@remote-host/*": ["./electron/remote-host/*"]
     }
   },
   "include": ["src", "tests", "__mocks__"]

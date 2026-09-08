@@ -51,5 +51,13 @@ export const aliases = {
    * `@` entry for the same reason `@shared` is: insertion order decides.
    */
   '@tests': fileURLToPath(new URL('./tests', import.meta.url)),
+  /**
+   * The server half of server mode (HIVE-142). Tests reach `electron/remote-host/**`
+   * through this alias; so may `electron/main/**`, which the zone comment in
+   * `eslint.config.mjs` says is deliberate. `src/**` already may not — the
+   * renderer zone lists `electron/remote-host/**` among what it forbids — so
+   * this alias resolving is not a widening of that fence.
+   */
+  '@remote-host': fileURLToPath(new URL('./electron/remote-host', import.meta.url)),
   '@': srcPath(),
 };
