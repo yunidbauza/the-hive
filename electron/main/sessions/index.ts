@@ -47,7 +47,7 @@ import type { HookRuntime } from '../hooks';
 import { withHostAlias } from '../hooks/container-origin';
 import { ticketKeysFromBranch } from '../hooks/ticket-intent';
 import { createStatusTracker } from '../hooks/tracker';
-import { createPtyIpc, type PtyIpc } from '../ipc/pty';
+import { createPtyIpc, type PtyIpc, type ResumeResult } from '../ipc/pty';
 import type { McpRuntime } from '../mcp';
 import type { PtyHostSupervisor } from '../pty-host/supervisor';
 import type { SkillsRuntime } from '../skills';
@@ -323,6 +323,21 @@ export interface Sessions {
   write(entityId: string, data: string): boolean;
   resize(entityId: string, cols: number, rows: number): void;
   ack(entityId: string, seq: number): void;
+  /**
+   * What a reconnecting remote client missed since `lastSeq` (HIVE-143).
+   *
+   * Exposed here rather than by handing `PtyIpc` out, because the id is the
+   * whole reason this method exists. `PtyIpc` is keyed by the **pty session**
+   * id, which is per generation and changes on every restart; every `pty:data`
+   * that leaves this module has had that id rewritten to the **entity** id by
+   * `forward`. A client's `resumeFrom` therefore holds entity ids, and the
+   * events it gets back must carry them too — so the translation happens in the
+   * one place that already owns it.
+   *
+   * `null` for an id with no live session, which the caller reads as "skip this
+   * one" rather than as an error. See {@link ResumeResult} for the rest.
+   */
+  resume(entityId: string, lastSeq: number): ResumeResult | null;
   kill(entityId: string): void;
   /** Kill, wait for the exit, then spawn a fresh process and bootstrap it. */
   restart(request: OpenRequest): Promise<void>;
@@ -2442,6 +2457,26 @@ export function createSessions(options: SessionsOptions): Sessions {
       const sessionId = registry.sessionFor(entityId);
       if (sessionId === undefined) return;
       ptyIpc.ack(sessionId, seq);
+    },
+
+    resume(entityId, lastSeq) {
+      const sessionId = registry.sessionFor(entityId);
+      if (sessionId === undefined) return null;
+
+      const result = ptyIpc.resume(sessionId, lastSeq);
+      // A gap carries a seq and no events, so there is nothing to translate.
+      if (result === null || result.kind === 'gap') return result;
+
+      /*
+        The same rewrite `forward` performs on every live `pty:data`, applied
+        to the replayed ones so a client cannot tell a replayed frame from a
+        live one. Anything else would hand it events for an id it has never
+        seen, on a session it is watching under another name.
+      */
+      return {
+        kind: 'replay',
+        events: result.events.map((event) => ({ ...event, sessionId: entityId })),
+      };
     },
 
     kill(entityId) {

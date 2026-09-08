@@ -5,7 +5,7 @@ import { registerIpcHandlers } from './index';
 /**
  * Where this process's IPC is answered (HIVE-141).
  *
- * `local` is today and every day so far: `registerIpcHandlers()` binds all 114
+ * `local` is today and every day so far: `registerIpcHandlers()` binds all 117
  * channels to handlers in this process. `remote` is the mode where they are
  * answered by another machine, and it is a stub — HIVE-144 fills it in.
  *

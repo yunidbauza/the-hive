@@ -709,6 +709,51 @@ describe('identity: the renderer only ever sees entity ids', () => {
     expect(() => sessions.kill('ghost')).not.toThrow();
     expect(supervisor.write).not.toHaveBeenCalled();
   });
+
+  /**
+   * Resume translates ids in **both** directions (HIVE-143).
+   *
+   * The ring in `ipc/pty.ts` is keyed by the pty session id and stamps its
+   * events with it; every `pty:data` that leaves this module has had that
+   * rewritten to the entity id by `forward`. So a remote client's `resumeFrom`
+   * holds entity ids, and what it gets back has to as well — a replayed frame
+   * must be indistinguishable from a live one. The ring's own arithmetic is
+   * `tests/electron/main/ipc/pty.test.ts`'s job.
+   */
+  describe('resume', () => {
+    it('replays what a client missed, under the entity id it knows', () => {
+      sessions.open(OPEN);
+      const sessionId = mintedFor('hero-refresh');
+
+      emitData({ sessionId, chunk: 'first' });
+      vi.advanceTimersByTime(8);
+      const live = on(CH.ptyData).at(-1)!.payload;
+
+      const result = sessions.resume('hero-refresh', 0);
+
+      expect(result).toEqual({
+        kind: 'replay',
+        events: [{ sessionId: 'hero-refresh', chunk: 'first', seq: live.seq }],
+      });
+      // Never the pty session id, which no client has ever seen.
+      expect(sessionId).not.toBe('hero-refresh');
+    });
+
+    it('replays nothing for a client that is already up to date', () => {
+      sessions.open(OPEN);
+      const sessionId = mintedFor('hero-refresh');
+
+      emitData({ sessionId, chunk: 'first' });
+      vi.advanceTimersByTime(8);
+      const seq = on(CH.ptyData).at(-1)!.payload.seq as number;
+
+      expect(sessions.resume('hero-refresh', seq)).toEqual({ kind: 'replay', events: [] });
+    });
+
+    it('answers null for an entity with no live session', () => {
+      expect(sessions.resume('ghost', 0)).toBeNull();
+    });
+  });
 });
 
 /**
