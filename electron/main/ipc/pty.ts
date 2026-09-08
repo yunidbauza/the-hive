@@ -4,6 +4,7 @@ import {
   CH,
   HIGH_WATER_BYTES,
   LOW_WATER_BYTES,
+  REPLAY_BYTES,
   RESIZE_THROTTLE_MS,
   type DataEvent,
   type ExitEvent,
@@ -46,7 +47,17 @@ export interface PtyIpcOptions {
   highWaterBytes?: number;
   lowWaterBytes?: number;
   resizeThrottleMs?: number;
+  replayBytes?: number;
 }
+
+/**
+ * `replay` — the events after `lastSeq`, contiguous, possibly empty.
+ * `gap`    — the ring cannot reach back; `seq` is the current head, which the
+ *            caller stamps onto the whole transcript so the client sees
+ *            exactly one discontinuity rather than two.
+ * `null`   — no such session, never spawned or already exited.
+ */
+export type ResumeResult = { kind: 'replay'; events: DataEvent[] } | { kind: 'gap'; seq: number };
 
 export interface PtyIpc {
   /** Called by the channel handlers once the payload has been validated. */
@@ -55,6 +66,11 @@ export interface PtyIpc {
   resize(sessionId: string, cols: number, rows: number): void;
   kill(sessionId: string): void;
   ack(sessionId: string, seq: number): void;
+  /**
+   * What a reconnecting client missed since `lastSeq` (HIVE-143). See
+   * {@link ResumeResult}.
+   */
+  resume(sessionId: string, lastSeq: number): ResumeResult | null;
   /** Dev-only counters, surfaced through `app:info`. */
   diagnostics(): PtyDiagnostics[];
   /** Drop every timer. Called on teardown so nothing outlives the app. */
@@ -89,6 +105,18 @@ interface Channel {
   unacked: number;
   paused: boolean;
 
+  /**
+   * Batches already sent, kept so a reconnecting socket can be given exactly
+   * what it missed (HIVE-143).
+   *
+   * Distinct from `outstanding`, which holds *unacknowledged* byte counts for
+   * flow control and is emptied by an ack. This holds *content*, and an ack
+   * says nothing about whether it can be discarded: a client that acked a
+   * batch and then lost its socket still needs that batch on reconnect.
+   */
+  replay: { seq: number; chunk: string }[];
+  replayBytes: number;
+
   /** Held until the last data for this session has been flushed. */
   exitEvent: ExitEvent | null;
   exited: boolean;
@@ -112,6 +140,8 @@ function emptyChannel(): Channel {
     outstanding: [],
     unacked: 0,
     paused: false,
+    replay: [],
+    replayBytes: 0,
     exitEvent: null,
     exited: false,
     resizeTimer: null,
@@ -133,6 +163,7 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
     highWaterBytes = HIGH_WATER_BYTES,
     lowWaterBytes = LOW_WATER_BYTES,
     resizeThrottleMs = RESIZE_THROTTLE_MS,
+    replayBytes = REPLAY_BYTES,
   } = options;
 
   const channels = new Map<string, Channel>();
@@ -158,6 +189,22 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
 
       const event: DataEvent = { sessionId, chunk, seq: channel.seq };
       send(CH.ptyData, event);
+
+      /*
+        Recorded after the send, not before: what a resuming client wants is
+        what was actually put on the wire, and recording first would leave a
+        batch in the ring that a throwing `send` never delivered.
+      */
+      channel.replay.push({ seq: channel.seq, chunk });
+      channel.replayBytes += bytes;
+      while (channel.replayBytes > replayBytes && channel.replay.length > 0) {
+        // Whole batches from the front, the way `Scrollback` drops whole
+        // chunks. Slicing one in half would leave a seq that maps to a
+        // fragment, and the seq is the only thing making resume possible.
+        const dropped = channel.replay.shift();
+        if (dropped === undefined) break;
+        channel.replayBytes -= Buffer.byteLength(dropped.chunk);
+      }
 
       /**
        * Above the high-water mark, stop the producer.
@@ -385,6 +432,46 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
         channel.paused = false;
         supervisor.resume(sessionId);
       }
+    },
+
+    resume(sessionId, lastSeq) {
+      const channel = channels.get(sessionId);
+      /*
+        Never spawned, or exited. An exited channel stays in `channels` so
+        `diagnostics()` can still attribute late drops to it (see `onData`),
+        but there is nothing left to resume — the caller skips this session
+        entirely rather than replaying a transcript for a terminal that is
+        already gone.
+      */
+      if (channel === undefined || channel.exited) return null;
+
+      if (lastSeq === channel.seq) return { kind: 'replay', events: [] };
+
+      /*
+        A client claiming to have seen more than was ever sent is not
+        necessarily lying: a server restart resets `seq` to 0, so a client
+        holding 400 from the previous process is being honest about a number
+        that no longer means anything here. Treated as a gap rather than an
+        error, which replays the transcript and tells the truth on screen.
+      */
+      const oldest = channel.replay[0]?.seq;
+      if (lastSeq > channel.seq || oldest === undefined || lastSeq + 1 < oldest) {
+        /*
+          The head, not zero. The caller stamps the whole transcript with this
+          seq, so the client sees one discontinuity here and then contiguous
+          live output at `seq + 1`. Stamping zero would produce a second
+          discontinuity at the first live batch and write the gap notice twice
+          for a single gap.
+        */
+        return { kind: 'gap', seq: channel.seq };
+      }
+
+      return {
+        kind: 'replay',
+        events: channel.replay
+          .filter((entry) => entry.seq > lastSeq)
+          .map((entry) => ({ sessionId, chunk: entry.chunk, seq: entry.seq })),
+      };
     },
 
     diagnostics() {

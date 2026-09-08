@@ -2151,6 +2151,17 @@ export const HIGH_WATER_BYTES = 512 * 1024;
 export const LOW_WATER_BYTES = 128 * 1024;
 
 /**
+ * Per-session replay ring, for a remote client reconnecting (HIVE-143).
+ *
+ * Sized to match `SCROLLBACK_BYTES`, which is the other bounded transcript in
+ * the app and the fallback when this one cannot reach back far enough. Making
+ * it larger would only move the point at which the gap notice appears; making
+ * it smaller would move that point closer for no saving worth having, since a
+ * session is already permitted 256 KiB in the pty host.
+ */
+export const REPLAY_BYTES = 256 * 1024;
+
+/**
  * At most one resize per session per this many milliseconds.
  *
  * A window drag fires `ResizeObserver` continuously, and every resize is a

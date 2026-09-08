@@ -502,3 +502,89 @@ describe('dispose', () => {
     expect(ipc.diagnostics()).toEqual([]);
   });
 });
+
+describe('resume', () => {
+  /** Flush one batch. Only a payload past the size cap flushes on its own. */
+  const beat = (chunk: string): void => {
+    emitData({ sessionId: 'a', chunk });
+    vi.advanceTimersByTime(8);
+  };
+
+  it('replays only what the client has not seen, in order', () => {
+    beat('one');
+    beat('two');
+    beat('three');
+
+    expect(ipc.resume('a', 1)).toEqual({
+      kind: 'replay',
+      events: [
+        { sessionId: 'a', chunk: 'two', seq: 2 },
+        { sessionId: 'a', chunk: 'three', seq: 3 },
+      ],
+    });
+  });
+
+  it('replays nothing when the client is already current', () => {
+    beat('one');
+
+    expect(ipc.resume('a', 1)).toEqual({ kind: 'replay', events: [] });
+  });
+
+  it('reports a gap at the current head when the ring cannot reach back', () => {
+    ipc.dispose();
+    sent = [];
+    ipc = build({ replayBytes: 8 });
+    ipc.spawn(SPAWN);
+    for (const chunk of ['aaaa', 'bbbb', 'cccc', 'dddd']) beat(chunk);
+
+    // An 8-byte ring holds the last two batches; seq 1 and 2 are gone.
+    expect(ipc.resume('a', 1)).toEqual({ kind: 'gap', seq: 4 });
+  });
+
+  it('still replays from the oldest seq the ring does hold', () => {
+    ipc.dispose();
+    sent = [];
+    ipc = build({ replayBytes: 8 });
+    ipc.spawn(SPAWN);
+    for (const chunk of ['aaaa', 'bbbb', 'cccc']) beat(chunk);
+
+    expect(ipc.resume('a', 2)).toEqual({
+      kind: 'replay',
+      events: [{ sessionId: 'a', chunk: 'cccc', seq: 3 }],
+    });
+  });
+
+  it('returns null for a session it has never heard of', () => {
+    expect(ipc.resume('nope', 0)).toBeNull();
+  });
+
+  it('reports a gap when the client claims a seq beyond what was ever sent', () => {
+    beat('one');
+
+    // A server restart resets seq to 0, so a client can honestly hold a higher
+    // number than this process ever issued. Treated as a gap, not a crash.
+    expect(ipc.resume('a', 99)).toEqual({ kind: 'gap', seq: 1 });
+  });
+
+  it('frees the ring when the session exits', () => {
+    beat('one');
+    emitExit({ sessionId: 'a', exitCode: 0 });
+    vi.advanceTimersByTime(8);
+
+    // The ring lives on the Channel, so the existing `channels.delete` frees
+    // it. Asserted because "it is freed with the channel" is only true while
+    // nothing starts holding the ring somewhere else.
+    expect(ipc.resume('a', 0)).toBeNull();
+  });
+
+  it('does not let the ring grow without bound under a flood', () => {
+    ipc.dispose();
+    sent = [];
+    ipc = build({ replayBytes: 1024 });
+    ipc.spawn(SPAWN);
+    for (let i = 0; i < 50; i += 1) beat('y'.repeat(512));
+
+    const result = ipc.resume('a', 0);
+    expect(result).toMatchObject({ kind: 'gap' });
+  });
+});
