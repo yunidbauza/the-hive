@@ -13,6 +13,7 @@ import {
   BRIDGE_LEDGER_KEYS,
   BRIDGE_NOTIFICATIONS_KEYS,
   BRIDGE_PTY_KEYS,
+  BRIDGE_SERVER_KEYS,
   BRIDGE_SESSION_KEYS,
   BRIDGE_SKILLS_KEYS,
   BRIDGE_SLACK_KEYS,
@@ -90,6 +91,8 @@ const theme = () =>
 const ui = () =>
   exposed.ui as Record<string, (...args: unknown[]) => unknown>;
 
+const server = () =>
+  exposed.server as Record<string, (...args: unknown[]) => unknown>;
 const session = () =>
   exposed.session as Record<string, (...args: unknown[]) => unknown>;
 const ledger = () =>
@@ -102,6 +105,15 @@ describe('exposed surface', () => {
     expect(Object.keys(exposed).sort()).toEqual([...BRIDGE_KEYS].sort());
     expect(Object.keys(pty()).sort()).toEqual([...BRIDGE_PTY_KEYS].sort());
     expect(Object.keys(config()).sort()).toEqual([...BRIDGE_CONFIG_KEYS].sort());
+    /**
+     * HIVE-142's namespace, written with it rather than after the fact — the
+     * habit the notes throughout this file spent six namespaces establishing.
+     * `pair` and `revoke` are the two verbs that mint and destroy a device
+     * credential; a third here is a change to what a device can do to every
+     * session on this machine, and this line is what stops it arriving
+     * quietly.
+     */
+    expect(Object.keys(server()).sort()).toEqual([...BRIDGE_SERVER_KEYS].sort());
     expect(Object.keys(integrations()).sort()).toEqual([
       ...BRIDGE_INTEGRATIONS_KEYS,
     ].sort());

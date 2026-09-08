@@ -84,14 +84,15 @@ export function readServerDevicesFromDisk(): readonly ServerDevice[] {
 
 /**
  * The {@link DeviceStore} the running server process uses — for the
- * listener's own `devices` getter, and for the tray's pairing and revoking
- * (HIVE-142 review, N1/N2). Reads never touch the shared config cache
- * ({@link readServerDevicesFromDisk}); writes go through `setServer`, the
- * same wholesale-replace-of-`devices` verb every other config mutation in
- * this app uses, which *does* update the cache — appropriate here because,
- * unlike a handshake, a write only ever happens from the tray, itself
- * reachable only by a human already at (or screen-sharing into) this
- * machine's own console.
+ * listener's own `devices` getter, for the tray's pairing and revoking
+ * (HIVE-142 review, N1/N2), and for the `server:pair`/`server:revoke` IPC
+ * handlers behind the Settings pane's device roster (HIVE-142). Reads never
+ * touch the shared config cache ({@link readServerDevicesFromDisk}); writes
+ * go through `setServer`, the same wholesale-replace-of-`devices` verb every
+ * other config mutation in this app uses, which *does* update the cache —
+ * appropriate here because, unlike a handshake, a write only ever happens
+ * from the tray or from Settings, both reachable only by a human already at
+ * (or screen-sharing into) this machine's own console.
  */
 export function serverDeviceStore(): DeviceStore {
   return {

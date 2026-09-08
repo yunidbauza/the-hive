@@ -39,7 +39,7 @@ export const REMOTE_PROTOCOL_VERSION = 1;
  * promote a `notify` to a `call` and the typing path acquires a round trip.
  *
  * - `call` — request/response. The client asks, the server answers with
- *   `result` or `error`. 86 channels.
+ *   `result` or `error`. 89 channels.
  * - `notify` — fire and forget, client to server, ordered per session. 6
  *   channels. Ordering between a `pty:write` and a `pty:resize` is observable,
  *   so a transport may not reorder them.
@@ -111,6 +111,9 @@ export const FRAME_KIND = {
   [CH.configSetJira]: 'call',
   [CH.configSetSlack]: 'call',
   [CH.configSetReceiver]: 'call',
+  [CH.configSetServer]: 'call',
+  [CH.serverPair]: 'call',
+  [CH.serverRevoke]: 'call',
   [CH.jiraStatus]: 'call',
   [CH.jiraSetToken]: 'call',
   [CH.jiraClearToken]: 'call',
@@ -214,7 +217,7 @@ export const FRAME_KIND = {
  * should be reviewed as a table, in one diff, before it is the thing standing
  * between a socket and `pty:spawn`.
  *
- * `event` channels carry a class too, because the ticket asks for all 114
+ * `event` channels carry a class too, because the ticket asks for all 117
  * classified exactly once and a hole in a default-deny table is worse than an
  * over-classification. For a push the class is the privilege needed to *receive*
  * it, which is `read` for all 22: a client cannot cause an event, only observe
@@ -225,7 +228,7 @@ export const FRAME_KIND = {
  * `pty:ack` and `pty:prompt` above. Grading a channel by the tone of its name is
  * how both of those came out wrong on the first pass.
  *
- * The twenty-six `execute` entries, each with its reason. The list is long
+ * The twenty-eight `execute` entries, each with its reason. The list is long
  * because the rule was applied by reading each handler rather than by trusting
  * the channel's name, and a surprising number of innocuously-named reads spawn a
  * process:
@@ -276,6 +279,14 @@ export const FRAME_KIND = {
  *   a permission prompt. Answering one authorises a tool call.
  * - `updates:check` — can download and install a new binary over the running
  *   application.
+ * - `server:pair`, `server:revoke` (HIVE-142) — mint or destroy a device
+ *   credential. The same register as `agents:run`: whoever holds a paired
+ *   device's token can reach the entire IPC surface, which is a strictly
+ *   larger capability than any single channel that credential could later
+ *   call. `config:set-server` stays `mutate` — it only ever writes `enabled`
+ *   and `bind`, both already resolved by {@link ConfigSnapshot.server};
+ *   minting and destroying the credential itself is what `server:pair` and
+ *   `server:revoke` are for.
  *
  * Two channels that read like `read` and are `mutate`: `session:pr` returns
  * `void` and calls `history.record` (`ipc/index.ts:2162`), a persistent write —
@@ -305,6 +316,9 @@ export const CHANNEL_AUTHORIZATION = {
   [CH.configSetJira]: 'mutate',
   [CH.configSetSlack]: 'mutate',
   [CH.configSetReceiver]: 'mutate',
+  [CH.configSetServer]: 'mutate',
+  [CH.serverPair]: 'execute',
+  [CH.serverRevoke]: 'execute',
   [CH.jiraStatus]: 'read',
   [CH.jiraSetToken]: 'mutate',
   [CH.jiraClearToken]: 'mutate',

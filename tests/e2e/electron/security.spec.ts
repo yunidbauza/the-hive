@@ -74,6 +74,7 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     github: Object.keys(window.hive!.github).sort(),
     notifications: Object.keys(window.hive!.notifications).sort(),
     jira: Object.keys(window.hive!.jira).sort(),
+    server: Object.keys(window.hive!.server).sort(),
     updates: Object.keys(window.hive!.updates).sort(),
     theme: Object.keys(window.hive!.theme).sort(),
     ui: Object.keys(window.hive!.ui).sort(),
@@ -278,6 +279,14 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'ledger',
     'notifications',
     'pty',
+    /**
+     * HIVE-142 adds `server`. What a web page can now do that it could not
+     * before: mint a device credential and hand back its plaintext once, or
+     * revoke one by name — asserted separately below on `surface.server`.
+     * Both verbs persist to `ConfigSnapshot.server.devices`, the same list
+     * `config.setServer` can read but never write directly.
+     */
+    'server',
     'session',
     'skills',
     /*
@@ -324,6 +333,14 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'write',
   ]);
   expect(surface.ledger).toEqual(['answer', 'list', 'onChanged', 'post']);
+  /**
+   * HIVE-142. Two verbs, and neither is an ordinary settings write: `pair`
+   * mints a device credential and answers its plaintext once; `revoke`
+   * destroys one by name. A third here is a change to what a device can do
+   * to every session on this machine, which is exactly the kind of widening
+   * this whole test exists to make impossible to add quietly.
+   */
+  expect(surface.server).toEqual(['pair', 'revoke']);
   expect(surface.skills).toEqual([
     'list',
     'read',
@@ -745,6 +762,16 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
      * than here: the allow-list names who may command, and the agent permission
      * fence decides what a woken run may do.
      */
+    /**
+     * HIVE-142's `setServer`, and it does exactly what `setReceiver` above
+     * does for the receiver: writes `enabled` and `bind`, both already
+     * resolved by `ConfigSnapshot.server`, and carries no credential —
+     * `parseSetServerRequest` refuses one as an unexpected key. Minting and
+     * destroying a device credential is the new `server` namespace's job,
+     * asserted separately below, and it is graded `execute` rather than
+     * `mutate` for exactly that reason (`remote-contract.ts`).
+     */
+    'setServer',
     'setSlack',
     'startClone',
   ]);

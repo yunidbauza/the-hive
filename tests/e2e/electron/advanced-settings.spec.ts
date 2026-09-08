@@ -440,3 +440,88 @@ test('the chip survives the switch going loopback — it reports the running bin
 
   await app.close();
 });
+
+/**
+ * HIVE-142's Server mode group, placed between `ContainerAliasGroup` and
+ * Reset (`advanced-section.tsx`). Asserted by heading order rather than by
+ * DOM position directly — Playwright has no ordinal locator for "the group
+ * between these two" — which is exactly what a component landing in the
+ * wrong slot would fail.
+ */
+test('the Server mode group renders between Containers and Reset', async ({}, testInfo) => {
+  const { configPath } = seed((name) => testInfo.outputPath(name));
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+  const page = await app.firstWindow();
+  await page.waitForSelector('header');
+
+  await openAdvanced(page);
+
+  const headings = await page.getByRole('heading', { level: 3 }).allTextContents();
+  const containers = headings.indexOf('Containers');
+  const server = headings.indexOf('Server mode');
+  const reset = headings.indexOf('Reset');
+
+  expect(containers).toBeGreaterThanOrEqual(0);
+  expect(server).toBeGreaterThan(containers);
+  expect(reset).toBeGreaterThan(server);
+
+  await app.close();
+});
+
+/**
+ * The default: nothing paired, nothing configured, so the switch reads off
+ * and the bind fields are absent rather than merely collapsed — the same
+ * `toBeHidden()` distinction `the off-loopback bind is off…` above draws for
+ * `ContainerAliasGroup`, and for the identical reason: `ServerModeGroup`
+ * renders its fields conditionally (`open ? <> … </> : null`).
+ */
+test('the Server mode switch is off, and its fields are hidden, by default', async ({}, testInfo) => {
+  const { configPath } = seed((name) => testInfo.outputPath(name));
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+  const page = await app.firstWindow();
+  await page.waitForSelector('header');
+
+  await openAdvanced(page);
+
+  const toggle = page.getByRole('switch', { name: 'Server mode' });
+  await expect(toggle).toBeVisible();
+  await expect(toggle).not.toBeChecked();
+  await expect(page.getByLabel(/bind address/i)).toBeHidden();
+  await expect(page.getByLabel(/^port$/i)).toBeHidden();
+
+  await app.close();
+});
+
+/**
+ * The write half of this switch: an ordinary settings write, exactly like
+ * `configSetReceiver`'s own, and proven against the real bridge — `handle`
+ * → `parseSetServerRequest` → `setServer` → disk.
+ */
+test('turning server mode on reveals the bind fields and writes enabled: true', async ({}, testInfo) => {
+  const { configPath } = seed((name) => testInfo.outputPath(name));
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+  const page = await app.firstWindow();
+  await page.waitForSelector('header');
+
+  await openAdvanced(page);
+
+  await page.getByRole('switch', { name: 'Server mode' }).click();
+
+  await expect(page.getByLabel(/bind address/i)).toBeVisible();
+  await expect(page.getByLabel(/^port$/i)).toBeVisible();
+
+  await expect
+    .poll(() => (read(configPath).server as Record<string, unknown> | undefined)?.enabled)
+    .toBe(true);
+
+  await app.close();
+});

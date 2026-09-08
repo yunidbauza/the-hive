@@ -17,6 +17,7 @@ import type {
   SetProjectRuntimeRequest,
   SetReceiverRequest,
   SetRuntimeRequest,
+  SetServerRequest,
 } from '@shared/config-contract';
 import type {
   AppInfo,
@@ -195,6 +196,75 @@ export const setJiraConnection = (request: SetJiraRequest): Promise<void> =>
 export const setReceiverConfig = (
   request: SetReceiverRequest,
 ): Promise<void> => mutate((bridge) => bridge.config.setReceiver(request));
+
+/**
+ * Turn server mode on or off, and change where it listens (HIVE-142).
+ *
+ * Routed through `mutate` like every other settings write, so the fresh
+ * snapshot main returns — `enabled` and `bind`, never a credential — is what
+ * the switch and the bind fields render. `bind` takes effect at next launch,
+ * exactly as {@link setReceiverConfig}'s does.
+ */
+export const setServerConfig = (request: SetServerRequest): Promise<void> =>
+  mutate((bridge) => bridge.config.setServer(request));
+
+/**
+ * Mint a device credential named `name`, and answer its plaintext once
+ * (HIVE-142).
+ *
+ * Not routed through `mutate`: `server:pair` does not return a
+ * `ConfigSnapshot`, it returns the one-time secret. The snapshot is re-read
+ * afterward so the caller's device list picks up the new entry without a
+ * manual Reload — the same reason every mutating verb elsewhere returns its
+ * own fresh snapshot, reached here by one extra read instead.
+ *
+ * `{ error }` on a refusal — a duplicate name, or a credential that could not
+ * be minted uniquely — rather than a rejected promise, so the settings pane
+ * can show the reason inline the same way the server-mode tray does.
+ *
+ * The plaintext token is the return value and nothing else. It is never
+ * logged, and this function never writes it anywhere the caller did not ask
+ * for it.
+ */
+export async function pairDevice(
+  name: string,
+): Promise<{ token: string } | { error: string }> {
+  const bridge = window.hive;
+  if (!bridge) return { error: 'No bridge available.' };
+
+  try {
+    const outcome = await bridge.server.pair({ name });
+    if ('token' in outcome) {
+      snapshot = await bridge.config.get();
+      emit();
+    }
+    return outcome;
+  } catch (cause) {
+    console.error('[hive] could not pair a device:', cause);
+    return { error: 'Pairing failed.' };
+  }
+}
+
+/**
+ * Revoke the device named `name` (HIVE-142).
+ *
+ * The snapshot is re-read afterward for the same reason {@link pairDevice}
+ * reads it: revoking has to reach the caller's device list — the list
+ * `ServerModeGroup` renders — without a manual Reload, and this verb returns
+ * no snapshot of its own to install.
+ */
+export async function revokeDevice(name: string): Promise<void> {
+  const bridge = window.hive;
+  if (!bridge) return;
+
+  try {
+    await bridge.server.revoke({ name });
+    snapshot = await bridge.config.get();
+  } catch (cause) {
+    console.error('[hive] could not revoke the device:', cause);
+  }
+  emit();
+}
 
 /**
  * What this machine's `gh` looks like (story 106).

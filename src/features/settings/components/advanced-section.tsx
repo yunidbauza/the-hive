@@ -9,6 +9,7 @@ import { useSwarmPhrase } from '@/hooks/use-swarm-phrase';
 
 import { ConfigResetConfirm } from '@features/settings/components/config-reset-confirm';
 import { ContainerAliasGroup } from '@features/settings/components/container-alias-group';
+import { ServerModeGroup } from '@features/settings/components/server-mode-group';
 import { SettingsGroup } from '@features/settings/components/settings-group';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
 import { useProjectConfig } from '@hooks/use-project-config';
@@ -348,6 +349,12 @@ export function AdvancedSection() {
       <ContainerAliasGroup
         hostAlias={snapshot.receiver.hostAlias}
         bind={snapshot.receiver.bind}
+      />
+
+      <ServerModeGroup
+        enabled={snapshot.server.enabled}
+        bind={snapshot.server.bind}
+        devices={snapshot.server.devices}
       />
 
       <SettingsGroup

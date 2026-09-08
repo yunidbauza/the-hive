@@ -81,11 +81,14 @@ import {
   parseSetJiraRequest,
   parseSetJiraTokenRequest,
   parseSetReceiverRequest,
+  parseSetServerRequest,
   parseSetSlackRequest,
   parseSetSlackTokensRequest,
   parseDismissRequest,
   parseMarkReadRequest,
   parseNotificationAction,
+  parsePairDeviceRequest,
+  parseRevokeDeviceRequest,
   parseSetNotificationsRequest,
   parseSetProjectRuntimeRequest,
   parseSetRuntimeRequest,
@@ -170,6 +173,7 @@ import {
   setProjectRuntime,
   setReceiver,
   setRuntime,
+  setServer,
   setSlack,
 } from '../config';
 import { diagnoseEnv } from '../config/env-diagnostic';
@@ -213,7 +217,8 @@ import {
   createSessionNames,
 } from '../notifications';
 import { registerPtyHost } from '../pty-host';
-import { readServerDevicesFromDisk } from '../server/file-backed-io';
+import { pairDevice, revokeDevice } from '../server/devices';
+import { readServerDevicesFromDisk, serverDeviceStore } from '../server/file-backed-io';
 import { createSessions, type Sessions } from '../sessions';
 import {
   createSessionHistory,
@@ -2809,6 +2814,48 @@ export function registerIpcHandlers(
   handle(CH.configSetReceiver, (_event, payload): ConfigSnapshot =>
     setReceiver(parseSetReceiverRequest(payload)),
   );
+  /**
+   * HIVE-142. Whether server mode is on, and where it listens — an ordinary
+   * settings write, exactly like `config:set-receiver` above. There is no
+   * credential in this payload: `parseSetServerRequest` refuses one, and
+   * pairing is `server:pair`'s job below.
+   */
+  handle(CH.configSetServer, (_event, payload): ConfigSnapshot =>
+    setServer(parseSetServerRequest(payload)),
+  );
+  /**
+   * Mint a device credential, and answer its plaintext once (HIVE-142).
+   *
+   * Goes through `pairDevice` — the same implementation `--pair` and the
+   * server-mode tray's "Pair a device…" call (`server/devices.ts`) — so the
+   * duplicate-name refusal, the collision-safe retry and "persist against
+   * the roster just read" are proven once, not reimplemented a third time
+   * here. The plaintext is the return value and nothing else: it is never
+   * written into the config, a store, or a log line — the server keeps only
+   * the digest `pairDevice` computed.
+   */
+  handle(
+    CH.serverPair,
+    (_event, payload): { token: string } | { error: string } => {
+      const { name } = parsePairDeviceRequest(payload);
+      const outcome = pairDevice(name, serverDeviceStore());
+      if (outcome.ok) return { token: outcome.token };
+      return {
+        error:
+          outcome.reason === 'duplicate-name'
+            ? `A device named "${name}" already exists. Revoke it first, or choose another name.`
+            : 'This Hive could not mint a unique device credential. Try again.',
+      };
+    },
+  );
+  /**
+   * Revoke a paired device by name (HIVE-142). A no-op, not a refusal, if no
+   * device holds that name — the same `revokeDevice` implementation `--revoke`
+   * and the tray's "Revoke" both call.
+   */
+  handle(CH.serverRevoke, (_event, payload): void => {
+    revokeDevice(parseRevokeDeviceRequest(payload).name, serverDeviceStore());
+  });
 
   /**
    * Slack's MCP server (HIVE-123) — four verbs, none taking a payload.

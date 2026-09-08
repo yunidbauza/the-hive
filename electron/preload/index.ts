@@ -21,6 +21,7 @@ import type {
   CloneStartResult,
   CommandDiagnostic,
   ConfigSnapshot,
+  DeviceNameRequest,
   DiagnoseCommandRequest,
   DiagnoseEnvRequest,
   EnvDiagnostic,
@@ -41,6 +42,7 @@ import type {
   SetProjectRuntimeRequest,
   SetReceiverRequest,
   SetRuntimeRequest,
+  SetServerRequest,
   SetSlackRequest,
   SetSlackTokensRequest,
 } from '@shared/config-contract';
@@ -249,6 +251,10 @@ const bridge: HiveBridge = {
     // HIVE-131. The name a container resolves to reach this host.
     setReceiver: (request: SetReceiverRequest): Promise<ConfigSnapshot> =>
       ipcRenderer.invoke(CH.configSetReceiver, request),
+    // HIVE-142. Whether server mode is on, and where it listens. No
+    // credential here — pairing is the `server` namespace's job, below.
+    setServer: (request: SetServerRequest): Promise<ConfigSnapshot> =>
+      ipcRenderer.invoke(CH.configSetServer, request),
     /*
       Story 107. Neither takes an argument — see the contract for why that is
       the security design and not an oversight. Written with no parameter list
@@ -265,6 +271,17 @@ const bridge: HiveBridge = {
     cancelClone: (): Promise<void> => ipcRenderer.invoke(CH.configCloneCancel),
     onCloneDone: (callback: (event: CloneDoneEvent) => void) =>
       subscribe<CloneDoneEvent>(CH.configCloneDone, callback),
+  },
+  // HIVE-142. Pairing and revoking a device for server mode — its own
+  // namespace because neither verb is an ordinary settings write; see the
+  // contract for why.
+  server: {
+    pair: (
+      request: DeviceNameRequest,
+    ): Promise<{ token: string } | { error: string }> =>
+      ipcRenderer.invoke(CH.serverPair, request),
+    revoke: (request: DeviceNameRequest): Promise<void> =>
+      ipcRenderer.invoke(CH.serverRevoke, request),
   },
   pty: {
     spawn: (request: SpawnRequest): Promise<void> =>

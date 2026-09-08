@@ -1723,6 +1723,20 @@ export interface SetServerRequest {
 }
 
 /**
+ * Payload of `server:pair` and `server:revoke` (HIVE-142).
+ *
+ * Both verbs take just a device name. Pairing mints the credential and stores
+ * only its digest; revoking needs nothing else to find the record. `name` is
+ * freeform text a person typed — "Yunid's MacBook" — not
+ * {@link isProjectKey}'s or an agent's closed alphabet, so it is bounded the
+ * way any other pasted text on this bridge is (`assertText`) rather than
+ * pattern-matched.
+ */
+export interface DeviceNameRequest {
+  name: string;
+}
+
+/**
  * Payload of `config:set-slack` (HIVE-124).
  *
  * Partial in the same way {@link SetRuntimeRequest} is: only the fields named
