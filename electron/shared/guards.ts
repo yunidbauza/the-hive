@@ -2033,6 +2033,15 @@ export function assertSkillName(value: unknown, label: string): string {
  * and a verb that removed the bundle root would be `skills.remove` with a
  * different name.
  *
+ * It also **normalises**, not just validates: the return value is
+ * `segments.join('/')`, not the string that was passed in. `a//b`, `a/b/c/d/`
+ * and `a\b\c\d` all `join` onto a root identically, so nothing downstream
+ * broke while this returned the verbatim string — but `readBundle` emits
+ * canonical POSIX-separated paths as `BundleEntry.path`, and a request that
+ * kept its own separators or doubled slashes would carry a string that can
+ * never `===` the manifest entry it names, silently missing a dedupe or an
+ * open-buffer lookup keyed on that path.
+ *
  * As with `assertRelPath`, this is not a containment check and cannot be one.
  * `electron/main/skills/paths.ts` resolves and calls `contains()` after
  * `realpath`. Both are required.
@@ -2049,7 +2058,7 @@ export function assertSkillPath(value: unknown, label: string): string {
     return fail(`${label}: must not contain a dot segment`);
   }
 
-  return path;
+  return segments.join('/');
 }
 
 /**
@@ -2160,6 +2169,12 @@ export function parseSkillImportRequest(input: unknown): SkillImportRequest {
 export function parseSkillDropRequest(input: unknown): SkillDropRequest {
   const raw = assertShape(input, ['name', 'dir', 'sources'], 'skillFileDrop');
 
+  // Declaration order, like every other parser here: a doubly-wrong request
+  // reports the field named first in the shape, not whichever check happens
+  // to run first in the function body.
+  const name = assertSkillName(raw.name, 'skillFileDrop.name');
+  const dir = assertSkillDir(raw.dir, 'skillFileDrop.dir');
+
   if (!Array.isArray(raw.sources)) {
     return fail('skillFileDrop.sources: must be an array');
   }
@@ -2170,9 +2185,19 @@ export function parseSkillDropRequest(input: unknown): SkillDropRequest {
   }
 
   return {
-    name: assertSkillName(raw.name, 'skillFileDrop.name'),
-    dir: assertSkillDir(raw.dir, 'skillFileDrop.dir'),
-    sources: raw.sources.map((source, index) => {
+    name,
+    dir,
+    /*
+      `Array.from` first, not a bare `.map`. `Array.prototype.map` skips holes
+      — `new Array(3)` has none of its indices set — so a sparse array walks
+      straight past the per-element guard below and comes back as a `string[]`
+      that is really three holes, no throw. `structuredClone`/`v8.serialize`,
+      which is the channel this payload actually crosses, preserves holes
+      exactly like that. `Array.from` reads every index up to `.length`,
+      turning a hole into `undefined`, which `assertString` then refuses like
+      any other wrong-typed element.
+    */
+    sources: Array.from(raw.sources).map((source, index) => {
       const label = `skillFileDrop.sources[${String(index)}]`;
       const path = assertString(source, label);
       if (!path.startsWith('/')) {

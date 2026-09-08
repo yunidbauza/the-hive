@@ -12,12 +12,16 @@ import type { FsRefusalReason } from './fs-contract';
  * was one file. A skill is a folder, and a pane that can author every file in
  * one cannot address them by anything but a path.
  *
- * So the boundary moved rather than dissolved. Six verbs still name a skill and
- * nothing else — `list`, `read`, `write`, `remove`, `rename`, and `import`,
- * whose target directory is a path but whose *sources* main chooses itself
- * through a native dialog. Seven carry a skill-relative path, and every one of
- * them puts it through `assertSkillPath`: `assertRelPath`'s rules — no control
- * characters, not absolute, no `..` segment — plus a depth cap.
+ * So the boundary moved rather than dissolved. Five verbs still name a skill
+ * and nothing else — `list`, `read`, `write`, `remove`, and `rename`. Seven
+ * carry a path. Five of those name a *file* inside the bundle and put it
+ * through `assertSkillPath`: `assertRelPath`'s rules — no control characters,
+ * not absolute, no `..` segment — plus a depth cap. The other two, `import`
+ * and `drop`, name a target *directory* rather than a file — where inside the
+ * bundle to put what main or the user hands it — and go through
+ * `assertSkillDir` instead: the same rule, plus one exception, `''`, which
+ * means the bundle root. `import`'s own *sources* are not part of this
+ * request at all; main chooses them itself through a native dialog.
  *
  * A guard on the string is deliberately **not** the whole story, for the reason
  * `guards.ts` gives about `assertRelPath` itself: a symlink is a fact about the

@@ -4,7 +4,11 @@ import {
   assertSkillDir,
   assertSkillPath,
   parseSkillDropRequest,
+  parseSkillFileWriteRequest,
+  parseSkillImportRequest,
+  parseSkillMoveRequest,
   parseSkillNameRequest,
+  parseSkillPathRequest,
   parseSkillRenameRequest,
   parseSkillWriteRequest,
 } from '../../../electron/shared/guards';
@@ -254,6 +258,26 @@ describe('assertSkillPath', () => {
   it('refuses control characters', () => {
     expect(() => assertSkillPath('a\u0000b', 'path')).toThrow();
   });
+
+  it('refuses a bare dot segment', () => {
+    expect(() => assertSkillPath('a/./b', 'path')).toThrow();
+    expect(() => assertSkillPath('.', 'path')).toThrow();
+  });
+
+  it('refuses a traversal segment reached through a backslash', () => {
+    expect(() => assertSkillPath('a\\..\\b', 'path')).toThrow();
+  });
+
+  it('normalises doubled and mixed separators to a canonical POSIX path', () => {
+    expect(assertSkillPath('a//b', 'path')).toBe('a/b');
+    expect(assertSkillPath('a/b/c/d/', 'path')).toBe('a/b/c/d');
+    expect(assertSkillPath('a\\b\\c\\d', 'path')).toBe('a/b/c/d');
+  });
+
+  it('counts depth through a backslash the same as a forward slash', () => {
+    expect(assertSkillPath('a\\b\\c\\d', 'path')).toBe('a/b/c/d');
+    expect(() => assertSkillPath('a\\b\\c\\d\\e', 'path')).toThrow();
+  });
 });
 
 describe('assertSkillDir', () => {
@@ -286,5 +310,102 @@ describe('parseSkillDropRequest', () => {
       sources: ['/tmp/a.ttf'],
     });
     expect(request.sources).toEqual(['/tmp/a.ttf']);
+  });
+
+  it('refuses a sparse array rather than silently keeping its holes', () => {
+    /*
+      `new Array(3)` has a length of 3 and no set indices. A bare `.map` skips
+      holes entirely and would return a `sources: string[]` that is really
+      three holes with nothing ever checked — no throw, and the length cap
+      above does not catch it because the length is still 3. `Array.from`
+      first is what turns each hole into `undefined`, which `assertString`
+      then refuses like any other wrong-typed element.
+    */
+    expect(() =>
+      parseSkillDropRequest({
+        name: 'x',
+        dir: '',
+        sources: new Array(3) as unknown[],
+      }),
+    ).toThrow();
+  });
+
+  it('validates in declaration order — name before dir before sources', () => {
+    // A doubly-wrong request should report the field named first in the
+    // shape, matching every other parser in this file.
+    expect(() =>
+      parseSkillDropRequest({ name: 'Bad Name', dir: '../x', sources: 'nope' }),
+    ).toThrow(/name/);
+  });
+});
+
+describe('parseSkillPathRequest', () => {
+  it('accepts a name and a skill-relative path', () => {
+    expect(parseSkillPathRequest({ name: 'x', path: 'scripts/a.py' })).toEqual({
+      name: 'x',
+      path: 'scripts/a.py',
+    });
+  });
+
+  it('refuses a traversal in the path — the guard is actually wired', () => {
+    expect(() =>
+      parseSkillPathRequest({ name: 'x', path: '../../etc/passwd' }),
+    ).toThrow();
+  });
+});
+
+describe('parseSkillFileWriteRequest', () => {
+  it('accepts a name, a path and a body', () => {
+    expect(
+      parseSkillFileWriteRequest({ name: 'x', path: 'notes.md', body: 'hi' }),
+    ).toEqual({ name: 'x', path: 'notes.md', body: 'hi' });
+  });
+
+  it('refuses a traversal in the path — the guard is actually wired', () => {
+    expect(() =>
+      parseSkillFileWriteRequest({ name: 'x', path: '../secrets', body: 'hi' }),
+    ).toThrow();
+  });
+});
+
+describe('parseSkillMoveRequest', () => {
+  it('accepts a name and two skill-relative paths', () => {
+    expect(
+      parseSkillMoveRequest({ name: 'x', from: 'a.md', to: 'b.md' }),
+    ).toEqual({ name: 'x', from: 'a.md', to: 'b.md' });
+  });
+
+  it('refuses a traversal in "from" — the guard is actually wired', () => {
+    expect(() =>
+      parseSkillMoveRequest({ name: 'x', from: '../../etc/passwd', to: 'b.md' }),
+    ).toThrow();
+  });
+
+  it('refuses a traversal in "to" — the guard is actually wired', () => {
+    expect(() =>
+      parseSkillMoveRequest({ name: 'x', from: 'a.md', to: '../../etc/passwd' }),
+    ).toThrow();
+  });
+});
+
+describe('parseSkillImportRequest', () => {
+  it('accepts a name and a bundle-relative dir', () => {
+    expect(parseSkillImportRequest({ name: 'x', dir: 'assets' })).toEqual({
+      name: 'x',
+      dir: 'assets',
+    });
+  });
+
+  it('accepts the bundle root as an empty dir', () => {
+    expect(parseSkillImportRequest({ name: 'x', dir: '' })).toEqual({
+      name: 'x',
+      dir: '',
+    });
+  });
+
+  it('refuses a traversal in the dir — the guard is actually wired', () => {
+    expect(() =>
+      parseSkillImportRequest({ name: 'x', dir: '../../etc' }),
+    ).toThrow();
   });
 });

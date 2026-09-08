@@ -173,7 +173,11 @@ export function createSkillsRuntime({
     `SkillsRead` is main's shape and `SkillsSnapshot` is the renderer's. They
     are kept separate rather than reused: the renderer has no business with a
     skill's `body` until it opens one, and shipping every file's full text on
-    every list would put the whole skills tree on the wire for a sidebar.
+    every list would put the whole skills tree on the wire for a sidebar. The
+    `manifest` carried below is the deliberate exception — it is metadata
+    (paths, sizes, exclusions), not content, and the pane needs it on every
+    row to dim an oversized file or grey out a symlink without a second round
+    trip. What still never crosses this boundary is a file's *body*.
   */
   const snapshot = (read: SkillsRead): SkillsSnapshot => ({
     skills: read.skills.map(({ name, description, manifest }) => ({
