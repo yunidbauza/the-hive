@@ -26,7 +26,46 @@ import { refuseProtocol } from './index';
  * wired in from `electron/main/**`, which this module may import but does not
  * yet need to. Building any of that here would be answering a question this
  * story was not asked.
+ *
+ * **Everything below the guard is untrusted input, and stays untrusted until
+ * `verifyDevice` says otherwise (HIVE-142 review).** The Origin/Host guard
+ * proves a caller's *browser* is one this app would talk to; it proves
+ * nothing about the bytes on the wire once the TCP handshake completes. A
+ * peer that clears the guard can still send an unmasked frame, a frame with
+ * no upper bound on size, or a first frame that is not shaped like an
+ * `AttachRequest` at all — and until `verifyDevice` returns `'ok'`, that peer
+ * has proven nothing else about itself. Every branch in the `'connection'`
+ * handler below exists because the first review of this file treated
+ * "reached `handleUpgrade`" as if it meant "trusted", which it does not.
  */
+
+/**
+ * How long an upgraded socket has to send its attach frame before it is
+ * dropped.
+ *
+ * A real attach frame is a few hundred bytes and arrives within milliseconds
+ * of the socket opening; a few seconds is already generous slack for a slow
+ * network. Without a deadline, a peer that clears the Origin/Host guard and
+ * then sends nothing holds the socket — and the fd and memory behind it —
+ * open forever, which on a Tailscale-reachable listener is a standing
+ * exhaustion path rather than a hypothetical one.
+ */
+const ATTACH_HANDSHAKE_TIMEOUT_MS = 5_000;
+
+/**
+ * The most a first frame may weigh, enforced by `ws` itself via
+ * `WebSocketServer`'s `maxPayload`.
+ *
+ * An attach frame — `kind`, `protocol`, `deviceId`, `token`, and an optional
+ * `resumeFrom` map — is a few hundred bytes even with a realistic session
+ * count in `resumeFrom`. `ws` defaults `maxPayload` to 100 MiB, which is a
+ * limit sized for a data channel, not a handshake; an unauthenticated peer
+ * should not get to make this process buffer that much before the frame is
+ * even inspected. The same discipline the hook receiver applies per route
+ * (`HOOK_MAX_BODY_BYTES` and its siblings in `electron/shared/hook-contract.ts`)
+ * applies here, sized for what this one frame actually needs.
+ */
+const ATTACH_MAX_PAYLOAD_BYTES = 8 * 1024;
 
 export interface RemoteListener {
   /** Starts listening. Resolves the bound address, or `null` on bind failure. */
@@ -35,6 +74,33 @@ export interface RemoteListener {
   stop: () => Promise<void>;
   /** What the kernel actually bound to, or `null` before `start` / after `stop`. */
   readonly boundHost: string | null;
+}
+
+/**
+ * Formats `host`:`port` for the `ws://` URL `start()` resolves.
+ *
+ * `bind.host` is validated elsewhere to exclude an IPv6 literal today (see
+ * `isServerBindHost`), but this function does not get to assume its caller
+ * never changes — a bare `::1` interpolated unbracketed produces
+ * `ws://::1:54321`, which is not a parseable authority. Bracketing whenever
+ * the host contains a colon is correct for both literal families and costs
+ * nothing when it is not needed.
+ */
+function wsUrl(host: string, port: number): string {
+  const authority = host.includes(':') ? `[${host}]` : host;
+  return `ws://${authority}:${String(port)}`;
+}
+
+/** Whether `value` has the shape `verifyDevice` and the protocol check can safely use. */
+function isAttachShaped(value: unknown): value is AttachRequest {
+  if (value === null || typeof value !== 'object') return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    candidate.kind === 'attach' &&
+    typeof candidate.protocol === 'number' &&
+    typeof candidate.deviceId === 'string' &&
+    typeof candidate.token === 'string'
+  );
 }
 
 export function createRemoteListener(options: {
@@ -69,6 +135,15 @@ export function createRemoteListener(options: {
   let wss: WebSocketServer | null = null;
   let boundHost: string | null = null;
 
+  /**
+   * Every armed handshake-deadline timer that has not yet fired or been
+   * cleared. `stop()` clears whatever is left so a timer belonging to a
+   * listener that no longer exists cannot fire against it later — load-
+   * bearing for a test process, where a leaked `setTimeout` is a handle that
+   * outlives the test it was created in.
+   */
+  const pendingTimers = new Set<NodeJS.Timeout>();
+
   function send(socket: WebSocket, frame: ServerFrame): void {
     socket.send(JSON.stringify(frame));
   }
@@ -95,14 +170,52 @@ export function createRemoteListener(options: {
           the only legitimate caller here is a `ws` upgrade. A `node:http`
           server with no `'request'` listener never writes a response, so the
           request just hangs; answering plainly is kinder than that and costs
-          one line.
+          one line. The guard still runs first: "every route" includes this
+          one, the same property `http-guard.ts` argues for in `reject`.
         */
-        const created = createServer((_req, res) => {
+        const created = createServer((req, res) => {
+          const status = guard(req.headers);
+          if (status !== null) {
+            res.writeHead(status).end();
+            return;
+          }
           res.writeHead(426, { 'content-type': 'text/plain' }).end('Upgrade required');
         });
 
-        const sockets = new WebSocketServer({ noServer: true });
+        const sockets = new WebSocketServer({ noServer: true, maxPayload: ATTACH_MAX_PAYLOAD_BYTES });
         sockets.on('connection', (socket: WebSocket) => {
+          /*
+            Armed the instant the socket exists, cleared the instant a first
+            frame arrives (or the socket closes or errors on its own) — see
+            `ATTACH_HANDSHAKE_TIMEOUT_MS` (I5, HIVE-142 review).
+          */
+          const timer = setTimeout(() => {
+            pendingTimers.delete(timer);
+            socket.terminate();
+          }, ATTACH_HANDSHAKE_TIMEOUT_MS);
+          pendingTimers.add(timer);
+          const clearHandshakeTimer = (): void => {
+            clearTimeout(timer);
+            pendingTimers.delete(timer);
+          };
+          socket.once('close', clearHandshakeTimer);
+
+          /*
+            An unauthenticated socket is untrusted input, and `ws` treats a
+            protocol violation (an unmasked client frame, a frame over
+            `maxPayload`) as an `Error` on the `Receiver`, forwarded to the
+            `WebSocket`'s own `'error'` event. `EventEmitter` throws sync when
+            an `'error'` event has no listener, which without this line is an
+            uncaught exception on `electron`'s main process — proved end to
+            end against this file (HIVE-142 review, C1). `ws` already runs its
+            own `.close()` before this fires; this handler exists to exist,
+            not to do anything clever with the error.
+          */
+          socket.on('error', () => {
+            clearHandshakeTimer();
+            socket.terminate();
+          });
+
           /*
             Exactly one frame is read from an unattached socket: the brief's
             entire handshake surface. `once` rather than `on` — anything past
@@ -111,67 +224,84 @@ export function createRemoteListener(options: {
             this handler decides.
           */
           socket.once('message', (data: Buffer | ArrayBuffer | Buffer[]) => {
-            let frame: unknown;
+            clearHandshakeTimer();
+
             try {
-              frame = JSON.parse(String(data));
-            } catch {
-              refuse(socket, unauthorized('Malformed first frame.'));
-              return;
-            }
+              let frame: unknown;
+              try {
+                frame = JSON.parse(String(data));
+              } catch {
+                refuse(socket, unauthorized('Malformed first frame.'));
+                return;
+              }
 
-            if (
-              frame === null ||
-              typeof frame !== 'object' ||
-              (frame as { kind?: unknown }).kind !== 'attach'
-            ) {
-              // A `call`, a `notify`, or anything else arriving first is
-              // refused exactly like a bad credential would be — an
-              // unattached socket has no standing to be told which kind of
-              // mistake it made.
-              refuse(socket, unauthorized('The first frame on a connection must be an attach.'));
-              return;
-            }
+              if (!isAttachShaped(frame)) {
+                // A `call`, a `notify`, or an `attach` with a field of the
+                // wrong type is refused exactly like a bad credential would
+                // be — an unattached socket has no standing to be told which
+                // kind of mistake it made, and `isAttachShaped` is what keeps
+                // a non-string `token` or `deviceId` from ever reaching
+                // `verifyDevice`, which would throw on one (C2, HIVE-142
+                // review): `digestOf` hands `token` straight to
+                // `createHash().update()`, which only accepts a string.
+                refuse(socket, unauthorized('The first frame on a connection must be a well-formed attach.'));
+                return;
+              }
 
-            const request = frame as AttachRequest;
+              const request = frame;
 
-            /*
-              Protocol before authorization, deliberately. A client on a
-              mismatched build should be told that — it costs nothing to check
-              and leaks nothing to answer — rather than being told its
-              credential is wrong when the real problem is a stale build.
-            */
-            if (request.protocol !== REMOTE_PROTOCOL_VERSION) {
-              refuse(socket, refuseProtocol(request.protocol));
-              return;
-            }
+              /*
+                Protocol before authorization, deliberately. A client on a
+                mismatched build should be told that — it costs nothing to
+                check and leaks nothing to answer — rather than being told its
+                credential is wrong when the real problem is a stale build.
+              */
+              if (request.protocol !== REMOTE_PROTOCOL_VERSION) {
+                refuse(socket, refuseProtocol(request.protocol));
+                return;
+              }
 
-            // Read fresh, not the array captured at `createRemoteListener`
-            // time — see the option's doc comment.
-            const result = verifyDevice(devices(), request.deviceId, request.token);
-            if (result === 'unknown') {
-              refuse(socket, unauthorized('Unknown device, or the token did not match.'));
-              return;
-            }
-            if (result === 'revoked') {
-              refuse(socket, {
-                kind: 'attach-refused',
-                code: 'revoked',
+              // Read fresh, not the array captured at `createRemoteListener`
+              // time — see the option's doc comment.
+              const result = verifyDevice(devices(), request.deviceId, request.token);
+              if (result === 'unknown') {
+                refuse(socket, unauthorized('Unknown device, or the token did not match.'));
+                return;
+              }
+              if (result === 'revoked') {
+                refuse(socket, {
+                  kind: 'attach-refused',
+                  code: 'revoked',
+                  protocol: REMOTE_PROTOCOL_VERSION,
+                  message: 'This device has been revoked.',
+                });
+                return;
+              }
+
+              send(socket, {
+                kind: 'attach-accepted',
                 protocol: REMOTE_PROTOCOL_VERSION,
-                message: 'This device has been revoked.',
+                serverName,
+                // No IPC surface exists on this socket yet (HIVE-143) — an
+                // empty snapshot is the honest answer, not a placeholder.
+                snapshot: {},
               });
-              return;
+              // The socket now sits attached with nothing further wired to
+              // it. That is the whole surface this story owns.
+            } catch {
+              /*
+                Belt and suspenders under `isAttachShaped`'s own validation:
+                anything this handler did not anticipate refuses the socket
+                rather than throwing past it (C2, HIVE-142 review). If even
+                the refusal cannot be sent — the socket is already going down
+                — terminate rather than let a second exception through.
+              */
+              try {
+                refuse(socket, unauthorized('The attach could not be processed.'));
+              } catch {
+                socket.terminate();
+              }
             }
-
-            send(socket, {
-              kind: 'attach-accepted',
-              protocol: REMOTE_PROTOCOL_VERSION,
-              serverName,
-              // No IPC surface exists on this socket yet (HIVE-143) — an
-              // empty snapshot is the honest answer, not a placeholder.
-              snapshot: {},
-            });
-            // The socket now sits attached with nothing further wired to it.
-            // That is the whole surface this story owns.
           });
         });
         wss = sockets;
@@ -186,11 +316,11 @@ export function createRemoteListener(options: {
           */
           const status = guard(req.headers);
           if (status !== null) {
-            const line = status === 400 ? 'Bad Request' : 'Forbidden';
             // A real status line, not a silent drop — `ws`'s client parses
             // this as an HTTP response and surfaces it as a connection error
-            // rather than hanging.
-            socket.write(`HTTP/1.1 ${String(status)} ${line}\r\nConnection: close\r\n\r\n`);
+            // rather than hanging. `createOriginGuard` only ever returns 403
+            // (or `null`), so there is exactly one reason phrase to spell.
+            socket.write(`HTTP/1.1 ${String(status)} Forbidden\r\nConnection: close\r\n\r\n`);
             socket.destroy();
             return;
           }
@@ -218,7 +348,7 @@ export function createRemoteListener(options: {
           }
           server = created;
           boundHost = address.address;
-          resolve(`ws://${bind.host}:${String(address.port)}`);
+          resolve(wsUrl(bind.host, address.port));
         });
       });
     },
@@ -230,12 +360,38 @@ export function createRemoteListener(options: {
         server = null;
         wss = null;
         boundHost = null;
+
+        // Nothing left to wait for once a timer has fired or been cleared,
+        // but one armed against a socket that never sent anything must not
+        // survive the listener it belongs to.
+        for (const timer of pendingTimers) clearTimeout(timer);
+        pendingTimers.clear();
+
         if (running === null) {
           resolve();
           return;
         }
-        runningSockets?.close();
+
+        /*
+          `wss.close()` alone does not close an already-attached socket: in
+          `noServer` mode it only stops accepting new upgrades and waits for
+          `clients` to empty on its own (`websocket-server.js`'s `close()`).
+          `closeAllConnections()` on the *http* server does not reach those
+          sockets either — a socket `ws` took over on `'upgrade'` is no
+          longer one `http.Server` tracks as a request-response connection.
+          Proved by probe (HIVE-142 review, I4): with a client still attached,
+          `stop()` never resolved in 1500ms; terminating that client by hand
+          let it resolve 9ms later. Terminating every live client explicitly,
+          before either `close()` call, is what actually empties `clients`
+          and lets the http server's own close finish.
+        */
+        if (runningSockets) {
+          for (const client of runningSockets.clients) client.terminate();
+          runningSockets.close();
+        }
         running.close(() => resolve());
+        // Keep-alive sockets, and anything mid-upgrade, would otherwise hold
+        // the close open past app quit.
         running.closeAllConnections?.();
       });
     },
