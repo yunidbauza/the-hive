@@ -640,6 +640,104 @@ export const BIND_KEYS: readonly (keyof ReceiverBindConfig)[] = [
   'allowedOrigins',
 ];
 
+/** The wildcard bind, refused for a served machine — see {@link isServerBindHost}. */
+const WILDCARD_BIND = '0.0.0.0';
+
+/**
+ * Whether a value may be `server.bind.host`.
+ *
+ * `isHostAlias` for shape — one predicate, not two — and one rejection beside
+ * it. `ReceiverBindConfig.host` accepts `0.0.0.0` deliberately, because a user
+ * whose container runtime names no bridge has nothing else to write. That
+ * reasoning does not transfer: a served machine is reached at a Tailscale
+ * address, which is always nameable, so the wildcard here is a wider surface
+ * with nothing to buy for it.
+ */
+export function isServerBindHost(value: unknown): value is string {
+  if (!isHostAlias(value)) return false;
+  return value !== WILDCARD_BIND;
+}
+
+/**
+ * Where the server listens (HIVE-142).
+ *
+ * A sibling of {@link ReceiverBindConfig}, not a reuse of it: the two differ in
+ * exactly the ways `isServerBindHost`'s doc comment explains, and in the
+ * default port, which has to be fixed rather than OS-assigned — see
+ * {@link ServerBindConfig.port}.
+ */
+export interface ServerBindConfig {
+  /** A hostname or an IPv4 literal, validated by {@link isServerBindHost}. */
+  host: string;
+  /**
+   * Fixed, not ephemeral — unlike {@link ReceiverBindConfig.port}, whose `0`
+   * asks the OS for any free port. A client's config and a LaunchAgent both
+   * have to name this port ahead of time, and neither can be told a number the
+   * kernel picks at boot.
+   */
+  port: number;
+  /** Full origins, as {@link isOrigin} defines one. Empty refuses every Origin. */
+  allowedOrigins: readonly string[];
+}
+
+/**
+ * How a device proves itself.
+ *
+ * A tagged union rather than a bare digest, so device public keys (Ed25519,
+ * verified with `crypto.verify`, no dependency) are an additive variant later
+ * rather than a migration. `sha256` is the only variant this build mints.
+ */
+export type ServerCredential = { kind: 'sha256'; digest: string };
+
+export interface ServerDevice {
+  id: string;
+  name: string;
+  /** ISO date, the day it was paired. */
+  paired: string;
+  revoked: boolean;
+  /**
+   * The digest, and deliberately not the token.
+   *
+   * A server verifying a credential never needs to hold one. The token is 128
+   * uniform bits, so a SHA-256 digest of it is not brute-forceable and no KDF
+   * is warranted — that is why there is no salt here, rather than an omission.
+   * The plaintext exists in exactly two places: stdout at mint time, and the
+   * client's own `safeStorage`.
+   */
+  credential: ServerCredential;
+}
+
+export interface ServerConfig {
+  enabled: boolean;
+  bind: ServerBindConfig;
+  devices: readonly ServerDevice[];
+}
+
+export const DEFAULT_SERVER: ServerConfig = {
+  enabled: false,
+  bind: { host: '127.0.0.1', port: 7433, allowedOrigins: [] },
+  devices: [],
+};
+
+/** The block's keys, for the parser's exact-key check. */
+export const SERVER_KEYS: readonly (keyof ServerConfig)[] = ['enabled', 'bind', 'devices'];
+
+/** The nested bind block's keys, for the same check one level down. */
+export const SERVER_BIND_KEYS: readonly (keyof ServerBindConfig)[] = [
+  'host',
+  'port',
+  'allowedOrigins',
+];
+
+/** One device's keys, for the same check on each entry in `devices`. */
+export const SERVER_DEVICE_KEYS: readonly (keyof ServerDevice)[] = [
+  'id',
+  'name',
+  'paired',
+  'revoked',
+  'credential',
+];
+
 /**
  * How a containerised session's `${VAR}` references get their values (HIVE-132).
  *
@@ -922,6 +1020,14 @@ export interface ConfigSnapshot {
    * on one branch.
    */
   receiver: ReceiverConfig;
+  /**
+   * Server mode, always fully resolved (HIVE-142).
+   *
+   * Defaulted here for the same reason `receiver` and `jira` are: main reads it
+   * at boot to decide whether to listen at all, and a consumer that had to
+   * remember to apply defaults is one that will eventually forget on one branch.
+   */
+  server: ServerConfig;
   /**
    * Real-time Slack events, always fully resolved (HIVE-124).
    *
@@ -1399,6 +1505,7 @@ export function emptySnapshot(
     notifications: { ...DEFAULT_NOTIFICATIONS },
     jira: { ...DEFAULT_JIRA },
     receiver: { ...DEFAULT_RECEIVER },
+    server: { ...DEFAULT_SERVER },
     slack: { ...DEFAULT_SLACK },
     errors: [],
   };
@@ -1567,6 +1674,52 @@ export interface SetReceiverRequest {
    * reason.
    */
   bind?: Partial<ReceiverBindConfig>;
+}
+
+/**
+ * Payload of `config:set-server` (HIVE-142).
+ *
+ * There is deliberately no credential here. A device's digest is not a secret
+ * — see {@link ServerDevice.credential} — but minting one is a different verb
+ * with a different payload (the plaintext token), and this one only ever
+ * writes what {@link ServerConfig} already resolves to.
+ *
+ * `bind` takes effect at next launch, for the reason
+ * {@link ReceiverBindConfig} states for the receiver: a socket that is already
+ * listening cannot be moved. `setServer` spreads the current block and spreads
+ * `bind` one level down rather than rebuilding either, for the same reason
+ * `setReceiver` does — a key this build has not heard of must survive a save
+ * made by this one.
+ */
+export interface SetServerRequest {
+  /**
+   * Whether the server is on. Absent leaves it untouched.
+   *
+   * A plain boolean, not nullable: there is no lower level to fall back to, so
+   * "off" is a value rather than an absence, the same reasoning
+   * {@link SetSlackRequest.socketMode} states.
+   */
+  enabled?: boolean;
+
+  /**
+   * Where the server listens. Absent leaves it untouched.
+   *
+   * `Partial`, and every field independently optional, for the reason
+   * {@link SetReceiverRequest.bind} states: Settings commits one field at a
+   * time, and a payload that had to carry all three would make committing the
+   * host reset the port.
+   */
+  bind?: Partial<ServerBindConfig>;
+
+  /**
+   * The full paired-device roster. Absent leaves it untouched.
+   *
+   * Replaced wholesale rather than merged, the same rule
+   * {@link SetSlackRequest.commanders} states: a roster is one list the caller
+   * already has in full — from pairing, revoking, or renaming a device — not a
+   * single field committed on blur.
+   */
+  devices?: readonly ServerDevice[];
 }
 
 /**

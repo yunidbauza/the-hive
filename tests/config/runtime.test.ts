@@ -6,6 +6,7 @@ import {
   DEFAULT_JIRA,
   DEFAULT_NOTIFICATIONS,
   DEFAULT_RECEIVER,
+  DEFAULT_SERVER,
   DEFAULT_SLACK,
 } from '@shared/config-contract';
 
@@ -108,6 +109,7 @@ describe('can', () => {
         notifications: { ...DEFAULT_NOTIFICATIONS },
         jira: { ...DEFAULT_JIRA },
         receiver: { ...DEFAULT_RECEIVER },
+        server: { ...DEFAULT_SERVER },
         slack: { ...DEFAULT_SLACK },
         subscriptionAuth: true,
   sessionMetrics: true,

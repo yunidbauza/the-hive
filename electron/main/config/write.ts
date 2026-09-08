@@ -21,6 +21,7 @@ import {
   DEFAULT_SUBSCRIPTION_AUTH,
   DEFAULT_JIRA,
   DEFAULT_RECEIVER,
+  DEFAULT_SERVER,
   DEFAULT_SLACK,
   type ConfigSnapshot,
 } from '@shared/config-contract';
@@ -301,6 +302,20 @@ export function writeConfig(
           `jira` and `notifications` are flat and need only one.
         */
         bind: { ...DEFAULT_BIND, ...validated.receiver?.bind },
+      },
+      /*
+        Resolved here as well as in `loadConfig` (HIVE-142), for the same
+        reason `receiver` is: this snapshot is the one every mutating verb
+        returns and becomes the cache, and a block resolved on only the read
+        path would leave every settings write answering with a partial
+        `server`. Two levels, for the same reason `receiver`'s comment above
+        states: `bind` is a nested block, and a one-level spread would let a
+        write naming only `bind.host` erase the default port and origin list.
+      */
+      server: {
+        ...DEFAULT_SERVER,
+        ...validated.server,
+        bind: { ...DEFAULT_SERVER.bind, ...validated.server?.bind },
       },
       /*
         Resolved here as well as in `loadConfig` (HIVE-124), for the same

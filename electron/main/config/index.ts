@@ -7,6 +7,7 @@ import {
   DEFAULT_IMPORT_LOGIN_ENV,
   DEFAULT_JIRA,
   DEFAULT_RECEIVER,
+  DEFAULT_SERVER,
   DEFAULT_SESSION_METRICS,
   DEFAULT_SLACK,
   DEFAULT_SUBSCRIPTION_AUTH,
@@ -28,6 +29,7 @@ import {
   type SetProjectRuntimeRequest,
   type SetReceiverRequest,
   type SetRuntimeRequest,
+  type SetServerRequest,
   type SetSlackRequest,
 } from '@shared/config-contract';
 import { resolveNotificationPrefs } from '@shared/notification-contract';
@@ -153,6 +155,15 @@ export function loadConfig(): ConfigSnapshot {
         `jira` and `notifications` are flat and need only one.
       */
       bind: { ...DEFAULT_BIND, ...parsed.receiver?.bind },
+    },
+    // Defaults *under* whatever the file named, exactly as `receiver` does
+    // above (HIVE-142) and for the same reason: `bind` is a nested block, so a
+    // one-level spread would let a file naming only `bind.host` erase the
+    // default port and origin list.
+    server: {
+      ...DEFAULT_SERVER,
+      ...parsed.server,
+      bind: { ...DEFAULT_SERVER.bind, ...parsed.server?.bind },
     },
     // Defaults *under* whatever the file named, exactly as `jira` and
     // `receiver` do above (HIVE-124). A plain spread suffices here too.
@@ -880,6 +891,62 @@ export function setReceiver(request: SetReceiverRequest): ConfigSnapshot {
       }
 
       return { ...draft, receiver: current };
+    }),
+  );
+}
+
+/**
+ * Change whether the server is on, where it listens, and/or the paired-device
+ * roster (HIVE-142).
+ *
+ * There is no credential here and never will be. A device's digest is not a
+ * secret, but minting one is pairing's job, not Settings', and this verb only
+ * ever writes what is already resolved.
+ *
+ * The block is spread, never rebuilt, for the same reason every other verb
+ * spreads its target: a key this build has not heard of — hand-written in the
+ * meantime — must survive a save made by this one. `bind` gets the same
+ * treatment one level down: see the comment at its merge below.
+ *
+ * `devices` replaces the stored roster wholesale rather than merging into it —
+ * the same rule `setSlack` applies to `commanders`, because a roster is one
+ * list the caller already has in full.
+ */
+export function setServer(request: SetServerRequest): ConfigSnapshot {
+  return commit(
+    writeConfig((draft) => {
+      // A non-object block is replaced rather than merged into. The reader has
+      // already reported it, and merging onto a string would produce something
+      // neither the user nor the parser meant.
+      const current =
+        typeof draft.server === 'object' &&
+        draft.server !== null &&
+        !Array.isArray(draft.server)
+          ? { ...(draft.server as Record<string, unknown>) }
+          : {};
+
+      if (request.enabled !== undefined) current.enabled = request.enabled;
+
+      /*
+        Merged into, not replaced. The same promise the block-level spread
+        above makes and for the same reason: a key this build has not heard of
+        — hand-written inside `bind` — must survive a save made by this one.
+        Settings writes one field at a time, so replacing the block would
+        silently drop the other two.
+      */
+      if (request.bind !== undefined) {
+        const currentBind =
+          typeof current.bind === 'object' &&
+          current.bind !== null &&
+          !Array.isArray(current.bind)
+            ? { ...(current.bind as Record<string, unknown>) }
+            : {};
+        current.bind = { ...currentBind, ...request.bind };
+      }
+
+      if (request.devices !== undefined) current.devices = request.devices;
+
+      return { ...draft, server: current };
     }),
   );
 }

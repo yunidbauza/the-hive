@@ -3,6 +3,9 @@ import {
   JIRA_KEYS,
   NOTIFICATION_KEYS,
   RECEIVER_KEYS,
+  SERVER_BIND_KEYS,
+  SERVER_DEVICE_KEYS,
+  SERVER_KEYS,
   SLACK_KEYS,
   SUPPORTED_CONFIG_VERSIONS,
   isAbsoluteContainerPath,
@@ -11,6 +14,7 @@ import {
   isEnvArgTemplate,
   isHostAlias,
   isOrigin,
+  isServerBindHost,
   unsafeEnvReason,
   type ContainerConfig,
   type JiraConfig,
@@ -18,6 +22,9 @@ import {
   type ProjectOrigin,
   type ReceiverBindConfig,
   type ReceiverConfig,
+  type ServerBindConfig,
+  type ServerConfig,
+  type ServerDevice,
   type SlackConfig,
 } from '@shared/config-contract';
 import { PROJECT_KEY_HINT, isProjectKey } from '@shared/config-contract';
@@ -141,6 +148,26 @@ export interface ParsedConfig {
    */
   receiver?: Partial<Omit<ReceiverConfig, 'bind'>> & { bind?: Partial<ReceiverBindConfig> };
   /**
+   * HIVE-142's server block, exactly as the file declared it.
+   *
+   * `undefined` when the file has none — which every config written before
+   * this story does. Kept partial here rather than defaulted for the same
+   * reason `receiver` is: the write path must be able to tell "the user chose
+   * this" from "the file said nothing", which is what keeps an untouched file
+   * from growing a block it never asked for.
+   *
+   * `bind` is partial one level down too, for the same reason `receiver.bind`
+   * is: a file that names the block but only one of its three fields must not
+   * have the other two silently promoted to "the user chose the default".
+   *
+   * `devices` is kept as the fully-validated array {@link optionalDevices}
+   * produces rather than partial per entry — a device with a missing field is
+   * not "half a device the caller merges a default under", it is a paired
+   * device this file cannot describe, so the whole entry is dropped rather
+   * than salvaged.
+   */
+  server?: Partial<Omit<ServerConfig, 'bind'>> & { bind?: Partial<ServerBindConfig> };
+  /**
    * HIVE-124's slack block, exactly as the file declared it.
    *
    * `undefined` when the file has none — which every config written before
@@ -200,6 +227,12 @@ const TOP_LEVEL_KEYS = [
   // HIVE-131, for the same reason. The container host alias — a name, never an
   // address with a port; the port belongs to the receiver.
   'receiver',
+  // HIVE-142, for the same reason. The paired-device roster included: a
+  // device's credential is a SHA-256 digest, not the token it was derived
+  // from, and a digest is not a secret — see `ServerDevice.credential` — which
+  // is why this block may hold it in a file the product invites the user to
+  // hand-edit.
+  'server',
   // HIVE-124, for the same reason. The socket-mode switch and the commander
   // allow-list; the two Slack tokens are secrets and are deliberately not in
   // this file.
@@ -820,6 +853,211 @@ function optionalReceiver(
   return receiver;
 }
 
+/** A 64-character lowercase hex digest — a SHA-256 output, as text. */
+const HEX_SHA256 = /^[0-9a-f]{64}$/;
+
+/**
+ * HIVE-142's nested `server.bind` block.
+ *
+ * Structurally {@link optionalBind}'s twin, with the one difference the shape
+ * forces: `host` is checked against {@link isServerBindHost}, not
+ * {@link isHostAlias}, and `0.0.0.0` gets its own message naming the value
+ * rather than the generic "expected a hostname" — see
+ * {@link isServerBindHost}'s doc comment for why the wildcard is refused here
+ * and not for the receiver.
+ */
+function optionalServerBind(
+  record: Record<string, unknown>,
+  label: string,
+  errors: string[],
+): Partial<ServerBindConfig> | undefined {
+  const value = record.bind;
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    errors.push(`${label}.bind: expected an object — ignored`);
+    return undefined;
+  }
+
+  const at = `${label}.bind`;
+
+  for (const key of Object.keys(value)) {
+    if (FORBIDDEN_KEYS.has(key)) {
+      errors.push(`${at}: forbidden key "${key}" — bind ignored`);
+      return undefined;
+    }
+  }
+
+  if (!checkKeys(value, SERVER_BIND_KEYS, at, errors)) return undefined;
+
+  const bind: Partial<ServerBindConfig> = {};
+
+  const host = value.host;
+  if (host !== undefined) {
+    if (host === '0.0.0.0') {
+      errors.push(
+        `${at}.host: 0.0.0.0 binds every interface — name the address this machine is reached at`,
+      );
+    } else if (isServerBindHost(host)) {
+      bind.host = host;
+    } else {
+      errors.push(`${at}.host: expected a hostname or an IPv4 address — using the default`);
+    }
+  }
+
+  const port = optionalPort(value, 'port', at, errors);
+  if (port !== null) bind.port = port;
+
+  const origins = value.allowedOrigins;
+  if (origins !== undefined) {
+    if (!Array.isArray(origins)) {
+      errors.push(`${at}.allowedOrigins: expected an array — using the default`);
+    } else {
+      const kept: string[] = [];
+      (origins as unknown[]).forEach((entry, index) => {
+        if (isOrigin(entry)) {
+          kept.push(entry);
+          return;
+        }
+        errors.push(
+          `${at}.allowedOrigins[${index}]: expected an origin like http://localhost:5173 — entry ignored`,
+        );
+      });
+      bind.allowedOrigins = kept;
+    }
+  }
+
+  return bind;
+}
+
+/**
+ * HIVE-142's `devices` array.
+ *
+ * Whole-entry salvage, unlike `optionalBind`'s per-field rule: a device is an
+ * identity plus a credential, and a device short one field is not "the same
+ * device with a default filled in" the way a bind missing its port is — it is
+ * a paired device this file cannot describe. A bad entry costs that entry, not
+ * the roster, the same rule `commanders` and `allowedOrigins` follow.
+ */
+function optionalDevices(
+  record: Record<string, unknown>,
+  label: string,
+  errors: string[],
+): readonly ServerDevice[] | undefined {
+  const value = record.devices;
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    errors.push(`${label}.devices: expected an array — ignored`);
+    return undefined;
+  }
+
+  const at = `${label}.devices`;
+  const kept: ServerDevice[] = [];
+
+  value.forEach((entry, index) => {
+    const entryAt = `${at}[${index}]`;
+
+    if (!isPlainObject(entry)) {
+      errors.push(`${entryAt}: expected an object — device dropped`);
+      return;
+    }
+
+    for (const key of Object.keys(entry)) {
+      if (FORBIDDEN_KEYS.has(key)) {
+        errors.push(`${entryAt}: forbidden key "${key}" — device dropped`);
+        return;
+      }
+    }
+
+    if (!checkKeys(entry, SERVER_DEVICE_KEYS, entryAt, errors)) return;
+
+    if (typeof entry.id !== 'string' || entry.id.trim() === '') {
+      errors.push(`${entryAt}.id: expected a non-empty string — device dropped`);
+      return;
+    }
+    if (typeof entry.name !== 'string' || entry.name.trim() === '') {
+      errors.push(`${entryAt}.name: expected a non-empty string — device dropped`);
+      return;
+    }
+    if (typeof entry.paired !== 'string' || entry.paired.trim() === '') {
+      errors.push(`${entryAt}.paired: expected an ISO date string — device dropped`);
+      return;
+    }
+    if (typeof entry.revoked !== 'boolean') {
+      errors.push(`${entryAt}.revoked: expected true or false — device dropped`);
+      return;
+    }
+
+    const credential = entry.credential;
+    if (
+      !isPlainObject(credential) ||
+      credential.kind !== 'sha256' ||
+      typeof credential.digest !== 'string' ||
+      !HEX_SHA256.test(credential.digest)
+    ) {
+      errors.push(
+        `${entryAt}.credential: expected { kind: "sha256", digest: <64-character hex> } — device dropped`,
+      );
+      return;
+    }
+
+    kept.push({
+      id: entry.id,
+      name: entry.name,
+      paired: entry.paired,
+      revoked: entry.revoked,
+      credential: { kind: 'sha256', digest: credential.digest },
+    });
+  });
+
+  return kept;
+}
+
+/**
+ * HIVE-142's server block.
+ *
+ * Structurally {@link optionalReceiver}'s twin: a malformed block is reported
+ * and dropped wholesale, while `bind` and `devices` salvage what they can
+ * within it.
+ */
+function optionalServer(
+  record: Record<string, unknown>,
+  label: string,
+  errors: string[],
+):
+  | (Partial<Omit<ServerConfig, 'bind'>> & { bind?: Partial<ServerBindConfig> })
+  | undefined {
+  const value = record.server;
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    errors.push(`${label}.server: expected an object — ignored`);
+    return undefined;
+  }
+
+  const at = `${label}.server`;
+
+  for (const key of Object.keys(value)) {
+    if (FORBIDDEN_KEYS.has(key)) {
+      errors.push(`${at}: forbidden key "${key}" — server ignored`);
+      return undefined;
+    }
+  }
+
+  if (!checkKeys(value, SERVER_KEYS, at, errors)) return undefined;
+
+  const server: Partial<Omit<ServerConfig, 'bind'>> & { bind?: Partial<ServerBindConfig> } = {};
+
+  const enabled = optionalBoolean(value, 'enabled', at, errors);
+  if (enabled !== null) server.enabled = enabled;
+
+  const bind = optionalServerBind(value, at, errors);
+  if (bind !== undefined) server.bind = bind;
+
+  const devices = optionalDevices(value, at, errors);
+  if (devices !== undefined) server.devices = devices;
+
+  return server;
+}
+
 /**
  * The `slack` block (HIVE-124).
  *
@@ -935,6 +1173,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
   const notifications = optionalNotifications(document, label, errors);
   const jira = optionalJira(document, label, errors);
   const receiver = optionalReceiver(document, label, errors);
+  const server = optionalServer(document, label, errors);
   const slack = optionalSlack(document, label, errors);
   const subscriptionAuth = optionalBoolean(
     document,
@@ -972,6 +1211,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       notifications,
       jira,
       receiver,
+      server,
       slack,
       projects: [],
       errors,
@@ -991,6 +1231,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       notifications,
       jira,
       receiver,
+      server,
       slack,
       projects: [],
       errors,
@@ -1104,6 +1345,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
     notifications,
     jira,
     receiver,
+    server,
     slack,
     projects,
     errors,
