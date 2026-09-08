@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { createServer as createNetServer, connect, type Socket } from 'node:net';
 
 import { WebSocket } from 'ws';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createRemoteListener } from '@remote-host/listener';
 import { REMOTE_PROTOCOL_VERSION } from '@shared/remote-contract';
@@ -284,18 +284,32 @@ describe('an unauthenticated socket is untrusted input (HIVE-142 review)', () =>
   });
 
   it('drops a socket that never sends an attach frame, after the handshake deadline', async () => {
-    const { device } = mintDevice('MacBook');
-    const url = await start([device]);
-    const socket = new WebSocket(url);
-    await new Promise<void>((resolve, reject) => {
-      socket.on('open', () => resolve());
-      socket.on('error', reject);
-    });
-    await new Promise<void>((resolve) => socket.once('close', () => resolve()));
-    // Reaching here at all is the assertion: the deadline fired and dropped
-    // a socket that sent nothing.
-    expect(socket.readyState).toBe(WebSocket.CLOSED);
-  }, 10_000);
+    // Fake timers, not a real wait — the deadline itself is the behaviour
+    // under test, and `listener.ts`'s `setTimeout` is a global the fake
+    // clock intercepts in this same process, so advancing it fires the real
+    // production timer without the test actually waiting in wall-clock time.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { device } = mintDevice('MacBook');
+      const url = await start([device]);
+      const socket = new WebSocket(url);
+      await new Promise<void>((resolve, reject) => {
+        socket.on('open', () => resolve());
+        socket.on('error', reject);
+      });
+
+      const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+      // Comfortably past the production deadline without importing its exact
+      // value — the constant is intentionally not exported, and "eventually
+      // drops a silent socket" does not need to pin the exact number.
+      await vi.advanceTimersByTimeAsync(60_000);
+      await closed;
+
+      expect(socket.readyState).toBe(WebSocket.CLOSED);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('start()/stop() lifecycle', () => {
