@@ -1,14 +1,22 @@
 // @vitest-environment node
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { writePluginDir } from '../../electron/main/skills/plugin';
-import type { SkillsRead } from '../../electron/main/skills/read';
+import { readUserSkills, type SkillsRead } from '../../electron/main/skills/read';
 
 /**
  * Custom-skills conformance: a real `claude`, actually run (HIVE-96).
@@ -68,6 +76,15 @@ const enabled = process.env.HIVE_LIVE_SKILLS_PROOF === '1';
 
 /** The marker a loaded skill is asked to print, and nothing else. */
 const MARKER = 'HIVE_SKILL_MARKER_OK';
+
+/**
+ * The marker a **script inside a bundle** prints when it actually runs
+ * (HIVE-148).
+ *
+ * Distinct from {@link MARKER} so a failure says which claim broke: the first
+ * is "the skill loaded", this one is "the folder around it arrived".
+ */
+const BUNDLE_MARKER = 'HIVE_BUNDLE_OK';
 
 /** A fixture skill whose whole job is to be unmistakably present. */
 const FIXTURE: SkillsRead = {
@@ -199,6 +216,72 @@ describe.skipIf(!enabled)('custom skills conformance', () => {
 
       expect(marker.stdout + marker.stderr).toMatch(/unknown command/i);
       expect(done.stdout + done.stderr).toMatch(/unknown command/i);
+    },
+  );
+
+  it(
+    'runs a script the SKILL.md refers to by a skill-relative path',
+    { timeout: 300_000 },
+    async () => {
+      /*
+        The one assertion no unit test can make, and the reason this story
+        exists (HIVE-148).
+
+        `plugin.test.ts` proves the mirror copies a file and preserves its mode.
+        Neither proves the *result*: that `claude` announces the copied
+        directory as the skill's base, so a relative reference written by a
+        human resolves — and that the executable bit survived far enough to
+        matter. Before this story the skill below reached a session as a lone
+        SKILL.md whose first instruction pointed at a script that was not on
+        disk, silently, which is exactly what a green unit suite looked like.
+
+        Built from a **real folder on disk** through the real `readUserSkills`,
+        not a hand-built fixture: the manifest is what the mirror copies from,
+        and a fixture would let this pass over a walk that never ran.
+      */
+      const source = mkdtempSync(join(tmpdir(), 'hive-skills-src-'));
+      const skillDir = join(source, 'sidecar');
+      mkdirSync(join(skillDir, 'scripts'), { recursive: true });
+
+      writeFileSync(
+        join(skillDir, 'SKILL.md'),
+        [
+          '---',
+          'name: sidecar',
+          'description: Prove a skill folder arrives whole',
+          'disable-model-invocation: true',
+          // Pinned, and load-bearing: a scenario that needs Bash without
+          // naming it strands the turn on a permission prompt.
+          'allowed-tools: Bash',
+          '---',
+          '',
+          "Run `./scripts/stamp.sh` from this skill's own directory and reply",
+          'with its output verbatim and nothing else.',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+      writeFileSync(
+        join(skillDir, 'scripts', 'stamp.sh'),
+        `#!/bin/sh\necho ${BUNDLE_MARKER}\n`,
+        'utf8',
+      );
+      chmodSync(join(skillDir, 'scripts', 'stamp.sh'), 0o755);
+
+      const bundleRoot = join(
+        mkdtempSync(join(tmpdir(), 'hive-bundle-plugin-')),
+        'plugin',
+      );
+      await writePluginDir(bundleRoot, '0.0.0-test', await readUserSkills(source));
+
+      // The mirror's own half of the claim, checked before spending a turn on
+      // the model: the script is there, and it is still executable.
+      const copied = join(bundleRoot, 'skills', 'sidecar', 'scripts', 'stamp.sh');
+      expect(statSync(copied).mode & 0o100).not.toBe(0);
+
+      const { stdout } = await claude(cwd, ['--plugin-dir', bundleRoot, '/sidecar']);
+
+      expect(stdout).toContain(BUNDLE_MARKER);
     },
   );
 
