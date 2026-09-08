@@ -90,6 +90,27 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
    * `null` until a surface reports. That is the conservative default in
    * disguise: no surface has reported means no surface is visible, and a
    * surface reports in the same effect that reveals it.
+   *
+   * **Known hazard, deliberately parked: one record, many surfaces
+   * (HIVE-143 review; HIVE-145 "Two attached clients" must close it).** "The
+   * stage shows one terminal at a time" was a fact about a single renderer.
+   * Server mode makes every attached socket a surface, and all of them write
+   * *this* value through the same `pty:prompt` notify — so with two devices
+   * attached the record says whatever the last one to report said, about
+   * whichever session it is watching. Two consequences, both silent:
+   * device B reporting `unfocused` for its own session releases a hold device A
+   * asked for, and `onRendererReset()` — fired when *a* surface goes away — wipes
+   * a hold that a different, still-live surface is relying on. The nudge then
+   * lands in a half-typed input box, which is the exact regression HIVE-135
+   * exists to prevent.
+   *
+   * Unreachable today: no client half exists until HIVE-144, so there is never
+   * more than one surface reporting. The fix is to key this by surface — a map
+   * from the reporter identity `watchReporter` already dedupes on to that
+   * surface's own `{ entityId, input }` — and to answer {@link clear} by asking
+   * whether **any** surface holds a draft for the session, rather than by asking
+   * the one. `onRendererReset` then drops one surface's entry instead of the
+   * whole record.
    */
   let focus: { entityId: string; input: 'empty' | 'draft' } | null = null;
 

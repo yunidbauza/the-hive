@@ -505,7 +505,16 @@ bounded transcripts of the same stream. A reconnecting socket calls
 `resume(sessionId, lastSeq)` and gets back exactly what it missed, a `gap` once
 the ring can't reach that far, or `null` for a session that never existed —
 the ring is reclaimed the moment a channel's `exited` flag is set rather than
-held for the rest of the process's life.
+held for the rest of the process's life. A `gap` sends one empty `pty:data`
+stamped at the head seq, so the client's own discontinuity check fires on
+reconnect rather than whenever output next happens.
+
+**Before HIVE-144's client sends its first real `resumeFrom`, read the parked
+hazard on `Sessions.resume` (`electron/main/sessions/index.ts`).** A seq alone
+does not name a generation, so a session that restarted while a client was away
+can answer `replay` with a *new* process's output stitched contiguously onto the
+old one's transcript. Closing it is HIVE-144's, and the comment names both
+candidate fixes.
 
 ### Sessions: what actually runs (story 096)
 
