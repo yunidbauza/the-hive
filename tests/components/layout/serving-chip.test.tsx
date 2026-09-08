@@ -24,4 +24,19 @@ describe('ServingChip', () => {
     render(<ServingChip />);
     expect(screen.getByTitle(/Settings › Advanced › Server mode/)).toBeInTheDocument();
   });
+
+  /*
+    The tone is the entire reason this component exists rather than a second
+    call site for `ExposureChip`: amber means "wider than you may have
+    meant," brand means "doing this on purpose." Without this assertion,
+    flipping `tone="brand"` back to `tone="amber"` — or dropping the prop —
+    passes every other test in the file, since none of the others look past
+    the text and title. See `exposure-chip.test.tsx`'s equivalent assertion
+    on `text-amber`.
+  */
+  it('uses the brand token, not amber — this exposure is on purpose', () => {
+    vi.mocked(useServerExposure).mockReturnValue('100.101.102.103');
+    render(<ServingChip />);
+    expect(screen.getByText(/100\.101\.102\.103/)).toHaveClass('text-brand');
+  });
 });

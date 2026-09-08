@@ -453,4 +453,58 @@ describe('Header', () => {
       expect(names.indexOf('172.17.0.1')).toBeGreaterThan(names.indexOf('demo'));
     });
   });
+
+  /**
+   * `ServingChip`'s own states — same shape as `ExposureChip`'s block above,
+   * for the same reason: its render logic belongs to its own spec, and what
+   * is pinned here is only that it is actually mounted in the `header-chips`
+   * cluster, after `ExposureChip` (HIVE-142).
+   *
+   * Sourced from the server-mode socket's **running** bind, read through the
+   * same `readAppInfo` mock — see the mock at the top of this file — never
+   * from `setProjectConfigForTest`'s snapshot.
+   */
+  describe('the serving chip (HIVE-142)', () => {
+    /*
+      No `setProjectConfigForTest` call here, so `useProjectConfig()` returns
+      `null` and `useServerExposure`'s gate means `readAppInfo` is never even
+      called — the same "no bridge" state `ExposureChip`'s absence test above
+      exercises.
+    */
+    it('is absent from the chips cluster when there is no config snapshot', () => {
+      render(<Header />);
+
+      const chips = screen.getByTestId('header-chips');
+      expect(chips).not.toHaveTextContent('100.101.102.103');
+    });
+
+    it('joins the cluster, after ExposureChip, once the server socket binds', async () => {
+      // A real snapshot, because `useServerExposure` gates its `readAppInfo`
+      // fetch on one resolving — see its own doc comment for why.
+      setProjectConfigForTest(emptySnapshot('/Users/dev/.hive/config.json'));
+      // Both fields bound at once, so the ordering assertion below actually
+      // compares two rendered chips rather than one chip against a `demo`
+      // text node that happens to sit earlier in the cluster.
+      readAppInfo.mockResolvedValue({
+        version: '0.1.0',
+        electron: '38.0.0',
+        chrome: '140.0.0',
+        node: '22.0.0',
+        platform: 'darwin',
+        logPath: '/Users/dev/Library/Logs/The Hive',
+        receiverBoundHost: '172.17.0.1',
+        serverBoundHost: '100.101.102.103',
+      });
+
+      render(<Header />);
+
+      const chips = screen.getByTestId('header-chips');
+      await waitFor(() => expect(chips).toHaveTextContent('100.101.102.103'));
+
+      const names = Array.from(chips.children).map((child) => child.textContent);
+      expect(names.indexOf('Serving 100.101.102.103')).toBeGreaterThan(
+        names.indexOf('172.17.0.1'),
+      );
+    });
+  });
 });

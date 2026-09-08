@@ -43,16 +43,19 @@ import { useReceiverExposure } from '@hooks/use-project-config';
  * `title` carries the rest, including where to turn it off, since a chip in a
  * 56px row has no room to spell out a sentence.
  *
- * Sits in the centre cluster beside {@link ModelChip} rather than in the left
- * zone with {@link DemoChip}: `DemoChip` describes the **build** — a fact
- * about the binary that never changes at runtime — which is why it lives with
- * the product identity. This chip describes a fact about the **running
- * process** instead, resolved at launch rather than baked into the binary, so
- * it belongs with the other chip that reads process state rather than the one
- * that reads a build flag. That the value, once main's own bind has resolved,
- * cannot change again before the next launch (see `AppInfo.receiverBoundHost`
- * for exactly what "resolved" means here) is why one read is enough — it does
- * not need to belong to a live subscription to earn this position.
+ * Sits beside {@link ModelChip} in the same `header-chips` flex row
+ * {@link DemoChip} also occupies — there is one cluster, not two zones with a
+ * boundary between them, and {@link ServingChip} now shares it too — but the
+ * ordering still separates by what each chip describes: `DemoChip` describes
+ * the **build** — a fact about the binary that never changes at runtime —
+ * which is why it lives with the product identity. This chip describes a
+ * fact about the **running process** instead, resolved at launch rather
+ * than baked into the binary, so it belongs with the other chip that reads
+ * process state rather than the one that reads a build flag. That the value,
+ * once main's own bind has resolved, cannot change again before the next
+ * launch (see `AppInfo.receiverBoundHost` for exactly what "resolved" means
+ * here) is why one read is enough — it does not need to belong to a live
+ * subscription to earn this position.
  */
 export function ExposureChip() {
   const address = useReceiverExposure();
