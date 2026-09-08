@@ -8,10 +8,12 @@ import {
   CHANNEL_AUTHORIZATION,
   FRAME_KIND,
   REMOTE_PROTOCOL_VERSION,
+  WINDOW_BOUND,
   authorizationOf,
   frameKindOf,
   isAuthorized,
   isClientFrameAllowed,
+  windowBoundReason,
 } from '@shared/remote-contract';
 
 /**
@@ -336,5 +338,38 @@ describe('remote contract: an unclassified channel is a compile error', () => {
     const partial: Record<Channel, 'read'> = { [CH.configGet]: 'read' };
 
     expect(partial[CH.configGet]).toBe('read');
+  });
+});
+
+describe('WINDOW_BOUND', () => {
+  it('names exactly the three dialog channels', () => {
+    expect(Object.keys(WINDOW_BOUND).sort()).toEqual(
+      [CH.configChooseDirectory, CH.themePick, CH.themeSave].sort(),
+    );
+  });
+
+  it('gives every entry a reason naming the ticket that removes it', () => {
+    for (const reason of Object.values(WINDOW_BOUND)) {
+      expect(reason).toMatch(/HIVE-146/);
+    }
+  });
+
+  it('only ever names a call channel', () => {
+    for (const channel of Object.keys(WINDOW_BOUND)) {
+      expect(frameKindOf(channel)).toBe('call');
+    }
+  });
+
+  it('does not name pty:prompt, which is adapted rather than refused', () => {
+    expect(windowBoundReason(CH.ptyPrompt)).toBeNull();
+  });
+
+  it('returns null for a channel that is not window bound', () => {
+    expect(windowBoundReason(CH.configGet)).toBeNull();
+    expect(windowBoundReason('not:a:channel')).toBeNull();
+  });
+
+  it('returns the reason for one that is', () => {
+    expect(windowBoundReason(CH.themePick)).toMatch(/HIVE-146/);
   });
 });

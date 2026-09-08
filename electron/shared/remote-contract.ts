@@ -415,6 +415,48 @@ export const CHANNEL_AUTHORIZATION = {
 } as const satisfies Record<Channel, Authorization>;
 
 /**
+ * Channels that cannot be answered for a socket, and the ticket that fixes each
+ * (HIVE-143).
+ *
+ * Exactly four channels in the whole surface dereference the Electron event
+ * they are handed. Three of them do it for the same reason — resolving a parent
+ * `BrowserWindow` for a native dialog — and server mode opens no window at all,
+ * so `BrowserWindow.fromWebContents` has nothing to return. Proxied as-is they
+ * would not throw: `config:choose-directory` returns `null` and reads to the
+ * user as a cancelled dialog, which is a silent failure rather than a loud one.
+ *
+ * Refused by name instead, so a remote client gets a code it can act on and a
+ * message naming the work. HIVE-146 deletes an entry as it lands each
+ * replacement — a server-side browser for the first, a client-side import and
+ * export for the other two — and this table goes away with the last of them.
+ *
+ * The fourth, `pty:prompt`, is deliberately absent. It uses the event for a
+ * surface *lifetime* rather than a window, and `watchReporter` already accepts
+ * anything with an `.on`, so a socket satisfies it. Refusing it would silently
+ * revert HIVE-135's nudge holding for every remote session.
+ */
+export const WINDOW_BOUND = {
+  [CH.configChooseDirectory]:
+    'Choosing a directory opens a dialog on the server, which has no window. HIVE-146 replaces it with a server-side browser.',
+  [CH.themePick]:
+    'Importing a theme reads a file on the machine the user is sitting at. HIVE-146 keeps it on the client.',
+  [CH.themeSave]:
+    'Exporting a theme writes a file on the machine the user is sitting at. HIVE-146 keeps it on the client.',
+} as const satisfies Partial<Record<Channel, string>>;
+
+/**
+ * Why `channel` cannot be answered for a socket, or `null` if it can.
+ *
+ * Takes a `string` for the reason {@link frameKindOf} does: the caller is
+ * holding something a socket sent it.
+ */
+export function windowBoundReason(channel: string): string | null {
+  return Object.hasOwn(WINDOW_BOUND, channel)
+    ? WINDOW_BOUND[channel as keyof typeof WINDOW_BOUND]
+    : null;
+}
+
+/**
  * The first frame on every connection, and the only one that may precede a
  * version check.
  *
