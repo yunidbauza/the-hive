@@ -3,9 +3,27 @@ import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { readBundle } from '../../../../electron/main/skills/bundle';
 import { readUserSkills } from '../../../../electron/main/skills/read';
+
+/*
+  Real `readBundle` throughout — wrapped rather than replaced, so every other
+  test in this file still gets the walk it asserts on. The wrap exists for one
+  test only: "does not walk a folder it rejected" needs to observe that the
+  walk was never *started* for a rejected folder, and asserting on
+  `read.skills`/`read.invalid` alone cannot distinguish that from a reader that
+  walked every folder and simply discarded the rejected one's result.
+  `restoreMocks` in `vitest.config.ts` clears call history and reverts to this
+  same real implementation before every test, so the spy never leaks state
+  between them.
+*/
+vi.mock('../../../../electron/main/skills/bundle', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../../../electron/main/skills/bundle')>();
+  return { ...actual, readBundle: vi.fn(actual.readBundle) };
+});
 
 let root: string;
 
@@ -243,12 +261,19 @@ describe('readUserSkills', () => {
   });
 
   it('does not walk a folder it rejected', async () => {
+    // An accepted skill alongside the rejected one so "never called" proves
+    // the walk skipped `Broken` specifically, not that it stopped walking
+    // altogether.
+    await write('standup', valid('standup'));
     await mkdir(join(root, 'Broken', 'scripts'), { recursive: true });
     await writeFile(join(root, 'Broken', 'SKILL.md'), '---\nname: Broken\n---\n', 'utf8');
 
     const read = await readUserSkills(root);
 
     expect(read.invalid.map((s) => s.name)).toContain('Broken');
-    expect(read.skills).toHaveLength(0);
+    expect(read.skills.map((s) => s.name)).toEqual(['standup']);
+
+    expect(vi.mocked(readBundle)).toHaveBeenCalledWith(join(root, 'standup'));
+    expect(vi.mocked(readBundle)).not.toHaveBeenCalledWith(join(root, 'Broken'));
   });
 });
