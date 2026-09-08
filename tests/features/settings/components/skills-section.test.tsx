@@ -20,6 +20,10 @@ const renameSkill = vi.fn();
 const importIntoSkill = vi.fn();
 const dropIntoSkill = vi.fn();
 const skillDropTokens = vi.fn();
+const writeSkillFile = vi.fn();
+const removeSkillFile = vi.fn();
+const moveSkillFile = vi.fn();
+const makeSkillDir = vi.fn();
 
 vi.mock('@/lib/skills', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/skills')>();
@@ -35,6 +39,13 @@ vi.mock('@/lib/skills', async (importOriginal) => {
     dropIntoSkill: (name: string, dir: string, tokens: string[]) =>
       dropIntoSkill(name, dir, tokens),
     skillDropTokens: (files: readonly File[]) => skillDropTokens(files),
+    writeSkillFile: (name: string, path: string, body: string) =>
+      writeSkillFile(name, path, body),
+    removeSkillFile: (name: string, path: string) =>
+      removeSkillFile(name, path),
+    moveSkillFile: (name: string, from: string, to: string) =>
+      moveSkillFile(name, from, to),
+    makeSkillDir: (name: string, path: string) => makeSkillDir(name, path),
   };
 });
 
@@ -101,6 +112,10 @@ beforeEach(() => {
   importIntoSkill.mockResolvedValue(null);
   dropIntoSkill.mockResolvedValue(null);
   skillDropTokens.mockReturnValue(['token-1']);
+  writeSkillFile.mockResolvedValue(null);
+  removeSkillFile.mockResolvedValue(null);
+  moveSkillFile.mockResolvedValue(null);
+  makeSkillDir.mockResolvedValue(null);
   /*
     Every file in a bundle now comes through one verb (HIVE-148). Opening a
     skill is opening its SKILL.md, so these tests reach the editor exactly as
@@ -214,6 +229,119 @@ describe('SkillsSection', () => {
 
     expect(screen.getByRole('button', { name: '/triage' })).toBeInTheDocument();
     expect(screen.queryByLabelText('Files in standup')).toBeNull();
+  });
+
+  /**
+   * Save and Delete mean different things depending on which file is open, and
+   * getting that wrong is not cosmetic: routing a `scripts/build.py` through
+   * the skill-level verbs would write its bytes into SKILL.md under the
+   * frontmatter name, and delete the whole bundle.
+   */
+  describe('inside a bundle', () => {
+    const bundled = () =>
+      snapshot({
+        skills: [
+          {
+            name: 'graphify',
+            description: 'does a thing',
+            valid: true as const,
+            manifest: {
+              entries: [
+                { path: 'SKILL.md', kind: 'file', size: 10, executable: false, excluded: null },
+                { path: 'build.py', kind: 'file', size: 10, executable: true, excluded: null },
+              ],
+              capped: null,
+            },
+          },
+        ],
+      });
+
+    const openBuildPy = async (): Promise<void> => {
+      render(<SkillsSection />);
+      await userEvent.click(screen.getByRole('button', { name: '/graphify' }));
+      await userEvent.click(screen.getByRole('button', { name: /build\.py/ }));
+      await screen.findByLabelText('Skill source');
+    };
+
+    it('saves the open file through the file verb, not the skill verb', async () => {
+      setSkillsForTest(bundled());
+      await openBuildPy();
+      appendSurfaceText('Skill source', 'print(2)');
+
+      await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+      expect(writeSkillFile).toHaveBeenCalledWith(
+        'graphify',
+        'build.py',
+        expect.stringContaining('print(2)'),
+      );
+      // The skill-level save would have written this into SKILL.md.
+      expect(saveSkill).not.toHaveBeenCalled();
+    });
+
+    it('deletes the open file, not the whole skill', async () => {
+      setSkillsForTest(bundled());
+      await openBuildPy();
+
+      await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+      const ask = screen.getByRole('alertdialog', { name: /Delete build\.py/ });
+      // Scoped to the question: the editor footer still carries its own
+      // Delete, and clicking the wrong one would prove nothing.
+      await userEvent.click(within(ask).getByRole('button', { name: 'Delete' }));
+
+      expect(removeSkillFile).toHaveBeenCalledWith('graphify', 'build.py');
+      expect(deleteSkill).not.toHaveBeenCalled();
+    });
+
+    it('renames the open file inside the bundle', async () => {
+      setSkillsForTest(bundled());
+      await openBuildPy();
+
+      await userEvent.click(screen.getByRole('button', { name: 'Rename' }));
+      const ask = screen.getByRole('alertdialog', { name: /Rename build\.py/ });
+      const box = within(ask).getByRole('textbox');
+      await userEvent.clear(box);
+      await userEvent.type(box, 'scripts/build.py');
+      await userEvent.click(within(ask).getByRole('button', { name: 'Rename' }));
+
+      expect(moveSkillFile).toHaveBeenCalledWith(
+        'graphify',
+        'build.py',
+        'scripts/build.py',
+      );
+    });
+
+    it('offers no Rename for a SKILL.md, whose name is its frontmatter', async () => {
+      setSkillsForTest(bundled());
+
+      render(<SkillsSection />);
+      await userEvent.click(screen.getByRole('button', { name: '/graphify' }));
+      await screen.findByLabelText('Skill source');
+
+      expect(screen.queryByRole('button', { name: 'Rename' })).toBeNull();
+    });
+
+    it('creates a file and opens it empty', async () => {
+      setSkillsForTest(bundled());
+
+      render(<SkillsSection />);
+      await userEvent.click(screen.getByRole('button', { name: '/graphify' }));
+      await userEvent.click(screen.getByRole('button', { name: '+ Add' }));
+      await userEvent.click(screen.getByRole('button', { name: 'New file' }));
+      await userEvent.type(
+        screen.getByRole('textbox', { name: 'New file' }),
+        'refs/schema.json',
+      );
+      await userEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+      // Empty, not templated: this pane cannot know the file type, and only
+      // the shebang rule in main cares.
+      expect(writeSkillFile).toHaveBeenCalledWith(
+        'graphify',
+        'refs/schema.json',
+        '',
+      );
+    });
   });
 
   it('counts the files the delete confirm will remove', async () => {

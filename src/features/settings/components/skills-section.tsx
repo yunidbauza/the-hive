@@ -7,11 +7,15 @@ import {
   frontmatterName,
   importIntoSkill,
   loadSkills,
+  makeSkillDir,
+  moveSkillFile,
   readSkillFile,
+  removeSkillFile,
   renameSkill,
   saveSkill,
   skillDropTokens,
   skillNameProblem,
+  writeSkillFile,
 } from '@/lib/skills';
 
 import { SwarmCreature } from '@components/ui/swarm-creature';
@@ -19,6 +23,7 @@ import { SettingsSectionHeader } from '@features/settings/components/settings-se
 import { SkillBundle } from '@features/settings/components/skill-bundle';
 import { SkillDiscardConfirm } from '@features/settings/components/skill-discard-confirm';
 import { SkillEditor } from '@features/settings/components/skill-editor';
+import { SkillPathPrompt } from '@features/settings/components/skill-path-prompt';
 import { useSkills } from '@hooks/use-skills';
 import type { FsRefusalReason } from '@shared/fs-contract';
 
@@ -285,10 +290,90 @@ export function SkillsSection() {
     );
   };
 
+  /**
+   * A one-field question about a path, or `null`.
+   *
+   * New file, new folder and rename are the same question with a different
+   * verb, so they share one piece of state rather than three flags that can
+   * disagree about which is showing.
+   */
+  const [prompt, setPrompt] = useState<{
+    question: string;
+    hint: string;
+    confirmLabel: string;
+    initial: string;
+    act: (path: string) => void;
+  } | null>(null);
+
   /** Bring files in from outside, through main's own picker. */
-  const addToBundle = (dir: string): void => {
+  const importToBundle = (dir: string): void => {
     if (drilled === null) return;
     void importIntoSkill(drilled, dir).then(setError);
+  };
+
+  const newFile = (dir: string): void => {
+    if (drilled === null) return;
+    const skillName = drilled;
+    setPrompt({
+      question: 'New file',
+      hint: 'A path inside the skill, at most four folders deep.',
+      confirmLabel: 'Create',
+      initial: dir === '' ? '' : `${dir}/`,
+      act: (path) => {
+        /*
+          Created empty, and opened. A template would be this pane guessing at
+          a file type it has no way to know — the bundle holds Python, JSON,
+          shell and fonts, and only the shebang rule cares which.
+        */
+        void writeSkillFile(skillName, path, '').then((failure) => {
+          setError(failure);
+          if (failure !== null) return;
+          setOpenPath(path);
+          setRefusal(null);
+          setBuffer('');
+          setSaved('');
+        });
+      },
+    });
+  };
+
+  const newFolder = (dir: string): void => {
+    if (drilled === null) return;
+    const skillName = drilled;
+    setPrompt({
+      question: 'New folder',
+      hint: 'A path inside the skill, at most four folders deep.',
+      confirmLabel: 'Create',
+      initial: dir === '' ? '' : `${dir}/`,
+      act: (path) => {
+        void makeSkillDir(skillName, path).then(setError);
+      },
+    });
+  };
+
+  /** Rename the open file inside its bundle. */
+  const renameOpenFile = (): void => {
+    if (drilled === null || openPath === null) return;
+    const skillName = drilled;
+    const from = openPath;
+    setPrompt({
+      question: `Rename ${from}`,
+      hint: 'Moving it into a folder that does not exist creates one.',
+      confirmLabel: 'Rename',
+      initial: from,
+      act: (to) => {
+        if (to === from) return;
+        void moveSkillFile(skillName, from, to).then((failure) => {
+          setError(failure);
+          if (failure !== null) return;
+          // Follow the file, the way `commit` follows a renamed skill: leaving
+          // the pane on a path that no longer exists is how HIVE-99's
+          // unrecoverable state began.
+          setOpenPath(to);
+          void openFile(skillName, to);
+        });
+      },
+    });
   };
 
   /**
@@ -371,8 +456,34 @@ export function SkillsSection() {
     );
   };
 
+  /**
+   * Is the editor showing a file *other than* the skill's own SKILL.md?
+   *
+   * The difference decides what Save and Delete mean, and getting it wrong is
+   * not cosmetic: saving `scripts/build.py` through the skill-level verb would
+   * write its bytes into SKILL.md under the frontmatter name, and deleting it
+   * would remove the whole bundle.
+   */
+  const inFile =
+    drilled !== null && openPath !== null && openPath !== 'SKILL.md';
+
   const save = (): void => {
-    if (buffer === null || problem !== null) return;
+    if (buffer === null) return;
+
+    if (inFile && drilled !== null && openPath !== null) {
+      const body = buffer;
+      void writeSkillFile(drilled, openPath, body).then((failure) => {
+        if (failure !== null) {
+          setError(failure);
+          return;
+        }
+        setError(null);
+        setSaved(body);
+      });
+      return;
+    }
+
+    if (problem !== null) return;
     const body = buffer;
 
     /*
@@ -414,6 +525,39 @@ export function SkillsSection() {
   };
 
   const remove = (): void => {
+    /*
+      Inside a bundle, Delete removes the *file* on screen — not the skill.
+      Removing the skill is the crumb, the list, and that row's own Delete,
+      which still asks and still counts what it takes.
+    */
+    if (inFile && drilled !== null && openPath !== null) {
+      const path = openPath;
+      const skillName = drilled;
+      setPending({
+        question: `Delete ${path}?`,
+        detail:
+          'Removes it from the skill folder. Sessions already running keep the copy they were given.',
+        confirmLabel: 'Delete',
+        act: () => {
+          void removeSkillFile(skillName, path).then((failure) => {
+            if (failure !== null) {
+              setError(failure);
+              return;
+            }
+            setError(null);
+            // Back to the file that is always there, rather than an empty
+            // panel over a row that no longer exists.
+            setOpenPath('SKILL.md');
+            setRefusal(null);
+            setBuffer(null);
+            setSaved(null);
+            void openFile(skillName, 'SKILL.md');
+          });
+        },
+      });
+      return;
+    }
+
     const target = open;
     if (target === null) {
       // Never saved, so there is no file. Abandoning it is a local matter.
@@ -579,7 +723,9 @@ export function SkillsSection() {
               );
             }}
             onOpen={openInBundle}
-            onAdd={addToBundle}
+            onNewFile={newFile}
+            onNewFolder={newFolder}
+            onImport={importToBundle}
             onDrop={dropIntoBundle}
           />
         ) : (
@@ -654,7 +800,26 @@ export function SkillsSection() {
               onChange={edit}
               onSave={save}
               onDelete={remove}
+              // A SKILL.md is renamed by editing its frontmatter, which is a
+              // rename of the whole skill and already asks its own question.
+              onRename={inFile ? renameOpenFile : undefined}
             />
+
+            {prompt === null ? null : (
+              <SkillPathPrompt
+                question={prompt.question}
+                hint={prompt.hint}
+                confirmLabel={prompt.confirmLabel}
+                initial={prompt.initial}
+                onConfirm={(path) => {
+                  prompt.act(path);
+                  setPrompt(null);
+                }}
+                onCancel={() => {
+                  setPrompt(null);
+                }}
+              />
+            )}
 
             {pending === null ? null : (
               <SkillDiscardConfirm

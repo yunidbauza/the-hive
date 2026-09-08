@@ -37,6 +37,12 @@ interface SkillEditorProps {
   onChange: (body: string) => void;
   onSave: () => void;
   onDelete: () => void;
+  /**
+   * Rename this file inside its bundle, or `undefined` where that makes no
+   * sense — a SKILL.md, whose name is its frontmatter's, and a skill that has
+   * never been saved.
+   */
+  onRename?: (() => void) | undefined;
 }
 
 /**
@@ -87,6 +93,7 @@ export function SkillEditor({
   onChange,
   onSave,
   onDelete,
+  onRename,
 }: SkillEditorProps) {
   const appearance = useEditorAppearance();
 
@@ -249,6 +256,15 @@ export function SkillEditor({
               'The name in the frontmatter names the folder and the command.')}
         </span>
         <div className="flex shrink-0 gap-1.5">
+          {onRename === undefined ? null : (
+            <button
+              type="button"
+              onClick={onRename}
+              className="rounded-md border border-border px-2.5 py-1 text-[12px] text-muted hover:bg-hover hover:text-ink"
+            >
+              Rename
+            </button>
+          )}
           <button
             type="button"
             onClick={onDelete}

@@ -83,8 +83,10 @@ interface SkillBundleProps {
   dirty: boolean;
   onBack: () => void;
   onOpen: (path: string) => void;
-  /** Add a file or folder under `dir`, or bring files in from outside. */
-  onAdd: (dir: string) => void;
+  onNewFile: (dir: string) => void;
+  onNewFolder: (dir: string) => void;
+  /** Open main's own picker. No source path is ever named by the renderer. */
+  onImport: (dir: string) => void;
   /** Files dropped onto the tree root, or onto one folder row. */
   onDrop: (dir: string, files: readonly File[]) => void;
 }
@@ -95,10 +97,14 @@ export function SkillBundle({
   dirty,
   onBack,
   onOpen,
-  onAdd,
+  onNewFile,
+  onNewFolder,
+  onImport,
   onDrop,
 }: SkillBundleProps) {
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  /** Is the Add menu showing? Closed on every choice. */
+  const [adding, setAdding] = useState(false);
   /** The folder a drag is currently over, for the drop target's outline. */
   const [over, setOver] = useState<string | null>(null);
 
@@ -292,15 +298,53 @@ export function SkillBundle({
         </p>
       )}
 
-      <button
-        type="button"
-        onClick={() => {
-          onAdd('');
-        }}
-        className="border-t border-border-soft px-2.5 py-1.5 text-left font-mono text-[12.5px] text-brand hover:bg-hover"
-      >
-        + Add
-      </button>
+      {adding ? (
+        /*
+          Three plain buttons rather than a dropdown primitive. The column is
+          190px and the menu has three items that never grow; a popover would
+          add a layer, a portal and a dismissal rule to a list that fits.
+        */
+        <div className="flex flex-col border-t border-border-soft">
+          {(
+            [
+              ['New file', onNewFile],
+              ['New folder', onNewFolder],
+              ['Add from your computer', onImport],
+            ] as const
+          ).map(([label, act]) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => {
+                setAdding(false);
+                act('');
+              }}
+              className="px-2.5 py-1.5 text-left text-[12.5px] text-muted hover:bg-hover hover:text-ink"
+            >
+              {label}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => {
+              setAdding(false);
+            }}
+            className="border-t border-border-soft px-2.5 py-1.5 text-left text-[11.5px] text-subtle hover:bg-hover"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => {
+            setAdding(true);
+          }}
+          className="border-t border-border-soft px-2.5 py-1.5 text-left font-mono text-[12.5px] text-brand hover:bg-hover"
+        >
+          + Add
+        </button>
+      )}
     </div>
   );
 }

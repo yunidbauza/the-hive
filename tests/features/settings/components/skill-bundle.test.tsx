@@ -62,7 +62,9 @@ const props = {
   dirty: false,
   onBack: vi.fn(),
   onOpen: vi.fn(),
-  onAdd: vi.fn(),
+  onNewFile: vi.fn(),
+  onNewFolder: vi.fn(),
+  onImport: vi.fn(),
   onDrop: vi.fn(),
 };
 
@@ -203,12 +205,40 @@ describe('SkillBundle', () => {
     ).toBeInTheDocument();
   });
 
-  it('offers Add at the bundle root', () => {
-    const onAdd = vi.fn();
-    render(<SkillBundle {...props} skill={skill(manifest)} onAdd={onAdd} />);
+  it('offers three ways to add, and only after asking', () => {
+    const onNewFile = vi.fn();
+    render(
+      <SkillBundle {...props} skill={skill(manifest)} onNewFile={onNewFile} />,
+    );
+
+    // The menu is closed until asked for, so the column is a file tree at rest.
+    expect(screen.queryByRole('button', { name: 'New file' })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: '+ Add' }));
 
-    expect(onAdd).toHaveBeenCalledWith('');
+    expect(screen.getByRole('button', { name: 'New folder' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Add from your computer' }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'New file' }));
+
+    expect(onNewFile).toHaveBeenCalledWith('');
+    // Closed again, rather than left open over the question it just raised.
+    expect(screen.getByRole('button', { name: '+ Add' })).toBeInTheDocument();
+  });
+
+  it('opens main\'s picker rather than naming a source path', () => {
+    const onImport = vi.fn();
+    render(
+      <SkillBundle {...props} skill={skill(manifest)} onImport={onImport} />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Add' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Add from your computer' }),
+    );
+
+    expect(onImport).toHaveBeenCalledWith('');
   });
 });
