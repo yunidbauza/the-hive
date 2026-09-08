@@ -3,6 +3,7 @@ import {
   lstat,
   mkdir,
   readFile as readFileRaw,
+  realpath,
   rename,
   rm,
   stat,
@@ -242,6 +243,42 @@ export function createSkillsRuntime({
     skillsRoot: skillsRoot(),
   });
 
+  /**
+   * Whether `absPath` — already resolved by `resolveInSkill` — names this
+   * skill's own `SKILL.md`, however it got there.
+   *
+   * A closure over `fileFor` rather than a module-level function, for the
+   * reason `fileFor` itself is one: it needs `skillsRoot()` read fresh per
+   * call, the same value `resolveInSkill` resolved its root from.
+   *
+   * Compares `realpath`d canonical paths rather than the request string,
+   * which is the whole point: `removeFile('graphify', 'self/SKILL.md')`
+   * clears `assertSkillPath` (no dot segment, depth 2) and, with a bundle
+   * holding `self -> .`, resolves to the exact same file `SKILL.md` names
+   * directly. Only comparing what the two paths actually resolve *to* catches
+   * that; comparing the strings that named them does not.
+   */
+  const isSkillManifest = async (
+    name: string,
+    absPath: string,
+  ): Promise<boolean> => {
+    let real: string;
+    try {
+      real = await realpath(absPath);
+    } catch {
+      return false; // Nothing there to be SKILL.md.
+    }
+
+    let canonical: string;
+    try {
+      canonical = await realpath(fileFor(name));
+    } catch {
+      return false; // No SKILL.md in this bundle to protect.
+    }
+
+    return real === canonical;
+  };
+
   return {
     sync,
 
@@ -324,21 +361,51 @@ export function createSkillsRuntime({
 
     async removeFile(name: string, path: string): Promise<SkillsSnapshot> {
       /*
+        The bundle root itself. `assertSkillPath` already refuses `''` at the
+        IPC boundary, so this is unreachable from the pane today — but every
+        other trap in this file is defended a second time here, and an
+        `rm -rf` of the whole skill is exactly the kind of mistake one
+        unguarded caller away should not survive.
+      */
+      if (path === '') {
+        throw new Error('Cannot remove the bundle root — remove the skill instead.');
+      }
+
+      const absPath = await resolveInSkill(name, path);
+
+      /*
         SKILL.md is what makes the folder a skill. Deleting it through the file
         tree would leave a folder that `readUserSkills` reports as invalid, a
         row the pane cannot open, and no way back except a text editor — the
         recovery trap HIVE-99's self review found and fixed. Deleting the
         *skill* is `skills:remove`, which asks first and says what it removes.
+
+        Checked against the *resolved* path, not the request string: a bundle
+        holding `self -> .` makes `self/SKILL.md` a second, symlinked name for
+        the same file, and `assertSkillPath` admits it (no dot segment, depth
+        2). String equality on the request would miss it entirely.
       */
-      if (path === 'SKILL.md') {
+      if (await isSkillManifest(name, absPath)) {
         throw new Error('SKILL.md cannot be deleted — delete the skill instead.');
       }
-      await rm(await resolveInSkill(name, path), { recursive: true, force: true });
+      await rm(absPath, { recursive: true, force: true });
       return snapshot(await sync());
     },
 
     async moveFile(name: string, from: string, to: string): Promise<SkillsSnapshot> {
       const source = await resolveInSkill(name, from);
+
+      /*
+        The same protection `removeFile` gives SKILL.md, because a move is a
+        second route to the same recovery trap: `moveFile(name, 'SKILL.md',
+        'archive.md')` leaves a folder with no `SKILL.md` just as surely as
+        deleting it would, and it must not be reachable by renaming around
+        the guard above.
+      */
+      if (await isSkillManifest(name, source)) {
+        throw new Error('SKILL.md cannot be moved — it must stay at the bundle root.');
+      }
+
       const target = await resolveInSkill(name, to);
 
       // Refused rather than left to `rename(2)`, for the reason the skill

@@ -448,10 +448,22 @@ describe('createSkillsRuntime file verbs', () => {
   });
 
   it('refuses to remove SKILL.md, which would break the skill silently', async () => {
+    /*
+      Pinned to the specific message and to the file surviving, not merely
+      that the call threw: an implementation that deleted the file and then
+      threw for an unrelated reason would pass a bare `.rejects.toThrow()`,
+      and so would one where `resolveInSkill` happened to throw for
+      everything. Neither is the guarantee this verb makes.
+    */
     const skills = runtime();
     await skills.write('graphify', '---\nname: graphify\n---\n');
 
-    await expect(skills.removeFile('graphify', 'SKILL.md')).rejects.toThrow();
+    await expect(
+      skills.removeFile('graphify', 'SKILL.md'),
+    ).rejects.toThrow(/SKILL\.md cannot be deleted/i);
+    expect(
+      await readFile(join(skillsDir(), 'graphify', 'SKILL.md'), 'utf8'),
+    ).toContain('name: graphify');
   });
 
   it('moves a file inside the bundle', async () => {
@@ -483,21 +495,200 @@ describe('createSkillsRuntime file verbs', () => {
     const skills = runtime();
     await skills.write('graphify', '---\nname: graphify\n---\n');
     const outside = await mkdtemp(join(tmpdir(), 'hive-outside-'));
-    await writeFile(join(outside, 'secret.txt'), 'no', 'utf8');
-    await symlink(outside, join(skillsDir(), 'graphify', 'escape'));
+    try {
+      await writeFile(join(outside, 'secret.txt'), 'no', 'utf8');
+      await symlink(outside, join(skillsDir(), 'graphify', 'escape'));
 
+      /*
+        The escape must fail *because it escapes*, not because the target is
+        missing: `secret.txt` is written before the symlink exists, so a
+        resolveInSkill that only checked ENOENT would find the file and read
+        it straight through the link. The message assertion is what pins this
+        down to `OutsideSkillError` rather than any other rejection — a bare
+        `.rejects.toThrow()` would pass just as well on ENOENT and prove
+        nothing.
+      */
+      await expect(
+        skills.readFile('graphify', 'escape/secret.txt'),
+      ).rejects.toThrow(/outside the skill folder/i);
+    } finally {
+      // In a `finally`, not inline: a failed assertion above must not leak
+      // the temp directory into the next run.
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a write through a dangling symlink rather than following it out', async () => {
     /*
-      The escape must fail *because it escapes*, not because the target is
-      missing: `secret.txt` is written before the symlink exists, so a
-      resolveInSkill that only checked ENOENT would find the file and read it
-      straight through the link. The message assertion is what pins this down
-      to `OutsideSkillError` rather than any other rejection — a bare
-      `.rejects.toThrow()` would pass just as well on ENOENT and prove nothing.
+      The gap the sabotage experiment for the escape test above could not
+      reach: `realpath` throws `ENOENT` for a path that genuinely does not
+      exist yet *and* for a dangling symlink, whose target is absent but
+      which is very much sitting on disk. A resolver that treated every
+      `ENOENT` as "climb, it's not there yet" would climb straight past the
+      link to a resolvable ancestor and hand `writeFile` a path it never
+      actually validated — which then follows the link and writes outside the
+      root with no error at all.
     */
-    await expect(
-      skills.readFile('graphify', 'escape/secret.txt'),
-    ).rejects.toThrow(/outside the skill folder/i);
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+    const outside = await mkdtemp(join(tmpdir(), 'hive-outside-'));
+    const outsideTarget = join(outside, 'not-yet.txt');
+    try {
+      // The target does not exist — this is what makes it dangling, and what
+      // makes `realpath` fail exactly the way a merely-not-created-yet path
+      // fails.
+      await symlink(outsideTarget, join(skillsDir(), 'graphify', 'escape'));
 
-    await rm(outside, { recursive: true, force: true });
+      await expect(
+        skills.writeFile('graphify', 'escape', 'PWNED'),
+      ).rejects.toThrow(/outside the skill folder/i);
+
+      // Not merely that it threw: nothing must have landed at the far end of
+      // the link. A refusal that still wrote through the link before
+      // throwing would pass a bare `.rejects.toThrow()` and still be a
+      // security hole.
+      await expect(readFile(outsideTarget, 'utf8')).rejects.toThrow();
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to remove SKILL.md through a symlink that resolves back to it', async () => {
+    /*
+      `assertSkillPath` admits `self/SKILL.md` — no dot segment, depth 2 — so
+      a bundle holding `self -> .` reaches `removeFile` with a path that is
+      not the literal string `'SKILL.md'` but resolves to the exact same
+      file. A guard checking the request string misses this entirely.
+    */
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+    await symlink('.', join(skillsDir(), 'graphify', 'self'));
+
+    await expect(
+      skills.removeFile('graphify', 'self/SKILL.md'),
+    ).rejects.toThrow(/SKILL\.md cannot be deleted/i);
+    expect(
+      await readFile(join(skillsDir(), 'graphify', 'SKILL.md'), 'utf8'),
+    ).toContain('name: graphify');
+  });
+
+  it('refuses to remove the bundle root itself', async () => {
+    // `assertSkillPath` already refuses `''` at the IPC boundary, so this
+    // exercises the runtime's own second line of defense directly.
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+
+    await expect(skills.removeFile('graphify', '')).rejects.toThrow();
+    expect(await readdir(join(skillsDir(), 'graphify'))).toContain('SKILL.md');
+  });
+
+  it('refuses to move SKILL.md out from under the skill', async () => {
+    // The same recovery trap `removeFile` guards against, one verb over: a
+    // successful move leaves a folder with no SKILL.md just as surely as a
+    // delete would.
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+
+    await expect(
+      skills.moveFile('graphify', 'SKILL.md', 'archive.md'),
+    ).rejects.toThrow(/SKILL\.md cannot be moved/i);
+    expect(
+      await readFile(join(skillsDir(), 'graphify', 'SKILL.md'), 'utf8'),
+    ).toContain('name: graphify');
+  });
+});
+
+/**
+ * The two `readFile` refusals — too-large and (covered above) binary — and
+ * the shebang boundary that decides a written file's mode. Both numbers and
+ * both edges are worth pinning down explicitly: they are the two places this
+ * module's behaviour is a threshold rather than a rule, and a threshold with
+ * no test drifts silently.
+ */
+describe('createSkillsRuntime file verbs — boundaries', () => {
+  const skillsDir = (): string => join(hiveDir, 'skills');
+
+  it('admits a file exactly at the size cap and refuses one byte over', async () => {
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+
+    await writeFile(
+      join(skillsDir(), 'graphify', 'at-cap.bin'),
+      Buffer.alloc(5_000_000, 'a'),
+    );
+    await writeFile(
+      join(skillsDir(), 'graphify', 'over-cap.bin'),
+      Buffer.alloc(5_000_001, 'a'),
+    );
+
+    const atCap = await skills.readFile('graphify', 'at-cap.bin');
+    const overCap = await skills.readFile('graphify', 'over-cap.bin');
+
+    expect(atCap.refused).toBeNull();
+    expect(overCap.refused).toBe('too-large');
+    expect(overCap.size).toBe(5_000_001);
+  });
+
+  it('writes exactly "#!" as 755', async () => {
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+
+    await skills.writeFile('graphify', 'run', '#!');
+
+    const info = await stat(join(skillsDir(), 'graphify', 'run'));
+    expect(info.mode & 0o777).toBe(0o755);
+  });
+
+  it('writes an empty file as 644', async () => {
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+
+    await skills.writeFile('graphify', 'empty.txt', '');
+
+    const info = await stat(join(skillsDir(), 'graphify', 'empty.txt'));
+    expect(info.mode & 0o777).toBe(0o644);
+  });
+
+  it('writes a leading-space shebang as 644, not 755', async () => {
+    // `#!` must be the first two bytes. The kernel would not execute this
+    // either, so 644 is the correct answer, not a near-miss.
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+
+    await skills.writeFile('graphify', 'run.sh', ' #!/bin/sh\necho hi\n');
+
+    const info = await stat(join(skillsDir(), 'graphify', 'run.sh'));
+    expect(info.mode & 0o777).toBe(0o644);
+  });
+
+  it('writes a leading-newline shebang as 644, not 755', async () => {
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+
+    await skills.writeFile('graphify', 'run.sh', '\n#!/bin/sh\necho hi\n');
+
+    const info = await stat(join(skillsDir(), 'graphify', 'run.sh'));
+    expect(info.mode & 0o777).toBe(0o644);
+  });
+
+  it('writes a BOM-prefixed shebang as 644, not 755', async () => {
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+
+    await skills.writeFile('graphify', 'run.sh', '﻿#!/bin/sh\necho hi\n');
+
+    const info = await stat(join(skillsDir(), 'graphify', 'run.sh'));
+    expect(info.mode & 0o777).toBe(0o644);
+  });
+
+  it('drops back to 644 when a shebang file is rewritten as plain text', async () => {
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+    await skills.writeFile('graphify', 'run.sh', '#!/bin/sh\necho hi\n');
+
+    await skills.writeFile('graphify', 'run.sh', 'no longer a script\n');
+
+    const info = await stat(join(skillsDir(), 'graphify', 'run.sh'));
+    expect(info.mode & 0o777).toBe(0o644);
   });
 });
