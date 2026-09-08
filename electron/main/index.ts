@@ -3,11 +3,14 @@ import { join } from 'node:path';
 import { app } from 'electron';
 
 import { applyDevDockIcon } from './app-icon';
+import { parseInvocation } from './cli';
 import { getConfig } from './config';
 import { startLoginEnvImport } from './config/login-env';
 import { installContentSecurityPolicy } from './csp';
 import { registerIpc } from './ipc/router';
 import { registerLifecycle } from './lifecycle';
+import { fileBackedIo } from './server/file-backed-io';
+import { runOneShot } from './server/one-shot';
 import { startUpdateChecks } from './updates';
 import { createWindow } from './window';
 
@@ -63,6 +66,22 @@ app.setName('The Hive');
  */
 if (!app.isPackaged && !app.commandLine.hasSwitch('user-data-dir')) {
   app.setPath('userData', join(app.getPath('appData'), 'the-hive'));
+}
+
+/*
+  Before the single-instance lock, and before `whenReady`, deliberately.
+
+  On a served machine the app is always running, so a one-shot that requested
+  the lock would lose it and quit before printing anything — and Electron's
+  `second-instance` event hands argv to the first instance with no channel to
+  answer on. Before `whenReady` because it can be: minting is `randomBytes`, a
+  digest and a config write. Measured 2026-09-08 — `safeStorage` is unavailable
+  before `whenReady` even in a GUI session, which is the other half of why the
+  server stores a digest rather than a secret.
+*/
+const invocation = parseInvocation(process.argv, app.isPackaged);
+if (invocation.kind !== 'app') {
+  process.exit(runOneShot(invocation, fileBackedIo()));
 }
 
 /**
