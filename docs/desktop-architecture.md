@@ -90,6 +90,17 @@ keeps its one gate. Pushes go out through a second `Broadcaster`
 broadcaster so a server that does have a window attached keeps painting
 locally too.
 
+`sandbox: true` has a consequence worth stating outright, because it has cost a
+session once: **the preload has no Node APIs.** A `node:` import there does not
+fail gracefully or fail only the feature that added it — it throws while the
+module is loading, so `contextBridge.exposeInMainWorld` never runs and the
+*entire* bridge is absent. The renderer then falls back to its no-bridge
+browser-demo state, showing "only available in the desktop app" inside the
+desktop app, with nothing on screen naming the import that did it. Unit specs
+cannot catch this because they mock the preload module; only the built app
+shows it. Reach for the browser global instead — `globalThis.crypto.randomUUID()`
+rather than `node:crypto`.
+
 ## The workspace config
 
 `~/.hive/config.json` — overridable by `HIVE_CONFIG_PATH` — maps a project id
@@ -138,13 +149,45 @@ per-theme hook settings and the status-line script under `hive/`
 
 The plugin directory is the app's copy of the user's skills, in the layout
 Claude Code loads: a `.claude-plugin/plugin.json` naming the plugin `hive`, and
-one `skills/<name>/SKILL.md` per valid skill plus the app-owned `done`. It is
+one `skills/<name>/` per valid skill plus the app-owned `done`. It is
 regenerated at launch and before every spawn, and passed as `--plugin-dir` on
 the session's command line — which loads for that process only and writes
 nothing to `~/.claude`. Stale entries are removed by a directory diff rather
 than a wipe: regenerations and spawns interleave, and a wipe would leave a
 window in which a session starting right now reads an empty plugin. Deleting the
 whole directory is safe; the next spawn writes it again.
+
+**A skill is its whole folder, and the plugin directory mirrors it** (HIVE-148).
+It used to receive one string per skill, so a skill carrying `scripts/`,
+`references/` or `assets/` arrived as a lone SKILL.md whose relative references
+dangled — silently, with the pane still reporting it healthy. `readUserSkills`
+now walks each folder into a manifest and `writePluginDir` copies every admitted
+entry, preserving mode, so a `755` script stays runnable and a skill-relative
+path resolves as written. No path is rewritten anywhere: the harness announces
+the copied directory as the skill's base.
+
+The walk is bounded — at most 200 files, 5 MB per file, four path segments deep,
+skipping `HIDDEN_ENTRIES` plus `.DS_Store` — and reports what it will not send
+rather than hiding it, because a tree that showed only the admitted files would
+let a user edit one that never reaches the session. A symlink inside a bundle is
+refused rather than followed; the skill folder itself may still be a symlink,
+which is the dotfiles case `read.ts` deliberately supports.
+
+Two properties are worth knowing before changing the mirror. The copy is a diff
+keyed on **size, mtime and mode** — a file whose mode alone changed is
+re-copied, and `copyFile` does not carry mode across, so the `chmod` after it is
+load-bearing. And `SKILL.md` is *written* from the body rather than mirrored
+from the manifest, because the walk stops in `localeCompare` order and `assets`
+sorts before it: a large bundle's manifest can genuinely lack the one file that
+makes the folder a skill.
+
+Files inside a bundle are authored through seven `skills:file:*` verbs.
+`assertSkillPath` bounds the string at the IPC boundary and `resolveInSkill`
+resolves it with `realpath` and a containment check in main — both are required,
+because a symlink is a fact about the disk rather than about the string.
+`drop` is the one verb carrying absolute paths, and the renderer cannot produce
+one: preload mints an opaque id per dropped `File` from `webUtils.getPathForFile`
+and resolves ids back to paths at invoke time.
 
 The session history (`sessions/history.ts`) exists because closing the app used to erase
 every record that any session had run: `hive-store` boots empty by design and

@@ -1286,6 +1286,12 @@ several versions of one plugin sit there at once and only that file says which
 is installed. What the field buys is a name that does not exist caught in the
 editor; what it cannot do is stop a skill the machine has.
 
+HIVE-148 made a Hive skill its whole *folder* rather than a single SKILL.md, and
+deliberately did not reach here. This module resolves **names**, and a name is
+what an agent definition declares — the contents of the folder behind it are the
+plugin mirror's business, and `~/.claude/skills` and installed plugins are
+directories The Hive reads and never manages.
+
 Making it a real sandbox would mean `--restricted`, which ignores the user's
 settings sources entirely — and would therefore cut off exactly the external
 skills the widening exists to allow. HIVE-115 declined that trade: the wake
