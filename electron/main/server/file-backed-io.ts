@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-import { DEFAULT_SERVER, type ServerDevice } from '@shared/config-contract';
+import type { ServerDevice } from '@shared/config-contract';
 
 import { getConfig, setServer } from '../config';
 import { parseConfig } from '../config/parse';
@@ -71,10 +71,15 @@ export function readServerDevicesFromDisk(): readonly ServerDevice[] {
   try {
     text = readFileSync(configPath(), 'utf8');
   } catch {
-    return DEFAULT_SERVER.devices;
+    return [];
   }
 
-  return parseConfig(text, 'config').server?.devices ?? DEFAULT_SERVER.devices;
+  // A fresh `[]`, not a shared default array — every caller (`pairDevice`,
+  // `revokeNamed`) spreads or maps over this result rather than mutating it
+  // in place today, but a single shared array handed out on every call is
+  // exactly the kind of thing that bites two stories later, once something
+  // does (HIVE-142 review, minor).
+  return parseConfig(text, 'config').server?.devices ?? [];
 }
 
 /**

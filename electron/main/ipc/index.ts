@@ -302,7 +302,7 @@ let systemNotificationRefusal: string | null = null;
  * The server-mode socket (HIVE-142), constructed unconditionally below but
  * only ever `start()`-ed by `index.ts`, and only in server mode. `null` here
  * means "not yet composed" (before `registerIpcHandlers` runs, or in a test
- * that never calls it) — `startRemoteListener` and `remoteListenerBoundHost`
+ * that never calls it) — `startRemoteListener` and `remoteListenerBoundAddress`
  * both treat that the same as "not listening" rather than throwing.
  */
 let remoteListener: ReturnType<typeof createRemoteListener> | null = null;
@@ -827,22 +827,17 @@ export function startRemoteListener(): Promise<string | null> {
   return remoteListener ? remoteListener.start() : Promise.resolve(null);
 }
 
-/** What the server-mode socket actually bound to (host only — see {@link remoteListenerBoundAddress}). */
-export function remoteListenerBoundHost(): string | null {
-  return remoteListener?.boundHost ?? null;
-}
-
 /**
  * `host:port`, for the tray's informational item — both pieces sourced from
  * what the listener actually bound, not composed from a separate config read
- * (HIVE-142 review, N3). Before this fix, `index.ts` built the displayed
- * address from `remoteListenerBoundHost()` plus a fresh
- * `getConfig().server.bind.port` read; that agreed with the socket only by
- * coincidence, because nothing else here reads `server.bind` a second time
- * after construction — a hand-edited port would show in the tray while the
- * already-listening socket, which cannot rebind without a restart, kept
- * answering on the old one. `remoteListenerPort` is the exact number
- * `createRemoteListener` was given, captured once beside it.
+ * (HIVE-142 review, N3). An earlier revision built the displayed address
+ * from a host-only accessor plus a fresh `getConfig().server.bind.port`
+ * read; that agreed with the socket only by coincidence, because nothing
+ * else here reads `server.bind` a second time after construction — a
+ * hand-edited port would show in the tray while the already-listening
+ * socket, which cannot rebind without a restart, kept answering on the old
+ * one. `remoteListenerPort` is the exact number `createRemoteListener` was
+ * given, captured once beside it.
  */
 export function remoteListenerBoundAddress(): string | null {
   const host = remoteListener?.boundHost ?? null;
