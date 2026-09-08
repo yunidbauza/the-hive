@@ -2464,7 +2464,7 @@ export function createSessions(options: SessionsOptions): Sessions {
       if (sessionId === undefined) return null;
 
       const result = ptyIpc.resume(sessionId, lastSeq);
-      // A gap carries a seq and no events, so there is nothing to translate.
+      // A gap carries no events, so there is no id in it to translate.
       if (result === null || result.kind === 'gap') return result;
 
       /*

@@ -1655,12 +1655,14 @@ export function registerIpcHandlers(
 
         /*
           `gap` — the ring no longer reaches back to `lastSeq`, so nothing is
-          sent and live output resumes at `result.seq + 1`. That leaves exactly
-          one discontinuity, which is what raises the renderer's existing gap
-          notice, once (`src/lib/terminal/pty-transport.ts`).
+          sent and this session's next live batch lands beyond `lastSeq + 1`.
+          That leaves exactly one discontinuity, which is what raises the
+          renderer's existing gap notice, once
+          (`src/lib/terminal/pty-transport.ts`).
 
           The design sketched a fallback here — resend the whole transcript,
-          stamped with `result.seq` — and it is deliberately **not** implemented,
+          stamped with the ring's head seq — and it is deliberately **not**
+          implemented,
           for two reasons that point the same way. Mechanically, there is no
           transcript in main to send: `PtyHostSupervisor` has no `replay`, the
           only `replay()` in the tree is `SessionManager`'s inside the pty-host

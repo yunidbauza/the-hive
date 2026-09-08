@@ -52,12 +52,28 @@ export interface PtyIpcOptions {
 
 /**
  * `replay` — the events after `lastSeq`, contiguous, possibly empty.
- * `gap`    — the ring cannot reach back; `seq` is the current head, which the
- *            caller stamps onto the whole transcript so the client sees
- *            exactly one discontinuity rather than two.
+ * `gap`    — the ring cannot reach back to `lastSeq`. The caller **sends
+ *            nothing** and lets live output resume where it is: the next batch
+ *            lands beyond `lastSeq + 1`, and the client's own sequence
+ *            assertion raises the gap notice exactly once
+ *            (`src/lib/terminal/pty-transport.ts`).
  * `null`   — no such session, never spawned or already exited.
+ *
+ * `gap` deliberately carries no payload (HIVE-143 review). It once carried the
+ * head seq, for a caller that would stamp it onto a whole replayed transcript —
+ * but there is no transcript in main to send (`PtyHostSupervisor` has no
+ * `replay`, and the only one in the tree is `SessionManager`'s inside the
+ * pty-host child process, unreachable without a protocol change this story does
+ * not make), and sending one would be wrong besides: a client that sent
+ * `resumeFrom` has already rendered everything up to `lastSeq` into its own
+ * terminal, so a transcript would duplicate that output rather than fill a hole.
+ *
+ * The two variants stay distinct all the same. `replay` means "here is exactly
+ * what you missed, no notice"; `gap` means "you missed more than I kept, expect
+ * a notice" — the caller does different things with them, and a single nullable
+ * event list could not tell them apart.
  */
-export type ResumeResult = { kind: 'replay'; events: DataEvent[] } | { kind: 'gap'; seq: number };
+export type ResumeResult = { kind: 'replay'; events: DataEvent[] } | { kind: 'gap' };
 
 export interface PtyIpc {
   /** Called by the channel handlers once the payload has been validated. */
@@ -462,18 +478,16 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
         necessarily lying: a server restart resets `seq` to 0, so a client
         holding 400 from the previous process is being honest about a number
         that no longer means anything here. Treated as a gap rather than an
-        error, which replays the transcript and tells the truth on screen.
+        error, which tells the truth on screen rather than crashing.
       */
       const oldest = channel.replay[0]?.seq;
       if (lastSeq > channel.seq || oldest === undefined || lastSeq + 1 < oldest) {
         /*
-          The head, not zero. The caller stamps the whole transcript with this
-          seq, so the client sees one discontinuity here and then contiguous
-          live output at `seq + 1`. Stamping zero would produce a second
-          discontinuity at the first live batch and write the gap notice twice
-          for a single gap.
+          Nothing to hand back — see {@link ResumeResult}. The caller sends no
+          frames, the next live batch lands beyond `lastSeq + 1`, and the
+          client's own sequence assertion raises the gap notice once.
         */
-        return { kind: 'gap', seq: channel.seq };
+        return { kind: 'gap' };
       }
 
       return {
