@@ -4,7 +4,7 @@ import { CH } from '../../../../electron/shared/ipc-contract';
 import { createIpcRegistry } from '../../../../electron/main/ipc/registry';
 import { createRemoteDispatch } from '../../../../electron/main/ipc/remote-dispatch';
 
-const callFrame = (channel: string, payload: unknown = null) =>
+const callFrame = (channel: unknown, payload: unknown = null) =>
   ({ kind: 'call', id: 'c1', channel, payload }) as never;
 
 describe('createRemoteDispatch call', () => {
@@ -32,6 +32,24 @@ describe('createRemoteDispatch call', () => {
     const dispatch = createRemoteDispatch(createIpcRegistry());
 
     const frame = await dispatch.call(callFrame('not:a:channel'));
+
+    expect(frame).toMatchObject({ kind: 'error', id: 'c1', code: 'unknown-channel' });
+  });
+
+  /**
+   * HIVE-143 review: `frameKindOf`, `isClientFrameAllowed` and
+   * `windowBoundReason` all key a plain object through `Object.hasOwn`, which
+   * coerces — so `["pty:spawn"]` used to clear every gate, miss the registry's
+   * `Map` (which does not coerce), and come back `not-ready`. That code means
+   * "the handlers are not registered yet", a fault on this side, and a client
+   * told that about its own malformed frame retries instead of fixing it.
+   */
+  it('refuses a channel that is not a string, rather than reporting not-ready', async () => {
+    const registry = createIpcRegistry();
+    registry.recordCall(CH.ptySpawn, vi.fn());
+    const dispatch = createRemoteDispatch(registry);
+
+    const frame = await dispatch.call(callFrame([CH.ptySpawn]));
 
     expect(frame).toMatchObject({ kind: 'error', id: 'c1', code: 'unknown-channel' });
   });
@@ -133,6 +151,26 @@ describe('createRemoteDispatch notify', () => {
     dispatch.notify({ kind: 'notify', channel: CH.configGet, payload: null } as never, reporter);
 
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The `notify` half of the coercion hole above (HIVE-143 review). One guard
+   * covers both because both refuse through the same `refuse` helper — this is
+   * the case that would catch a future fix applied to only one of them.
+   */
+  it('drops a notify whose channel is not a string', () => {
+    const registry = createIpcRegistry();
+    const handler = vi.fn();
+    registry.recordNotify(CH.ptyWrite, handler);
+    const dispatch = createRemoteDispatch(registry);
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    dispatch.notify({ kind: 'notify', channel: [CH.ptyWrite], payload: null } as never, reporter);
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining('unknown-channel'));
+
+    logged.mockRestore();
   });
 
   it('swallows a throwing notify handler, because a notify has no reply', () => {

@@ -66,8 +66,30 @@ export function createRemoteDispatch(registry: IpcRegistry): RemoteDispatch {
    */
   function refuse(
     kind: 'call' | 'notify',
-    channel: string,
+    channel: unknown,
   ): { code: DispatchRefusal; message: string } | null {
+    /*
+      `channel` is typed `string` on the frame and is not one on the wire
+      (HIVE-143 review).
+
+      Everything downstream that decides is `Object.hasOwn` — `frameKindOf`,
+      `isClientFrameAllowed` and `windowBoundReason` all key a plain object —
+      and `Object.hasOwn` coerces its key, so `["pty:spawn"]` stringifies to
+      `"pty:spawn"` and clears every gate. `registry.call` is a `Map`, which
+      does not coerce, so the lookup then misses and the frame was answered
+      `not-ready`. Nothing unsafe ran; the answer was simply a lie. `not-ready`
+      was given its own code to mean "the handlers are not registered yet" — a
+      composition-order fault on *this* side — and a client told that about its
+      own malformed frame will retry rather than fix it.
+
+      Checked here, where the other shape checks live, so `call` and `notify`
+      are covered by the one guard. The channel is not echoed back: it is
+      attacker-controlled and of unknown type, and there is nothing useful to
+      quote to a client that already knows what it sent.
+    */
+    if (typeof channel !== 'string') {
+      return { code: 'unknown-channel', message: 'channel must be a string' };
+    }
     if (frameKindOf(channel) === null) {
       return { code: 'unknown-channel', message: `no such channel: ${channel}` };
     }
