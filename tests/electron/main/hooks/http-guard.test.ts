@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { readFile } from 'node:fs/promises';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createOriginGuard, secretEquals } from '../../../../electron/main/hooks/http-guard';
 
@@ -41,6 +41,45 @@ describe('createOriginGuard', () => {
 
   it('keeps an IPv6 literal bracketed and reads it as loopback', () => {
     expect(guard()({ host: '[::1]:63999' })).toBeNull();
+  });
+
+  describe('onHostRefused (HIVE-142 review, I4)', () => {
+    it('is called with the claimed Host and what would have been admitted, only on a Host refusal', () => {
+      const onHostRefused = vi.fn();
+      const g = guard({
+        host: '100.64.1.2',
+        hostAliases: () => new Set(['a.test']),
+        onHostRefused,
+      });
+
+      expect(g({ host: 'my-tailscale-name:7433' })).toBe(403);
+
+      expect(onHostRefused).toHaveBeenCalledTimes(1);
+      expect(onHostRefused).toHaveBeenCalledWith('my-tailscale-name', ['100.64.1.2', 'a.test']);
+    });
+
+    it('is not called when the Host matches', () => {
+      const onHostRefused = vi.fn();
+      const g = guard({ host: '100.64.1.2', onHostRefused });
+
+      expect(g({ host: '100.64.1.2:7433' })).toBeNull();
+
+      expect(onHostRefused).not.toHaveBeenCalled();
+    });
+
+    it('is not called for an Origin refusal', () => {
+      const onHostRefused = vi.fn();
+      const g = guard({ onHostRefused });
+
+      expect(g({ host: '127.0.0.1', origin: 'http://evil.test' })).toBe(403);
+
+      expect(onHostRefused).not.toHaveBeenCalled();
+    });
+
+    it('never reaches the wire — the guard still only ever returns 403 or null', () => {
+      const g = guard({ host: '100.64.1.2', onHostRefused: () => undefined });
+      expect(g({ host: 'elsewhere.test' })).toBe(403);
+    });
   });
 });
 

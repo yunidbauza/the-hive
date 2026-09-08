@@ -12,17 +12,29 @@ import {
   pairOutcomeMessage,
   revokeDevice,
   revokeNamed,
+  revokeOutcomeMessage,
   verifyDevice,
 } from '../../../../electron/main/server/devices';
 
-/** A `DeviceStore` over a plain in-memory array, recording every write. */
-function fakeStore(initial: readonly ServerDevice[]): DeviceStore & { writes: (readonly ServerDevice[])[] } {
+/**
+ * A `DeviceStore` over a plain in-memory array, recording every write.
+ *
+ * `persistWrites` defaults `true` (a filesystem that works) — a test that
+ * wants the write-failure branch (HIVE-142 review, C1) passes `false`
+ * without needing a real read-only file or directory, exactly the seam the
+ * finding asked for.
+ */
+function fakeStore(
+  initial: readonly ServerDevice[],
+  persistWrites = true,
+): DeviceStore & { writes: (readonly ServerDevice[])[] } {
   const writes: (readonly ServerDevice[])[] = [];
   return {
     writes,
     readDevices: vi.fn(() => initial),
     writeDevices: vi.fn((devices: readonly ServerDevice[]) => {
       writes.push(devices);
+      return persistWrites;
     }),
   };
 }
@@ -209,6 +221,22 @@ describe('pairDevice', () => {
     const written = store.writes[0] ?? [];
     expect(written.map((d) => d.name).sort()).toEqual(['MacBook', 'Old Phone', 'iPad'].sort());
   });
+
+  /**
+   * HIVE-142 review, C1: `pairDevice` used to return `{ ok: true, token }`
+   * whether or not `store.writeDevices` actually persisted anything —
+   * `setServer` never throws on a write failure, it reports one, and this
+   * used to discard that report. A token handed out for a digest that
+   * exists nowhere is a credential that can never authenticate.
+   */
+  it('reports write-failed, not ok, when the store could not persist the mint', () => {
+    const store = fakeStore([], false);
+
+    const outcome = pairDevice('MacBook', store);
+
+    expect(outcome).toEqual({ ok: false, reason: 'write-failed' });
+    expect(store.writeDevices).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('pairOutcomeMessage', () => {
@@ -221,6 +249,12 @@ describe('pairOutcomeMessage', () => {
   it('names the attempt cap for a mint-failed refusal', () => {
     expect(pairOutcomeMessage({ ok: false, reason: 'mint-failed' }, 'MacBook')).toBe(
       `Could not mint a unique device credential after ${String(MAX_MINT_ATTEMPTS)} attempts. Try again.`,
+    );
+  });
+
+  it('names the device and the write failure for a write-failed refusal', () => {
+    expect(pairOutcomeMessage({ ok: false, reason: 'write-failed' }, 'MacBook')).toMatch(
+      /MacBook/,
     );
   });
 });
@@ -288,7 +322,7 @@ describe('revokeDevice', () => {
 
     const outcome = revokeDevice('ghost', store);
 
-    expect(outcome.revoked).toBe(false);
+    expect(outcome).toEqual({ revoked: false, reason: 'not-found' });
     expect(store.writeDevices).not.toHaveBeenCalled();
   });
 
@@ -303,5 +337,35 @@ describe('revokeDevice', () => {
     expect(written.map((d) => d.name).sort()).toEqual(['MacBook', 'iPad']);
     expect(written.find((d) => d.name === 'iPad')?.revoked).toBe(false);
     expect(written.find((d) => d.name === 'MacBook')?.revoked).toBe(true);
+  });
+
+  /**
+   * HIVE-142 review, C1 — the sharpest version of the finding: revoking a
+   * stolen device must fail closed. `revokeDevice` used to return
+   * `{ revoked: true }` whether or not the write actually landed, which
+   * means a device whose digest is still live on disk was reported gone.
+   */
+  it('fails closed: reports write-failed, not revoked, when the store could not persist it', () => {
+    const macBook = mintDevice('MacBook').device;
+    const store = fakeStore([macBook], false);
+
+    const outcome = revokeDevice('MacBook', store);
+
+    expect(outcome).toEqual({ revoked: false, reason: 'write-failed' });
+    expect(store.writeDevices).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('revokeOutcomeMessage', () => {
+  it('names the device for a not-found refusal', () => {
+    expect(revokeOutcomeMessage({ revoked: false, reason: 'not-found' }, 'MacBook')).toBe(
+      'No device named "MacBook" is paired.',
+    );
+  });
+
+  it('names the device and the write failure for a write-failed refusal', () => {
+    expect(
+      revokeOutcomeMessage({ revoked: false, reason: 'write-failed' }, 'MacBook'),
+    ).toMatch(/MacBook/);
   });
 });

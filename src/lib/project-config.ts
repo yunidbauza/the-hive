@@ -236,11 +236,11 @@ export const setServerConfig = (request: SetServerRequest): Promise<void> =>
  */
 export async function pairDevice(
   name: string,
-): Promise<{ token: string } | { error: string }> {
+): Promise<{ token: string; deviceId: string } | { error: string }> {
   const bridge = window.hive;
   if (!bridge) return { error: 'No bridge available.' };
 
-  let outcome: { token: string } | { error: string };
+  let outcome: { token: string; deviceId: string } | { error: string };
   try {
     outcome = await bridge.server.pair({ name });
   } catch (cause) {
@@ -277,6 +277,12 @@ export async function pairDevice(
  * The revoke and the snapshot re-read are two separate `try` blocks, for the
  * same reason {@link pairDevice}'s are: a revoke that actually landed must be
  * reported as `{ ok: true }` even if the follow-up read fails.
+ *
+ * `bridge.server.revoke`'s own resolved value is inspected now (HIVE-142
+ * review, I7), not discarded — main can answer `{ error }` for a name that
+ * matches nothing (a hand-edit or a rename since boot) or a config write
+ * that did not land, and this used to report `{ ok: true }` unconditionally
+ * the instant the promise resolved, whatever main actually said.
  */
 export async function revokeDevice(
   name: string,
@@ -284,12 +290,15 @@ export async function revokeDevice(
   const bridge = window.hive;
   if (!bridge) return { ok: false, error: 'No bridge available.' };
 
+  let outcome: { revoked: true } | { error: string };
   try {
-    await bridge.server.revoke({ name });
+    outcome = await bridge.server.revoke({ name });
   } catch (cause) {
     console.error('[hive] could not revoke the device:', cause);
     return { ok: false, error: 'Could not revoke the device. Try again.' };
   }
+
+  if ('error' in outcome) return { ok: false, error: outcome.error };
 
   try {
     snapshot = await bridge.config.get();

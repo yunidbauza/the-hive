@@ -730,6 +730,25 @@ describe('the server block (HIVE-142)', () => {
     expect(parsed.fatal).toBe(false);
   });
 
+  /**
+   * HIVE-142 review, I1: every other spelling `dns.lookup`/`net.Server.listen`
+   * still resolve to the same `0.0.0.0` — `isHostAlias`'s per-label regex
+   * admits all four as hostname shapes, so the literal-string check above is
+   * not the whole rule.
+   */
+  it.each(['0', '00', '0x0', '0X0', '000.000.000.000'])(
+    'refuses %s, another spelling of the wildcard, and keeps the rest',
+    (host) => {
+      const parsed = parseConfig(
+        JSON.stringify({ version: 2, server: { enabled: true, bind: { host } } }),
+        'config',
+      );
+      expect(parsed.server?.bind?.host).toBeUndefined();
+      expect(parsed.server?.enabled).toBe(true);
+      expect(parsed.fatal).toBe(false);
+    },
+  );
+
   it('allows loopback, for single-machine testing', () => {
     const parsed = parseConfig(
       JSON.stringify({ version: 2, server: { bind: { host: '127.0.0.1' } } }),
@@ -754,6 +773,21 @@ describe('the server block (HIVE-142)', () => {
     expect(parsed.server?.devices?.[0]?.id).toBe('d_9f2c');
     expect(parsed.errors.join(' ')).toMatch(/device/i);
     expect(parsed.fatal).toBe(false);
+  });
+
+  /**
+   * HIVE-142 review, I6: `pairDevice`/`revokeDevice` read the already-
+   * filtered roster and write it back wholesale, so a dropped entry is not
+   * merely ignored for this load — it is erased from the file for good the
+   * next time anyone pairs or revokes anything. The message has to say that,
+   * not just "dropped".
+   */
+  it('says a dropped device is lost for good on the next write, not merely ignored', () => {
+    const parsed = parseConfig(
+      JSON.stringify({ version: 2, server: { devices: [{ id: 'd_bad' }] } }),
+      'config',
+    );
+    expect(parsed.errors.join(' ')).toMatch(/erased for good/i);
   });
 
   it('is advisory about a bad port and falls back to the default', () => {

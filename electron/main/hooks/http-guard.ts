@@ -41,8 +41,21 @@ export function createOriginGuard(options: {
   allowedOrigins: readonly string[];
   host: string;
   hostAliases: () => ReadonlySet<string>;
+  /**
+   * Diagnostics only (HIVE-142 review, I4) — called just before a *Host*
+   * mismatch is refused, with the claimed value and what would have been
+   * admitted. Never called for the Origin check above, and never anything
+   * this function does on its own: it never reaches the wire (an
+   * unauthenticated peer must learn nothing about what this app would have
+   * admitted), and whether it does anything at all is entirely the caller's
+   * choice — the hook receiver passes nothing and stays exactly as silent as
+   * it always was; the server-mode listener passes a logger so a refused
+   * MagicDNS name explains itself in this machine's own log instead of
+   * being a bare, unexplained 403.
+   */
+  onHostRefused?: (claimed: string, admissible: readonly string[]) => void;
 }): (headers: Record<string, string | string[] | undefined>) => number | null {
-  const { allowedOrigins, host, hostAliases } = options;
+  const { allowedOrigins, host, hostAliases, onHostRefused } = options;
 
   return function guard(headers) {
     /*
@@ -92,10 +105,12 @@ export function createOriginGuard(options: {
       rather than captured, because the set can change under a config reload
       or a folder change while this socket stays up.
     */
-    for (const alias of hostAliases()) {
+    const aliases = hostAliases();
+    for (const alias of aliases) {
       if (bare === alias.toLowerCase()) return null;
     }
 
+    onHostRefused?.(claimed, [host, ...aliases]);
     return 403;
   };
 }

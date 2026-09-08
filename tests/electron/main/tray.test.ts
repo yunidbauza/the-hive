@@ -93,21 +93,29 @@ function makeDevices(): ServerDevice[] {
   ];
 }
 
-type PairAttempt = { token: string } | { error: string };
+type PairAttempt = { token: string; deviceId: string } | { error: string };
+type RevokeAttempt = { revoked: true } | { error: string };
 
 function makeDeps(overrides: {
   devices?: () => ServerDevice[];
   boundAddress?: () => string | null;
+  bindError?: () => string | null;
   onPair?: (name: string) => PairAttempt;
+  onRevoke?: (name: string) => RevokeAttempt;
 } = {}) {
   return {
     devices: overrides.devices ?? (() => makeDevices()),
     onPair: vi.fn(
-      overrides.onPair ?? ((_name: string): PairAttempt => ({ token: 'K7QM-4XR2-9WFD-A3LP' })),
+      overrides.onPair ??
+        ((_name: string): PairAttempt => ({
+          token: 'K7QM-4XR2-9WFD-A3LP',
+          deviceId: 'd_new1',
+        })),
     ),
-    onRevoke: vi.fn(),
+    onRevoke: vi.fn(overrides.onRevoke ?? ((_name: string): RevokeAttempt => ({ revoked: true }))),
     onOpenConsole: vi.fn(),
     boundAddress: overrides.boundAddress ?? (() => '100.101.102.103:7433'),
+    bindError: overrides.bindError ?? (() => null),
   };
 }
 
@@ -131,9 +139,11 @@ describe('buildTrayTemplate', () => {
 
     expect(deps.onPair).toHaveBeenCalledTimes(1);
     expect(typeof deps.onPair.mock.calls[0]?.[0]).toBe('string');
+    // The device id alongside the token (HIVE-142 review, I5) — the attach
+    // handshake needs both, and "Copy" only ever copies the token.
     expect(showMessageBox).toHaveBeenCalledWith(
       expect.objectContaining({
-        detail: 'K7QM-4XR2-9WFD-A3LP',
+        detail: 'K7QM-4XR2-9WFD-A3LP\nDevice id: d_new1',
         buttons: ['Copy', 'Done'],
       }),
     );
@@ -227,6 +237,36 @@ describe('buildTrayTemplate', () => {
     );
   });
 
+  /**
+   * HIVE-142 review, C1/I4: a revoke that did not actually land — no such
+   * device any more, or the config write failed — must be shown, not
+   * papered over with the same "Device revoked" every successful click
+   * gets. Fail closed and loudly.
+   */
+  it('shows an error dialog rather than "Device revoked" when the revoke did not land', async () => {
+    showMessageBox.mockResolvedValue({ response: 1 }); // "Revoke"
+    const deps = makeDeps({
+      onRevoke: () => ({ error: '"MacBook" was not revoked — the config file could not be written.' }),
+    });
+    const template = buildTrayTemplate(deps) as MenuItem[];
+
+    const paired = template.find((item) => item.label === 'Paired devices (2)');
+    paired?.submenu?.find((entry) => entry.label === 'Revoke "MacBook"…')?.click?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(showMessageBox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        title: 'Could not revoke this device',
+        message: '"MacBook" was not revoked — the config file could not be written.',
+      }),
+    );
+    expect(showMessageBox).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Device revoked' }),
+    );
+  });
+
   it('does not revoke when the confirmation is cancelled', async () => {
     showMessageBox.mockResolvedValue({ response: 0 }); // "Cancel"
     const deps = makeDeps();
@@ -264,6 +304,38 @@ describe('buildTrayTemplate', () => {
 
     const address = template.find((item) => item.label === 'Not yet listening');
     expect(address?.enabled).toBe(false);
+  });
+
+  /**
+   * HIVE-142 review, I3: a port conflict or a `bind.host` that does not yet
+   * resolve to a local interface (Tailscale not up) used to render the exact
+   * same "Not yet listening" a socket still starting shows — indistinguishable
+   * on an unattended machine with nobody to notice the difference.
+   */
+  it('shows the bind failure reason instead of "Not yet listening" when one occurred', () => {
+    const deps = makeDeps({
+      boundAddress: () => null,
+      bindError: () => 'listen EADDRINUSE: address already in use 127.0.0.1:7433',
+    });
+    const template = buildTrayTemplate(deps) as MenuItem[];
+
+    const address = template.find(
+      (item) => item.label === 'Not serving — listen EADDRINUSE: address already in use 127.0.0.1:7433',
+    );
+    expect(address?.enabled).toBe(false);
+    expect(template.find((item) => item.label === 'Not yet listening')).toBeUndefined();
+  });
+
+  it('prefers a bound address over a stale bind error', () => {
+    const deps = makeDeps({
+      boundAddress: () => '100.101.102.103:7433',
+      bindError: () => 'listen EADDRINUSE: address already in use 127.0.0.1:7433',
+    });
+    const template = buildTrayTemplate(deps) as MenuItem[];
+
+    expect(
+      template.find((item) => item.label === 'Serving 100.101.102.103:7433'),
+    ).toBeDefined();
   });
 
   it('Open The Hive calls onOpenConsole', () => {

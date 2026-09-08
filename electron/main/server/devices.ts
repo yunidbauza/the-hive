@@ -155,7 +155,22 @@ export function mintUniqueDevice(
  */
 export interface DeviceStore {
   readDevices: () => readonly ServerDevice[];
-  writeDevices: (devices: readonly ServerDevice[]) => void;
+  /**
+   * Persists `devices` as the whole roster, and reports whether it actually
+   * landed (HIVE-142 review, C1).
+   *
+   * `true` means the config file was written; `false` means it was not —
+   * a read-only file, a read-only parent directory, a full disk, or any
+   * other `writeConfig` failure (`config/write.ts` never throws at a
+   * caller; it reports). Before this was `=> void`, both real
+   * implementations (`file-backed-io.ts`) discarded that answer, so a mint
+   * or a revoke that could not actually be written to disk still reported
+   * success to whoever asked — worst on `revokeDevice`, where it meant a
+   * stolen device's digest stayed live while its owner was told it was
+   * gone. `pairDevice`/`revokeDevice` below both fail closed on `false`
+   * rather than report the mutation they merely computed in memory.
+   */
+  writeDevices: (devices: readonly ServerDevice[]) => boolean;
 }
 
 export type PairOutcome =
@@ -163,7 +178,15 @@ export type PairOutcome =
   /** An *active* device already holds this name — refused before anything is minted. */
   | { ok: false; reason: 'duplicate-name' }
   /** {@link mintUniqueDevice} gave up after {@link MAX_MINT_ATTEMPTS} collisions. */
-  | { ok: false; reason: 'mint-failed' };
+  | { ok: false; reason: 'mint-failed' }
+  /**
+   * `store.writeDevices` reported `false` (HIVE-142 review, C1): a device was
+   * minted in memory but never reached disk. Nothing was stored — the
+   * caller must not treat this as "pairing worked, saving failed
+   * separately", because there is no separate save; a token handed out here
+   * would authenticate against a digest that exists nowhere.
+   */
+  | { ok: false; reason: 'write-failed' };
 
 /**
  * The one place a `PairOutcome` becomes a message a person reads (HIVE-142
@@ -181,6 +204,8 @@ export function pairOutcomeMessage(
       return `A device named "${name}" already exists. Revoke it first, or choose another name.`;
     case 'mint-failed':
       return `Could not mint a unique device credential after ${String(MAX_MINT_ATTEMPTS)} attempts. Try again.`;
+    case 'write-failed':
+      return `Could not save "${name}" to the config file. Nothing was stored — no credential for it exists anywhere. Check that the config file and its directory are writable, and try again.`;
   }
 }
 
@@ -238,7 +263,8 @@ export function pairDevice(
   const minted = mintUniqueDevice(name, survivors, now, mint);
   if (!minted) return { ok: false, reason: 'mint-failed' };
 
-  store.writeDevices([...survivors, minted.device]);
+  const persisted = store.writeDevices([...survivors, minted.device]);
+  if (!persisted) return { ok: false, reason: 'write-failed' };
   return { ok: true, device: minted.device, token: minted.token };
 }
 
@@ -296,15 +322,60 @@ export function revokeNamed(
   return found ? { devices: next, revoked: true } : { devices, revoked: false };
 }
 
+export type RevokeOutcome =
+  | { revoked: true }
+  /** No device holds `name` — nothing to persist, and nothing wrong either. */
+  | { revoked: false; reason: 'not-found' }
+  /**
+   * `revokeNamed` found the device and flipped its flag in memory, but
+   * `store.writeDevices` reported `false` (HIVE-142 review, C1) — the write
+   * did not land. This is the fail-closed answer: the digest on disk is
+   * unchanged, so the device can still authenticate, and `revoked: true`
+   * here would be exactly the "reports success without applying" shape the
+   * review called out as the wrong one for a security control. The caller
+   * must treat this like the revoke never happened, because — on disk — it
+   * did not.
+   */
+  | { revoked: false; reason: 'write-failed' };
+
+/**
+ * The one place a {@link RevokeOutcome} becomes a message a person reads
+ * (HIVE-142 review, C1) — the same reason {@link pairOutcomeMessage} exists:
+ * `--revoke`, the tray's "Revoke" and the Settings pane's `server:revoke`
+ * handler each get the accurate reason from one implementation rather than
+ * three that can drift, or three that all say "no such device" for a write
+ * failure that was never that.
+ */
+export function revokeOutcomeMessage(
+  outcome: Extract<RevokeOutcome, { revoked: false }>,
+  name: string,
+): string {
+  switch (outcome.reason) {
+    case 'not-found':
+      return `No device named "${name}" is paired.`;
+    case 'write-failed':
+      return `"${name}" was not revoked — the config file could not be written. It can still reach this Hive; check that the file is writable and try again.`;
+  }
+}
+
 /**
  * Revokes the device named `name` against a freshly-read roster, and
  * persists the result — the one implementation `--revoke` and the tray's
  * "Revoke" both call (HIVE-142 review, N2), for the same reason
  * {@link pairDevice} exists: `store.readDevices()` is called exactly once,
  * and a no-op (unknown name) writes nothing at all.
+ *
+ * Fails closed on a write failure (HIVE-142 review, C1): revoking a stolen
+ * device is the single most security-critical action this module offers,
+ * and reporting `revoked: true` for a write that never reached disk would
+ * tell whoever is holding the stolen laptop's clock nothing has changed —
+ * because, until the write actually lands, nothing has.
  */
-export function revokeDevice(name: string, store: DeviceStore): { revoked: boolean } {
+export function revokeDevice(name: string, store: DeviceStore): RevokeOutcome {
   const result = revokeNamed(store.readDevices(), name);
-  if (result.revoked) store.writeDevices(result.devices);
-  return { revoked: result.revoked };
+  if (!result.revoked) return { revoked: false, reason: 'not-found' };
+
+  const persisted = store.writeDevices(result.devices);
+  if (!persisted) return { revoked: false, reason: 'write-failed' };
+  return { revoked: true };
 }

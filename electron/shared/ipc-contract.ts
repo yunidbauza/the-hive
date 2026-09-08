@@ -1592,15 +1592,27 @@ export interface HiveBridge {
      * once, and never again. The renderer must not store it, log it, or hand
      * it to anything other than the person copying it onto the other device.
      *
+     * `deviceId` rides alongside the token (HIVE-142 review, I5): the attach
+     * handshake needs both, and this was the only place the id was not also
+     * handed to whoever is holding the token.
+     *
      * Refuses with `error` rather than rejecting the promise, on a duplicate
-     * name or if a unique id could not be minted — both are things the person
+     * name, a credential that could not be minted uniquely, or a config write
+     * that did not land (HIVE-142 review, C1) — all are things the person
      * pairing can act on, not a broken channel.
      */
     pair(
       request: DeviceNameRequest,
-    ): Promise<{ token: string } | { error: string }>;
-    /** Revoke the device named `request.name`. A no-op if none exists. */
-    revoke(request: DeviceNameRequest): Promise<void>;
+    ): Promise<{ token: string; deviceId: string } | { error: string }>;
+    /**
+     * Revoke the device named `request.name`.
+     *
+     * `{ error }` on a name that matches nothing, or on a write that did not
+     * land (HIVE-142 review, I7 — same family as C1), rather than an
+     * unconditional success: the most urgent control on the Settings pane
+     * must not report "done" for a revoke that changed nothing on disk.
+     */
+    revoke(request: DeviceNameRequest): Promise<{ revoked: true } | { error: string }>;
   };
   pty: {
     spawn(request: SpawnRequest): Promise<void>;

@@ -223,9 +223,9 @@ export function ServerModeGroup({ enabled, bind, devices }: ServerModeGroupProps
   const [pairName, setPairName] = useState('');
   const [pairError, setPairError] = useState<string | null>(null);
   const [pairing, setPairing] = useState(false);
-  const [justPaired, setJustPaired] = useState<{ name: string; token: string } | null>(
-    null,
-  );
+  const [justPaired, setJustPaired] = useState<
+    { name: string; token: string; deviceId: string } | null
+  >(null);
 
   const handlePair = () => {
     const name = pairName.trim();
@@ -239,7 +239,7 @@ export function ServerModeGroup({ enabled, bind, devices }: ServerModeGroupProps
     void pairDevice(name).then((outcome) => {
       setPairing(false);
       if ('token' in outcome) {
-        setJustPaired({ name, token: outcome.token });
+        setJustPaired({ name, token: outcome.token, deviceId: outcome.deviceId });
         setPairName('');
       } else {
         setPairError(outcome.error);
@@ -376,6 +376,13 @@ export function ServerModeGroup({ enabled, bind, devices }: ServerModeGroupProps
             <code className="break-all font-mono text-[12px] text-ink">
               {justPaired.token}
             </code>
+            {/*
+              The attach handshake needs the id alongside the token (HIVE-142
+              review, I5) — before this, it was readable only by opening
+              config.json, so a person holding the token had no way to
+              actually use it.
+            */}
+            <p className="text-[11px] text-subtle">Device id: {justPaired.deviceId}</p>
             <Button
               variant="ghost"
               size="sm"

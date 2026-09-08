@@ -47,19 +47,40 @@ export interface TrayDeps {
   /**
    * Mints and stores a device named `name`, answering the plaintext token —
    * once, never stored — or the reason it refused (HIVE-142 review, N4): a
-   * duplicate name (`devices.ts`'s `pairDevice`, shared with `--pair`) or a
+   * duplicate name (`devices.ts`'s `pairDevice`, shared with `--pair`), a
    * device id that could not be minted uniquely after every retry
    * (`mintUniqueDevice`; a 16-bit id space and a real if vanishingly
-   * unlikely collision). Nothing is stored on refusal — a discriminated
-   * result rather than `string | null` so this menu can show the *accurate*
+   * unlikely collision), or a config write that did not land (HIVE-142
+   * review, C1). Nothing is stored on refusal — a discriminated result
+   * rather than `string | null` so this menu can show the *accurate*
    * reason, the same one `runPair` already prints for the CLI, instead of
-   * one generic message papering over two different causes.
+   * one generic message papering over three different causes.
+   *
+   * `deviceId` rides alongside the token (HIVE-142 review, I5) — the same
+   * reason `runPair` and the Settings pane's token panel both show it now:
+   * the attach handshake needs both, and the id used to be readable only
+   * inside `config.json`.
    */
-  onPair: (name: string) => { token: string } | { error: string };
-  onRevoke: (name: string) => void;
+  onPair: (name: string) => { token: string; deviceId: string } | { error: string };
+  /**
+   * Revokes the device named `name`, answering whether it actually happened
+   * (HIVE-142 review, C1/I4) — a name that matches nothing, or a config
+   * write that did not land, both refuse rather than report success; the
+   * click handler shows the accurate reason instead of an unconditional
+   * "Device revoked".
+   */
+  onRevoke: (name: string) => { revoked: true } | { error: string };
   onOpenConsole: () => void;
   /** What `listener.start()` actually bound, or `null` before it has. */
   boundAddress: () => string | null;
+  /**
+   * Why nothing is bound yet, or `null` when it is bound or has never been
+   * tried (HIVE-142 review, I3) — the cause `createRemoteListener`'s own
+   * bind failure recorded, so an unattended machine's tray can say "Not
+   * serving — <reason>" instead of "Not yet listening" forever, which is
+   * indistinguishable from "still starting".
+   */
+  bindError: () => string | null;
 }
 
 /**
@@ -116,7 +137,21 @@ export function buildTrayTemplate(deps: TrayDeps): MenuItemConstructorOptions[] 
               })
               .then((result) => {
                 if (result.response !== 1) return; // Cancel, or dismissed.
-                deps.onRevoke(device.name);
+                const outcome = deps.onRevoke(device.name);
+                // A refusal — no such device any more, or the write did not
+                // land (HIVE-142 review, C1/I4) — is shown rather than
+                // papered over with the same "Device revoked" every
+                // successful click gets; the security-critical answer here
+                // is whether it actually happened, not whether the click
+                // was received.
+                if ('error' in outcome) {
+                  void dialog.showMessageBox({
+                    type: 'error',
+                    title: 'Could not revoke this device',
+                    message: outcome.error,
+                  });
+                  return;
+                }
                 void dialog.showMessageBox({
                   type: 'info',
                   title: 'Device revoked',
@@ -127,6 +162,7 @@ export function buildTrayTemplate(deps: TrayDeps): MenuItemConstructorOptions[] 
         }));
 
   const address = deps.boundAddress();
+  const bindError = deps.bindError();
 
   return [
     {
@@ -151,13 +187,17 @@ export function buildTrayTemplate(deps: TrayDeps): MenuItemConstructorOptions[] 
           });
           return;
         }
-        const { token } = attempt;
+        const { token, deviceId } = attempt;
         void dialog
           .showMessageBox({
             type: 'info',
             title: 'Device paired',
             message: `"${name}" can now reach this Hive.`,
-            detail: token,
+            // The device id on its own line (HIVE-142 review, I5) — the
+            // attach handshake needs both, and "Copy" below only ever copies
+            // the token, so a person pairing from this menu needs the id
+            // visible here, not just implied by the roster underneath it.
+            detail: `${token}\nDevice id: ${deviceId}`,
             buttons: ['Copy', 'Done'],
             defaultId: 0,
             noLink: true,
@@ -173,7 +213,20 @@ export function buildTrayTemplate(deps: TrayDeps): MenuItemConstructorOptions[] 
     },
     { type: 'separator' },
     {
-      label: address === null ? 'Not yet listening' : `Serving ${address}`,
+      /*
+        Three distinguishable states, not two (HIVE-142 review, I3): a bind
+        that failed (port conflict, or a `bind.host` that does not resolve to
+        a local interface yet — Tailscale not up) used to render the exact
+        same "Not yet listening" a socket that is merely still starting does,
+        which makes the two indistinguishable on an unattended machine with
+        nobody to notice the difference except by symptom.
+      */
+      label:
+        address !== null
+          ? `Serving ${address}`
+          : bindError !== null
+            ? `Not serving — ${bindError}`
+            : 'Not yet listening',
       enabled: false,
     },
     { label: 'Open The Hive', click: () => deps.onOpenConsole() },

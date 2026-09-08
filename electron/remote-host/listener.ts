@@ -10,6 +10,7 @@ import {
   type ServerFrame,
 } from '@shared/remote-contract';
 
+import { describe } from '../main/config/paths';
 import { createOriginGuard } from '../main/hooks/http-guard';
 import { verifyDevice } from '../main/server/devices';
 
@@ -74,6 +75,15 @@ export interface RemoteListener {
   stop: () => Promise<void>;
   /** What the kernel actually bound to, or `null` before `start` / after `stop`. */
   readonly boundHost: string | null;
+  /**
+   * Why the most recent `start()` failed to bind, or `null` when bound or
+   * never tried (HIVE-142 review, I3). A port already in use, or a
+   * `bind.host` that does not yet resolve to a local interface — Tailscale
+   * not up yet, most likely on this deployment — both leave `boundHost` at
+   * `null` with no way to tell "still starting" from "gave up"; this is
+   * that difference, for the tray to show rather than swallow.
+   */
+  readonly lastBindError: string | null;
 }
 
 /**
@@ -152,11 +162,33 @@ export function createRemoteListener(options: {
     allowedOrigins: bind.allowedOrigins,
     host: bind.host,
     hostAliases: () => new Set<string>(),
+    /*
+      Diagnostics only (HIVE-142 review, I4): a Tailscale node typically has
+      both an address and a MagicDNS name, and a client that addresses this
+      socket by the name is refused with a bare 403 and, until this, nothing
+      explaining why. Logged here — this machine's own log — never on the
+      wire, which would hand an unauthenticated peer exactly the admissible
+      set it is being refused for not already knowing.
+    */
+    onHostRefused: (claimed, admissible) => {
+      console.error(
+        `[hive] server mode refused Host "${claimed}" — admissible: loopback, ${admissible.join(', ')}`,
+      );
+    },
   });
 
   let server: Server | null = null;
   let wss: WebSocketServer | null = null;
   let boundHost: string | null = null;
+  /**
+   * The cause of the most recent bind failure, or `null` when bound or never
+   * tried (HIVE-142 review, I3) — set in the `'error'` handler below,
+   * cleared the moment a bind actually succeeds. Exposed as
+   * {@link RemoteListener.lastBindError} so the tray can tell "still
+   * starting" apart from "failed, and here is why" instead of showing the
+   * same "Not yet listening" for both.
+   */
+  let bindError: string | null = null;
 
   /**
    * Every armed handshake-deadline timer that has not yet fired or been
@@ -184,6 +216,10 @@ export function createRemoteListener(options: {
   return {
     get boundHost() {
       return boundHost;
+    },
+
+    get lastBindError() {
+      return bindError;
     },
 
     start() {
@@ -365,11 +401,33 @@ export function createRemoteListener(options: {
           });
         });
 
-        created.on('error', () => {
+        created.on('error', (cause) => {
           // Only a bind failure clears the handles — see `stop()` and
           // `receiver.ts`'s identical guard for why `server === null` is the
           // discriminator between "never bound" and "bound, then errored".
           if (server === null) {
+            // Logged with its cause, and recorded for the tray to show
+            // (HIVE-142 review, I3) — a port conflict or a `bind.host` that
+            // does not yet resolve to a local interface used to leave
+            // `boundHost` at `null` with nothing anywhere saying why, which
+            // on an unattended machine is indistinguishable from "still
+            // starting".
+            const reason = describe(cause);
+            console.error(`[hive] server mode could not bind ${wsUrl(bind.host, bind.port)}: ${reason}`);
+            bindError = reason;
+            /*
+              `wss` was already assigned below (before `created.listen` was
+              even called) and `created` is a real, if now-erroring,
+              `http.Server` — `stop()`'s own early return on `server === null`
+              never reaches either of them, so both leak for the life of the
+              process unless this handler closes them itself (HIVE-142
+              review, M2). Neither ever accepted a real connection, so a bare
+              `.close()` with no callback is enough — there is nothing
+              in-flight to wait for.
+            */
+            wss?.close();
+            wss = null;
+            created.close();
             boundHost = null;
             resolve(null);
           }
@@ -383,6 +441,7 @@ export function createRemoteListener(options: {
           }
           server = created;
           boundHost = address.address;
+          bindError = null;
           resolve(wsUrl(bind.host, address.port));
         });
       });

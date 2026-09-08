@@ -217,7 +217,12 @@ import {
   createSessionNames,
 } from '../notifications';
 import { registerPtyHost } from '../pty-host';
-import { pairDevice, pairOutcomeMessage, revokeDevice } from '../server/devices';
+import {
+  pairDevice,
+  pairOutcomeMessage,
+  revokeDevice,
+  revokeOutcomeMessage,
+} from '../server/devices';
 import { readServerDevicesFromDisk, serverDeviceStore } from '../server/file-backed-io';
 import { createSessions, type Sessions } from '../sessions';
 import {
@@ -847,6 +852,16 @@ export function startRemoteListener(): Promise<string | null> {
 export function remoteListenerBoundAddress(): string | null {
   const host = remoteListener?.boundHost ?? null;
   return host === null || remoteListenerPort === null ? null : `${host}:${String(remoteListenerPort)}`;
+}
+
+/**
+ * Why nothing is bound yet, for the tray's own informational item (HIVE-142
+ * review, I3) — `null` on every launch that is not server mode, exactly like
+ * {@link remoteListenerBoundAddress} above, since `remoteListener` is
+ * constructed unconditionally but only ever started in server mode.
+ */
+export function remoteListenerBindError(): string | null {
+  return remoteListener?.lastBindError ?? null;
 }
 
 /**
@@ -2833,13 +2848,19 @@ export function registerIpcHandlers(
    * here. The plaintext is the return value and nothing else: it is never
    * written into the config, a store, or a log line — the server keeps only
    * the digest `pairDevice` computed.
+   *
+   * `deviceId` rides alongside the token (HIVE-142 review, I5): `AttachRequest`
+   * needs both, and until now the id was readable only inside `config.json`.
+   * A write failure (C1) is reported through the same `{ error }` shape a
+   * duplicate name or a minting collision already uses — the pane shows the
+   * reason instead of the token panel either way.
    */
   handle(
     CH.serverPair,
-    (_event, payload): { token: string } | { error: string } => {
+    (_event, payload): { token: string; deviceId: string } | { error: string } => {
       const { name } = parsePairDeviceRequest(payload);
       const outcome = pairDevice(name, serverDeviceStore());
-      if (outcome.ok) return { token: outcome.token };
+      if (outcome.ok) return { token: outcome.token, deviceId: outcome.device.id };
       return { error: pairOutcomeMessage(outcome, name) };
     },
   );
@@ -2847,10 +2868,22 @@ export function registerIpcHandlers(
    * Revoke a paired device by name (HIVE-142). A no-op, not a refusal, if no
    * device holds that name — the same `revokeDevice` implementation `--revoke`
    * and the tray's "Revoke" both call.
+   *
+   * Reports the outcome rather than answering `void` (HIVE-142 review, I7,
+   * same family as C1): a hand-edit or a rename since boot can mean this
+   * name matches nothing, or the write itself can fail, and either way the
+   * renderer's `revokeDevice` (`project-config.ts`) must not tell the pane
+   * "done" for a revoke that changed nothing on disk.
    */
-  handle(CH.serverRevoke, (_event, payload): void => {
-    revokeDevice(parseRevokeDeviceRequest(payload).name, serverDeviceStore());
-  });
+  handle(
+    CH.serverRevoke,
+    (_event, payload): { revoked: true } | { error: string } => {
+      const { name } = parseRevokeDeviceRequest(payload);
+      const outcome = revokeDevice(name, serverDeviceStore());
+      if (outcome.revoked) return { revoked: true };
+      return { error: revokeOutcomeMessage(outcome, name) };
+    },
+  );
 
   /**
    * Slack's MCP server (HIVE-123) — four verbs, none taking a payload.

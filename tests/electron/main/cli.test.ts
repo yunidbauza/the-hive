@@ -76,4 +76,33 @@ describe('parseInvocation', () => {
       name: 'MacBook',
     });
   });
+
+  /**
+   * HIVE-142 review, M1: the IPC path runs `assertText` (non-empty, capped,
+   * no control characters) and the Settings pane trims — this argv path had
+   * neither, so `--pair "   "` minted and persisted a device whose name
+   * `optionalDevices` (`config/parse.ts`) then drops on every later load,
+   * leaving a token that could never authenticate anything.
+   */
+  it('asks for a name when --pair is given only whitespace', () => {
+    const result = parseInvocation(packagedArgv('--pair', '   '), true);
+    expect(result.kind).toBe('usage');
+  });
+
+  it('asks for a name when --revoke is given only whitespace', () => {
+    const result = parseInvocation(packagedArgv('--revoke', '   '), true);
+    expect(result.kind).toBe('usage');
+  });
+
+  it('trims incidental whitespace around an otherwise valid --pair name', () => {
+    expect(parseInvocation(packagedArgv('--pair', '  MacBook  '), true)).toEqual({
+      kind: 'pair',
+      name: 'MacBook',
+    });
+  });
+
+  it('asks for a name when --pair carries a control character', () => {
+    const result = parseInvocation(packagedArgv('--pair', 'Mac\nBook'), true);
+    expect(result.kind).toBe('usage');
+  });
 });

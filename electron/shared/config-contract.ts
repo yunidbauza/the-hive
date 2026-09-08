@@ -651,6 +651,42 @@ export const BIND_KEYS: readonly (keyof ReceiverBindConfig)[] = [
 export const WILDCARD_BIND = '0.0.0.0';
 
 /**
+ * One `inet_aton`-style numeral, split on `.` — decimal (`0`, `00`), hex
+ * (`0x0`, `0X00`), or a dotted-quad label (`000`) — checked for whether it can
+ * only ever mean zero.
+ *
+ * `HOST_ALIAS_LABEL` already restricts each label to letters, digits and
+ * inner hyphens, so this only has to ask "if the kernel reads this label as a
+ * legacy numeric host part, is the value zero" — it never has to reject a
+ * shape `isHostAlias` would not have admitted in the first place.
+ */
+function isZeroIPv4Label(label: string): boolean {
+  const hex = /^0[xX]([0-9a-fA-F]+)$/.exec(label);
+  if (hex) return /^0+$/.test(hex[1] ?? '');
+  return /^[0-9]+$/.test(label) && /^0+$/.test(label);
+}
+
+/**
+ * Whether `value` is *any* legacy numeral spelling of the IPv4 wildcard —
+ * `0`, `00`, `0x0`, `000.000.000.000`, and every other combination of decimal,
+ * octal and hex zeroes `inet_aton` folds to `0.0.0.0` (HIVE-142 review, I1).
+ *
+ * `dns.lookup` and `net.Server.listen` both resolve every one of these to
+ * `0.0.0.0` on this machine (verified against this host, HIVE-142 review) —
+ * the literal string `'0.0.0.0'` is only the one spelling a person is likely
+ * to type by hand, not the complete set the kernel treats the same way. A
+ * legacy numeral address has at most four dot-separated fields (`inet_aton`
+ * has no fifth-field form), so anything longer is left to the ordinary
+ * hostname/IPv4 rules below rather than treated as numeric at all. Every
+ * field has to fold to zero — the weighted sum of several fields is zero only
+ * if every term is, since none of the per-field weights can be negative.
+ */
+function isNumericWildcard(value: string): boolean {
+  const labels = value.split('.');
+  return labels.length <= 4 && labels.every(isZeroIPv4Label);
+}
+
+/**
  * Whether a value may be `server.bind.host`.
  *
  * `isHostAlias` for shape — one predicate, not two — and one rejection beside
@@ -659,10 +695,17 @@ export const WILDCARD_BIND = '0.0.0.0';
  * reasoning does not transfer: a served machine is reached at a Tailscale
  * address, which is always nameable, so the wildcard here is a wider surface
  * with nothing to buy for it.
+ *
+ * The rejection is every numeral spelling of that wildcard
+ * ({@link isNumericWildcard}), not only the literal `'0.0.0.0'` — see that
+ * function's own doc comment for why `0`, `00`, `0x0` and
+ * `000.000.000.000` all have to be refused here too, in the one predicate
+ * every validation surface (the file reader, the IPC guard, and the Settings
+ * pane) calls, rather than in each of them separately.
  */
 export function isServerBindHost(value: unknown): value is string {
   if (!isHostAlias(value)) return false;
-  return value !== WILDCARD_BIND;
+  return !isNumericWildcard(value);
 }
 
 /**
@@ -674,7 +717,19 @@ export function isServerBindHost(value: unknown): value is string {
  * {@link ServerBindConfig.port}.
  */
 export interface ServerBindConfig {
-  /** A hostname or an IPv4 literal, validated by {@link isServerBindHost}. */
+  /**
+   * A hostname or an IPv4 literal, validated by {@link isServerBindHost}.
+   *
+   * **A client must address this machine by this exact value.** The Host
+   * guard (`createOriginGuard`, `remote-host/listener.ts`) admits loopback and
+   * this string, and nothing else — not a MagicDNS name or any other alias
+   * that merely *resolves* to the same address. A Tailscale node typically
+   * has both a `100.x` address and a name; if a client reaches this socket
+   * through the name, it is refused with a bare 403 (logged here, but not on
+   * the wire, so an unauthenticated peer learns nothing about what this app
+   * would have admitted). Naming a wider admissible set is HIVE-144's
+   * decision, not this story's.
+   */
   host: string;
   /**
    * Fixed, not ephemeral — unlike {@link ReceiverBindConfig.port}, whose `0`

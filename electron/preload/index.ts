@@ -278,9 +278,11 @@ const bridge: HiveBridge = {
   server: {
     pair: (
       request: DeviceNameRequest,
-    ): Promise<{ token: string } | { error: string }> =>
+    ): Promise<{ token: string; deviceId: string } | { error: string }> =>
       ipcRenderer.invoke(CH.serverPair, request),
-    revoke: (request: DeviceNameRequest): Promise<void> =>
+    revoke: (
+      request: DeviceNameRequest,
+    ): Promise<{ revoked: true } | { error: string }> =>
       ipcRenderer.invoke(CH.serverRevoke, request),
   },
   pty: {

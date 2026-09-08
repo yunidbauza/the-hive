@@ -383,11 +383,14 @@ describe('pairDevice (HIVE-142)', () => {
     expect(projectConfigSnapshot()).toBeNull();
   });
 
-  it('returns the token, and re-reads the snapshot so the device list updates', async () => {
+  it('returns the token and the device id, and re-reads the snapshot so the device list updates', async () => {
     const afterPair = snapshot([], {
       server: { ...DEFAULT_SERVER, devices: [device('d_1', 'New laptop')] },
     });
-    const pair = vi.fn().mockResolvedValue({ token: 'ABCD-EFGH-JKMN-PQRS' });
+    // `deviceId` rides alongside the token (HIVE-142 review, I5) — the
+    // attach handshake needs both, and it used to be readable only inside
+    // config.json.
+    const pair = vi.fn().mockResolvedValue({ token: 'ABCD-EFGH-JKMN-PQRS', deviceId: 'd_1' });
     const get = vi.fn().mockResolvedValue(afterPair);
     withServerBridge(pair, get);
     const listener = vi.fn();
@@ -395,6 +398,7 @@ describe('pairDevice (HIVE-142)', () => {
 
     await expect(pairDevice('New laptop')).resolves.toEqual({
       token: 'ABCD-EFGH-JKMN-PQRS',
+      deviceId: 'd_1',
     });
 
     expect(pair).toHaveBeenCalledWith({ name: 'New laptop' });
@@ -437,14 +441,15 @@ describe('pairDevice (HIVE-142)', () => {
    * would send them to retry a name `server:pair` now refuses as a
    * duplicate.
    */
-  it('still returns the token when the snapshot re-read fails', async () => {
+  it('still returns the token and the device id when the snapshot re-read fails', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const pair = vi.fn().mockResolvedValue({ token: 'ABCD-EFGH-JKMN-PQRS' });
+    const pair = vi.fn().mockResolvedValue({ token: 'ABCD-EFGH-JKMN-PQRS', deviceId: 'd_1' });
     const get = vi.fn().mockRejectedValue(new Error('closed window'));
     withServerBridge(pair, get);
 
     await expect(pairDevice('New laptop')).resolves.toEqual({
       token: 'ABCD-EFGH-JKMN-PQRS',
+      deviceId: 'd_1',
     });
     expect(console.error).toHaveBeenCalled();
   });
@@ -462,7 +467,7 @@ describe('revokeDevice (HIVE-142)', () => {
     const afterRevoke = snapshot([], {
       server: { ...DEFAULT_SERVER, devices: [device('d_1', 'Old laptop', true)] },
     });
-    const revoke = vi.fn().mockResolvedValue(undefined);
+    const revoke = vi.fn().mockResolvedValue({ revoked: true });
     const get = vi.fn().mockResolvedValue(afterRevoke);
     (window as { hive?: unknown }).hive = { server: { revoke }, config: { get } };
     const listener = vi.fn();
@@ -494,9 +499,31 @@ describe('revokeDevice (HIVE-142)', () => {
     });
   });
 
+  /**
+   * HIVE-142 review, I7: `bridge.server.revoke`'s own resolved value used to
+   * be discarded entirely — this renderer function reported `{ ok: true }`
+   * unconditionally the instant the promise settled, whatever main actually
+   * said. A hand-edit or a rename since boot can mean the name matches
+   * nothing on main's side; this is that answer, surfaced rather than
+   * swallowed.
+   */
+  it('returns the refusal reason when main reports no matching device', async () => {
+    const revoke = vi
+      .fn()
+      .mockResolvedValue({ error: 'No device named "Old laptop" is paired.' });
+    const get = vi.fn();
+    (window as { hive?: unknown }).hive = { server: { revoke }, config: { get } };
+
+    await expect(revokeDevice('Old laptop')).resolves.toEqual({
+      ok: false,
+      error: 'No device named "Old laptop" is paired.',
+    });
+    expect(get).not.toHaveBeenCalled();
+  });
+
   it('still returns ok when the snapshot re-read fails', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const revoke = vi.fn().mockResolvedValue(undefined);
+    const revoke = vi.fn().mockResolvedValue({ revoked: true });
     const get = vi.fn().mockRejectedValue(new Error('closed window'));
     (window as { hive?: unknown }).hive = { server: { revoke }, config: { get } };
 

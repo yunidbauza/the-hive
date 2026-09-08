@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { createServer as createNetServer, connect, type Socket } from 'node:net';
 
-import { WebSocket } from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createRemoteListener } from '@remote-host/listener';
@@ -356,6 +356,87 @@ describe('start()/stop() lifecycle', () => {
     expect(listener.boundHost).toBeNull();
 
     await new Promise<void>((resolve) => blocker.close(() => resolve()));
+  });
+
+  /**
+   * HIVE-142 review, I3: a bind failure used to be silent everywhere — no
+   * log, and `boundHost === null` is indistinguishable from "still
+   * starting". Both the log and `lastBindError` have to name the real cause.
+   */
+  it('logs the bind failure with its cause, and records it on lastBindError', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const blocker = createNetServer();
+    await new Promise<void>((resolve) => blocker.listen(0, '127.0.0.1', () => resolve()));
+    const address = blocker.address();
+    if (address === null || typeof address === 'string') throw new Error('expected an AddressInfo');
+    const port = address.port;
+
+    listener = createRemoteListener({
+      bind: { host: '127.0.0.1', port, allowedOrigins: [] },
+      devices: () => [],
+      serverName: 'test-mini',
+    });
+    await listener.start();
+
+    expect(listener.lastBindError).toEqual(expect.stringContaining('EADDRINUSE'));
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('EADDRINUSE'));
+
+    errorSpy.mockRestore();
+    await new Promise<void>((resolve) => blocker.close(() => resolve()));
+  });
+
+  /**
+   * HIVE-142 review, M2: on a pre-listen error the handler used to leave
+   * `wss` assigned and the half-created `http.Server` unclosed, and `stop()`
+   * early-returns on `server === null` — so neither was ever closed. Both
+   * have to be cleaned up on the failure path itself.
+   */
+  it('closes the half-created WebSocketServer on a bind failure, rather than leaking it', async () => {
+    const wssCloseSpy = vi.spyOn(WebSocketServer.prototype, 'close');
+    const blocker = createNetServer();
+    await new Promise<void>((resolve) => blocker.listen(0, '127.0.0.1', () => resolve()));
+    const address = blocker.address();
+    if (address === null || typeof address === 'string') throw new Error('expected an AddressInfo');
+    const port = address.port;
+
+    listener = createRemoteListener({
+      bind: { host: '127.0.0.1', port, allowedOrigins: [] },
+      devices: () => [],
+      serverName: 'test-mini',
+    });
+    await listener.start();
+
+    expect(wssCloseSpy).toHaveBeenCalled();
+
+    wssCloseSpy.mockRestore();
+    await new Promise<void>((resolve) => blocker.close(() => resolve()));
+  });
+
+  it('clears lastBindError once a later start() actually binds', async () => {
+    const blocker = createNetServer();
+    await new Promise<void>((resolve) => blocker.listen(0, '127.0.0.1', () => resolve()));
+    const address = blocker.address();
+    if (address === null || typeof address === 'string') throw new Error('expected an AddressInfo');
+    const port = address.port;
+
+    const failing = createRemoteListener({
+      bind: { host: '127.0.0.1', port, allowedOrigins: [] },
+      devices: () => [],
+      serverName: 'test-mini',
+    });
+    await failing.start();
+    expect(failing.lastBindError).not.toBeNull();
+    await new Promise<void>((resolve) => blocker.close(() => resolve()));
+
+    // A fresh listener, since `bind.port` is fixed per instance: proves the
+    // field genuinely reports "no error", not merely "never checked again".
+    listener = createRemoteListener({
+      bind: { host: '127.0.0.1', port: 0, allowedOrigins: [] },
+      devices: () => [],
+      serverName: 'test-mini',
+    });
+    await listener.start();
+    expect(listener.lastBindError).toBeNull();
   });
 
   it('resolves stop() before start() was ever called', async () => {

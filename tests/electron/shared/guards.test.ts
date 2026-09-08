@@ -1195,6 +1195,20 @@ describe('parseSetServerRequest (HIVE-142)', () => {
     );
   });
 
+  /**
+   * HIVE-142 review, I1: `0`, `00`, `0x0` and `000.000.000.000` are all
+   * legal hostname shapes by `isHostAlias`'s rule, and all four are spellings
+   * of the same wildcard `dns.lookup`/`net.Server.listen` resolve `0.0.0.0`
+   * to — not just the one literal string this guard used to refuse.
+   */
+  it('refuses every numeral spelling of the wildcard bind, not just the literal string', () => {
+    for (const host of ['0', '00', '0x0', '0X0', '000.000.000.000']) {
+      expect(() => parseSetServerRequest({ bind: { host } })).toThrow(
+        /setServer\.bind\.host/,
+      );
+    }
+  });
+
   it('refuses a bind host that is not a hostname', () => {
     for (const host of ['10.0.0.5?', 'evil.com/x', '10.0.0.5:80', 'a b', '']) {
       expect(() => parseSetServerRequest({ bind: { host } })).toThrow(

@@ -254,7 +254,15 @@ const MAX_TEXT = 4096;
  */
 const MAX_PROJECT_IDS = 1000;
 
-function assertText(value: unknown, label: string): string {
+/**
+ * Exported (HIVE-142 review, M1) so `cli.ts`'s `--pair`/`--revoke` argv
+ * parsing can hold a device name to the exact same bound this file's own
+ * IPC guards do (`parsePairDeviceRequest`, `parseRevokeDeviceRequest`) —
+ * non-empty, capped, no control characters — rather than accepting anything
+ * argv hands it and minting a device the config reader silently drops on
+ * the next load because its name is empty or unprintable.
+ */
+export function assertText(value: unknown, label: string): string {
   const text = assertString(value, label);
   if (text.length === 0) return fail(`${label}: must not be empty`);
   if (text.length > MAX_TEXT) return fail(`${label}: too long`);

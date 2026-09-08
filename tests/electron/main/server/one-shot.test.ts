@@ -5,7 +5,8 @@ import type { ServerDevice } from '@shared/config-contract';
 import { runOneShot } from '../../../../electron/main/server/one-shot';
 import { mintDevice } from '../../../../electron/main/server/devices';
 
-const io = (devices: readonly ServerDevice[] = []) => {
+/** `persistWrites` defaults `true`; pass `false` for the C1 write-failure branch. */
+const io = (devices: readonly ServerDevice[] = [], persistWrites = true) => {
   const written: ServerDevice[][] = [];
   const lines: string[] = [];
   return {
@@ -13,7 +14,10 @@ const io = (devices: readonly ServerDevice[] = []) => {
     lines,
     io: {
       readDevices: () => devices,
-      writeDevices: (next: readonly ServerDevice[]) => written.push([...next]),
+      writeDevices: (next: readonly ServerDevice[]) => {
+        written.push([...next]);
+        return persistWrites;
+      },
       print: (line: string) => lines.push(line),
     },
   };
@@ -34,6 +38,31 @@ describe('runOneShot --pair', () => {
     runOneShot({ kind: 'pair', name: 'MacBook' }, i);
     const digest = written[0]?.[0]?.credential.digest ?? '';
     expect(lines.join('\n')).not.toContain(digest);
+  });
+
+  /**
+   * HIVE-142 review, I5: `AttachRequest` needs the device id alongside the
+   * token, and until now the id was readable only inside `config.json`.
+   */
+  it('prints the device id alongside the token', () => {
+    const { io: i, written, lines } = io();
+    runOneShot({ kind: 'pair', name: 'MacBook' }, i);
+    const id = written[0]?.[0]?.id ?? '';
+    expect(id).not.toBe('');
+    expect(lines).toContain(`Device id: ${id}`);
+  });
+
+  /**
+   * HIVE-142 review, C1: a device minted in memory but never persisted must
+   * not exit 0 having printed a token for a credential that exists nowhere.
+   */
+  it('exits non-zero and prints no token when the write does not land', () => {
+    const { io: i, written, lines } = io([], false);
+    const code = runOneShot({ kind: 'pair', name: 'MacBook' }, i);
+    expect(code).toBe(1);
+    expect(written).toHaveLength(1); // the write was attempted...
+    expect(lines.join('\n')).not.toMatch(/[0-9A-HJ-NP-TV-Z]{4}(-[0-9A-HJ-NP-TV-Z]{4}){3}/); // ...but no token was ever shown
+    expect(lines.join('\n')).toMatch(/MacBook/);
   });
 
   it('keeps devices that already exist', () => {
@@ -94,10 +123,24 @@ describe('runOneShot --revoke', () => {
     expect(runOneShot({ kind: 'revoke', name: 'ghost' }, i)).toBe(1);
     expect(written).toHaveLength(0);
   });
+
+  /**
+   * HIVE-142 review, C1 — the sharpest version of this finding: `--revoke`
+   * must fail closed, not print success for a device whose digest is still
+   * live on disk because the write never landed.
+   */
+  it('exits non-zero and does not claim success when the write does not land', () => {
+    const existing = mintDevice('MacBook').device;
+    const { io: i, lines } = io([existing], false);
+    const code = runOneShot({ kind: 'revoke', name: 'MacBook' }, i);
+    expect(code).toBe(1);
+    expect(lines.join('\n')).not.toMatch(/no longer reach/i);
+    expect(lines.join('\n')).toMatch(/MacBook/);
+  });
 });
 
 describe('runOneShot --devices', () => {
-  it('lists names and states without printing any credential', () => {
+  it('lists names, ids and states without printing any credential', () => {
     const a = mintDevice('MacBook').device;
     const b = { ...mintDevice('iPad').device, revoked: true };
     const { io: i, lines } = io([a, b]);
@@ -105,6 +148,11 @@ describe('runOneShot --devices', () => {
     const out = lines.join('\n');
     expect(out).toContain('MacBook');
     expect(out).toContain('iPad');
+    // The id (HIVE-142 review, I5): an operator holding only a token has to
+    // find the id the attach handshake also needs without opening
+    // config.json by hand.
+    expect(out).toContain(a.id);
+    expect(out).toContain(b.id);
     expect(out).toMatch(/revoked/i);
     expect(out).not.toContain(a.credential.digest);
   });

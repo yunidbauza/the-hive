@@ -711,21 +711,29 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       const result = await runOneShot(['--pair', 'Live-Device-A'], configPath, userDataDir);
       expect(result.code).toBe(0);
 
-      // The token is the first of three lines `runPair` prints
-      // (`one-shot.ts`) — four groups of four Crockford-base32 characters.
+      // The token, then the device id, are the first two of four lines
+      // `runPair` prints (`one-shot.ts`) — HIVE-142 review, I5: the attach
+      // handshake needs both, and the id used to be readable only inside
+      // config.json. Four groups of four Crockford-base32 characters for
+      // the token.
       const lines = result.stdout.trim().split('\n');
-      expect(lines).toHaveLength(3);
+      expect(lines).toHaveLength(4);
       const token = lines[0] ?? '';
       expect(token).toMatch(/^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/u);
+      const idLine = lines[1] ?? '';
+      expect(idLine).toMatch(/^Device id: /);
+      const printedId = idLine.replace(/^Device id: /, '');
 
-      // The device's id never reaches stdout, so it is read back off the
-      // config file the one-shot just wrote — the same file the running
-      // server's `devices` getter re-reads on every handshake
-      // (`file-backed-io.ts`'s `readServerDevicesFromDisk`).
+      // Cross-checked against the config file the one-shot just wrote — the
+      // same file the running server's `devices` getter re-reads on every
+      // handshake (`file-backed-io.ts`'s `readServerDevicesFromDisk`) — so
+      // this proves the printed id is not merely well-shaped but the exact
+      // one that was actually persisted.
       const parsed = parseConfig(readFileSync(configPath, 'utf8'), 'config');
       const minted = parsed.server?.devices?.find((device) => device.name === 'Live-Device-A');
       expect(minted).toBeDefined();
-      liveA = { id: minted?.id ?? '', token };
+      expect(minted?.id).toBe(printedId);
+      liveA = { id: printedId, token };
 
       // The proof itself: attach against the SAME server process that was
       // already listening before `--pair` ever ran, with no restart in
@@ -745,8 +753,9 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       const result = await runOneShot(['--pair', 'Live-Device-B'], configPath, userDataDir);
       expect(result.code).toBe(0);
       const lines = result.stdout.trim().split('\n');
-      expect(lines).toHaveLength(3);
+      expect(lines).toHaveLength(4);
       const token = lines[0] ?? '';
+      const printedId = (lines[1] ?? '').replace(/^Device id: /, '');
 
       const parsed = parseConfig(readFileSync(configPath, 'utf8'), 'config');
       const devices = parsed.server?.devices ?? [];
@@ -758,7 +767,8 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       expect(survivedA).toBeDefined();
       expect(survivedA?.revoked).toBe(false);
       expect(b).toBeDefined();
-      liveB = { id: b?.id ?? '', token };
+      expect(b?.id).toBe(printedId);
+      liveB = { id: printedId, token };
 
       // The server, still the same process, still running, still answers for
       // A after B was added — the roster it re-read did not just gain B, it

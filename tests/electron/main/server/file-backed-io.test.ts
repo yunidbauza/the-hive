@@ -8,7 +8,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CONFIG_PATH_ENV } from '@shared/config-contract';
 
 import { getConfig, reloadConfig } from '../../../../electron/main/config';
-import { readServerDevicesFromDisk } from '../../../../electron/main/server/file-backed-io';
+import {
+  readServerDevicesFromDisk,
+  serverDeviceStore,
+} from '../../../../electron/main/server/file-backed-io';
 
 /**
  * `readServerDevicesFromDisk` against a real file (HIVE-142 review, N1).
@@ -134,4 +137,23 @@ describe('readServerDevicesFromDisk', () => {
       expect(after.shell).toBe('/bin/bash');
     },
   );
+});
+
+/**
+ * `serverDeviceStore().writeDevices` against a real, writable file (HIVE-142
+ * review, C1) — the wiring proof that `setServerReportingWrite`'s boolean
+ * actually reaches this `DeviceStore`, complementing the seam-based
+ * write-failure tests in `devices.test.ts`, which do not need (and should
+ * not need) a real filesystem to prove the fail-closed branch.
+ */
+describe('serverDeviceStore', () => {
+  it('reports true and persists on an ordinary writable file', () => {
+    writeFileSync(path, JSON.stringify({ version: 2 }));
+
+    const store = serverDeviceStore();
+    const persisted = store.writeDevices([device('d_1', 'MacBook')]);
+
+    expect(persisted).toBe(true);
+    expect(readServerDevicesFromDisk()).toEqual([device('d_1', 'MacBook')]);
+  });
 });

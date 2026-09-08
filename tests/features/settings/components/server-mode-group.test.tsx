@@ -305,6 +305,7 @@ describe('ServerModeGroup', () => {
     it('shows the token, and it survives an unrelated re-render, until dismissed', async () => {
       vi.mocked(pairDevice).mockResolvedValue({
         token: 'ABCD-EFGH-JKMN-PQRS',
+        deviceId: 'd_ef56',
       });
 
       const { rerender } = render(
@@ -315,6 +316,10 @@ describe('ServerModeGroup', () => {
       await userEvent.click(screen.getByRole('button', { name: /^pair$/i }));
 
       expect(await screen.findByText(/ABCD-EFGH-JKMN-PQRS/)).toBeInTheDocument();
+      // The device id alongside the token (HIVE-142 review, I5) — the attach
+      // handshake needs both, and it used to be readable only inside
+      // config.json.
+      expect(screen.getByText(/d_ef56/)).toBeInTheDocument();
       expect(pairDevice).toHaveBeenCalledWith('New laptop');
 
       // An unrelated re-render — same props, a fresh `devices` reference,
@@ -363,6 +368,7 @@ describe('ServerModeGroup', () => {
     it('clears a previously shown token once a new pairing attempt fails', async () => {
       vi.mocked(pairDevice).mockResolvedValueOnce({
         token: 'ABCD-EFGH-JKMN-PQRS',
+        deviceId: 'd_ef56',
       });
 
       render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} />);

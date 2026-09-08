@@ -102,6 +102,29 @@ describe('the server bind block', () => {
     expect(parsed.fatal).toBe(false);
   });
 
+  /**
+   * HIVE-142 review, I1: `isHostAlias`'s per-label regex admits `0`, `00`,
+   * `0x0` and `000.000.000.000` as hostname shapes, and `dns.lookup`/
+   * `net.Server.listen` all fold every one of them to `0.0.0.0` on this
+   * machine (verified) — the literal-string check above catches only the one
+   * spelling a person is likely to type by hand.
+   */
+  it.each(['0', '00', '0x0', '0X0', '000.000.000.000'])(
+    'refuses %s — another spelling of the same wildcard — and falls back to the default host',
+    (host) => {
+      const parsed = parseConfig(doc({ server: { bind: { host } } }), 'config');
+
+      expect(resolved(parsed).bind.host).toBe('127.0.0.1');
+      expect(parsed.fatal).toBe(false);
+    },
+  );
+
+  it('does not refuse a real dotted-quad that merely contains a zero octet', () => {
+    const parsed = parseConfig(doc({ server: { bind: { host: '10.0.0.5' } } }), 'config');
+
+    expect(resolved(parsed).bind.host).toBe('10.0.0.5');
+  });
+
   it('keeps the good fields when one is wrong', () => {
     const parsed = parseConfig(
       doc({ server: { bind: { host: '10.0.0.5?', port: 7433 } } }),

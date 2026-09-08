@@ -1,10 +1,15 @@
+import { IpcValidationError, assertText } from '@shared/guards';
+
 /**
  * Server-mode invocation parsing (HIVE-142).
  *
  * Split from `index.ts` so it can be driven directly in a unit test, the way
  * `lifecycle.ts` is: asserting argv handling through a real Electron boot
  * would be slow and indirect, and this module has nothing Electron-specific
- * in it — no `electron` import, not even a type import.
+ * in it — no `electron` import, not even a type import. `@shared/guards` is
+ * fine to pull in here for the same reason it is fine in `one-shot.ts`'s own
+ * `@shared/config-contract` import: nothing in `electron/shared/` reaches
+ * into `electron` itself.
  */
 
 export type Invocation =
@@ -23,6 +28,27 @@ export type Invocation =
  * *starting* with a dash, so there is no case here worth the extra rule.
  */
 const KNOWN_FLAGS = ['--pair', '--revoke', '--devices', '--server'];
+
+/**
+ * Trims and validates a device name the same way both other pairing surfaces
+ * do before it ever reaches `mintDevice` (HIVE-142 review, M1): the Settings
+ * pane trims (`server-mode-group.tsx`'s `handlePair`), and the IPC guard runs
+ * `assertText` (`parsePairDeviceRequest`). This CLI path had neither, so
+ * `--pair "   "` minted and persisted a device whose name is blank once
+ * trimmed — exactly what `optionalDevices` (`config/parse.ts`) then drops on
+ * every later load, leaving a token that can never authenticate anything.
+ * `null` on a refusal — the caller turns that into the same `usage` shape a
+ * missing name already gets.
+ */
+function assertDeviceName(name: string): string | null {
+  const trimmed = name.trim();
+  try {
+    return assertText(trimmed, 'device name');
+  } catch (cause) {
+    if (!(cause instanceof IpcValidationError)) throw cause;
+    return null;
+  }
+}
 
 /**
  * Parse `process.argv` into a typed `Invocation`.
@@ -47,8 +73,9 @@ export function parseInvocation(argv: readonly string[], packaged: boolean): Inv
   // even inspected.
   const pairIndex = args.indexOf('--pair');
   if (pairIndex !== -1) {
-    const name = args[pairIndex + 1];
-    if (!name || KNOWN_FLAGS.includes(name)) {
+    const raw = args[pairIndex + 1];
+    const name = raw && !KNOWN_FLAGS.includes(raw) ? assertDeviceName(raw) : null;
+    if (name === null) {
       return {
         kind: 'usage',
         message: 'Usage: the-hive --pair "<device name>"\nA device name is required.',
@@ -59,8 +86,9 @@ export function parseInvocation(argv: readonly string[], packaged: boolean): Inv
 
   const revokeIndex = args.indexOf('--revoke');
   if (revokeIndex !== -1) {
-    const name = args[revokeIndex + 1];
-    if (!name || KNOWN_FLAGS.includes(name)) {
+    const raw = args[revokeIndex + 1];
+    const name = raw && !KNOWN_FLAGS.includes(raw) ? assertDeviceName(raw) : null;
+    if (name === null) {
       return {
         kind: 'usage',
         message: 'Usage: the-hive --revoke "<device name>"\nA device name is required.',

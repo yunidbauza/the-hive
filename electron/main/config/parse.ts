@@ -940,13 +940,31 @@ function optionalServerBind(
 }
 
 /**
+ * What every `optionalDevices` rejection ends its message with (HIVE-142
+ * review, I6).
+ *
+ * A dropped entry here is not merely absent from *this* load the way a bad
+ * project or a bad origin is — `pairDevice`/`revokeDevice`
+ * (`server/devices.ts`) read the already-filtered roster and write it back
+ * wholesale (`setServer({ devices })`), so a device this parser drops is
+ * erased from the file for good the next time anyone pairs or revokes
+ * anything, not merely ignored until the typo is fixed. One hand-edit typo
+ * costs a real paired device permanently, which "device dropped" alone does
+ * not say.
+ */
+const DEVICE_LOST =
+  'device dropped, and erased for good the next time anything pairs or revokes a device';
+
+/**
  * HIVE-142's `devices` array.
  *
  * Whole-entry salvage, unlike `optionalBind`'s per-field rule: a device is an
  * identity plus a credential, and a device short one field is not "the same
  * device with a default filled in" the way a bind missing its port is — it is
  * a paired device this file cannot describe. A bad entry costs that entry, not
- * the roster, the same rule `commanders` and `allowedOrigins` follow.
+ * the roster, the same rule `commanders` and `allowedOrigins` follow — see
+ * {@link DEVICE_LOST} for why every message below says what that cost really
+ * is, rather than just "dropped".
  */
 function optionalDevices(
   record: Record<string, unknown>,
@@ -967,13 +985,13 @@ function optionalDevices(
     const entryAt = `${at}[${index}]`;
 
     if (!isPlainObject(entry)) {
-      errors.push(`${entryAt}: expected an object — device dropped`);
+      errors.push(`${entryAt}: expected an object — ${DEVICE_LOST}`);
       return;
     }
 
     for (const key of Object.keys(entry)) {
       if (FORBIDDEN_KEYS.has(key)) {
-        errors.push(`${entryAt}: forbidden key "${key}" — device dropped`);
+        errors.push(`${entryAt}: forbidden key "${key}" — ${DEVICE_LOST}`);
         return;
       }
     }
@@ -981,19 +999,19 @@ function optionalDevices(
     if (!checkKeys(entry, SERVER_DEVICE_KEYS, entryAt, errors)) return;
 
     if (typeof entry.id !== 'string' || entry.id.trim() === '') {
-      errors.push(`${entryAt}.id: expected a non-empty string — device dropped`);
+      errors.push(`${entryAt}.id: expected a non-empty string — ${DEVICE_LOST}`);
       return;
     }
     if (typeof entry.name !== 'string' || entry.name.trim() === '') {
-      errors.push(`${entryAt}.name: expected a non-empty string — device dropped`);
+      errors.push(`${entryAt}.name: expected a non-empty string — ${DEVICE_LOST}`);
       return;
     }
     if (typeof entry.paired !== 'string' || entry.paired.trim() === '') {
-      errors.push(`${entryAt}.paired: expected an ISO date string — device dropped`);
+      errors.push(`${entryAt}.paired: expected an ISO date string — ${DEVICE_LOST}`);
       return;
     }
     if (typeof entry.revoked !== 'boolean') {
-      errors.push(`${entryAt}.revoked: expected true or false — device dropped`);
+      errors.push(`${entryAt}.revoked: expected true or false — ${DEVICE_LOST}`);
       return;
     }
 
@@ -1005,7 +1023,7 @@ function optionalDevices(
       !HEX_SHA256.test(credential.digest)
     ) {
       errors.push(
-        `${entryAt}.credential: expected { kind: "sha256", digest: <64-character hex> } — device dropped`,
+        `${entryAt}.credential: expected { kind: "sha256", digest: <64-character hex> } — ${DEVICE_LOST}`,
       );
       return;
     }

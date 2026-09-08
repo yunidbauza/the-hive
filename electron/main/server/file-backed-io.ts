@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 
 import type { ServerDevice } from '@shared/config-contract';
 
-import { getConfig, setServer } from '../config';
+import { getConfig, setServerReportingWrite } from '../config';
 import { parseConfig } from '../config/parse';
 import { configPath } from '../config/paths';
 
@@ -26,9 +26,11 @@ export function fileBackedIo(): OneShotIo {
     // staleness the narrow reader exists to avoid is a long-running-process
     // problem this function never has.
     readDevices: () => getConfig().server.devices,
-    writeDevices: (devices) => {
-      setServer({ devices });
-    },
+    // `.ok`, not a discarded call (HIVE-142 review, C1): a one-shot that
+    // minted or revoked a device in memory and then failed to write it must
+    // say so, not exit 0 having told the operator a credential exists that
+    // exists nowhere.
+    writeDevices: (devices) => setServerReportingWrite({ devices }).ok,
     print: (line) => {
       process.stdout.write(`${line}\n`);
     },
@@ -97,8 +99,11 @@ export function readServerDevicesFromDisk(): readonly ServerDevice[] {
 export function serverDeviceStore(): DeviceStore {
   return {
     readDevices: readServerDevicesFromDisk,
-    writeDevices: (devices) => {
-      setServer({ devices });
-    },
+    // Same reporting as `fileBackedIo`'s own `writeDevices` above, and for
+    // the same reason (HIVE-142 review, C1) — the tray's "Pair a device…"
+    // and "Revoke" and the Settings pane's `server:pair`/`server:revoke`
+    // handlers all go through this store, and none of them may report a
+    // mutation that never reached disk.
+    writeDevices: (devices) => setServerReportingWrite({ devices }).ok,
   };
 }

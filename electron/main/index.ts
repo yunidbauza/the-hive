@@ -3,14 +3,20 @@ import { join } from 'node:path';
 import { app } from 'electron';
 
 import { applyDevDockIcon } from './app-icon';
+import { primaryWindow } from './aux-windows';
 import { parseInvocation } from './cli';
 import { getConfig } from './config';
 import { startLoginEnvImport } from './config/login-env';
 import { installContentSecurityPolicy } from './csp';
-import { remoteListenerBoundAddress, startRemoteListener } from './ipc';
+import { remoteListenerBindError, remoteListenerBoundAddress, startRemoteListener } from './ipc';
 import { registerIpc } from './ipc/router';
 import { registerLifecycle } from './lifecycle';
-import { pairDevice, pairOutcomeMessage, revokeDevice } from './server/devices';
+import {
+  pairDevice,
+  pairOutcomeMessage,
+  revokeDevice,
+  revokeOutcomeMessage,
+} from './server/devices';
 import { fileBackedIo, serverDeviceStore } from './server/file-backed-io';
 import { runOneShot } from './server/one-shot';
 import { onShutdown } from './shutdown';
@@ -236,17 +242,41 @@ if (!app.requestSingleInstanceLock()) {
         devices: deviceStore.readDevices,
         onPair: (name) => {
           const outcome = pairDevice(name, deviceStore);
-          if (outcome.ok) return { token: outcome.token };
+          if (outcome.ok) return { token: outcome.token, deviceId: outcome.device.id };
           return { error: pairOutcomeMessage(outcome, name) };
         },
         onRevoke: (name) => {
-          revokeDevice(name, deviceStore);
+          const outcome = revokeDevice(name, deviceStore);
+          if (outcome.revoked) return { revoked: true };
+          return { error: revokeOutcomeMessage(outcome, name) };
         },
-        onOpenConsole: () => createWindow({ withSplash: true }),
+        /*
+          The `primaryWindow()`-first shape `second-instance` already uses in
+          `lifecycle.ts` (HIVE-142 review, I2) — this click used to call
+          `createWindow({ withSplash: true })` unconditionally, so with the
+          dock icon hidden and no Cmd-Tab entry, clicking the tray while the
+          console was merely hidden behind another window stacked a second
+          renderer, splash and all, rather than surfacing the one already
+          open. No splash on a re-open, for the same reason `second-instance`
+          has none either: the app is already running, so there is no boot
+          to cover.
+        */
+        onOpenConsole: () => {
+          const existing = primaryWindow();
+          if (existing) {
+            if (existing.isMinimized()) existing.restore();
+            existing.focus();
+            return;
+          }
+          createWindow();
+        },
         // Both pieces sourced from what the listener actually bound, not
         // composed from a separate config read — see that function's own
         // doc comment (HIVE-142 review, N3).
         boundAddress: remoteListenerBoundAddress,
+        // The cause of a bind failure, for the same reason (HIVE-142
+        // review, I3).
+        bindError: remoteListenerBindError,
       });
     }
   });
