@@ -1,6 +1,7 @@
 import {
   chmod,
   copyFile,
+  lstat,
   mkdir,
   readdir,
   rm,
@@ -46,10 +47,25 @@ const manifest = (version: string): string =>
 /**
  * Copy one file only when the destination differs, preserving its mode.
  *
- * Size and mtime rather than a content hash: this runs before every spawn, and
- * hashing every file in every bundle to discover that nothing changed would
- * cost more than the copy it avoids. The pair is what `rsync` compares for the
- * same reason, and a source edited in place gets a new mtime.
+ * Size, mtime and mode rather than a content hash: this runs before every
+ * spawn, and hashing every file in every bundle to discover that nothing
+ * changed would cost more than the copy it avoids. Size and mtime are the pair
+ * `rsync` compares for the same reason; mode is added because this is also the
+ * only place a mode change ever reaches the mirror, and without it a
+ * `chmod +x` on a file whose bytes and mtime are unchanged would never
+ * re-copy.
+ *
+ * `mtime.getTime()`, not `mtimeMs`. `utimes` takes a `Date`, and `Date` holds
+ * whole milliseconds only, so the mtime this function sets on `to` always has
+ * a zero fractional part. A filesystem that reports one on `from` — APFS does
+ * — then never matches `mtimeMs`, and the skip would never fire: every
+ * regeneration would `copyFile` (which truncates before rewriting) every file
+ * in every bundle, on every spawn. `getTime()` applies the same truncation to
+ * both sides of the comparison, so a source that has not moved compares equal
+ * after this function is the one that set the destination's mtime.
+ *
+ * `mode & 0o777` on both sides, not raw `mode`, which also carries file-type
+ * bits that are irrelevant here and would make the comparison meaningless.
  */
 async function copyIfChanged(from: string, to: string): Promise<void> {
   const source = await stat(from);
@@ -58,7 +74,8 @@ async function copyIfChanged(from: string, to: string): Promise<void> {
     const destination = await stat(to);
     if (
       destination.size === source.size &&
-      destination.mtimeMs === source.mtimeMs
+      destination.mtime.getTime() === source.mtime.getTime() &&
+      (destination.mode & 0o777) === (source.mode & 0o777)
     ) {
       return;
     }
@@ -72,6 +89,39 @@ async function copyIfChanged(from: string, to: string): Promise<void> {
   // moved one step later.
   await chmod(to, source.mode & 0o777);
   await utimes(to, source.atime, source.mtime);
+}
+
+/**
+ * Clear whatever is at `path` when it exists and is not a `kind`.
+ *
+ * A stale `mkdir` throws `EEXIST` over a file that used to be a directory's
+ * name, and a stale `copyFile` throws `EISDIR` over a directory that used to
+ * be a file's name. Both are permanent: the copy phase below runs before
+ * `prune`, so the stale entry is never cleared and every later regeneration
+ * throws the same way — which, uncaught two frames up, drops `--plugin-dir`
+ * from the spawn entirely and disables every skill, not just this one.
+ *
+ * `lstat`, not `stat`: a symlink is not a `kind` either way, which is what
+ * stops a destination symlink named like an admitted path from surviving to
+ * let `mkdir({ recursive: true })` or `copyFile` resolve through it and write
+ * outside `pluginRoot`.
+ */
+async function ensureKind(
+  path: string,
+  kind: 'file' | 'directory',
+): Promise<void> {
+  let existing;
+  try {
+    existing = await lstat(path);
+  } catch {
+    return;
+  }
+
+  const matches =
+    kind === 'directory' ? existing.isDirectory() : existing.isFile();
+  if (!matches) {
+    await rm(path, { recursive: true, force: true });
+  }
 }
 
 /** Remove anything under `dir` that is not in `expected`, depth-first. */
@@ -124,6 +174,16 @@ async function prune(
  * either side. The diff argument above did not change; it got stronger. There
  * are more files to lose in the window a wipe would open, and a prune that
  * lies now has a subtree to delete rather than a file.
+ *
+ * `SKILL.md` itself is the one entry written directly from `skill.body`
+ * rather than mirrored through the entry loop, the same way `/done` already
+ * is. `readBundle` walks in name order and stops hard at a file-count cap, so
+ * a bundle whose `assets/` or `scripts/` sorts before `SKILL.md` and is large
+ * enough can produce a manifest that never lists it — the exact failure this
+ * story exists to fix, reproduced one layer along, silently. Writing it
+ * unconditionally makes "the file a session executes is missing from the
+ * mirror" structurally impossible instead of dependent on another module's
+ * walk order or size cap.
  */
 export async function writePluginDir(
   pluginRoot: string,
@@ -171,26 +231,34 @@ export async function writePluginDir(
     const destination = join(skillsDir, skill.name);
     await mkdir(destination, { recursive: true });
 
+    // Written directly from `skill.body`, not mirrored below — see the
+    // docblock's "SKILL.md itself" paragraph for why.
+    await writeFile(join(destination, 'SKILL.md'), skill.body, 'utf8');
+
     const admitted = skill.manifest.entries.filter(
-      (entry) => entry.excluded === null,
+      (entry) => entry.excluded === null && entry.path !== 'SKILL.md',
     );
 
     // Directories first, so a file never arrives before its parent exists.
     for (const entry of admitted) {
       if (entry.kind === 'directory') {
-        await mkdir(join(destination, entry.path), { recursive: true });
+        const path = join(destination, entry.path);
+        await ensureKind(path, 'directory');
+        await mkdir(path, { recursive: true });
       }
     }
     for (const entry of admitted) {
       if (entry.kind === 'file') {
-        await copyIfChanged(
-          join(skill.dir, entry.path),
-          join(destination, entry.path),
-        );
+        const to = join(destination, entry.path);
+        await ensureKind(to, 'file');
+        await copyIfChanged(join(skill.dir, entry.path), to);
       }
     }
 
-    await prune(destination, new Set(admitted.map((entry) => entry.path)));
+    await prune(
+      destination,
+      new Set(['SKILL.md', ...admitted.map((entry) => entry.path)]),
+    );
   }
 
   const expected = new Set([
