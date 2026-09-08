@@ -2503,7 +2503,12 @@ export function createSessions(options: SessionsOptions): Sessions {
       if (sessionId === undefined) return null;
 
       const result = ptyIpc.resume(sessionId, lastSeq);
-      // A gap carries no events, so there is no id in it to translate.
+      /*
+        A gap carries no events, so there is no id in it to translate — only a
+        seq, and a seq is a property of the stream rather than of the id it is
+        published under. It passes through unchanged and the caller stamps its
+        marker frame with the entity id it already holds.
+      */
       if (result === null || result.kind === 'gap') return result;
 
       /*

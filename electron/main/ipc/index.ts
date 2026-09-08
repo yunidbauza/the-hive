@@ -292,6 +292,15 @@ const attachedSockets = new Set<AttachedSocket>();
  * handler. If a fourth ever grows the dependency, it must be added to that
  * table in the same commit — this cast is the reason that is a rule and not a
  * preference.
+ *
+ * **And the rule is checked, not merely stated (HIVE-143 review).**
+ * `remote-composition.test.ts` reads this file as source text, finds every
+ * `handle`/`on` site that binds an `event` parameter it actually uses, and
+ * fails if that set is anything other than `WINDOW_BOUND`'s three channels plus
+ * `pty:prompt` — the one that dereferences the event deliberately, for a
+ * *surface lifetime* rather than a window, which a socket satisfies. That test
+ * is what makes the paragraph above enforceable; the `_event` naming
+ * convention every other handler follows is what makes it readable.
  */
 const REMOTE_INVOKE_EVENT = {} as IpcMainInvokeEvent;
 
@@ -692,6 +701,24 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  * about this process's window, not about notifications, and the hub is
  * deliberately ignorant of what the user is looking at. The hub asks a
  * predicate; it never holds this.
+ *
+ * **Known hazard, deliberately parked: one value, many surfaces (HIVE-143
+ * review; HIVE-145 "Two attached clients" must close it).** Every attached
+ * socket sends `ui:foreground` down the same notify channel a renderer does, so
+ * this holds whatever the last surface to change stage said. With two devices
+ * attached, one of them switching tabs rewrites the other's answer: a
+ * notification for the session device A is watching is suppressed because
+ * device B happens to be looking at it, or — worse, because it is the case the
+ * suppression exists for — is *raised* while device A is watching it, because
+ * device B moved on. `windowFocused()` compounds it: it is a fact about this
+ * machine's windows, and a served Mac usually has none, so the suppression it
+ * gates is already the wrong question for a remote surface.
+ *
+ * Unreachable today: no client half exists until HIVE-144, so exactly one
+ * surface ever reports. The fix is to key this by surface — a map from the
+ * socket (or the window) to what *it* is showing — and to suppress only when
+ * every live surface that could see the session is both focused and on it,
+ * which is the question `isForeground` was always really asking.
  */
 let foregroundTerminalId: string | null = null;
 
@@ -1654,27 +1681,47 @@ export function registerIpcHandlers(
         }
 
         /*
-          `gap` — the ring no longer reaches back to `lastSeq`, so nothing is
-          sent and this session's next live batch lands beyond `lastSeq + 1`.
-          That leaves exactly one discontinuity, which is what raises the
-          renderer's existing gap notice, once
-          (`src/lib/terminal/pty-transport.ts`).
+          `gap` — the ring no longer reaches back to `lastSeq`, so what this
+          client missed cannot be handed to it. One **empty** `pty:data`,
+          stamped at the session's current head seq, is what it gets instead
+          (HIVE-143 review).
 
-          The design sketched a fallback here — resend the whole transcript,
-          stamped with the ring's head seq — and it is deliberately **not**
-          implemented,
-          for two reasons that point the same way. Mechanically, there is no
-          transcript in main to send: `PtyHostSupervisor` has no `replay`, the
-          only `replay()` in the tree is `SessionManager`'s inside the pty-host
-          **child process** with no protocol message to reach it, and the design
-          is equally explicit that `pty-host-protocol.ts` does not change here.
-          Adding one would also make this callback asynchronous and cost the
-          ordering guarantee above. Behaviourally, it would be wrong even if it
-          were free: this is a *reconnecting* client that already rendered
-          everything up to `lastSeq` into its own terminal, so a whole
-          transcript would duplicate hundreds of lines rather than fill a hole.
-          A client with nothing on screen sends no `resumeFrom` at all.
+          That single frame does two things and nothing else. Its seq is not
+          `lastSeq + 1`, so the client's existing discontinuity check fires the
+          moment the frame lands and writes the gap notice into the transcript
+          in the place the hole actually is (`src/lib/terminal/pty-transport.ts`);
+          and its chunk is empty, so the write that follows the check puts
+          nothing on screen. No new frame type, no protocol change — the client
+          already handles exactly this shape.
+
+          The alternative this replaces was to send nothing and let the next
+          live batch raise the notice, which is right only while there *is* a
+          next batch. Reattaching to a session that has gone idle — a build that
+          finished while the client was away is the ordinary case — produced no
+          frames at all, so the client redrew its cached transcript with an
+          unmarked hole in it, and the notice arrived much later, if ever,
+          reading as a new gap rather than as this reconnect's.
+
+          The design sketched a different fallback — resend the whole
+          transcript, stamped with the ring's head seq — and that is still
+          deliberately **not** implemented, for two reasons that point the same
+          way. Mechanically, there is no transcript in main to send:
+          `PtyHostSupervisor` has no `replay`, the only `replay()` in the tree is
+          `SessionManager`'s inside the pty-host **child process** with no
+          protocol message to reach it, and the design is equally explicit that
+          `pty-host-protocol.ts` does not change here. Adding one would also make
+          this callback asynchronous and cost the ordering guarantee above.
+          Behaviourally, it would be wrong even if it were free: this is a
+          *reconnecting* client that already rendered everything up to `lastSeq`
+          into its own terminal, so a whole transcript would duplicate hundreds
+          of lines rather than fill a hole. A client with nothing on screen sends
+          no `resumeFrom` at all.
         */
+        socket.send({
+          kind: 'event',
+          channel: CH.ptyData,
+          payload: { sessionId, chunk: '', seq: result.seq },
+        });
       }
     },
     onDetach: (socket) => {
@@ -3921,6 +3968,28 @@ export function registerIpcHandlers(
     sessions?.resize(request.sessionId, request.cols, request.rows);
   });
 
+  /**
+   * The renderer — or an attached socket — says xterm has parsed up to `seq`,
+   * which is what releases those bytes from the flow-control window
+   * (`ipc/pty.ts`).
+   *
+   * **Known hazard, deliberately parked: one window, many consumers (HIVE-143
+   * review; HIVE-145 "Two attached clients" must close it).** The unacked
+   * window is per *session*, and an ack releases it for everyone: with two
+   * surfaces watching one terminal, the first to finish parsing a batch
+   * unpauses the producer for both. A fast client on a fast link therefore lets
+   * the pty outrun a slow one, whose frames queue in `ws`'s own send buffer —
+   * which nothing here bounds — until it is arbitrarily far behind or the
+   * process is holding megabytes for it. `pty-transport.ts` records the same
+   * shape for split panes ("backpressure follows the fastest pane") and reaches
+   * the same conclusion: harmless while there is only ever one.
+   *
+   * Unreachable today: no client half exists until HIVE-144. The fix is for the
+   * window to follow the **slowest** consumer — track acks per attached surface
+   * and release a batch only once every surface watching that session has
+   * acknowledged it — with a surface that goes away releasing whatever it was
+   * holding, or a slow client would pause a session forever by disconnecting.
+   */
   on(CH.ptyAck, (_event, payload) => {
     const request = parseAckRequest(payload);
     sessions?.ack(request.sessionId, request.seq);

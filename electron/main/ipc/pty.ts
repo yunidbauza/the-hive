@@ -52,28 +52,38 @@ export interface PtyIpcOptions {
 
 /**
  * `replay` — the events after `lastSeq`, contiguous, possibly empty.
- * `gap`    — the ring cannot reach back to `lastSeq`. The caller **sends
- *            nothing** and lets live output resume where it is: the next batch
- *            lands beyond `lastSeq + 1`, and the client's own sequence
- *            assertion raises the gap notice exactly once
- *            (`src/lib/terminal/pty-transport.ts`).
+ * `gap`    — the ring cannot reach back to `lastSeq`. The caller sends one
+ *            **empty** `pty:data` stamped at {@link ResumeResult.seq}, which
+ *            trips the client's own sequence assertion immediately and writes
+ *            nothing to the terminal (`src/lib/terminal/pty-transport.ts`).
  * `null`   — no such session, never spawned or already exited.
  *
- * `gap` deliberately carries no payload (HIVE-143 review). It once carried the
- * head seq, for a caller that would stamp it onto a whole replayed transcript —
- * but there is no transcript in main to send (`PtyHostSupervisor` has no
- * `replay`, and the only one in the tree is `SessionManager`'s inside the
- * pty-host child process, unreachable without a protocol change this story does
- * not make), and sending one would be wrong besides: a client that sent
- * `resumeFrom` has already rendered everything up to `lastSeq` into its own
- * terminal, so a transcript would duplicate that output rather than fill a hole.
+ * `gap` carries the channel's current head seq, and that number has exactly one
+ * job: it is what the synthetic marker frame is stamped with (HIVE-143 review).
+ * It is **not** a stamp for a replayed transcript — there is no transcript in
+ * main to send (`PtyHostSupervisor` has no `replay`, and the only one in the
+ * tree is `SessionManager`'s inside the pty-host child process, unreachable
+ * without a protocol change this story does not make), and sending one would be
+ * wrong besides: a client that sent `resumeFrom` has already rendered
+ * everything up to `lastSeq` into its own terminal, so a transcript would
+ * duplicate that output rather than fill a hole.
+ *
+ * Why the marker rather than nothing at all, which is what this returned
+ * before: "say nothing and let the next live batch raise the notice" has no
+ * branch for *there is no next batch*. A client that watched to seq 40, went
+ * away, missed three megabytes and reattached to a now-idle shell would receive
+ * zero frames and render its cached transcript with an unmarked hole in it —
+ * and the notice, when output eventually resumed, would read as a fresh gap
+ * rather than as the one its reconnect caused.
  *
  * The two variants stay distinct all the same. `replay` means "here is exactly
- * what you missed, no notice"; `gap` means "you missed more than I kept, expect
- * a notice" — the caller does different things with them, and a single nullable
- * event list could not tell them apart.
+ * what you missed, no notice"; `gap` means "you missed more than I kept, here
+ * is the discontinuity" — the caller does different things with them, and a
+ * single nullable event list could not tell them apart.
  */
-export type ResumeResult = { kind: 'replay'; events: DataEvent[] } | { kind: 'gap' };
+export type ResumeResult =
+  | { kind: 'replay'; events: DataEvent[] }
+  | { kind: 'gap'; seq: number };
 
 export interface PtyIpc {
   /** Called by the channel handlers once the payload has been validated. */
@@ -483,11 +493,13 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
       const oldest = channel.replay[0]?.seq;
       if (lastSeq > channel.seq || oldest === undefined || lastSeq + 1 < oldest) {
         /*
-          Nothing to hand back — see {@link ResumeResult}. The caller sends no
-          frames, the next live batch lands beyond `lastSeq + 1`, and the
-          client's own sequence assertion raises the gap notice once.
+          No events to hand back, but a number the caller needs — see
+          {@link ResumeResult}. `channel.seq` is where this session's stream
+          actually is, and the caller stamps its one empty marker frame with it
+          so the client's sequence assertion fires now rather than whenever
+          output next happens.
         */
-        return { kind: 'gap' };
+        return { kind: 'gap', seq: channel.seq };
       }
 
       return {

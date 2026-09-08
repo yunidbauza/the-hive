@@ -540,8 +540,9 @@ describe('resume', () => {
     // An 8-byte ring holds the last two batches; seq 1 and 2 are gone. A gap
     // rather than the replay of seq 3 and 4 the ring *could* still produce:
     // handing back a discontiguous run is what the client cannot recover from.
-    // `toEqual`, so the retired `seq` cannot quietly come back (HIVE-143 review).
-    expect(ipc.resume('a', 1)).toEqual({ kind: 'gap' });
+    // `toEqual` on the whole shape, and the `seq` is the head — 4 batches in —
+    // because that is the number the caller stamps its marker frame with.
+    expect(ipc.resume('a', 1)).toEqual({ kind: 'gap', seq: 4 });
   });
 
   it('still replays from the oldest seq the ring does hold', () => {
@@ -568,7 +569,9 @@ describe('resume', () => {
     // number than this process ever issued. Treated as a gap, not a crash — and
     // specifically not a `replay` of everything the ring holds, which would look
     // to the client like output arriving with seq numbers it has already passed.
-    expect(ipc.resume('a', 99)).toEqual({ kind: 'gap' });
+    // The `seq` is this process's head, 1 — not the 99 the client claimed. The
+    // marker frame has to be stamped with a number that means something here.
+    expect(ipc.resume('a', 99)).toEqual({ kind: 'gap', seq: 1 });
   });
 
   it('frees the ring when the session exits', () => {
@@ -593,9 +596,9 @@ describe('resume', () => {
     /*
       A gap is the proof the ring was bounded: 50 × 512 bytes went in, so a ring
       that had grown without bound would still hold seq 1 and answer `replay`.
-      `toEqual` rather than `toMatchObject`, so the retired `seq` cannot quietly
-      come back on this shape either (HIVE-143 review).
+      `toEqual` rather than `toMatchObject`, so the shape is pinned whole — the
+      `seq` is the 50th batch, which is where the stream actually is.
     */
-    expect(ipc.resume('a', 0)).toEqual({ kind: 'gap' });
+    expect(ipc.resume('a', 0)).toEqual({ kind: 'gap', seq: 50 });
   });
 });
