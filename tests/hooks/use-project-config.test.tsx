@@ -51,6 +51,7 @@ const info = (receiverBoundHost: string | null): AppInfo => ({
   platform: 'darwin',
   logPath: '/Users/dev/Library/Logs/The Hive',
   receiverBoundHost,
+  serverBoundHost: null,
 });
 
 /**

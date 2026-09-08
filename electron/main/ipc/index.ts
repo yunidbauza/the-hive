@@ -2342,6 +2342,11 @@ export function registerIpcHandlers(
       // bind" — both mean the same thing to a caller asking whether the
       // process is reachable off loopback right now.
       receiverBoundHost: hooks?.boundHost() ?? null,
+      // Same shape, same reason: `remoteListener` exists on every launch
+      // (constructed unconditionally), but only ever bound in server mode —
+      // `?.boundHost` is `null` on every other launch, which is the correct
+      // answer for "is anything reachable off this socket right now."
+      serverBoundHost: remoteListener?.boundHost ?? null,
       // Omitted rather than empty when nothing has run, so the field's presence
       // means something.
       ...(diagnostics.length > 0 ? { pty: diagnostics } : {}),

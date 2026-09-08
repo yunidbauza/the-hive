@@ -1308,6 +1308,34 @@ export interface AppInfo {
    */
   receiverBoundHost: string | null;
   /**
+   * The host the server-mode socket is actually bound to right now, or
+   * `null` when nothing is listening (HIVE-142).
+   *
+   * The same "running, not configured" shape as {@link AppInfo.receiverBoundHost},
+   * for the same reason: a listening socket cannot be moved, so this is what
+   * `remoteListener.start()` actually bound, not `server.bind.host` off the
+   * config snapshot. The two can disagree for an entire running session —
+   * flip `server.enabled` off in the config file and the snapshot updates on
+   * the next read, but the socket bound at this launch's boot stays open
+   * until relaunch — and a status readout has to report the one that is
+   * actually true right now.
+   *
+   * `startRemoteListener()` is fire-and-forget from `index.ts`'s boot
+   * sequence, exactly as `hooks.start()` is for the receiver, so a reader on
+   * this side of the bridge has no guarantee its read lands after the bind
+   * resolves — `server.bind.host` accepts a hostname as well as an IPv4
+   * literal, and `listen()` resolving one can outlast window creation and
+   * this value's first read. `useServerExposure` copes with that itself,
+   * the same single bounded retry `useReceiverExposure` uses; see its own
+   * doc comment for why once is enough.
+   *
+   * The one consumer is the header's serving chip (`useServerExposure`,
+   * `ServingChip`) — see that component's own doc comment for why it reads
+   * **brand**, not the amber `receiverBoundHost`'s chip spends, even though
+   * both chips are sourced the same way.
+   */
+  serverBoundHost: string | null;
+  /**
    * Per-session flow-control counters (story 093).
    *
    * Flow-control bugs are otherwise diagnosed by staring at a slow terminal

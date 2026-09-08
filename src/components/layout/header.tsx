@@ -7,6 +7,7 @@ import { BrandBlock } from '@components/layout/brand-block';
 import { DemoChip } from '@components/layout/demo-chip';
 import { ExposureChip } from '@components/layout/exposure-chip';
 import { ModelChip } from '@components/layout/model-chip';
+import { ServingChip } from '@components/layout/serving-chip';
 import { StatusCounts } from '@components/layout/status-counts';
 import { Badge } from '@components/ui/badge';
 import { isDesktop } from '@config/runtime';
@@ -193,6 +194,7 @@ export function Header() {
           <DemoChip />
           <ModelChip />
           <ExposureChip />
+          <ServingChip />
         </div>
       </div>
 

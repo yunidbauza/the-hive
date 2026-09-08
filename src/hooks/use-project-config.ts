@@ -161,3 +161,66 @@ export function useReceiverExposure(): string | null {
 
   return boundHost !== null && !isLoopbackHost(boundHost) ? boundHost : null;
 }
+
+/**
+ * The address the server-mode socket is **actually** listening on, or `null`
+ * while nothing is (HIVE-142).
+ *
+ * Sourced from `AppInfo.serverBoundHost` rather than `snapshot.server.bind.host`
+ * for the same reason `useReceiverExposure` reads `receiverBoundHost` instead
+ * of `snapshot.receiver.bind.host`: the config value is what will be bound at
+ * the *next* launch, and a listening socket cannot be moved to match a config
+ * write that happens after boot. See `AppInfo.serverBoundHost`'s own doc
+ * comment for exactly what "bound right now" means and why it can lag a
+ * config read for a whole running session.
+ *
+ * Same one-retry shape as `useReceiverExposure`, using the same
+ * {@link LATE_BIND_RETRY_MS}: `startRemoteListener()` is fire-and-forget from
+ * main's boot sequence, `server.bind.host` accepts a hostname as well as an
+ * IPv4 literal, and a slow resolution can outlast this hook's first read —
+ * a lone `null` is ambiguous between "off" and "not resolved yet," so a
+ * second read after the same delay tells the two apart.
+ *
+ * Unlike `useReceiverExposure`, the result is not filtered through
+ * `isLoopbackHost`: that predicate answers "is this wider than the user might
+ * have meant," which is the receiver's whole question. A server-mode bind is
+ * deliberate by construction — nothing sets `server.enabled` by accident —
+ * so any non-null address here is worth showing, loopback included.
+ */
+export function useServerExposure(): string | null {
+  const snapshot = useProjectConfig();
+  const hasSnapshot = snapshot !== null;
+  const [boundHost, setBoundHost] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!hasSnapshot) return;
+
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    void readAppInfo().then((info) => {
+      if (cancelled) return;
+      const host = info?.serverBoundHost ?? null;
+      setBoundHost(host);
+
+      // See `LATE_BIND_RETRY_MS`'s own comment: a `null` here is ambiguous
+      // between "nothing is listening" and "the bind has not resolved yet,"
+      // and only a second read tells the two apart.
+      if (host === null) {
+        retryTimer = setTimeout(() => {
+          if (cancelled) return;
+          void readAppInfo().then((retryInfo) => {
+            if (!cancelled) setBoundHost(retryInfo?.serverBoundHost ?? null);
+          });
+        }, LATE_BIND_RETRY_MS);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      if (retryTimer !== undefined) clearTimeout(retryTimer);
+    };
+  }, [hasSnapshot]);
+
+  return boundHost;
+}
