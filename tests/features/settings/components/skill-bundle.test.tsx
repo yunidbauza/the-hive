@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { SkillBundle } from '@features/settings/components/skill-bundle';
@@ -59,6 +59,7 @@ const manifest: BundleManifest = {
 
 const props = {
   openPath: null,
+  dirty: false,
   onBack: vi.fn(),
   onOpen: vi.fn(),
   onAdd: vi.fn(),
@@ -184,6 +185,22 @@ describe('SkillBundle', () => {
     );
 
     expect(screen.getByRole('button', { name: /SKILL\.md/ })).toBeInTheDocument();
+  });
+
+  it('carries the unsaved marker on the crumb, which is the way out', () => {
+    const { rerender } = render(
+      <SkillBundle {...props} skill={skill(manifest)} dirty={false} />,
+    );
+
+    expect(screen.queryByText('edited')).toBeNull();
+
+    rerender(<SkillBundle {...props} skill={skill(manifest)} dirty />);
+
+    // On the control that leaves, not on a row: leaving is when the edit is
+    // about to cost something.
+    expect(
+      within(screen.getByRole('button', { name: /^Skills/ })).getByText('edited'),
+    ).toBeInTheDocument();
   });
 
   it('offers Add at the bundle root', () => {

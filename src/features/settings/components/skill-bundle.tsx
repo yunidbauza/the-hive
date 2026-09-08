@@ -72,6 +72,15 @@ interface SkillBundleProps {
   skill: SkillSummary;
   /** Which file is open, so its row reads as selected. */
   openPath: string | null;
+  /**
+   * Is the open buffer unsaved?
+   *
+   * Shown on the crumb rather than on a row, because the crumb is the control
+   * that leaves. While the list was always visible an `edited` flag beside the
+   * skill's name did that job; drilled in, the place a user is about to lose
+   * work from is the way out.
+   */
+  dirty: boolean;
   onBack: () => void;
   onOpen: (path: string) => void;
   /** Add a file or folder under `dir`, or bring files in from outside. */
@@ -83,6 +92,7 @@ interface SkillBundleProps {
 export function SkillBundle({
   skill,
   openPath,
+  dirty,
   onBack,
   onOpen,
   onAdd,
@@ -178,6 +188,9 @@ export function SkillBundle({
       >
         <Icon name="ph-caret-left" size={12} />
         <span className="truncate">Skills</span>
+        {dirty ? (
+          <span className="ml-auto shrink-0 text-[11px] text-brand">edited</span>
+        ) : null}
       </button>
 
       {/*

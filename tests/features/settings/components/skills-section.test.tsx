@@ -13,21 +13,28 @@ import { resetSkills, setSkillsForTest } from '@lib/skills';
 import type { SkillsSnapshot } from '@shared/skills-contract';
 
 const loadSkills = vi.fn();
-const readSkill = vi.fn();
+const readSkillFile = vi.fn();
 const saveSkill = vi.fn();
 const deleteSkill = vi.fn();
 const renameSkill = vi.fn();
+const importIntoSkill = vi.fn();
+const dropIntoSkill = vi.fn();
+const skillDropTokens = vi.fn();
 
 vi.mock('@/lib/skills', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/skills')>();
   return {
     ...actual,
     loadSkills: () => loadSkills(),
-    readSkill: (name: string) => readSkill(name),
+    readSkillFile: (name: string, path: string) => readSkillFile(name, path),
     saveSkill: (name: string, body: string) => saveSkill(name, body),
     deleteSkill: (name: string) => deleteSkill(name),
     renameSkill: (from: string, to: string, body: string) =>
       renameSkill(from, to, body),
+    importIntoSkill: (name: string, dir: string) => importIntoSkill(name, dir),
+    dropIntoSkill: (name: string, dir: string, tokens: string[]) =>
+      dropIntoSkill(name, dir, tokens),
+    skillDropTokens: (files: readonly File[]) => skillDropTokens(files),
   };
 });
 
@@ -53,6 +60,36 @@ const withSkills = (...names: string[]): SkillsSnapshot =>
     })),
   });
 
+/**
+ * Switch to another skill, which is two clicks now rather than one (HIVE-148).
+ *
+ * The 190px column drills into the open skill's files, so every other skill is
+ * behind the `Skills` crumb. That is the cost the drill-in chose — a folder
+ * cannot be a column of names — and these tests pay it exactly as a user does,
+ * which is also what keeps them honest about the dirty guard: the crumb is
+ * guarded too, so a dirty buffer asks on the way out rather than on the way in.
+ */
+const switchTo = async (name: string): Promise<void> => {
+  await leaveBundle();
+  await userEvent.click(screen.getByRole('button', { name: `/${name}` }));
+};
+
+/**
+ * The crumb alone — the click the dirty guard actually intercepts.
+ *
+ * A dirty buffer stops here, so the tests about the confirm use this rather
+ * than {@link switchTo}: the skill list is still behind the question, and
+ * reaching for a row that is not on screen yet would be the test asserting a
+ * sequence the user cannot perform.
+ */
+const leaveBundle = (): Promise<void> =>
+  /*
+    A prefix, because the crumb's accessible name grows an "edited" suffix
+    while the buffer is dirty — which is deliberate: the way out is where a
+    screen-reader user most needs to hear that leaving will cost something.
+  */
+  userEvent.click(screen.getByRole('button', { name: /^Skills/ }));
+
 beforeEach(() => {
   loadSkills.mockResolvedValue(undefined);
   // `null` is success — the mutators resolve with the reason they failed.
@@ -61,11 +98,22 @@ beforeEach(() => {
   // A rename resolves with what it *did*, not just whether it worked — the
   // middle outcome (moved, then failed to write) is what recovery hangs on.
   renameSkill.mockResolvedValue({ moved: true, error: null });
-  readSkill.mockImplementation((name: string) =>
+  importIntoSkill.mockResolvedValue(null);
+  dropIntoSkill.mockResolvedValue(null);
+  skillDropTokens.mockReturnValue(['token-1']);
+  /*
+    Every file in a bundle now comes through one verb (HIVE-148). Opening a
+    skill is opening its SKILL.md, so these tests reach the editor exactly as
+    they did — they just take the bundle route to get there.
+  */
+  readSkillFile.mockImplementation((name: string, path: string) =>
     Promise.resolve({
       name,
+      path,
+      absPath: `/home/u/.hive/skills/${name}/${path}`,
+      size: file(name).length,
       body: file(name),
-      path: `/home/u/.hive/skills/${name}/SKILL.md`,
+      refused: null,
     }),
   );
 });
@@ -138,7 +186,7 @@ describe('SkillsSection', () => {
     expect(screen.getByText('invalid')).toBeInTheDocument();
     expect(row).toBeDisabled();
     await userEvent.click(row);
-    expect(readSkill).not.toHaveBeenCalled();
+    expect(readSkillFile).not.toHaveBeenCalled();
   });
 
   it('opens a skill into the editor', async () => {
@@ -147,9 +195,60 @@ describe('SkillsSection', () => {
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '/standup' }));
 
-    expect(readSkill).toHaveBeenCalledWith('standup');
+    expect(readSkillFile).toHaveBeenCalledWith('standup', 'SKILL.md');
     await screen.findByLabelText('Skill source');
     expect(surfaceText('Skill source')).toBe(file('standup'));
+  });
+
+  it('drills the column into the skill, and comes back on the crumb', async () => {
+    setSkillsForTest(withSkills('standup', 'triage'));
+
+    render(<SkillsSection />);
+    await userEvent.click(screen.getByRole('button', { name: '/standup' }));
+
+    // The list is gone; the column is this skill's files now.
+    expect(screen.getByLabelText('Files in standup')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '/triage' })).toBeNull();
+
+    await leaveBundle();
+
+    expect(screen.getByRole('button', { name: '/triage' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Files in standup')).toBeNull();
+  });
+
+  it('counts the files the delete confirm will remove', async () => {
+    setSkillsForTest(
+      snapshot({
+        skills: [
+          {
+            name: 'graphify',
+            description: 'does a thing',
+            valid: true as const,
+            manifest: {
+              entries: [
+                { path: 'SKILL.md', kind: 'file', size: 10, executable: false, excluded: null },
+                { path: 'scripts', kind: 'directory', size: 0, executable: false, excluded: null },
+                { path: 'scripts/a.py', kind: 'file', size: 10, executable: true, excluded: null },
+                { path: 'refs.json', kind: 'file', size: 10, executable: false, excluded: null },
+              ],
+              capped: null,
+            },
+          },
+        ],
+      }),
+    );
+
+    render(<SkillsSection />);
+    await userEvent.click(screen.getByRole('button', { name: '/graphify' }));
+    await screen.findByLabelText('Skill source');
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+    /*
+      Three files, not four: the directory is not one. "Removes the folder"
+      was accurate when a skill was a single file, and is not a sentence to
+      show someone about to delete a bundle.
+    */
+    expect(screen.getByText(/Removes 3 files/)).toBeInTheDocument();
   });
 
   it('starts a new skill from a template with a blank name', async () => {
@@ -231,32 +330,42 @@ describe('SkillsSection', () => {
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '/standup' }));
     appendSurfaceText('Skill source', ' more');
-    readSkill.mockClear();
-    await userEvent.click(screen.getByRole('button', { name: '/triage' }));
+    readSkillFile.mockClear();
+    await leaveBundle();
 
     expect(
       screen.getByRole('alertdialog', { name: /Discard changes/ }),
     ).toBeInTheDocument();
     // The switch has not happened yet — that is the whole point of asking.
-    expect(readSkill).not.toHaveBeenCalled();
+    expect(readSkillFile).not.toHaveBeenCalled();
 
     await userEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
 
     expect(screen.queryByRole('alertdialog')).toBeNull();
-    expect(readSkill).not.toHaveBeenCalled();
+    expect(readSkillFile).not.toHaveBeenCalled();
   });
 
-  it('switches after the discard is confirmed', async () => {
+  it('returns to the list after the discard is confirmed, and switches from there', async () => {
+    /*
+      What the confirm resumes is the action it interrupted, which is now
+      *leaving the bundle* rather than opening another skill. So discarding
+      lands on the list, and picking the next skill is the ordinary click it
+      always was — one question, then a normal pane.
+    */
     setSkillsForTest(withSkills('standup', 'triage'));
 
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '/standup' }));
     appendSurfaceText('Skill source', ' more');
-    readSkill.mockClear();
-    await userEvent.click(screen.getByRole('button', { name: '/triage' }));
+    readSkillFile.mockClear();
+    await leaveBundle();
     await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
 
-    expect(readSkill).toHaveBeenCalledWith('triage');
+    expect(readSkillFile).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole('button', { name: '/triage' }));
+
+    expect(readSkillFile).toHaveBeenCalledWith('triage', 'SKILL.md');
   });
 
   it('switches without asking when nothing is dirty', async () => {
@@ -265,10 +374,10 @@ describe('SkillsSection', () => {
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '/standup' }));
     await screen.findByLabelText('Skill source');
-    await userEvent.click(screen.getByRole('button', { name: '/triage' }));
+    await switchTo('triage');
 
     expect(screen.queryByRole('alertdialog')).toBeNull();
-    expect(readSkill).toHaveBeenCalledWith('triage');
+    expect(readSkillFile).toHaveBeenCalledWith('triage', 'SKILL.md');
   });
 
   it('claims Escape, so backing out of a confirm does not close settings', async () => {
@@ -282,7 +391,7 @@ describe('SkillsSection', () => {
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '/standup' }));
     appendSurfaceText('Skill source', ' more');
-    await userEvent.click(screen.getByRole('button', { name: '/triage' }));
+    await leaveBundle();
 
     expect(screen.getByRole('alertdialog')).toHaveAttribute('data-escape-scope');
   });
@@ -395,7 +504,7 @@ describe('SkillsSection', () => {
       which could be the first row's body under the second row's name.
     */
     let resolveFirst: (file: unknown) => void = () => undefined;
-    readSkill.mockImplementation((name: string) => {
+    readSkillFile.mockImplementation((name: string, path: string) => {
       if (name === 'standup') {
         return new Promise((resolve) => {
           resolveFirst = resolve;
@@ -403,15 +512,18 @@ describe('SkillsSection', () => {
       }
       return Promise.resolve({
         name,
+        path,
+        absPath: `/home/u/.hive/skills/${name}/${path}`,
+        size: file(name).length,
         body: file(name),
-        path: `/home/u/.hive/skills/${name}/SKILL.md`,
+        refused: null,
       });
     });
     setSkillsForTest(withSkills('standup', 'triage'));
 
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '/standup' }));
-    await userEvent.click(screen.getByRole('button', { name: '/triage' }));
+    await switchTo('triage');
     await screen.findByLabelText('Skill source');
     expect(surfaceText('Skill source')).toBe(file('triage'));
 
@@ -454,7 +566,7 @@ describe('SkillsSection', () => {
     await userEvent.click(screen.getByRole('button', { name: '/standup' }));
     const box = await screen.findByLabelText('Skill source');
     appendSurfaceText('Skill source', ' more');
-    await userEvent.click(screen.getByRole('button', { name: '/triage' }));
+    await leaveBundle();
     expect(screen.getByRole('alertdialog')).toBeInTheDocument();
 
     // The caret is in CodeMirror's content, which is where it really is when
@@ -807,7 +919,7 @@ describe('SkillsSection renaming', () => {
     render(<SkillsSection />);
     await userEvent.click(screen.getByRole('button', { name: '/standup' }));
     appendSurfaceText('Skill source', ' more');
-    await userEvent.click(screen.getByRole('button', { name: '/triage' }));
+    await leaveBundle();
     expect(
       screen.getByRole('alertdialog', { name: /Discard changes/ }),
     ).toBeInTheDocument();

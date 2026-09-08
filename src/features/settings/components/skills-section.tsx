@@ -3,19 +3,24 @@ import { useEffect, useState } from 'react';
 import { useSwarmPhrase } from '@/hooks/use-swarm-phrase';
 import {
   deleteSkill,
+  dropIntoSkill,
   frontmatterName,
+  importIntoSkill,
   loadSkills,
-  readSkill,
+  readSkillFile,
   renameSkill,
   saveSkill,
+  skillDropTokens,
   skillNameProblem,
 } from '@/lib/skills';
 
 import { SwarmCreature } from '@components/ui/swarm-creature';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
+import { SkillBundle } from '@features/settings/components/skill-bundle';
 import { SkillDiscardConfirm } from '@features/settings/components/skill-discard-confirm';
 import { SkillEditor } from '@features/settings/components/skill-editor';
 import { useSkills } from '@hooks/use-skills';
+import type { FsRefusalReason } from '@shared/fs-contract';
 
 /**
  * The Skills section of settings (HIVE-96).
@@ -34,9 +39,23 @@ import { useSkills } from '@hooks/use-skills';
  *
  * ## Layout
  *
- * Master–detail: a 190px list beside the editor, both always visible, so
- * switching between skills is one click and the set stays in view while you
- * type. Chosen over a drill-in on browser-rendered mockups.
+ * A 190px column beside the editor, and that column **drills in** (HIVE-148).
+ * Pick a skill and the list becomes that skill's file tree under a `‹ Skills`
+ * crumb, with its SKILL.md already open; the editor keeps its full width at
+ * every depth.
+ *
+ * This reverses what stood here, and the reversal is worth recording rather
+ * than quietly overwriting. Master–detail was chosen over a drill-in on
+ * browser-rendered mockups, and it was the right choice **while a skill was one
+ * file**: a flat list of names has nothing to drill into, and keeping the set
+ * in view cost nothing. A skill is a folder now, and a folder cannot be a
+ * column of names.
+ *
+ * The alternatives were weighed again and lost for reasons the first round
+ * never faced. A file-chip strip cannot show a folder as a folder. A third
+ * column leaves the editor about 232px on a 1440px window, which is not an
+ * editor. What the drill-in costs is the set of skills leaving the screen while
+ * you are inside one, and the crumb is the whole of the answer to that.
  *
  * 190 rather than the 150 this pane opened at, and the same 190 the agents
  * pane took: a row here is `/name` in monospace with an `invalid` or `edited`
@@ -71,6 +90,29 @@ export function SkillsSection() {
   const [open, setOpen] = useState<string | null>(null);
   const [buffer, setBuffer] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  /**
+   * Which skill's files the 190px column is showing, or `null` for the list
+   * (HIVE-148).
+   *
+   * A second level of navigation in one column rather than a third column: at
+   * 190 + 190 the editor is left about 232px on a 1440px window, which is not
+   * an editor. Drilling in keeps the editor's full width at every depth.
+   */
+  const [drilled, setDrilled] = useState<string | null>(null);
+  /**
+   * Which file inside that bundle is open, or `null` for its SKILL.md.
+   *
+   * Kept beside `open` rather than folded into it: `open` is a *skill* name and
+   * every existing rule in this component — the dirty guard, the rename, the
+   * `taken` list — is written about skill names. Overloading it to sometimes
+   * mean a file path would quietly change what all of them mean.
+   */
+  const [openPath, setOpenPath] = useState<string | null>(null);
+  /** A refused file's reason and size, or `null` when the buffer is real. */
+  const [refusal, setRefusal] = useState<{
+    reason: FsRefusalReason;
+    size: number;
+  } | null>(null);
   /**
    * A pending question, held rather than asked immediately.
    *
@@ -173,38 +215,95 @@ export function SkillsSection() {
       ? 'It has never been saved, so there is nothing on disk to keep.'
       : 'The file on disk is unchanged. Your edits in this box are lost.';
 
-  const openSkill = (name: string): void => {
+  /**
+   * Drill into a skill's files, opening its SKILL.md (HIVE-148).
+   *
+   * Behind the same dirty guard as every other navigation here, and for the
+   * same reason: the buffer belongs to whatever was last opened, and a drill-in
+   * is a move away from it.
+   */
+  const drillInto = (name: string): void => {
     guard(
       () => {
+        setDrilled(name);
         setOpen(name);
+        setOpenPath('SKILL.md');
+        setRefusal(null);
         setBuffer(null);
         setSaved(null);
         setError(null);
-        void readSkill(name).then((file) => {
-          // `null` is the browser demo, or a read that failed and already
-          // reported itself. Either way there is nothing to put in the editor.
-          if (file === null) return;
-          /*
-            Drop a response the user has moved on from.
-
-            Two quick clicks race: the first row leaves `buffer` null, so the
-            dirty guard does not stop the second, and whichever `skills:read`
-            resolves last wins. Without this check that could be the *first*
-            row's body, landing under the second row's name and path — and
-            Delete would then act on the name, not on the text on screen.
-          */
-          setOpen((current) => {
-            if (current !== name) return current;
-            setBuffer(file.body);
-            setSaved(file.body);
-            return current;
-          });
-        });
+        void openFile(name, 'SKILL.md');
       },
       discardQuestion,
       discardDetail,
       'Discard',
     );
+  };
+
+  /**
+   * Read one file out of a bundle into the editor.
+   *
+   * The same stale-response check `openSkill` documents, keyed on the *path*
+   * as well as the name: two quick clicks in the tree race exactly as two
+   * clicks in the skill list do, and whichever read resolves last would
+   * otherwise land under the other row's header.
+   */
+  const openFile = async (name: string, path: string): Promise<void> => {
+    const file = await readSkillFile(name, path);
+    if (file === null) return;
+
+    setOpenPath((current) => {
+      if (current !== path) return current;
+      if (file.refused === null) {
+        setRefusal(null);
+        setBuffer(file.body ?? '');
+        setSaved(file.body ?? '');
+      } else {
+        // A font is not a failure. The panel keeps a path, a size and a Delete.
+        setRefusal({ reason: file.refused, size: file.size });
+        setBuffer('');
+        setSaved('');
+      }
+      return current;
+    });
+  };
+
+  const openInBundle = (path: string): void => {
+    if (drilled === null) return;
+    guard(
+      () => {
+        setOpenPath(path);
+        setRefusal(null);
+        setBuffer(null);
+        setSaved(null);
+        setError(null);
+        void openFile(drilled, path);
+      },
+      discardQuestion,
+      discardDetail,
+      'Discard',
+    );
+  };
+
+  /** Bring files in from outside, through main's own picker. */
+  const addToBundle = (dir: string): void => {
+    if (drilled === null) return;
+    void importIntoSkill(drilled, dir).then(setError);
+  };
+
+  /**
+   * Copy dropped files in.
+   *
+   * The renderer never sees a path: `skillDropTokens` asks preload to mint an
+   * opaque id per `File` the browser vouched for, and only those ids cross.
+   * A drop of files preload could not vouch for mints nothing, so nothing is
+   * sent rather than something wrong being sent.
+   */
+  const dropIntoBundle = (dir: string, files: readonly File[]): void => {
+    if (drilled === null) return;
+    const tokens = skillDropTokens([...files]);
+    if (tokens.length === 0) return;
+    void dropIntoSkill(drilled, dir, tokens).then(setError);
   };
 
   const newSkill = (): void => {
@@ -325,7 +424,7 @@ export function SkillsSection() {
     }
     setPending({
       question: `Delete /${target}?`,
-      detail: `Removes the folder under ${snapshot?.skillsRoot ?? 'the skills folder'}. Sessions already running keep the command until they end.`,
+      detail: `Removes ${String(fileCount)} ${fileCount === 1 ? 'file' : 'files'} under ${snapshot?.skillsRoot ?? 'the skills folder'}/${target}. Sessions already running keep the command until they end.`,
       confirmLabel: 'Delete',
       act: () => {
         void deleteSkill(target).then((failure) => {
@@ -349,6 +448,20 @@ export function SkillsSection() {
     ...skills.map((skill) => ({ name: skill.name, reason: null as string | null })),
     ...invalid.map((skill) => ({ name: skill.name, reason: skill.reason })),
   ];
+
+  /** The drilled skill's own summary, or `undefined` when showing the list. */
+  const drilledSkill = skills.find((skill) => skill.name === drilled);
+
+  /**
+   * How many files deleting this skill would take with it.
+   *
+   * Counted from the manifest rather than guessed: "Removes the folder" was
+   * accurate when a skill was one file, and is not a sentence to show someone
+   * about to delete a bundle of forty.
+   */
+  const fileCount =
+    drilledSkill?.manifest.entries.filter((entry) => entry.kind === 'file')
+      .length ?? 0;
 
   const description =
     'Slash commands available only inside sessions The Hive starts. Saved as SKILL.md under ~/.hive/skills. A skill can end with /done handoff to close its session.';
@@ -445,6 +558,31 @@ export function SkillsSection() {
       )}
 
       <div className="grid min-h-0 flex-1 grid-cols-[190px_minmax(0,1fr)] gap-3">
+        {drilledSkill !== undefined ? (
+          <SkillBundle
+            skill={drilledSkill}
+            openPath={openPath}
+            dirty={dirty}
+            onBack={() => {
+              guard(
+                () => {
+                  setDrilled(null);
+                  setOpenPath(null);
+                  setRefusal(null);
+                  setBuffer(null);
+                  setSaved(null);
+                  setError(null);
+                },
+                discardQuestion,
+                discardDetail,
+                'Discard',
+              );
+            }}
+            onOpen={openInBundle}
+            onAdd={addToBundle}
+            onDrop={dropIntoBundle}
+          />
+        ) : (
         <div className="flex flex-col overflow-y-auto rounded-[7px] border border-border">
           {rows.map((row) => {
             const active = row.name === open;
@@ -457,7 +595,12 @@ export function SkillsSection() {
                 // An invalid skill has nothing to open: main could not read a
                 // name out of it, so there is no file this pane could address.
                 disabled={broken}
-                onClick={() => openSkill(row.name)}
+                // A valid skill drills into its files; SKILL.md opens with it,
+                // so the one-click path to the thing people edit most is
+                // unchanged from when a skill was a single file.
+                onClick={() => {
+                  drillInto(row.name);
+                }}
                 className={`flex items-center justify-between gap-2 border-b border-border-soft px-2.5 py-1.5 text-left text-[12.5px] last:border-b-0 ${
                   active ? 'bg-active text-ink' : 'text-muted'
                 } ${broken ? 'cursor-default' : 'hover:bg-hover hover:text-ink'}`}
@@ -483,6 +626,7 @@ export function SkillsSection() {
             + New skill
           </button>
         </div>
+        )}
 
         {buffer === null ? (
           <div className="flex items-center justify-center rounded-[7px] border border-dashed border-border px-4 text-center text-[11.5px] text-subtle">
@@ -491,10 +635,22 @@ export function SkillsSection() {
         ) : (
           <div className="flex min-h-0 flex-col gap-2">
             <SkillEditor
-              path={open === null ? null : `${snapshot.skillsRoot}/${open}/SKILL.md`}
+              path={
+                open === null
+                  ? null
+                  : `${snapshot.skillsRoot}/${open}/${openPath ?? 'SKILL.md'}`
+              }
               body={buffer}
               dirty={dirty}
-              problem={problem}
+              /*
+                The frontmatter name rule governs SKILL.md and nothing else. A
+                `scripts/build.py` has no frontmatter, so carrying `problem`
+                here would disable Save on every other file in the bundle for a
+                rule that does not apply to it.
+              */
+              problem={openPath === null || openPath === 'SKILL.md' ? problem : null}
+              refused={refusal?.reason ?? null}
+              size={refusal?.size ?? 0}
               onChange={edit}
               onSave={save}
               onDelete={remove}
