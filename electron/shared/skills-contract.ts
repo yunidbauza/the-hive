@@ -166,6 +166,9 @@ export const SKILL_SKIP_ENTRIES: readonly string[] = [
   '.DS_Store',
 ];
 
+/** Why an entry will not be copied. The pane's chip renders from this. */
+export type BundleExclusion = 'skipped' | 'too-large' | 'symlink';
+
 /**
  * One thing inside a skill folder, as both the mirror and the pane see it.
  *
@@ -174,9 +177,6 @@ export const SKILL_SKIP_ENTRIES: readonly string[] = [
  * yet filled would vanish on the next read — which is exactly the "fictional
  * until a file lands in it" problem that verb exists to prevent.
  */
-/** Why an entry will not be copied. The pane's chip renders from this. */
-export type BundleExclusion = 'skipped' | 'too-large' | 'symlink';
-
 export interface BundleEntry {
   /** POSIX-separated, relative to the skill folder. `scripts/build.py`. */
   path: string;

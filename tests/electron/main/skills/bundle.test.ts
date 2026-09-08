@@ -121,14 +121,29 @@ describe('readBundle', () => {
   });
 
   it('does not count a skipped name against the file cap', async () => {
-    await mkdir(join(dir, 'node_modules'), { recursive: true });
-    for (let i = 0; i < 199; i += 1) {
-      await writeFile(join(dir, `f${String(i)}.txt`), 'x', 'utf8');
+    /*
+      A fresh directory rather than the shared `dir` fixture: `dir` already
+      holds `SKILL.md` from `beforeEach`, and folding that into "200 real
+      files" would leave the arithmetic ambiguous about whether it is one of
+      the 200 or an extra 201st file. Written on its own, exactly 200 real
+      files plus the skipped `node_modules` is unambiguous: the counter must
+      reach exactly 200 and stop, with nothing left to trip it. A budget that
+      wrongly counted the skip toward 200 would run out one file early and
+      cap on `node_modules` itself, since `node_modules` sorts after every
+      `f*.txt` name.
+    */
+    const capDir = await mkdtemp(join(tmpdir(), 'hive-bundle-cap-'));
+    await mkdir(join(capDir, 'node_modules'), { recursive: true });
+    for (let i = 0; i < 200; i += 1) {
+      await writeFile(join(capDir, `f${String(i)}.txt`), 'x', 'utf8');
     }
 
-    const manifest = await readBundle(dir);
+    const manifest = await readBundle(capDir);
 
     expect(manifest.capped).toBeNull();
+    expect(manifest.entries.filter((e) => e.kind === 'file')).toHaveLength(200);
+
+    await rm(capDir, { recursive: true, force: true });
   });
 
   it('answers an empty manifest for a folder that is not there', async () => {
