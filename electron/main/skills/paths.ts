@@ -117,16 +117,25 @@ const MAX_LINK_HOPS = 10;
  * for a `#!` one, outside the skill folder.
  *
  * So this concatenates and stops. The string it returns still contains
- * `esc/..`, which is the point: `realpath` then resolves it for real, finds
- * `<outside>`'s parent, and refuses. The one concession is not appending a
- * separator when `dir` already ends in one — the filesystem-root case — which
- * adds no component and cancels none.
+ * `esc/..`, which is the point — but note *where* the refusal then comes
+ * from, because it is one step further along than it looks: `realpath` on
+ * that whole string fails `ENOENT` (the leaf was never created, which is why
+ * the link dangled in the first place), and it is the climb in
+ * {@link assertWithinRoot} that then resolves `<root>/./esc/..` for real,
+ * finds `<outside>`'s parent, and refuses. Preserving `esc/..` is what makes
+ * that climb possible; `join` would have left nothing to climb to.
+ *
+ * The one concession is not appending a separator when `dir` already ends in
+ * one — the filesystem root, or a doubled separator carried in from a link
+ * target, since `dirname('/a/b//c')` is `'/a/b/'` and a target may well
+ * contain `//`. Either way it adds no component and cancels none.
  *
  * The invariant, stated once for the whole module: **containment is asserted
  * only on a path the kernel resolved, never on one this code assembled.**
  * Every assembled string in this file — this one, the `dirname` climb below,
  * `resolveInSkill`'s `join(root, path)` — is either handed straight to
- * `realpath`/`lstat` for the authoritative answer or is the very path the
+ * `realpath`/`lstat` for the authoritative answer or is the path — or a
+ * prefix of it, as `writeFile`'s `mkdir(dirname(absPath))` uses — that the
  * caller will pass to `fs`. The moment an assembled string is treated as a
  * *proxy* for what the kernel would traverse, the check is checking fiction.
  */
@@ -292,8 +301,10 @@ async function assertWithinRoot(
  *
  * `join(root, path)` is safe here where the same call is not safe inside that
  * walk, and the difference is worth naming because it is subtle: this string
- * is not a *prediction* of what the kernel will traverse, it is the exact
- * string every caller then hands to `fs`. Whatever `join` normalises away is
+ * is not a *prediction* of what the kernel will traverse, it is the string
+ * every caller then hands to `fs` — or, for `writeFile` and `moveFile`'s
+ * `mkdir`, a prefix of it, which the same resolution already covered.
+ * Whatever `join` normalises away is
  * normalised away for the syscall too, so the check and the operation cannot
  * disagree. A link's declared target is the opposite — the kernel traverses
  * the link, not the string this module built from it — which is why

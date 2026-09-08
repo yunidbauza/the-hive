@@ -540,15 +540,20 @@ describe('createSkillsRuntime file verbs', () => {
       // fails.
       await symlink(outsideTarget, join(skillsDir(), 'graphify', 'escape'));
 
-      await expect(
-        skills.writeFile('graphify', 'escape', 'PWNED'),
-      ).rejects.toThrow(/outside the skill folder/i);
+      const refusal = await skills.writeFile('graphify', 'escape', 'PWNED').then(
+        () => null,
+        (error: unknown) => error as Error,
+      );
 
       // Not merely that it threw: nothing must have landed at the far end of
       // the link. A refusal that still wrote through the link before
       // throwing would pass a bare `.rejects.toThrow()` and still be a
-      // security hole.
+      // security hole. Asserted first so a regression fails *here*, printing
+      // what escaped, rather than exiting early on the refusal.
       await expect(readFile(outsideTarget, 'utf8')).rejects.toThrow();
+      expect(refusal?.message ?? 'writeFile did not refuse').toMatch(
+        /outside the skill folder/i,
+      );
     } finally {
       await rm(outside, { recursive: true, force: true });
     }
@@ -581,13 +586,18 @@ describe('createSkillsRuntime file verbs', () => {
       // where it actually goes.
       await symlink('./esc/hop.txt', join(skillsDir(), 'graphify', 'hop'));
 
-      await expect(
-        skills.writeFile('graphify', 'hop', '#!/bin/sh\necho PWNED\n'),
-      ).rejects.toThrow(/outside the skill folder/i);
+      const refusal = await skills
+        .writeFile('graphify', 'hop', '#!/bin/sh\necho PWNED\n')
+        .then(
+          () => null,
+          (error: unknown) => error as Error,
+        );
 
-      await expect(
-        readFile(join(outside, 'hop.txt'), 'utf8'),
-      ).rejects.toThrow();
+      // Landing first — see the table below for why the order is the point.
+      await expect(readFile(join(outside, 'hop.txt'), 'utf8')).rejects.toThrow();
+      expect(refusal?.message ?? 'writeFile did not refuse').toMatch(
+        /outside the skill folder/i,
+      );
     } finally {
       await rm(outside, { recursive: true, force: true });
     }
@@ -606,74 +616,209 @@ describe('createSkillsRuntime file verbs', () => {
       await symlink('./chainC', join(skillsDir(), 'graphify', 'chainB'));
       await symlink(outsideTarget, join(skillsDir(), 'graphify', 'chainC'));
 
-      await expect(
-        skills.writeFile('graphify', 'chainA', 'PWNED'),
-      ).rejects.toThrow(/outside the skill folder/i);
+      const refusal = await skills.writeFile('graphify', 'chainA', 'PWNED').then(
+        () => null,
+        (error: unknown) => error as Error,
+      );
 
+      // Landing first — see the table below for why the order is the point.
       await expect(readFile(outsideTarget, 'utf8')).rejects.toThrow();
+      expect(refusal?.message ?? 'writeFile did not refuse').toMatch(
+        /outside the skill folder/i,
+      );
     } finally {
       await rm(outside, { recursive: true, force: true });
     }
   });
 
-  it('refuses a write through a symlink whose target puts .. after a symlinked component', async () => {
-    /*
-      The round-3 repair's own mistake, and the third route to the same
-      escape: it built the next hop with `path.join`, which collapses `..`
-      against the preceding component **lexically, before anything touches
-      the disk**. `join(root, './esc/../PWNED.txt')` is `root/PWNED.txt` —
-      `esc` cancelled away and never visited, so the recursion never asked
-      where it really goes and approved a path that does not exist. The
-      kernel does the opposite: it resolves `esc` to `<outside>/live` first,
-      *then* applies `..`, landing at `<outside>/PWNED.txt`. The body starts
-      `#!`, so what landed there landed executable.
+  /*
+    The `..`-after-a-symlinked-component escape, as a **class** rather than as
+    the two spellings that happened to get reported.
 
-      `hopdd` is IPC-legal — no dot segment, depth 1 — so `assertSkillPath`
-      admits it and this function is the only thing standing in the way.
+    Every row below writes outside the bundle, mode 755, against a resolver
+    that composes a link's declared target with `path.join` — because `join`
+    collapses `..` against the preceding component *lexically, before anything
+    touches the disk*, so the escaping component is cancelled away and never
+    visited. The kernel does the opposite: it resolves `esc` to
+    `<outside>/live` first and only then applies `..`. What varies from row to
+    row is nothing the resolver should care about — a dot, a doubled slash,
+    how far the `..` sits from the link — which is exactly why one or two
+    examples were the wrong test. This function has now been fixed four times
+    for four spellings of one bug; the table is the attempt to hand the next
+    reader the bug instead.
+
+    Every `hop` here is IPC-legal — no dot segment, depth 1 or 2 — so
+    `assertSkillPath` admits it and `resolveInSkill` is the only thing
+    standing in the way.
+  */
+  const escapes: {
+    what: string;
+    target: string;
+    plant?: (bundle: string, live: string) => Promise<void>;
+    lands: 'outside' | 'skills-tree';
+  }[] = [
+    { what: 'the reported spelling', target: './esc/../PWNED.txt', lands: 'outside' },
+    { what: 'no leading dot', target: 'esc/../PWNED.txt', lands: 'outside' },
+    { what: 'a dot mid-path', target: './esc/./../PWNED.txt', lands: 'outside' },
+    { what: 'a doubled separator', target: './esc//../PWNED.txt', lands: 'outside' },
+    {
+      what: 'repeated dot segments',
+      target: './esc/./././../PWNED.txt',
+      lands: 'outside',
+    },
+    {
+      // `..` that is not adjacent to the link, so a fix that only inspected
+      // the component right after it would still leak.
+      what: 'a .. that is not adjacent to the link',
+      target: './esc/sub/../../PWNED.txt',
+      plant: async (_bundle, live) => {
+        await mkdir(join(live, 'sub'), { recursive: true });
+      },
+      lands: 'outside',
+    },
+    {
+      // The link a level down, so a fix that only inspected the declared
+      // target's first component would pass every row above and leak here.
+      what: 'the symlinked component a level down',
+      target: './sub/esc/../PWNED.txt',
+      plant: async (bundle, live) => {
+        await mkdir(join(bundle, 'sub'), { recursive: true });
+        await symlink(live, join(bundle, 'sub', 'esc'));
+      },
+      lands: 'outside',
+    },
+    {
+      /*
+        No outside link at all — `here -> .` is entirely in-bundle and looks
+        innocent, and `./here/../X` still climbs a level, into the skills tree
+        itself. A planted file there is another skill's content, or a new
+        skill, which is escape enough without ever leaving `~/.hive`.
+      */
+      what: 'a link to . landing in the skills tree',
+      target: './here/../PWNED.txt',
+      plant: async (bundle) => {
+        await symlink('.', join(bundle, 'here'));
+      },
+      lands: 'skills-tree',
+    },
+  ];
+
+  it.each(escapes)(
+    'refuses a write that escapes by putting .. after a symlink — $what',
+    async ({ target, plant, lands }) => {
+      const skills = runtime();
+      await skills.write('graphify', '---\nname: graphify\n---\n');
+      const bundle = join(skillsDir(), 'graphify');
+      const outside = await mkdtemp(join(tmpdir(), 'hive-outside-'));
+      try {
+        const live = join(outside, 'live');
+        await mkdir(live, { recursive: true });
+        await symlink(live, join(bundle, 'esc'));
+        await plant?.(bundle, live);
+        await symlink(target, join(bundle, 'hop'));
+
+        const landing =
+          lands === 'outside'
+            ? join(outside, 'PWNED.txt')
+            : join(skillsDir(), 'PWNED.txt');
+
+        const refusal = await skills
+          .writeFile('graphify', 'hop', '#!/bin/sh\necho PWNED\n')
+          .then(
+            () => null,
+            (error: unknown) => error as Error,
+          );
+
+        /*
+          The landing is asserted **first**, and the order is the point: it is
+          the assertion that fails by printing the escaped file's own body, so
+          a regression reads as evidence rather than as "a promise resolved".
+          Asserting the refusal first hides the landing behind an early exit
+          and costs the next person a separate probe to see what actually
+          happened — which is how this bug survived three rounds of green
+          suites.
+        */
+        await expect(readFile(landing, 'utf8')).rejects.toThrow();
+        expect(refusal?.message ?? 'writeFile did not refuse').toMatch(
+          /outside the skill folder/i,
+        );
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('refuses the same escape through a legitimately symlinked skill root', async () => {
+    // `resolveInSkill` `realpath`s the root before anything else — the
+    // dotfiles case `read.ts` supports on purpose — so the whole class above
+    // has to keep working against a bundle that is itself a link. It does
+    // not follow from the rows above: the root being resolved elsewhere is
+    // exactly the kind of difference a lexical shortcut gets wrong.
+    const elsewhere = await mkdtemp(join(tmpdir(), 'hive-bundle-'));
+    const outside = await mkdtemp(join(tmpdir(), 'hive-outside-'));
+    try {
+      await writeFile(
+        join(elsewhere, 'SKILL.md'),
+        '---\nname: linked\ndescription: d\n---\nB.\n',
+        'utf8',
+      );
+      await mkdir(skillsDir(), { recursive: true });
+      await symlink(elsewhere, join(skillsDir(), 'linked'));
+      const live = join(outside, 'live');
+      await mkdir(live, { recursive: true });
+      await symlink(live, join(elsewhere, 'esc'));
+      await symlink('./esc/../PWNED.txt', join(elsewhere, 'hop'));
+
+      const refusal = await runtime()
+        .writeFile('linked', 'hop', '#!/bin/sh\necho PWNED\n')
+        .then(
+          () => null,
+          (error: unknown) => error as Error,
+        );
+
+      await expect(readFile(join(outside, 'PWNED.txt'), 'utf8')).rejects.toThrow();
+      expect(refusal?.message ?? 'writeFile did not refuse').toMatch(
+        /outside the skill folder/i,
+      );
+    } finally {
+      await rm(elsewhere, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a cycle whose every hop crosses the bundle boundary', async () => {
+    /*
+      `cyc1 -> ./esc/../cyc2` and back again: each hop leaves the bundle,
+      lands beside it, and names the other link. Neither ever resolves, so
+      this is the shape where a hop budget could quietly stand in for the
+      containment check — and the two must not be confused, because a budget
+      that ran out would refuse this for the wrong reason and go on allowing
+      the single-hop version. Refused on containment, at the first hop.
+
+      Like `d/xout` below, this is a class guard and not regression evidence:
+      it is green against the `path.join` composition too, which refuses it
+      via the hop budget instead. The table above is what fails when the
+      resolver breaks.
     */
     const skills = runtime();
     await skills.write('graphify', '---\nname: graphify\n---\n');
     const outside = await mkdtemp(join(tmpdir(), 'hive-outside-'));
-    const landing = join(outside, 'PWNED.txt');
     try {
       const live = join(outside, 'live');
       await mkdir(live, { recursive: true });
       await symlink(live, join(skillsDir(), 'graphify', 'esc'));
-      await symlink('./esc/../PWNED.txt', join(skillsDir(), 'graphify', 'hopdd'));
+      await symlink('./esc/../cyc2', join(skillsDir(), 'graphify', 'cyc1'));
+      await symlink('./esc/../cyc1', join(skillsDir(), 'graphify', 'cyc2'));
 
-      await expect(
-        skills.writeFile('graphify', 'hopdd', '#!/bin/sh\necho PWNED\n'),
-      ).rejects.toThrow(/outside the skill folder/i);
-
-      await expect(readFile(landing, 'utf8')).rejects.toThrow();
-    } finally {
-      await rm(outside, { recursive: true, force: true });
-    }
-  });
-
-  it('refuses the same .. escape when the symlinked component is a level down', async () => {
-    // The same collapse, one directory deeper, because a fix that only
-    // looked at the first component of a declared target would pass the test
-    // above and still leak here.
-    const skills = runtime();
-    await skills.write('graphify', '---\nname: graphify\n---\n');
-    const outside = await mkdtemp(join(tmpdir(), 'hive-outside-'));
-    const landing = join(outside, 'PWNED.txt');
-    try {
-      const live = join(outside, 'live');
-      await mkdir(live, { recursive: true });
-      await mkdir(join(skillsDir(), 'graphify', 'sub'), { recursive: true });
-      await symlink(live, join(skillsDir(), 'graphify', 'sub', 'esc'));
-      await symlink(
-        './sub/esc/../PWNED.txt',
-        join(skillsDir(), 'graphify', 'hopnested'),
+      const refusal = await skills.writeFile('graphify', 'cyc1', 'PWNED').then(
+        () => null,
+        (error: unknown) => error as Error,
       );
 
-      await expect(
-        skills.writeFile('graphify', 'hopnested', '#!/bin/sh\necho PWNED\n'),
-      ).rejects.toThrow(/outside the skill folder/i);
-
-      await expect(readFile(landing, 'utf8')).rejects.toThrow();
+      await expect(readFile(join(outside, 'cyc2'), 'utf8')).rejects.toThrow();
+      expect(refusal?.message ?? 'writeFile did not refuse').toMatch(
+        /outside the skill folder/i,
+      );
     } finally {
       await rm(outside, { recursive: true, force: true });
     }
@@ -687,6 +832,14 @@ describe('createSkillsRuntime file verbs', () => {
       resolves `d/xout`'s target `../../PWNED.txt` relative to `root/inner`
       and lands one level above the bundle — in the skills tree itself, where
       a planted file becomes another skill's content.
+
+      **This is a class guard, not a regression guard, and it should not be
+      counted as evidence that any fix works.** It is green against the
+      `path.join` composition too, and structurally so: the link is a sibling
+      of what it escapes through, so the lexical collapse and the kernel's
+      resolution agree on where it lands. It is here because the property has
+      no other coverage, not because it fails when the resolver breaks — the
+      table above is what fails then.
     */
     const skills = runtime();
     await skills.write('graphify', '---\nname: graphify\n---\n');
@@ -697,12 +850,17 @@ describe('createSkillsRuntime file verbs', () => {
       join(skillsDir(), 'graphify', 'inner', 'xout'),
     );
 
-    await expect(skills.writeFile('graphify', 'd/xout', 'PWNED')).rejects.toThrow(
-      /outside the skill folder/i,
+    const refusal = await skills.writeFile('graphify', 'd/xout', 'PWNED').then(
+      () => null,
+      (error: unknown) => error as Error,
     );
+
     await expect(
       readFile(join(skillsDir(), 'PWNED.txt'), 'utf8'),
     ).rejects.toThrow();
+    expect(refusal?.message ?? 'writeFile did not refuse').toMatch(
+      /outside the skill folder/i,
+    );
   });
 
   it('refuses rather than falls through when the link-hop budget runs out', async () => {
