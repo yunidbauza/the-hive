@@ -1,0 +1,652 @@
+// @vitest-environment node
+import { spawn, type ChildProcess } from 'node:child_process';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { get as httpGet } from 'node:http';
+import { createRequire } from 'node:module';
+import { connect as netConnect, createServer as createNetServer } from 'node:net';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { WebSocket } from 'ws';
+
+import { parseConfig } from '../../electron/main/config/parse';
+import { mintDevice, type MintedDevice } from '../../electron/main/server/devices';
+import { CONFIG_PATH_ENV, CONFIG_VERSION } from '../../electron/shared/config-contract';
+import { REMOTE_PROTOCOL_VERSION } from '../../electron/shared/remote-contract';
+
+/**
+ * Server-mode conformance (HIVE-142): the eight acceptance criteria plus the
+ * data-loss half of the freshness fix, proved against the **built** app —
+ * `pnpm desktop:build` first — spawned as a real Electron process, and a real
+ * `ws` client speaking the wire protocol from outside that process entirely.
+ *
+ * ## Why this cannot be a unit test
+ *
+ * `tests/electron/remote-host/listener.test.ts` already proves the handshake
+ * in-process, against `createRemoteListener` called directly. That is the
+ * exact shape that cannot catch what this story's three review rounds were
+ * actually about: whether `index.ts` wires the listener up at all in server
+ * mode, whether `--pair` — a **second OS process**, spawned after the server
+ * is already listening — actually lands a device the running server's
+ * unauthenticated-read getter picks up without a restart, and whether the
+ * config file that process just wrote is safe to leave on a served machine's
+ * disk. None of those are properties of `listener.ts` in isolation; they are
+ * properties of the composition in `electron/main/index.ts`, and the only way
+ * to observe a composition bug is to run the composed thing.
+ *
+ * ## The eight cases, plus one
+ *
+ * 1. Boots with `--server`, binds loopback, opens no window.
+ * 2. A raw `ws` client completes the handshake and is accepted.
+ * 3. A wrong token, a revoked token and a disallowed `Origin` are each
+ *    refused, asserting the refusal code.
+ * 4. A forced protocol mismatch names both versions, and no frame follows.
+ * 5. A call frame on an unattached socket is refused.
+ * 6. `--pair` in a second process is seen by the running server with no
+ *    restart — the headline claim, and the one this file exists for.
+ * 7. `config.json` is read back and contains no token — checked against the
+ *    literal string the mint printed, not a shape assertion.
+ * 8. A config asking for `0.0.0.0` fails to bind the wildcard, names why, and
+ *    the app keeps running.
+ * 9. Pairing a second device from the CLI while the server runs does not
+ *    erase the first — the data-loss half of the same freshness fix, added
+ *    here because an earlier implementation of it replaced the whole roster
+ *    from a stale in-memory copy and silently dropped a concurrently paired
+ *    device.
+ *
+ * Case 1's assertion is deliberately thin: it proves the served app answers
+ * on its socket, and nothing about the absence of a window. A live client
+ * outside the process cannot observe `BrowserWindow.getAllWindows()`, and a
+ * stdout marker that exists only so this file could read it would be
+ * production code written to serve a test — `registerLifecycle`'s own unit
+ * test already proves the window never opens.
+ *
+ * ## What is not proved here
+ *
+ * Nothing past the handshake: HIVE-143 adds call routing over this socket, and
+ * today an attached client is handed nothing further (`listener.ts`'s own
+ * words: "the socket now sits attached with nothing further wired to it").
+ * There is nothing to route yet, so there is nothing to test yet.
+ *
+ * ## `HIVE_CONFIG_PATH` is mandatory, and never inherited
+ *
+ * `--user-data-dir` only relocates Electron's own profile (window state, the
+ * single-instance lock) — the workspace config lives at `~/.hive/config.json`
+ * (`electron/main/config/paths.ts`) unless `HIVE_CONFIG_PATH` says otherwise
+ * (`config-contract.ts`'s `CONFIG_PATH_ENV`), and nothing here ever spawns a
+ * process without it explicitly set. {@link REAL_CONFIG_PATH} is asserted
+ * against on every scratch path this file is about to write to, at the moment
+ * it is computed — not as a formality, but because a mistake here writes a
+ * real device credential into the person running this suite's actual config,
+ * which is exactly how the brief for this task was written in the first
+ * place. Every `HIVE_*` variable a spawned process gets is named explicitly by
+ * {@link scrubbedEnv}, which strips whatever the same name happens to be set
+ * to in this shell before applying the ones this file actually wants — so an
+ * ambient `HIVE_CONFIG_PATH`, or a leftover `HIVE_LIVE_*_PROOF`, cannot leak
+ * into a child and make this suite pass for the wrong reason.
+ *
+ * ## Evidence
+ *
+ * A `vitest run` off a TTY (a background shell) prints totals only, so a
+ * failure here would otherwise be unreadable. Every spawned process's argv,
+ * exit code and captured stdout/stderr is collected into {@link processLog}
+ * and written once, at the very end, to `finding.json` inside
+ * {@link evidenceDir} — which this file does **not** delete, on the same
+ * reasoning `hook-context-conformance.test.ts` gives for leaving its own
+ * evidence directory behind: a scratch dir in `os.tmpdir()` costs nothing to
+ * leave and is the only place a failed background run's detail survives.
+ *
+ * Gated behind `HIVE_LIVE_SERVER_PROOF=1` (`pnpm test:server`) because it
+ * spawns real Electron processes and binds real sockets.
+ */
+
+const RUN = process.env['HIVE_LIVE_SERVER_PROOF'] === '1';
+
+/** The one path this file must never write to. See the header comment. */
+const REAL_CONFIG_PATH = join(homedir(), '.hive', 'config.json');
+
+/** Refuses to proceed if `path` is the developer's real config file. */
+function assertScratchPath(path: string): void {
+  if (path === REAL_CONFIG_PATH) {
+    throw new Error(
+      `refusing to run: this suite would write to ${REAL_CONFIG_PATH}, the real workspace config`,
+    );
+  }
+}
+
+/**
+ * The Electron binary this suite drives, resolved the same way Electron's own
+ * docs describe for an npm script: `require('electron')` answers the
+ * executable's path when the caller is plain Node rather than Electron
+ * itself. A static `import` of the `electron` package types this as the
+ * `Electron.CrossProcessExports` namespace — correct inside the app, and a
+ * lie about what this process, which is Node under Vitest, actually gets back
+ * — so a `require` reached through `createRequire` is used instead of an
+ * `import` that `tsc` would accept but that would be wrong at runtime.
+ */
+const electronBinary = createRequire(import.meta.url)('electron') as string;
+
+/** The built app's entry point — the same file `desktop:build` produces and `package.json`'s `main` names. */
+const MAIN_ENTRY = join(import.meta.dirname, '../../out/main/index.js');
+
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** A free loopback port, found by binding ephemeral (port 0) and releasing it — the only way to get a fixed number to hand to `server.bind.port`, which (unlike the hook receiver's) is not OS-assigned. */
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createNetServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address();
+      probe.close(() => {
+        if (address === null || typeof address === 'string') {
+          reject(new Error('could not determine a free port'));
+          return;
+        }
+        resolve(address.port);
+      });
+    });
+  });
+}
+
+/** Polls a raw TCP connect until it succeeds, or throws once `deadlineMs` has passed. */
+async function waitForListener(host: string, port: number, deadlineMs: number): Promise<void> {
+  const start = Date.now();
+  const tryOnce = (): Promise<boolean> =>
+    new Promise((resolve) => {
+      const socket = netConnect({ host, port }, () => {
+        socket.end();
+        resolve(true);
+      });
+      socket.on('error', () => resolve(false));
+    });
+
+  while (Date.now() - start < deadlineMs) {
+    if (await tryOnce()) return;
+    await delay(200);
+  }
+  throw new Error(`timed out waiting for ${host}:${String(port)} to accept connections`);
+}
+
+/** The HTTP status a plain GET gets back — proof the socket is a real HTTP(S) upgrade server, not merely an open file descriptor. */
+function httpStatus(url: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const req = httpGet(url, (res) => {
+      res.resume();
+      resolve(res.statusCode ?? 0);
+    });
+    req.on('error', reject);
+  });
+}
+
+/** One spawned process's evidence, kept whether it passes or fails. */
+interface ProcessRecord {
+  label: string;
+  args: readonly string[];
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+}
+
+const processLog: ProcessRecord[] = [];
+
+/**
+ * `env`, with every `HIVE_*` key this shell happens to carry stripped first.
+ *
+ * Spreading `process.env` and layering overrides on top is what every other
+ * `tests/live` file does, and it is exactly the trap this task's dispatch
+ * warns about: an ambient `HIVE_CONFIG_PATH` (or any other `HIVE_*` a
+ * developer's own shell profile sets) would otherwise ride along underneath
+ * `overrides` and only matter on the keys `overrides` does not also name.
+ * Stripping first and layering explicit values after means the only `HIVE_*`
+ * variables a spawned process ever sees are the ones named right here.
+ */
+function scrubbedEnv(overrides: Record<string, string>): NodeJS.ProcessEnv {
+  const base: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined || key.startsWith('HIVE_')) continue;
+    base[key] = value;
+  }
+  return { ...base, ...overrides };
+}
+
+/** Spawns the app itself — a long-running process this file must stop with {@link stopApp}. */
+function spawnApp(extraArgs: readonly string[], configPath: string, userDataDir: string): ChildProcess {
+  assertScratchPath(configPath);
+  const args = [MAIN_ENTRY, `--user-data-dir=${userDataDir}`, ...extraArgs];
+  const child = spawn(electronBinary, args, {
+    env: scrubbedEnv({ [CONFIG_PATH_ENV]: configPath, HIVE_E2E: '1' }),
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  const record: ProcessRecord = {
+    label: `app ${extraArgs.join(' ')}`,
+    args,
+    code: null,
+    signal: null,
+    stdout: '',
+    stderr: '',
+  };
+  processLog.push(record);
+  child.stdout?.on('data', (chunk: Buffer) => (record.stdout += chunk.toString()));
+  child.stderr?.on('data', (chunk: Buffer) => (record.stderr += chunk.toString()));
+  child.on('exit', (code, signal) => {
+    record.code = code;
+    record.signal = signal;
+  });
+  return child;
+}
+
+/** Stops a process started by {@link spawnApp}: `SIGTERM` first, `SIGKILL` if it has not gone in 10s. */
+function stopApp(child: ChildProcess): Promise<void> {
+  return new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(() => child.kill('SIGKILL'), 10_000);
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    child.kill('SIGTERM');
+  });
+}
+
+/**
+ * Runs one of the CLI one-shots (`--pair`, `--revoke`, `--devices`) to
+ * completion in its own, separate process — the exact shape `--pair` has in
+ * production, and the only way to prove case 6's claim that a *second*
+ * process reaches an *already-running* server with no restart.
+ */
+function runOneShot(
+  args: readonly string[],
+  configPath: string,
+  userDataDir: string,
+  timeoutMs = 20_000,
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  assertScratchPath(configPath);
+  return new Promise((resolve, reject) => {
+    const fullArgs = [MAIN_ENTRY, ...args, `--user-data-dir=${userDataDir}`];
+    const child = spawn(electronBinary, fullArgs, {
+      env: scrubbedEnv({ [CONFIG_PATH_ENV]: configPath }),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    const record: ProcessRecord = {
+      label: `one-shot ${args.join(' ')}`,
+      args: fullArgs,
+      code: null,
+      signal: null,
+      stdout: '',
+      stderr: '',
+    };
+    processLog.push(record);
+
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`one-shot ${args.join(' ')} timed out after ${String(timeoutMs)}ms`));
+    }, timeoutMs);
+
+    child.stdout?.on('data', (chunk: Buffer) => (record.stdout += chunk.toString()));
+    child.stderr?.on('data', (chunk: Buffer) => (record.stderr += chunk.toString()));
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on('exit', (code, signal) => {
+      clearTimeout(timer);
+      record.code = code;
+      record.signal = signal;
+      resolve({ code, stdout: record.stdout, stderr: record.stderr });
+    });
+  });
+}
+
+/** What one attach attempt resolved to: a parsed frame, or the HTTP status an upgrade was refused with. */
+interface AttachOutcome {
+  httpStatus?: number;
+  frame?: Record<string, unknown>;
+}
+
+/**
+ * Sends one frame over a fresh `ws` connection and resolves with whatever
+ * comes back — a JSON frame, or (for an Origin refused at the upgrade itself)
+ * the HTTP status the server answered with instead of `101`. Mirrors
+ * `tests/electron/remote-host/listener.test.ts`'s own `attach`/`attachTolerant`
+ * helpers, merged into one shape because this file's callers need both.
+ */
+function attach(
+  url: string,
+  frame: unknown,
+  headers: Record<string, string> = {},
+): Promise<AttachOutcome> {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(url, { headers });
+    let settled = false;
+    const settle = (outcome: AttachOutcome): void => {
+      if (settled) return;
+      settled = true;
+      resolve(outcome);
+    };
+
+    socket.on('open', () => socket.send(JSON.stringify(frame)));
+    socket.on('message', (data) => {
+      settle({ frame: JSON.parse(String(data)) as Record<string, unknown> });
+      socket.close();
+    });
+    // Fires instead of `error` only because this handler is registered —
+    // exactly the refusal an disallowed Origin produces (a 403 at the upgrade,
+    // never a JSON frame).
+    socket.on('unexpected-response', (_req, res) => {
+      settle({ httpStatus: res.statusCode });
+      res.resume();
+    });
+    // A close with nothing ever received — the handshake-timeout drop, most
+    // likely — resolves empty rather than hanging the test.
+    socket.on('close', () => settle({}));
+    socket.on('error', (err) => {
+      if (settled) return;
+      reject(err);
+    });
+  });
+}
+
+describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => {
+  let evidenceDir: string;
+
+  beforeAll(() => {
+    evidenceDir = mkdtempSync(join(tmpdir(), 'hive-live-server-evidence-'));
+  });
+
+  afterAll(() => {
+    const findingPath = join(evidenceDir, 'finding.json');
+    writeFileSync(
+      findingPath,
+      JSON.stringify({ ranAt: new Date().toISOString(), processes: processLog }, null, 2),
+      'utf8',
+    );
+    console.info('EVIDENCE ', findingPath);
+  });
+
+  describe('the handshake, the CLI in a second process, and the token never on disk', () => {
+    let dir: string;
+    let configPath: string;
+    let userDataDir: string;
+    let oneShotUserDataDir: string;
+    let port: number;
+    let url: string;
+    let app: ChildProcess;
+    let active: MintedDevice;
+    let revoked: MintedDevice;
+    let liveA: { id: string; token: string } | null = null;
+
+    beforeAll(async () => {
+      dir = mkdtempSync(join(tmpdir(), 'hive-live-server-main-'));
+      configPath = join(dir, 'config.json');
+      userDataDir = join(dir, 'user-data');
+      oneShotUserDataDir = join(dir, 'one-shot-user-data');
+      assertScratchPath(configPath);
+
+      active = mintDevice('Seed-Active');
+      revoked = mintDevice('Seed-Revoked');
+      port = await freePort();
+
+      const config = {
+        version: CONFIG_VERSION,
+        projects: [],
+        server: {
+          bind: { host: '127.0.0.1', port, allowedOrigins: [] },
+          devices: [active.device, { ...revoked.device, revoked: true }],
+        },
+      };
+      writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+
+      app = spawnApp(['--server'], configPath, userDataDir);
+      url = `ws://127.0.0.1:${String(port)}`;
+      await waitForListener('127.0.0.1', port, 30_000);
+    }, 45_000);
+
+    afterAll(async () => {
+      await stopApp(app);
+    }, 15_000);
+
+    it('1. boots with --server and answers on its socket', async () => {
+      // A plain GET, not an upgrade: proof this is the real HTTP(S) server
+      // `remote-host/listener.ts` builds (426 is its own "Upgrade required"
+      // answer to anything that is not a `ws` handshake), not merely a TCP
+      // port something else happens to hold open. Window-absence is
+      // `registerLifecycle`'s unit test, not this file — see the header
+      // comment.
+      const status = await httpStatus(`http://127.0.0.1:${String(port)}/`);
+      expect(status).toBe(426);
+    });
+
+    it('2. a raw ws client completes the attach handshake and is accepted', async () => {
+      const outcome = await attach(url, {
+        kind: 'attach',
+        protocol: REMOTE_PROTOCOL_VERSION,
+        deviceId: active.device.id,
+        token: active.token,
+      });
+      expect(outcome.frame).toMatchObject({ kind: 'attach-accepted' });
+    });
+
+    it('3a. refuses a wrong token, naming it unauthorized', async () => {
+      const outcome = await attach(url, {
+        kind: 'attach',
+        protocol: REMOTE_PROTOCOL_VERSION,
+        deviceId: active.device.id,
+        token: 'ZZZZ-ZZZZ-ZZZZ-ZZZZ',
+      });
+      expect(outcome.frame).toMatchObject({ kind: 'attach-refused', code: 'unauthorized' });
+    });
+
+    it('3b. refuses a revoked device presenting its own correct token, naming it revoked', async () => {
+      const outcome = await attach(url, {
+        kind: 'attach',
+        protocol: REMOTE_PROTOCOL_VERSION,
+        deviceId: revoked.device.id,
+        token: revoked.token,
+      });
+      expect(outcome.frame).toMatchObject({ kind: 'attach-refused', code: 'revoked' });
+    });
+
+    it('3c. refuses a disallowed Origin at the upgrade, before any frame is read', async () => {
+      const outcome = await attach(
+        url,
+        {
+          kind: 'attach',
+          protocol: REMOTE_PROTOCOL_VERSION,
+          deviceId: active.device.id,
+          token: active.token,
+        },
+        { Origin: 'http://evil.test' },
+      );
+      // `allowedOrigins: []` above refuses every Origin, so this proves the
+      // guard runs before the attach frame is ever inspected — a structured
+      // `attach-refused` needs a completed upgrade, and this one never gets
+      // one.
+      expect(outcome.httpStatus).toBe(403);
+    });
+
+    it('4. a forced protocol mismatch names both versions, and sends no frame afterward', async () => {
+      const clientProtocol = REMOTE_PROTOCOL_VERSION + 1;
+      const messages: Record<string, unknown>[] = [];
+      await new Promise<void>((resolve, reject) => {
+        const socket = new WebSocket(url);
+        socket.on('open', () =>
+          socket.send(
+            JSON.stringify({
+              kind: 'attach',
+              protocol: clientProtocol,
+              deviceId: active.device.id,
+              token: active.token,
+            }),
+          ),
+        );
+        socket.on('message', (data) => messages.push(JSON.parse(String(data)) as Record<string, unknown>));
+        socket.on('close', () => resolve());
+        socket.on('error', reject);
+      });
+
+      // Exactly one frame total, even after the socket has fully closed —
+      // that is what "no frame follows" means: not merely that the refusal
+      // came first, but that nothing else ever arrived.
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({ kind: 'attach-refused', code: 'protocol-mismatch' });
+      const message = String(messages[0]?.['message']);
+      expect(message).toContain(String(REMOTE_PROTOCOL_VERSION));
+      expect(message).toContain(String(clientProtocol));
+    });
+
+    it('5. refuses a call frame that arrives on an unattached socket', async () => {
+      const outcome = await attach(url, {
+        kind: 'call',
+        id: 'req-1',
+        channel: 'config:get',
+        payload: {},
+      });
+      expect(outcome.frame).toMatchObject({ kind: 'attach-refused', code: 'unauthorized' });
+    });
+
+    it('6. --pair in a second process is seen by the already-running server, with no restart', async () => {
+      const result = await runOneShot(['--pair', 'Live-Device-A'], configPath, oneShotUserDataDir);
+      expect(result.code).toBe(0);
+
+      // The token is the first of three lines `runPair` prints
+      // (`one-shot.ts`) — four groups of four Crockford-base32 characters.
+      const lines = result.stdout.trim().split('\n');
+      expect(lines).toHaveLength(3);
+      const token = lines[0] ?? '';
+      expect(token).toMatch(/^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/u);
+
+      // The device's id never reaches stdout, so it is read back off the
+      // config file the one-shot just wrote — the same file the running
+      // server's `devices` getter re-reads on every handshake
+      // (`file-backed-io.ts`'s `readServerDevicesFromDisk`).
+      const parsed = parseConfig(readFileSync(configPath, 'utf8'), 'config');
+      const minted = parsed.server?.devices?.find((device) => device.name === 'Live-Device-A');
+      expect(minted).toBeDefined();
+      liveA = { id: minted?.id ?? '', token };
+
+      // The proof itself: attach against the SAME server process that was
+      // already listening before `--pair` ever ran, with no restart in
+      // between.
+      const outcome = await attach(url, {
+        kind: 'attach',
+        protocol: REMOTE_PROTOCOL_VERSION,
+        deviceId: liveA.id,
+        token: liveA.token,
+      });
+      expect(outcome.frame).toMatchObject({ kind: 'attach-accepted' });
+    }, 25_000);
+
+    it('9. pairing a second device from the CLI does not erase the first', async () => {
+      expect(liveA).not.toBeNull();
+
+      const result = await runOneShot(['--pair', 'Live-Device-B'], configPath, oneShotUserDataDir);
+      expect(result.code).toBe(0);
+
+      const parsed = parseConfig(readFileSync(configPath, 'utf8'), 'config');
+      const devices = parsed.server?.devices ?? [];
+      const survivedA = devices.find((device) => device.id === liveA?.id);
+      const b = devices.find((device) => device.name === 'Live-Device-B');
+
+      // A's own record is untouched — not merely "a device named
+      // Live-Device-A exists somewhere", but the exact id minted for it.
+      expect(survivedA).toBeDefined();
+      expect(survivedA?.revoked).toBe(false);
+      expect(b).toBeDefined();
+
+      // The server, still the same process, still running, still answers for
+      // A after B was added — the roster it re-read did not just gain B, it
+      // kept A.
+      const outcome = await attach(url, {
+        kind: 'attach',
+        protocol: REMOTE_PROTOCOL_VERSION,
+        deviceId: liveA?.id ?? '',
+        token: liveA?.token ?? '',
+      });
+      expect(outcome.frame).toMatchObject({ kind: 'attach-accepted' });
+    }, 25_000);
+
+    it('7. config.json never contains a literal token, checked against the exact strings the mints printed', () => {
+      const text = readFileSync(configPath, 'utf8');
+      expect(text).not.toContain(active.token);
+      expect(text).not.toContain(revoked.token);
+      if (liveA) expect(text).not.toContain(liveA.token);
+      // The digest format the credential is stored as instead — proof the
+      // file legitimately describes these devices, rather than this
+      // assertion passing because the file is simply empty.
+      expect(text).toMatch(/"kind":\s*"sha256"/u);
+      expect(text.match(/"digest":\s*"[0-9a-f]{64}"/gu)?.length).toBeGreaterThanOrEqual(3);
+    });
+  });
+
+  describe('a config asking for the wildcard bind (spec §8)', () => {
+    let dir: string;
+    let configPath: string;
+    let userDataDir: string;
+    let oneShotUserDataDir: string;
+    let port: number;
+    let app: ChildProcess;
+
+    beforeAll(async () => {
+      dir = mkdtempSync(join(tmpdir(), 'hive-live-server-wildcard-'));
+      configPath = join(dir, 'config.json');
+      userDataDir = join(dir, 'user-data');
+      oneShotUserDataDir = join(dir, 'one-shot-user-data');
+      assertScratchPath(configPath);
+
+      port = await freePort();
+      const config = {
+        version: CONFIG_VERSION,
+        projects: [],
+        server: { bind: { host: '0.0.0.0', port, allowedOrigins: [] } },
+      };
+      writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+
+      app = spawnApp(['--server'], configPath, userDataDir);
+      // The fallback host — `127.0.0.1`, `DEFAULT_SERVER.bind`'s own value —
+      // not the refused wildcard: see the `it` below for why the parser
+      // guarantees this is what actually gets bound.
+      await waitForListener('127.0.0.1', port, 30_000);
+    }, 45_000);
+
+    afterAll(async () => {
+      await stopApp(app);
+    }, 15_000);
+
+    it('8. refuses the wildcard bind with a message naming why, and the app keeps running', async () => {
+      // The structural half: the same parser `getConfig()` calls at boot
+      // refuses `0.0.0.0` and says why — `parse.ts`'s
+      // `optionalServerBind`, read back against the exact bytes on disk.
+      const parsed = parseConfig(readFileSync(configPath, 'utf8'), 'config');
+      expect(
+        parsed.errors.some(
+          (message) => message.includes('0.0.0.0') && message.includes('binds every interface'),
+        ),
+      ).toBe(true);
+      // Confirms the failure is real refusal, not a bind the parser merely
+      // complained about while still honouring it.
+      expect(parsed.server?.bind?.host).toBeUndefined();
+
+      // The behavioural half: with `host` refused, the block falls back to
+      // `DEFAULT_SERVER.bind.host` (`127.0.0.1`) — the wildcard is never
+      // asked of the OS at all, and the app is still serving on the address
+      // it fell back to.
+      const status = await httpStatus(`http://127.0.0.1:${String(port)}/`);
+      expect(status).toBe(426);
+
+      // And the app itself has not gone down over a config error — proved by
+      // a second, independent process (the `--devices` one-shot) that
+      // reaches the very same file.
+      expect(app.exitCode).toBeNull();
+      const devices = await runOneShot(['--devices'], configPath, oneShotUserDataDir);
+      expect(devices.code).toBe(0);
+    });
+  });
+});
