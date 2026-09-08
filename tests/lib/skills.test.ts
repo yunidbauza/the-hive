@@ -30,6 +30,7 @@ const snapshot = (names: string[]): SkillsSnapshot => ({
     name,
     description: 'does a thing',
     valid: true as const,
+    manifest: { entries: [], capped: null },
   })),
   invalid: [],
   skillsRoot: '/home/u/.hive/skills',

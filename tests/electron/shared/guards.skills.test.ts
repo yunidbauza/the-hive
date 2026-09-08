@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  assertSkillDir,
+  assertSkillPath,
+  parseSkillDropRequest,
   parseSkillNameRequest,
   parseSkillRenameRequest,
   parseSkillWriteRequest,
@@ -211,5 +214,77 @@ describe('parseSkillRenameRequest', () => {
       from: 'standup',
       to: 'standup',
     });
+  });
+});
+
+describe('assertSkillPath', () => {
+  it('accepts an ordinary nested path, and mixed case', () => {
+    expect(assertSkillPath('scripts/build.py', 'path')).toBe('scripts/build.py');
+    expect(assertSkillPath('assets/Inter-Bold.ttf', 'path')).toBe(
+      'assets/Inter-Bold.ttf',
+    );
+    expect(assertSkillPath('docs/Screen Shot.png', 'path')).toBe(
+      'docs/Screen Shot.png',
+    );
+  });
+
+  it('refuses a traversal segment', () => {
+    expect(() => assertSkillPath('../secrets', 'path')).toThrow();
+    expect(() => assertSkillPath('a/../../b', 'path')).toThrow();
+  });
+
+  it('allows a real file whose name merely starts with dots', () => {
+    expect(assertSkillPath('..hidden', 'path')).toBe('..hidden');
+  });
+
+  it('refuses an absolute path, POSIX and Windows alike', () => {
+    expect(() => assertSkillPath('/etc/passwd', 'path')).toThrow();
+    expect(() => assertSkillPath('C:\\Windows', 'path')).toThrow();
+  });
+
+  it('refuses a path deeper than four folders', () => {
+    expect(assertSkillPath('a/b/c/d', 'path')).toBe('a/b/c/d');
+    expect(() => assertSkillPath('a/b/c/d/e', 'path')).toThrow();
+  });
+
+  it('refuses an empty path, which names nothing', () => {
+    expect(() => assertSkillPath('', 'path')).toThrow();
+  });
+
+  it('refuses control characters', () => {
+    expect(() => assertSkillPath('a\u0000b', 'path')).toThrow();
+  });
+});
+
+describe('assertSkillDir', () => {
+  it('accepts the bundle root as an empty string', () => {
+    expect(assertSkillDir('', 'dir')).toBe('');
+  });
+
+  it('refuses everything assertSkillPath refuses', () => {
+    expect(() => assertSkillDir('../x', 'dir')).toThrow();
+    expect(() => assertSkillDir('/etc', 'dir')).toThrow();
+  });
+});
+
+describe('parseSkillDropRequest', () => {
+  it('refuses a source that is not an absolute path', () => {
+    expect(() =>
+      parseSkillDropRequest({ name: 'x', dir: '', sources: ['relative.txt'] }),
+    ).toThrow();
+  });
+
+  it('refuses more sources than the file cap allows', () => {
+    const sources = Array.from({ length: 201 }, (_, i) => `/tmp/f${String(i)}`);
+    expect(() => parseSkillDropRequest({ name: 'x', dir: '', sources })).toThrow();
+  });
+
+  it('accepts absolute sources', () => {
+    const request = parseSkillDropRequest({
+      name: 'x',
+      dir: 'assets',
+      sources: ['/tmp/a.ttf'],
+    });
+    expect(request.sources).toEqual(['/tmp/a.ttf']);
   });
 });

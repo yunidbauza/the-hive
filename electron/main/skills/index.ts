@@ -176,10 +176,11 @@ export function createSkillsRuntime({
     every list would put the whole skills tree on the wire for a sidebar.
   */
   const snapshot = (read: SkillsRead): SkillsSnapshot => ({
-    skills: read.skills.map(({ name, description }) => ({
+    skills: read.skills.map(({ name, description, manifest }) => ({
       name,
       description,
       valid: true,
+      manifest,
     })),
     invalid: read.invalid.map(({ name, reason }) => ({
       name,

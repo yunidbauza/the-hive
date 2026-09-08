@@ -49,6 +49,7 @@ const withSkills = (...names: string[]): SkillsSnapshot =>
       name,
       description: 'does a thing',
       valid: true as const,
+      manifest: { entries: [], capped: null },
     })),
   });
 

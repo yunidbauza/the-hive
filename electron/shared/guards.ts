@@ -91,9 +91,19 @@ import type {
   SessionNoteRequest,
   SessionPrRequest,
 } from './session-history-contract';
-import { RESERVED_SKILL_NAME, SKILL_NAME_PATTERN } from './skills-contract';
+import {
+  MAX_BUNDLE_DEPTH,
+  MAX_BUNDLE_FILES,
+  RESERVED_SKILL_NAME,
+  SKILL_NAME_PATTERN,
+} from './skills-contract';
 import type {
+  SkillDropRequest,
+  SkillFileWriteRequest,
+  SkillImportRequest,
+  SkillMoveRequest,
   SkillNameRequest,
+  SkillPathRequest,
   SkillRenameRequest,
   SkillWriteRequest,
 } from './skills-contract';
@@ -2009,6 +2019,52 @@ export function assertSkillName(value: unknown, label: string): string {
   return name;
 }
 
+/**
+ * A skill-relative path, as the bundle verbs accept one (HIVE-148).
+ *
+ * `assertRelPath`'s rules, and deliberately not a character class. A charset of
+ * `[a-z0-9._-]` looks stricter and buys nothing: traversal is already dead
+ * without it, because no `..` segment survives — while it would refuse
+ * `README.md`, `Inter-Bold.ttf` and every screenshot with a space in its name,
+ * which are exactly the files a user drags into a bundle.
+ *
+ * What it adds over `assertRelPath` is a depth cap and a refusal of `''`. The
+ * empty path means "the project root" there; here every verb names a thing,
+ * and a verb that removed the bundle root would be `skills.remove` with a
+ * different name.
+ *
+ * As with `assertRelPath`, this is not a containment check and cannot be one.
+ * `electron/main/skills/paths.ts` resolves and calls `contains()` after
+ * `realpath`. Both are required.
+ */
+export function assertSkillPath(value: unknown, label: string): string {
+  const path = assertRelPath(value, label);
+  if (path === '') return fail(`${label}: names nothing`);
+
+  const segments = path.split(/[/\\]/).filter((segment) => segment !== '');
+  if (segments.length > MAX_BUNDLE_DEPTH) {
+    return fail(`${label}: deeper than ${String(MAX_BUNDLE_DEPTH)} folders`);
+  }
+  if (segments.some((segment) => segment === '.')) {
+    return fail(`${label}: must not contain a dot segment`);
+  }
+
+  return path;
+}
+
+/**
+ * The same rule, plus the bundle root.
+ *
+ * A separate export rather than a boolean parameter: `import` and `drop` target
+ * a directory and default to the root, every other verb names an entry, and a
+ * flag repeated at nine call sites is a flag someone eventually passes wrong.
+ */
+export function assertSkillDir(value: unknown, label: string): string {
+  const path = assertString(value, label);
+  if (path === '') return '';
+  return assertSkillPath(path, label);
+}
+
 export function parseSkillNameRequest(input: unknown): SkillNameRequest {
   const raw = assertShape(input, ['name'], 'skillName');
   return { name: assertSkillName(raw.name, 'skillName.name') };
@@ -2055,6 +2111,75 @@ export function parseSkillWriteRequest(input: unknown): SkillWriteRequest {
   return {
     name: assertSkillName(raw.name, 'skillWrite.name'),
     body: assertString(raw.body, 'skillWrite.body'),
+  };
+}
+
+export function parseSkillPathRequest(input: unknown): SkillPathRequest {
+  const raw = assertShape(input, ['name', 'path'], 'skillFilePath');
+  return {
+    name: assertSkillName(raw.name, 'skillFilePath.name'),
+    path: assertSkillPath(raw.path, 'skillFilePath.path'),
+  };
+}
+
+export function parseSkillFileWriteRequest(
+  input: unknown,
+): SkillFileWriteRequest {
+  const raw = assertShape(input, ['name', 'path', 'body'], 'skillFileWrite');
+  return {
+    name: assertSkillName(raw.name, 'skillFileWrite.name'),
+    path: assertSkillPath(raw.path, 'skillFileWrite.path'),
+    body: assertString(raw.body, 'skillFileWrite.body'),
+  };
+}
+
+export function parseSkillMoveRequest(input: unknown): SkillMoveRequest {
+  const raw = assertShape(input, ['name', 'from', 'to'], 'skillFileMove');
+  return {
+    name: assertSkillName(raw.name, 'skillFileMove.name'),
+    from: assertSkillPath(raw.from, 'skillFileMove.from'),
+    to: assertSkillPath(raw.to, 'skillFileMove.to'),
+  };
+}
+
+export function parseSkillImportRequest(input: unknown): SkillImportRequest {
+  const raw = assertShape(input, ['name', 'dir'], 'skillFileImport');
+  return {
+    name: assertSkillName(raw.name, 'skillFileImport.name'),
+    dir: assertSkillDir(raw.dir, 'skillFileImport.dir'),
+  };
+}
+
+/**
+ * The only skills verb whose payload holds an absolute path.
+ *
+ * Guarded here anyway. Preload is what makes a forged path impossible, and this
+ * is what makes a *broken* preload visible rather than exploitable — the same
+ * belt-and-braces `parseSpawnRequest` applies to values main itself chose.
+ */
+export function parseSkillDropRequest(input: unknown): SkillDropRequest {
+  const raw = assertShape(input, ['name', 'dir', 'sources'], 'skillFileDrop');
+
+  if (!Array.isArray(raw.sources)) {
+    return fail('skillFileDrop.sources: must be an array');
+  }
+  if (raw.sources.length > MAX_BUNDLE_FILES) {
+    return fail(
+      `skillFileDrop.sources: more than ${String(MAX_BUNDLE_FILES)} files`,
+    );
+  }
+
+  return {
+    name: assertSkillName(raw.name, 'skillFileDrop.name'),
+    dir: assertSkillDir(raw.dir, 'skillFileDrop.dir'),
+    sources: raw.sources.map((source, index) => {
+      const label = `skillFileDrop.sources[${String(index)}]`;
+      const path = assertString(source, label);
+      if (!path.startsWith('/')) {
+        return fail(`${label}: must be an absolute path`);
+      }
+      return path;
+    }),
   };
 }
 

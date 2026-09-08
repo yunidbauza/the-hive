@@ -1,24 +1,43 @@
 import { HIDDEN_ENTRIES } from './fs-contract';
+import type { FsRefusalReason } from './fs-contract';
 
 /**
  * Custom skills — the slash commands The Hive gives the sessions it starts
- * (HIVE-96).
+ * (HIVE-96), and the folders behind them (HIVE-148).
  *
- * ## Why no verb in this contract takes a path
+ * ## Which verbs take a path, and why that changed
  *
- * `fs-contract.ts` states the rule this file tightens. There, a request names a
- * `projectId` and a project-relative path, and main resolves the two against a
- * directory it validated itself. Here there is no path at all: a request names
- * a **skill**, and main already knows the one directory skills live in.
+ * This file used to say that no verb here takes a path, and that traversal was
+ * therefore unrepresentable rather than filtered. That was true while a skill
+ * was one file. A skill is a folder, and a pane that can author every file in
+ * one cannot address them by anything but a path.
  *
- * A name is {@link SKILL_NAME_PATTERN}, which cannot express a separator, a dot
- * segment, or a drive letter. So traversal is not filtered out of these
- * requests — it is unrepresentable in them, which is a stronger claim and a
- * much shorter one to audit.
+ * So the boundary moved rather than dissolved. Six verbs still name a skill and
+ * nothing else — `list`, `read`, `write`, `remove`, `rename`, and `import`,
+ * whose target directory is a path but whose *sources* main chooses itself
+ * through a native dialog. Seven carry a skill-relative path, and every one of
+ * them puts it through `assertSkillPath`: `assertRelPath`'s rules — no control
+ * characters, not absolute, no `..` segment — plus a depth cap.
  *
- * The consequence worth stating for the next person: `remove` cannot be widened
- * into "delete this directory" by a change in the renderer. Widening it would
- * mean adding a field here first, and this file is where a reviewer looks.
+ * A guard on the string is deliberately **not** the whole story, for the reason
+ * `guards.ts` gives about `assertRelPath` itself: a symlink is a fact about the
+ * disk, not about the string. Main resolves every path with `realpath` and
+ * checks containment with `contains()` before it touches anything, exactly as
+ * `fs/paths.ts` does. Both layers are required and neither substitutes.
+ *
+ * ## The one verb that carries an absolute path, and who may produce one
+ *
+ * `drop` carries source paths. The renderer cannot produce one: preload mints
+ * an opaque id per file from `webUtils.getPathForFile`, which answers only for
+ * a real `File` the browser built from a drop, and resolves ids back to paths
+ * at invoke time. A renderer that invents an id gets nothing. Without that, the
+ * verb would be a read-anywhere primitive — copy `/etc/passwd` into a bundle,
+ * then read it back with `skills:file:read`.
+ *
+ * The consequence worth stating for the next person is unchanged in spirit:
+ * `remove` still cannot be widened into "delete this directory" by a change in
+ * the renderer. Widening it would mean adding a field here first, and this file
+ * is where a reviewer looks.
  */
 
 /**
@@ -53,6 +72,8 @@ export interface SkillSummary {
   /** From the frontmatter. Empty when the file declares none, which is legal. */
   description: string;
   valid: true;
+  /** Everything in the folder, including what will not be sent (HIVE-148). */
+  manifest: BundleManifest;
 }
 
 /**
@@ -215,4 +236,60 @@ export interface BundleManifest {
    * definition has no row to carry a reason.
    */
   capped: string | null;
+}
+
+/** A file or folder inside one skill. */
+export interface SkillPathRequest {
+  name: string;
+  path: string;
+}
+
+export interface SkillFileWriteRequest {
+  name: string;
+  path: string;
+  /** The whole file. Uncapped and unswept, for the reason `SkillWriteRequest` gives. */
+  body: string;
+}
+
+/** Rename inside the bundle. Both are skill-relative; neither leaves it. */
+export interface SkillMoveRequest {
+  name: string;
+  from: string;
+  to: string;
+}
+
+/** Where inside the bundle to put what the user picks. `''` is the root. */
+export interface SkillImportRequest {
+  name: string;
+  dir: string;
+}
+
+/**
+ * `sources` are absolute paths, and only preload can put one here.
+ *
+ * The renderer's side of this verb takes opaque ids; preload resolves them from
+ * the map it filled through `webUtils.getPathForFile` and consumes them. See
+ * this file's headline docblock.
+ */
+export interface SkillDropRequest {
+  name: string;
+  dir: string;
+  sources: string[];
+}
+
+/**
+ * One file in a bundle, for the editor.
+ *
+ * `refused` rather than an error, and the distinction is `fs-contract.ts`'s: a
+ * font is not a failure. The pane renders a row, a size and a Delete for one,
+ * which is more than an error could offer.
+ */
+export interface SkillFileRead {
+  name: string;
+  path: string;
+  /** The real location, for the editor's header. */
+  absPath: string;
+  size: number;
+  body: string | null;
+  refused: FsRefusalReason | null;
 }
