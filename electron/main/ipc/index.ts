@@ -1462,13 +1462,20 @@ export function registerIpcHandlers(
   remoteListener = createRemoteListener({
     bind: getConfig().server.bind,
     /*
-      A getter, not the array itself — this is what lets a `--pair` or
-      `--revoke` one-shot, run from a terminal in a *different* process,
-      reach a server that is already listening with no restart. Read fresh on
-      every handshake by `createRemoteListener` itself; see that option's own
-      doc comment for the full argument.
+      `reloadConfig()`, not `getConfig()` (HIVE-142 review, I3). `getConfig()`
+      answers this process's cached `ConfigSnapshot`, and the config file is
+      explicitly not watched (`config/index.ts`'s own module doc comment) — a
+      getter closing over `getConfig()` would still be reading whatever was
+      cached at boot, no matter how many times it is called, which is not
+      what "read fresh" means. `reloadConfig()` actually re-reads the file, so
+      a `--pair` or `--revoke` one-shot run from a terminal in a *different*
+      process is genuinely visible to the very next handshake, with no
+      restart of this process. Called once per handshake by
+      `createRemoteListener` itself (its own doc comment on this option); a
+      handshake is rare enough that a file read on every one of them is not a
+      cost worth optimising away.
     */
-    devices: () => getConfig().server.devices,
+    devices: () => reloadConfig().server.devices,
     // What a client's header indicator renders: "attached · <serverName>".
     // The machine's own hostname identifies *which* served Mac a client is
     // looking at, which matters once more than one exists.

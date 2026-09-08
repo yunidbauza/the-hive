@@ -54,7 +54,11 @@ vi.mock('electron', () => ({
   clipboard: { writeText },
   nativeImage: {
     createEmpty: vi.fn(() => ({ isEmpty: () => true })),
-    createFromPath: vi.fn(() => ({ isEmpty: () => false, setTemplateImage })),
+    createFromPath: vi.fn(() => ({
+      isEmpty: () => false,
+      setTemplateImage,
+      resize: vi.fn(() => ({ isEmpty: () => false, setTemplateImage })),
+    })),
   },
 }));
 
@@ -181,22 +185,49 @@ describe('buildTrayTemplate', () => {
     const paired = template.find((item) => item.label === 'Paired devices (2)');
     expect(paired?.submenu).toHaveLength(2);
     expect(paired?.submenu?.map((entry) => entry.label)).toEqual([
-      'MacBook',
-      'Old Phone (revoked)',
+      'Revoke "MacBook"…',
+      '"Old Phone" (revoked)',
     ]);
   });
 
-  it("clicking an active device's entry revokes it by name", () => {
+  it("clicking an active device's entry asks for confirmation before revoking it (HIVE-142 I4)", async () => {
+    // A mis-click on the sole console of an unattended machine must not
+    // silently cut a device's access — see the click handler's own comment.
+    showMessageBox.mockResolvedValue({ response: 1 }); // "Revoke"
     const deps = makeDeps();
     const template = buildTrayTemplate(deps) as MenuItem[];
 
     const paired = template.find((item) => item.label === 'Paired devices (2)');
-    const macBook = paired?.submenu?.find((entry) => entry.label === 'MacBook');
+    const macBook = paired?.submenu?.find((entry) => entry.label === 'Revoke "MacBook"…');
+    expect(macBook?.enabled).toBe(true);
 
     macBook?.click?.();
+    expect(deps.onRevoke).not.toHaveBeenCalled(); // not yet — confirmation is still pending
+    expect(showMessageBox).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'warning', buttons: ['Cancel', 'Revoke'] }),
+    );
+
+    await Promise.resolve();
+    await Promise.resolve();
 
     expect(deps.onRevoke).toHaveBeenCalledWith('MacBook');
-    expect(macBook?.enabled).toBe(true);
+    // Reported after, the same way pairing reports success.
+    expect(showMessageBox).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'info', title: 'Device revoked' }),
+    );
+  });
+
+  it('does not revoke when the confirmation is cancelled', async () => {
+    showMessageBox.mockResolvedValue({ response: 0 }); // "Cancel"
+    const deps = makeDeps();
+    const template = buildTrayTemplate(deps) as MenuItem[];
+
+    const paired = template.find((item) => item.label === 'Paired devices (2)');
+    paired?.submenu?.find((entry) => entry.label === 'Revoke "MacBook"…')?.click?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(deps.onRevoke).not.toHaveBeenCalled();
   });
 
   it('disables an already-revoked device entry', () => {
@@ -204,7 +235,7 @@ describe('buildTrayTemplate', () => {
     const template = buildTrayTemplate(deps) as MenuItem[];
 
     const paired = template.find((item) => item.label === 'Paired devices (2)');
-    const oldPhone = paired?.submenu?.find((entry) => entry.label === 'Old Phone (revoked)');
+    const oldPhone = paired?.submenu?.find((entry) => entry.label === '"Old Phone" (revoked)');
 
     expect(oldPhone?.enabled).toBe(false);
   });
@@ -254,15 +285,31 @@ describe('buildTrayTemplate', () => {
           credential: { kind: 'sha256', digest: 'x' } as const,
         })),
     });
+    // By label, not by array position — a reordering of the template's other
+    // entries must not break this on its own.
+    const pairedLabel = (deps_: typeof deps) =>
+      (buildTrayTemplate(deps_) as MenuItem[]).find((item) =>
+        item.label?.startsWith('Paired devices'),
+      )?.label;
 
-    expect((buildTrayTemplate(deps) as MenuItem[])[1]?.label).toBe(
-      'Paired devices (1)',
-    );
+    expect(pairedLabel(deps)).toBe('Paired devices (1)');
 
     count = 2;
-    expect((buildTrayTemplate(deps) as MenuItem[])[1]?.label).toBe(
-      'Paired devices (2)',
-    );
+    expect(pairedLabel(deps)).toBe('Paired devices (2)');
+  });
+
+  it('shows every dialog with no parent window (server mode runs no renderer)', async () => {
+    const deps = makeDeps();
+    const template = buildTrayTemplate(deps) as MenuItem[];
+
+    template.find((item) => item.label === 'Pair a device…')?.click?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // `showMessageBox(options)` — never `showMessageBox(window, options)`.
+    for (const call of showMessageBox.mock.calls) {
+      expect(call).toHaveLength(1);
+    }
   });
 });
 

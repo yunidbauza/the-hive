@@ -4,7 +4,7 @@ import { app } from 'electron';
 
 import { applyDevDockIcon } from './app-icon';
 import { parseInvocation } from './cli';
-import { getConfig, setServer } from './config';
+import { getConfig, reloadConfig, setServer } from './config';
 import { startLoginEnvImport } from './config/login-env';
 import { installContentSecurityPolicy } from './csp';
 import { remoteListenerBoundHost, startRemoteListener } from './ipc';
@@ -13,6 +13,7 @@ import { registerLifecycle } from './lifecycle';
 import { mintUniqueDevice, revokeNamed } from './server/devices';
 import { fileBackedIo } from './server/file-backed-io';
 import { runOneShot } from './server/one-shot';
+import { onShutdown } from './shutdown';
 import { createServerTray } from './tray';
 import { startUpdateChecks } from './updates';
 import { createWindow } from './window';
@@ -153,6 +154,14 @@ if (!app.requestSingleInstanceLock()) {
   const serverMode = invocation.server || getConfig().server.enabled;
 
   /**
+   * The tray's own handle (HIVE-142 review, I2) — see the comment at its
+   * assignment below for why dropping it is not an option. Declared here,
+   * outside `whenReady`'s callback, so `onShutdown` can close over it and
+   * still see the value that callback assigns.
+   */
+  let serverTray: ReturnType<typeof createServerTray> | undefined;
+
+  /**
    * The CSP has to be installed before any renderer loads, and
    * `session.defaultSession` is only available once the app is ready.
    */
@@ -194,30 +203,75 @@ if (!app.requestSingleInstanceLock()) {
         `boundHost` rather than the promise `hooks.start()` returned.
       */
       void startRemoteListener();
-      createServerTray({
-        devices: () => getConfig().server.devices,
+      /*
+        Held in a module-level binding, not discarded (HIVE-142 review, I2).
+        Inside `createServerTray`, the only remaining references form a
+        closed cycle — `tray` → its own `click`/`right-click` handler map →
+        `showMenu` → `tray` again — reachable from nothing outside the
+        function once its return value is dropped. A collected `Tray` takes
+        its status item down with it: the classic Electron footgun, and in
+        server mode the tray is the *only* way a human reaches Pair, Open or
+        Quit — the exact failure `createServerTray`'s own `setTitle('Hive')`
+        fallback exists to keep from being invisible, defeated a different
+        way if the whole item can vanish. `serverTray.destroy()` is also
+        registered with `onShutdown` below, so the status item is removed
+        cleanly rather than left for the OS to notice the process exited.
+      */
+      serverTray = createServerTray({
         /*
-          Mint, then persist: `setServer` spreads onto the current block
-          (`electron/main/config/index.ts`'s own rule), so this never rebuilds
-          `bind` or drops a device paired by a concurrent `--pair` one-shot —
-          the same wholesale-replace-of-`devices`-only shape `fileBackedIo`
-          uses for the CLI path.
+          `reloadConfig()`, not `getConfig()` (HIVE-142 review, I3) — the same
+          fix and the same reason as the listener's own `devices` getter in
+          `ipc/index.ts`: `getConfig()` answers a snapshot cached at boot, and
+          the file is never watched, so a plain `getConfig()` here would show
+          the tray a roster frozen at launch forever, not "fresh on every
+          open" as this option is documented to be.
+        */
+        devices: () => reloadConfig().server.devices,
+        /*
+          Mint, then persist against a freshly re-read roster — `reloadConfig()`
+          again, and load-bearing here in a way it is not for the listener's
+          read-only getter: `setServer` replaces `devices` wholesale
+          (`electron/main/config/index.ts`'s own rule), so building the next
+          array from a *stale* `getConfig()` would silently erase a device
+          paired meanwhile by a concurrent `--pair` one-shot the moment this
+          write lands (HIVE-142 review, I3b — a real data-loss bug the getter
+          fix alone does not touch, since this is a write path, not a read).
 
           `mintUniqueDevice`, not a bare `mintDevice` call — the collision
           check `--pair`'s own `runOneShot` path already has (HIVE-142
           review). Nothing is written on `null`; the tray tells the user to
           try again rather than pairing a device whose id shadows one already
           stored, which `verifyDevice` would then never see past the first.
+
+          Neither of these closes the race entirely — two processes can still
+          write between this read and this write — but that is the same
+          bounded, documented gap `--pair`'s own one-shot already lives with
+          (spec §8's "Concurrency" note): the writer is atomic and preserves
+          unknown keys, so the failure mode is a lost update, not a corrupt
+          file, and pairing is manual and rare enough that this is recorded
+          rather than engineered around.
         */
         onPair: (name) => {
-          const devices = getConfig().server.devices;
+          const devices = reloadConfig().server.devices;
+          /*
+            Refuses a duplicate name before minting anything, matching
+            `runPair`'s own check in `one-shot.ts` (HIVE-142 review, minor).
+            Without it, two same-named devices become an un-separable entry:
+            `revokeNamed` below — shared by this path and `--revoke` — matches
+            by name and revokes *every* device carrying it, with no way to
+            single one out. `autoPairingName` (`tray.ts`) is timestamp-based,
+            so a real collision needs two tray pairings inside the same
+            second; rare, but the check costs nothing against a failure mode
+            that would otherwise be silent.
+          */
+          if (devices.some((device) => device.name === name)) return null;
           const minted = mintUniqueDevice(name, devices);
           if (!minted) return null;
           setServer({ devices: [...devices, minted.device] });
           return minted.token;
         },
         onRevoke: (name) => {
-          const result = revokeNamed(getConfig().server.devices, name);
+          const result = revokeNamed(reloadConfig().server.devices, name);
           if (result.revoked) setServer({ devices: result.devices });
         },
         onOpenConsole: () => createWindow({ withSplash: true }),
@@ -239,6 +293,15 @@ if (!app.requestSingleInstanceLock()) {
       });
     }
   });
+
+  /*
+    `serverTray?.` rather than a plain call: this hook is registered
+    unconditionally (every launch, not only server mode), and it runs
+    whether or not the tray was ever created — the same `?.` shape every
+    other optional-composition teardown in this codebase uses (see
+    `ipc/index.ts`'s `hooks?.`, `runs?.`, `scheduler?.`).
+  */
+  onShutdown(() => serverTray?.destroy());
 
   registerLifecycle({ createWindow, serverMode });
 }

@@ -48,6 +48,25 @@ export function registerLifecycle({
   const isMac = platform === 'darwin';
 
   /**
+   * Whether boot's own window-or-no-window decision (below, in `whenReady`)
+   * has been made yet.
+   *
+   * `activate` is registered here, synchronously, before `whenReady` has
+   * resolved — and Electron's own docs list "launching the application for
+   * the first time" among `activate`'s triggers, so a race is at least
+   * documented as possible even though a manual `--server` launch on this
+   * machine (HIVE-142 review, I1) did not reproduce it: `whenReady` resolved
+   * with no `activate` seen in the following 20+ seconds. Guarding anyway
+   * costs one flag and closes a real hole either way: in ordinary mode, an
+   * `activate` that *did* race ahead of boot would find zero app windows and
+   * call `createWindow()` a second time, right before boot's own
+   * `createWindow({ withSplash: true })` ran — two windows from one launch.
+   * In server mode the same race would open the console the instant server
+   * mode had decided not to. This flag closes both.
+   */
+  let booting = true;
+
+  /**
    * Focus the existing window instead of opening a second one — or, on a
    * served machine, open the console for the first time.
    *
@@ -105,16 +124,30 @@ export function registerLifecycle({
      * handler runs unconditionally on its own `whenReady`.
      */
     if (!serverMode) createWindow({ withSplash: true });
+    // Boot's own decision is made — see `booting`'s doc comment above.
+    booting = false;
   });
 
   /**
-   * macOS: clicking the dock icon with no windows open re-creates one.
+   * Re-creates a window when there is none — a dock icon click with no
+   * window open in ordinary mode, or (deliberately, HIVE-142) any equivalent
+   * of that in server mode, where the dock icon is hidden but a re-activation
+   * attempt is still a request to see the console, the same reasoning
+   * `second-instance` above already applies. Not guarded by `serverMode`
+   * itself — server mode's own boot leaves `appWindows()` at zero exactly
+   * like a closed-everything ordinary session does, so the same check below
+   * already does the right thing in both.
    *
-   * Deliberately without the splash. The app is already running; there is no
-   * boot to cover, and a chamber that opened every time the dock was clicked
-   * would turn a two-and-a-half second launch flourish into a recurring toll.
+   * Deliberately without the splash: the app is already running (or, in
+   * server mode, already listening); there is no boot to cover, and a
+   * chamber that opened every time would turn a launch flourish into a
+   * recurring toll.
+   *
+   * Guarded by `booting` because this handler is registered before
+   * `whenReady` — see that flag's own doc comment for the race it closes.
    */
   app.on('activate', () => {
+    if (booting) return;
     /**
      * Counted over the app's own windows, not every window that exists.
      *

@@ -121,6 +121,54 @@ describe('activate', () => {
 
     expect(createWindow).not.toHaveBeenCalled();
   });
+
+  it('does not open a second window when activate races ahead of boot (HIVE-142 I1)', async () => {
+    // `activate` is registered before `whenReady` resolves. A manual
+    // `--server` launch on macOS did not reproduce this race (whenReady
+    // resolved with no `activate` seen in 20+ seconds), but Electron's own
+    // docs list first launch as a possible trigger, and the failure mode is
+    // real either way: without the `booting` guard, firing `activate` here —
+    // while `appWindows()` is still empty, ahead of boot's own decision —
+    // would add a *second* `createWindow` call alongside boot's own.
+    const createWindow = vi.fn();
+    registerLifecycle({ createWindow, platform: 'darwin' });
+
+    // Fired synchronously, before `whenReady().then()`'s callback has run —
+    // the exact race window `booting` exists to close.
+    await fire('activate');
+
+    // Boot still proceeds normally, and exactly once.
+    await vi.waitFor(() => expect(createWindow).toHaveBeenCalledTimes(1));
+    expect(createWindow).toHaveBeenCalledWith({ withSplash: true });
+  });
+
+  it('does not open a window when activate races ahead of server-mode boot', async () => {
+    // Server mode never calls `createWindow` from `whenReady` itself, so
+    // there is no createWindow call to wait on — `Menu.setApplicationMenu`
+    // is the marker boot has actually settled, same as the server-mode-skip
+    // test above.
+    const { Menu } = await import('electron');
+    const createWindow = vi.fn();
+    registerLifecycle({ createWindow, platform: 'darwin', serverMode: true });
+
+    await fire('activate');
+    expect(createWindow).not.toHaveBeenCalled();
+
+    await vi.waitFor(() => expect(Menu.setApplicationMenu).toHaveBeenCalled());
+    await fire('activate');
+    expect(createWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it('still opens the console once server-mode boot has settled — the tray-equivalent of a dock click', async () => {
+    const { Menu } = await import('electron');
+    const createWindow = vi.fn();
+    registerLifecycle({ createWindow, platform: 'darwin', serverMode: true });
+    await vi.waitFor(() => expect(Menu.setApplicationMenu).toHaveBeenCalled());
+
+    await fire('activate');
+
+    expect(createWindow).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('second-instance', () => {

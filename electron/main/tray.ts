@@ -30,7 +30,15 @@ import { devIconPath } from './app-icon';
  */
 
 export interface TrayDeps {
-  /** Read fresh on every open, so a `--pair` or `--revoke` in another process shows up with no restart. */
+  /**
+   * Must actually re-read the config file on every call, not merely be
+   * called again — `getConfig()` alone answers a snapshot cached at boot
+   * (the file is never watched), so a getter that only wraps `getConfig()`
+   * would look fresh while showing the same frozen roster forever. `index.ts`
+   * fulfils this with `reloadConfig()` (HIVE-142 review, I3); a `--pair` or
+   * `--revoke` one-shot run from a terminal in another process is what this
+   * property exists to make visible here with no restart.
+   */
   devices: () => readonly ServerDevice[];
   /**
    * Mints and stores a device named `name`, returning the plaintext token —
@@ -74,11 +82,41 @@ export function buildTrayTemplate(deps: TrayDeps): MenuItemConstructorOptions[] 
     devices.length === 0
       ? [{ label: 'No devices paired', enabled: false }]
       : devices.map((device) => ({
-          label: device.revoked ? `${device.name} (revoked)` : device.name,
+          label: device.revoked ? `"${device.name}" (revoked)` : `Revoke "${device.name}"…`,
           // A revoked device has nothing left to revoke — the item exists so
           // the roster is still legible, not so it can be clicked again.
           enabled: !device.revoked,
-          click: () => deps.onRevoke(device.name),
+          /*
+            Confirmed before it happens, and reported after (HIVE-142 review,
+            I4). The bare device name used to be both the label and the whole
+            click target: one mis-click on the sole console of an unattended
+            machine silently cut a device's access, with no signal beyond
+            "(revoked)" the *next* time this menu happened to open. A device
+            revoked in error has no undo — `mintUniqueDevice`/`--pair` mints a
+            new credential, it does not restore the old one — which is exactly
+            why this, unlike pairing, asks first.
+          */
+          click: () => {
+            void dialog
+              .showMessageBox({
+                type: 'warning',
+                title: 'Revoke this device?',
+                message: `"${device.name}" will no longer be able to reach this Hive.`,
+                detail: 'This cannot be undone. A revoked device must be paired again from a terminal or this menu.',
+                buttons: ['Cancel', 'Revoke'],
+                defaultId: 0,
+                cancelId: 0,
+              })
+              .then((result) => {
+                if (result.response !== 1) return; // Cancel, or dismissed.
+                deps.onRevoke(device.name);
+                void dialog.showMessageBox({
+                  type: 'info',
+                  title: 'Device revoked',
+                  message: `"${device.name}" can no longer reach this Hive.`,
+                });
+              });
+          },
         }));
 
   const address = deps.boundAddress();
@@ -156,11 +194,19 @@ export function buildTrayTemplate(deps: TrayDeps): MenuItemConstructorOptions[] 
  * icon art was drawn for the Dock, not as a monochrome silhouette, so this is
  * an improvement over showing it untouched rather than a properly-designed
  * template asset — that asset is still owed (see the module doc comment).
+ *
+ * `resize({ width: 16, height: 16 })` on top of that (HIVE-142 review,
+ * minor): the dev asset `devIconPath` resolves is the full-bleed 1024px Dock
+ * master, and a template image keeps only its alpha channel — at menu-bar
+ * scale, an un-resized 1024px opaque square renders as a solid block, not a
+ * recognisable mark. Bounding it to the size macOS actually draws a menu-bar
+ * icon at is what lets whatever silhouette the art has survive at all; it is
+ * still not the purpose-built glyph the module doc comment says is owed.
  */
 function trayIcon(): NativeImage {
   const path = devIconPath('icon.png');
   if (!path) return nativeImage.createEmpty();
-  const image = nativeImage.createFromPath(path);
+  const image = nativeImage.createFromPath(path).resize({ width: 16, height: 16 });
   if (image.isEmpty()) return image;
   image.setTemplateImage(true);
   return image;
