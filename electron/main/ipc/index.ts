@@ -4148,17 +4148,17 @@ export function remoteRegistrySize(): number {
   return remoteRegistry.size();
 }
 
-/**
- * Test-only: attach a socket with no listener behind it (HIVE-143).
- *
- * The composition suite has no real `ws` server, so this is how it reaches the
- * set the socket half of the fan-out reads. Production code attaches through
- * the listener's own `onAttach`, which is also where resume happens — this
- * deliberately does neither, so a test that wants the resume path must exercise
- * `Sessions.resume` or the live suite instead of this door.
- */
-export function attachForTest(socket: AttachedSocket): void {
-  attachedSockets.add(socket);
-}
+/*
+  There is deliberately no `attachForTest` here (HIVE-143 review).
 
+  It existed so the composition suite could reach `attachedSockets` without a
+  real `ws` server, and it was documented test-only — but a documented
+  convention is not a fence. As an ordinary export it let any caller add an
+  arbitrary object to the fan-out set, which is push access to every attached
+  client's stream, from a module the whole main process already imports. The
+  suite reaches the same set through the production door instead: it stands in
+  for the listener, captures the real `onAttach` this file hands
+  `createRemoteListener`, and calls that — which is also a stronger test, since
+  it now covers the callback rather than bypassing it.
+*/
 export { assertSender, isTrustedSender, IpcSenderError } from './sender';

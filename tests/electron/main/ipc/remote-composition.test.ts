@@ -132,14 +132,28 @@ vi.mock('../../../../electron/main/ledger', () => ({
  * listener it is handed to.
  *
  * `registerIpcHandlers` constructs the listener and passes it the callback
- * under test; nothing else exposes it, and `attachForTest` deliberately does
- * not go through it (its own comment says so). Faking the listener is
- * therefore the only way to reach the replay loop without a real socket — and
- * it fakes only the transport: the callback, the fan-out set it adds to, and
- * the frames it builds are all the production ones.
+ * under test, and nothing else exposes it. Faking the listener is therefore the
+ * only way to reach the fan-out set and the replay loop without a real socket —
+ * and it fakes only the transport: the callback, the set it adds to, and the
+ * frames it builds are all the production ones.
+ *
+ * It is also the *only* way, deliberately (HIVE-143 review). There used to be an
+ * `attachForTest` export that added a socket to the set directly; it was a
+ * production export with a test-only comment, and push access to every attached
+ * client's stream is not a thing to leave lying in a module the whole main
+ * process imports. Every case below that needs an attached socket goes through
+ * this door, which is the one production code uses too.
  */
 type OnAttach = (socket: AttachedSocket, resumeFrom: Readonly<Record<string, number>> | undefined) => void;
 let capturedOnAttach: OnAttach | null = null;
+
+/** The captured callback, or a failure naming why it is missing. */
+const onAttach = (): OnAttach => {
+  if (capturedOnAttach === null) {
+    throw new Error('createRemoteListener was never handed an onAttach');
+  }
+  return capturedOnAttach;
+};
 
 vi.mock('@remote-host/listener', () => ({
   createRemoteListener: (options: { onAttach: OnAttach }) => {
@@ -187,8 +201,9 @@ vi.mock('../../../../electron/main/sessions', () => ({
 }));
 
 const { CH } = await import('../../../../electron/shared/ipc-contract');
-const { attachForTest, registerIpcHandlers, remoteRegistrySize, resetIpcHandlers } =
-  await import('../../../../electron/main/ipc');
+const { registerIpcHandlers, remoteRegistrySize, resetIpcHandlers } = await import(
+  '../../../../electron/main/ipc'
+);
 
 /**
  * Read at import time, before any test body has run, so the composition-order
@@ -252,7 +267,10 @@ describe('remote composition (HIVE-143)', () => {
     windows.push(fakeWindow());
     registerIpcHandlers();
     const socket = { send: vi.fn() };
-    attachForTest(socket);
+    // Attached the way production attaches — the real `onAttach`, with no
+    // `resumeFrom`, so nothing is replayed and the only effect under test is
+    // that the socket joined the fan-out.
+    onAttach()(socket, undefined);
 
     emitLedgerChanged({ id: 'e1' });
 
@@ -268,7 +286,7 @@ describe('remote composition (HIVE-143)', () => {
     windows.push(fakeWindow());
     registerIpcHandlers();
     const socket = { send: vi.fn() };
-    attachForTest(socket);
+    onAttach()(socket, undefined);
 
     resetIpcHandlers();
     registerIpcHandlers();
@@ -296,13 +314,6 @@ describe('the attach replay loop (HIVE-143)', () => {
   const recordingSocket = (): { socket: AttachedSocket; sent: unknown[] } => {
     const sent: unknown[] = [];
     return { socket: { send: (frame) => sent.push(frame) }, sent };
-  };
-
-  const onAttach = (): OnAttach => {
-    if (capturedOnAttach === null) {
-      throw new Error('createRemoteListener was never handed an onAttach');
-    }
-    return capturedOnAttach;
   };
 
   it('sends nothing at all when the client asked for no resume', () => {
