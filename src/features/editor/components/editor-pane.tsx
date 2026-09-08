@@ -10,6 +10,7 @@ import {
   NoticeAction,
 } from '@features/editor/components/editor-notice';
 import { languageFor } from '@lib/explorer/language';
+import { humanSize } from '@lib/human-size';
 import { useEditorAppearance, useEditorLayout } from '@stores/appearance-store';
 import { useActiveFile, useEditorActions } from '@stores/editor-store';
 import { usePickerState, useSettingsOpen } from '@stores/ui-store';
@@ -25,24 +26,6 @@ import { usePickerState, useSettingsOpen } from '@stores/ui-store';
  * decided, and re-deriving "is this too large" in the renderer would be a
  * second threshold to keep in step with the first.
  */
-
-/**
- * Decimal, not binary.
- *
- * `MAX_FILE_BYTES` is 1,000,000 — a round decimal number — so a 1024-based
- * formatter would render the cap itself as "977 KB" and make the refusal read
- * as though the limit were somewhere else entirely.
- */
-const BYTES_PER_KB = 1000;
-
-/** A size a person can read. Not `Intl` — this is two digits and a suffix. */
-function humanSize(bytes: number): string {
-  if (bytes < BYTES_PER_KB) return `${bytes} B`;
-  if (bytes < BYTES_PER_KB * BYTES_PER_KB) {
-    return `${Math.round(bytes / BYTES_PER_KB)} KB`;
-  }
-  return `${(bytes / BYTES_PER_KB / BYTES_PER_KB).toFixed(1)} MB`;
-}
 
 /** A quiet full-pane message — the refusals, the errors, the empty case. */
 function PaneMessage({ icon, children }: { icon: string; children: string }) {

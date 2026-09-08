@@ -2,7 +2,10 @@ import { useEffect, useRef } from 'react';
 
 import { EditorSurface } from '@components/editor/editor-surface';
 import { languageFor } from '@lib/explorer/language';
+import { humanSize } from '@lib/human-size';
+import type { FsRefusalReason } from '@shared/fs-contract';
 import { useEditorAppearance } from '@stores/appearance-store';
+
 
 /**
  * The markdown grammar, resolved once at module scope.
@@ -21,6 +24,16 @@ interface SkillEditorProps {
   dirty: boolean;
   /** Why the typed name cannot be saved, or `null`. Disables Save when set. */
   problem: string | null;
+  /**
+   * Why this file cannot be shown, or `null` to edit it (HIVE-148).
+   *
+   * `FsRefusalReason` rather than a vocabulary of this pane's own: a bundle
+   * holds fonts and images, and "not text" is a distinction `fs-contract.ts`
+   * already draws for exactly the same reason on exactly the same kind of file.
+   */
+  refused?: FsRefusalReason | null;
+  /** The file's size on disk, for the refusal message. */
+  size?: number;
   onChange: (body: string) => void;
   onSave: () => void;
   onDelete: () => void;
@@ -50,12 +63,27 @@ interface SkillEditorProps {
  * `env-editor.tsx` still argues against a text box for env vars, and still
  * correctly: that argument is about *structured* data — name/value pairs, which
  * are genuinely better as rows — and does not reach a document.
+ *
+ * ## Why a file it cannot render still gets a panel (HIVE-148)
+ *
+ * A skill is a folder now, and a folder holds fonts and images. One of them
+ * being unopenable is not an error — it is a **refusal**, the distinction
+ * `fs-contract.ts` draws and `fs/read.ts` implements, and the reason this reuses
+ * `FsRefusalReason` rather than inventing a second word for the same fact.
+ *
+ * So the panel keeps the path, adds a size, and keeps Delete, which is the one
+ * action that still means something for a file nobody can type. What it drops
+ * is Save: there is no buffer behind it, and a disabled Save would send the
+ * reader hunting for a reason it is disabled rather than telling them the file
+ * is fine and simply not showable here.
  */
 export function SkillEditor({
   path,
   body,
   dirty,
   problem,
+  refused = null,
+  size = 0,
   onChange,
   onSave,
   onDelete,
@@ -174,20 +202,33 @@ export function SkillEditor({
         A never-saved skill has no path, and every never-saved skill is the same
         draft, so they share one key.
       */}
-      <EditorSurface
-        ariaLabel="Skill source"
-        fileKey={path ?? 'new-skill'}
-        value={body}
-        languageLoad={SKILL_LANGUAGE}
-        readOnly={false}
-        fontFamily={appearance.fontFamily}
-        fontSize={appearance.fontSize}
-        wordWrap={appearance.wordWrap}
-        lineNumbers={appearance.lineNumbers}
-        tabWidth={appearance.tabWidth}
-        onChange={onChange}
-        onSave={save}
-      />
+      {refused === null ? (
+        <EditorSurface
+          ariaLabel="Skill source"
+          fileKey={path ?? 'new-skill'}
+          value={body}
+          languageLoad={SKILL_LANGUAGE}
+          readOnly={false}
+          fontFamily={appearance.fontFamily}
+          fontSize={appearance.fontSize}
+          wordWrap={appearance.wordWrap}
+          lineNumbers={appearance.lineNumbers}
+          tabWidth={appearance.tabWidth}
+          onChange={onChange}
+          onSave={save}
+        />
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
+          <span className="text-[12px] text-muted">
+            {refused === 'too-large'
+              ? 'This file is too large to show here.'
+              : 'This file is not text.'}
+          </span>
+          <span className="text-[11.5px] text-subtle">
+            It ships with the skill. {humanSize(size)}
+          </span>
+        </div>
+      )}
 
       <div className="flex items-center justify-between gap-3 border-t border-border-soft px-2.5 py-1.5">
         {/*
@@ -202,7 +243,10 @@ export function SkillEditor({
               : 'min-w-0 text-[11px] text-red'
           }
         >
-          {problem ?? 'The name in the frontmatter names the folder and the command.'}
+          {refused !== null
+            ? 'Delivered to every session that starts with this skill.'
+            : (problem ??
+              'The name in the frontmatter names the folder and the command.')}
         </span>
         <div className="flex shrink-0 gap-1.5">
           <button
@@ -212,14 +256,24 @@ export function SkillEditor({
           >
             Delete
           </button>
-          <button
-            type="button"
-            onClick={onSave}
-            disabled={problem !== null}
-            className="rounded-md bg-brand-fill px-2.5 py-1 text-[12px] text-on-brand hover:bg-brand-fill-hover disabled:opacity-60"
-          >
-            Save
-          </button>
+          {/*
+            Save is absent for a refused file, not disabled.
+
+            There is no buffer behind it — nothing was read, so there is nothing
+            to write — and a disabled control sends the reader looking for the
+            reason it is disabled. Delete is the one action that still means
+            something here, so it is the only one offered.
+          */}
+          {refused === null ? (
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={problem !== null}
+              className="rounded-md bg-brand-fill px-2.5 py-1 text-[12px] text-on-brand hover:bg-brand-fill-hover disabled:opacity-60"
+            >
+              Save
+            </button>
+          ) : null}
         </div>
       </div>
     </div>
