@@ -5,7 +5,10 @@ import { join } from 'node:path';
 import {
   RESERVED_SKILL_NAME,
   SKILL_NAME_PATTERN,
+  type BundleManifest,
 } from '@shared/skills-contract';
+
+import { readBundle } from './bundle';
 
 /**
  * Reading the user's own skills (HIVE-96).
@@ -35,6 +38,16 @@ export interface UserSkill {
    */
   body: string;
   path: string;
+  /** The skill folder itself, which the mirror copies from. */
+  dir: string;
+  /**
+   * Everything else in the folder (HIVE-148).
+   *
+   * Read here rather than by the mirror because both the mirror and the pane
+   * need it, and walking twice would let the directory change between them —
+   * the pane would then dim a row the mirror had just copied.
+   */
+  manifest: BundleManifest;
 }
 
 export interface InvalidSkill {
@@ -197,7 +210,15 @@ export async function readUserSkills(root: string): Promise<SkillsRead> {
       continue;
     }
 
-    skills.push({ name, description: keys.description ?? '', body, path });
+    const dir = join(root, name);
+    skills.push({
+      name,
+      description: keys.description ?? '',
+      body,
+      path,
+      dir,
+      manifest: await readBundle(dir),
+    });
   }
 
   return { skills, invalid };

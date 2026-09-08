@@ -20,6 +20,8 @@ const read = (...names: string[]): SkillsRead => ({
     description: 'd',
     body: `---\nname: ${name}\ndescription: d\n---\nBody.\n`,
     path: `/wherever/${name}/SKILL.md`,
+    dir: `/wherever/${name}`,
+    manifest: { entries: [], capped: null },
   })),
   invalid: [],
 });

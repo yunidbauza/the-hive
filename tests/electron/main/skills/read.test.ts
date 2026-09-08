@@ -221,4 +221,34 @@ describe('readUserSkills', () => {
 
     expect(read.skills.map((s) => s.name)).toEqual(['standup', 'triage']);
   });
+
+  it('carries the bundle manifest and the folder path on each skill', async () => {
+    await mkdir(join(root, 'graphify', 'scripts'), { recursive: true });
+    await writeFile(
+      join(root, 'graphify', 'SKILL.md'),
+      '---\nname: graphify\n---\nrun scripts/build.py\n',
+      'utf8',
+    );
+    await writeFile(join(root, 'graphify', 'scripts', 'build.py'), 'x', 'utf8');
+
+    const read = await readUserSkills(root);
+    const skill = read.skills.find((s) => s.name === 'graphify');
+
+    expect(skill?.dir).toBe(join(root, 'graphify'));
+    expect(skill?.manifest.entries.map((e) => e.path).sort()).toEqual([
+      'SKILL.md',
+      'scripts',
+      'scripts/build.py',
+    ]);
+  });
+
+  it('does not walk a folder it rejected', async () => {
+    await mkdir(join(root, 'Broken', 'scripts'), { recursive: true });
+    await writeFile(join(root, 'Broken', 'SKILL.md'), '---\nname: Broken\n---\n', 'utf8');
+
+    const read = await readUserSkills(root);
+
+    expect(read.invalid.map((s) => s.name)).toContain('Broken');
+    expect(read.skills).toHaveLength(0);
+  });
 });
