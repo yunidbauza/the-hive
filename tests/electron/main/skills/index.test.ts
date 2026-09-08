@@ -553,6 +553,68 @@ describe('createSkillsRuntime file verbs', () => {
     }
   });
 
+  it('refuses a write through a symlink whose declared target transits another symlink out of the bundle', async () => {
+    /*
+      The round-2 repair's own mistake, reopening the write escape by a
+      different route: it read a link's declared target with `readlink`,
+      joined it *lexically* onto the directory holding the link, and checked
+      `contains()` on that joined **string** — never asking what an
+      intermediate component actually resolves to on disk. `esc -> <outside>`
+      is a real, existing symlink; `hop -> ./esc/leaf.txt` looks contained as
+      a *string* (`root/esc/leaf.txt`), but `esc` itself resolves for real to
+      somewhere outside `root`. `writeFile` then followed `hop` through
+      `esc` and landed outside with an attacker-chosen body — a `#!` body
+      would even land executable, since `writeFile`'s `chmod` follows the
+      same link. The fix runs a link's declared target back through the same
+      resolution rather than trusting the string it read.
+    */
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+    const outside = await mkdtemp(join(tmpdir(), 'hive-outside-'));
+    try {
+      // `esc` is a genuinely resolvable link to a real directory outside the
+      // bundle — the piece a lexical check never looked at.
+      await symlink(outside, join(skillsDir(), 'graphify', 'esc'));
+      // `hop`'s own declared target never leaves the bundle as a *string* —
+      // it reads `./esc/hop.txt`, and only resolving `esc` for real reveals
+      // where it actually goes.
+      await symlink('./esc/hop.txt', join(skillsDir(), 'graphify', 'hop'));
+
+      await expect(
+        skills.writeFile('graphify', 'hop', '#!/bin/sh\necho PWNED\n'),
+      ).rejects.toThrow(/outside the skill folder/i);
+
+      await expect(
+        readFile(join(outside, 'hop.txt'), 'utf8'),
+      ).rejects.toThrow();
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a write through a chain of dangling symlinks that ends outside the bundle', async () => {
+    // Each hop is validated on its own account rather than assumed safe
+    // because the *previous* hop's declared target string looked local —
+    // three hops deep, matching what the reviewer drove.
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+    const outside = await mkdtemp(join(tmpdir(), 'hive-outside-'));
+    const outsideTarget = join(outside, 'chain.txt');
+    try {
+      await symlink('./chainB', join(skillsDir(), 'graphify', 'chainA'));
+      await symlink('./chainC', join(skillsDir(), 'graphify', 'chainB'));
+      await symlink(outsideTarget, join(skillsDir(), 'graphify', 'chainC'));
+
+      await expect(
+        skills.writeFile('graphify', 'chainA', 'PWNED'),
+      ).rejects.toThrow(/outside the skill folder/i);
+
+      await expect(readFile(outsideTarget, 'utf8')).rejects.toThrow();
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
   it('refuses to remove SKILL.md through a symlink that resolves back to it', async () => {
     /*
       `assertSkillPath` admits `self/SKILL.md` — no dot segment, depth 2 — so
@@ -656,6 +718,25 @@ describe('createSkillsRuntime file verbs', () => {
     expect(
       await readFile(join(skillsDir(), 'graphify', 'SKILL.md'), 'utf8'),
     ).toContain('name: graphify');
+  });
+
+  it('refuses to move the bundle root by a symlinked spelling', async () => {
+    /*
+      `removeFile` got this guard; `moveFile` did not, and
+      `moveFile('graphify', 'up/graphify', 'archive')` was reachable the same
+      way `removeFile`'s was. It happened to already fail — `rename(2)`
+      refuses to move a directory into its own subtree with `EINVAL` — but
+      that is a syscall accident standing in for a guard, not a defended
+      trap, and this file's own rule is that every trap here is deliberate.
+    */
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+    await symlink('..', join(skillsDir(), 'graphify', 'up'));
+
+    await expect(
+      skills.moveFile('graphify', 'up/graphify', 'archive'),
+    ).rejects.toThrow(/cannot move the bundle root/i);
+    expect(await readdir(join(skillsDir(), 'graphify'))).toContain('SKILL.md');
   });
 });
 

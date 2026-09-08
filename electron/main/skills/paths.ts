@@ -83,6 +83,130 @@ export class OutsideSkillError extends Error {
 }
 
 /**
+ * How many symlink hops {@link assertWithinRoot} will follow while chasing a
+ * dangling chain before it gives up and refuses.
+ *
+ * Small and explicit on purpose, not a stand-in for the kernel's own `ELOOP`
+ * limit (Linux's is 40). Nothing legitimate a skill bundle would contain
+ * chains this deep; the budget exists to bound a hostile or accidental cycle
+ * (`a -> b -> a`) to a fixed number of `readlink` calls rather than to model
+ * how many hops are "reasonable".
+ */
+const MAX_LINK_HOPS = 10;
+
+/**
+ * Follow `candidate` to wherever it actually resolves — including through a
+ * chain of symlinks that never bottoms out in a real file — and throw
+ * {@link OutsideSkillError} unless every hop lands inside `root`.
+ *
+ * ## The bug this exists to fix, and why a lexical check could not
+ *
+ * An earlier version of the dangling-link repair below read a link's raw
+ * target with `readlink`, joined it *lexically* onto the directory holding
+ * it, and checked `contains()` on that joined **string**. That is exactly
+ * the mistake `assertSkillPath` is documented as not making one layer up: a
+ * symlink is a fact about the disk, not about the string. A bundle holding
+ * `esc -> <outside>` (a real, existing directory) and `hop -> ./esc/leaf`
+ * produces a lexically-joined candidate `root/esc/leaf` that reads as
+ * contained — because the check never asked what `esc` itself resolves to.
+ * `writeFile` then follows `hop` through `esc` and lands outside the root
+ * with an attacker-chosen body and, if that body starts `#!`, an executable
+ * bit — the same primitive as the escape this module's first version closed,
+ * reopened by a different route.
+ *
+ * The fix is to never trust a link's declared target as a string: every
+ * candidate a link claims to point to is run back through this same
+ * resolution, recursively, so a transiting link (`hop` through `esc`) is
+ * caught the moment the recursive call reaches `esc` and finds it resolves
+ * for real to somewhere outside `root`. A multi-link chain — `chainA ->
+ * chainB -> <outside>` — is caught the same way, one recursive hop per link,
+ * because each hop is validated on its own account rather than assumed safe
+ * because the *previous* hop's target string looked local.
+ *
+ * `hopsRemaining` bounds the recursion so a cycle (`a -> b -> a`) cannot spin
+ * forever; see {@link MAX_LINK_HOPS}.
+ */
+async function assertWithinRoot(
+  root: string,
+  candidate: string,
+  hopsRemaining: number,
+): Promise<void> {
+  let probe = candidate;
+  for (;;) {
+    let real;
+    try {
+      real = await realpath(probe);
+    } catch {
+      /*
+        `realpath` failed, for one of several reasons — and a class rather
+        than a message match is what tells them apart safely: reading
+        English here would be one reworded string away from treating an
+        escape as a missing file and walking on up the tree.
+
+        `lstat` does not follow the final link, so it sees an entry sitting
+        at `probe` even when `realpath` could not resolve all the way
+        through it. Nothing there at all is the only case safe to climb past.
+      */
+      let entry;
+      try {
+        entry = await lstat(probe);
+      } catch {
+        entry = null;
+      }
+
+      if (entry !== null) {
+        /*
+          Something is here. A plain file or directory that `lstat` can see
+          but `realpath` cannot resolve is refused outright — that
+          combination is not the dangling-link case this function is built
+          to repair, and refusing is the safe default when the reason is
+          unclear (see the `EACCES` paragraph on {@link resolveInSkill}).
+
+          A symlink gets followed rather than trusted: `readlink` gives its
+          raw, unfollowed target, resolved *lexically* against the directory
+          that contains it (the same relative-target semantics the kernel
+          itself uses) — but that lexical result is never the answer by
+          itself. It is handed straight back into this same function, one
+          hop lighter, so whatever *that* link claims gets the identical
+          scrutiny this one just did. A transiting link is caught when the
+          recursive call reaches it and finds its real target outside `root`;
+          a dangling chain that never leaves `root` climbs, at its end, to a
+          real ancestor that does resolve, exactly like the ordinary
+          not-created-yet case below.
+        */
+        if (!entry.isSymbolicLink()) throw new OutsideSkillError();
+        if (hopsRemaining <= 0) throw new OutsideSkillError();
+
+        let linkTarget: string;
+        try {
+          linkTarget = await readlink(probe);
+        } catch {
+          throw new OutsideSkillError();
+        }
+
+        const next = isAbsolute(linkTarget)
+          ? linkTarget
+          : join(dirname(probe), linkTarget);
+
+        await assertWithinRoot(root, next, hopsRemaining - 1);
+        return;
+      }
+
+      const parent = dirname(probe);
+      // `dirname('/')` is `'/'`. Unreachable, because the root itself resolved
+      // a moment ago — but a loop that cannot terminate is worse than a
+      // redundant guard.
+      if (parent === probe) throw new OutsideSkillError();
+      probe = parent;
+      continue;
+    }
+
+    if (!contains(root, real)) throw new OutsideSkillError();
+    return;
+  }
+}
+
+/**
  * Resolve a skill-relative path against the skill's own folder, or refuse.
  *
  * The second half of the check `assertSkillPath` explicitly is not. That guard
@@ -98,7 +222,11 @@ export class OutsideSkillError extends Error {
  * outside.
  *
  * The nearest existing ancestor is resolved rather than the target, because
- * `writeFile` and `mkdir` are told about paths that do not exist yet.
+ * `writeFile` and `mkdir` are told about paths that do not exist yet. The
+ * actual walk, including what happens when that ancestor turns out to be a
+ * symlink, lives in {@link assertWithinRoot} — see its docblock for the
+ * write-escape this repaired and why a lexical check on a link's target
+ * could not.
  *
  * ## What this check does *not* close, and why that is a documented choice
  *
@@ -110,13 +238,16 @@ export class OutsideSkillError extends Error {
  *
  * That gap is deliberately left open rather than closed. Closing it properly
  * needs `O_NOFOLLOW` plus a dirfd-relative write path through every verb in
- * this module, which is a substantial rewrite — and the only actor who could
- * win that race already has write access to the user's own `~/.hive/skills`
- * between two syscalls of *this* process, at which point planting a symlink
- * buys them nothing they could not already do by writing the file directly.
- * Main is the only writer to this tree; the check holds for every path that
- * does not require a second, adversarial writer racing this process on its
- * own machine.
+ * this module, which is a substantial rewrite for a race that requires a
+ * second, adversarial process winning a timing window against this one
+ * between two syscalls — a materially different threat from the one this
+ * module otherwise defends against, which is a bundle's own on-disk shape.
+ * `~/.hive/skills` is hand-editable and backed up with the user's dotfiles
+ * (see the top of this file), so main is emphatically *not* the tree's only
+ * writer; what makes the race low-value is not who else can write here, but
+ * that winning it buys an attacker nothing beyond what they could already do
+ * by writing the target file directly, in the same window, without needing a
+ * symlink or this function's cooperation at all.
  *
  * ## Why `realpath` failing is not the same as "nothing is there"
  *
@@ -150,16 +281,13 @@ export class OutsideSkillError extends Error {
  * *climb past* an unresolvable link is right — that is what stops the write
  * escape above — but refusing to *address* it at all would leave that stale
  * link permanently stuck: undeletable, unmovable, with the pane's own Delete
- * button always failing and no way back except a text editor.
- *
- * So a present-but-unresolvable entry that is a symlink gets one more look:
- * `readlink` gives its raw, unfollowed target, resolved against the
- * directory that contains it — the same relative-target semantics the
- * kernel itself uses. If that resolves inside the root, the link is treated
- * as a legitimate (if broken) member of the bundle and this returns
- * normally, so `removeFile` and `moveFile` can still reach it — `rm` and
- * `rename` act on the link entry itself and never need to follow it. Only a
- * link that *claims* to point outside the root is refused.
+ * button always failing and no way back except a text editor. So a
+ * present-but-unresolvable symlink is followed, not refused outright — see
+ * {@link assertWithinRoot} for how far that following goes and why a single
+ * lexical hop was not enough. A link whose real resolution — direct, or at
+ * the end of a chain — lands inside the root stays addressable, so
+ * `removeFile` and `moveFile` can still reach it: `rm` and `rename` act on
+ * the link entry itself and never need to follow it.
  */
 export async function resolveInSkill(
   name: string,
@@ -168,69 +296,6 @@ export async function resolveInSkill(
   const root = await realpath(join(skillsRoot(), name));
   const target = join(root, path);
 
-  let probe = target;
-  for (;;) {
-    let real;
-    try {
-      real = await realpath(probe);
-    } catch {
-      /*
-        `realpath` failed, for one of several reasons — and a class rather
-        than a message match is what tells them apart safely: reading
-        English here would be one reworded string away from treating an
-        escape as a missing file and walking on up the tree.
-
-        `lstat` does not follow the final link, so it sees an entry sitting
-        at `probe` even when `realpath` could not resolve all the way
-        through it. Nothing there at all is the only case safe to climb past.
-      */
-      let entry;
-      try {
-        entry = await lstat(probe);
-      } catch {
-        entry = null;
-      }
-
-      if (entry !== null) {
-        /*
-          Something is here. A plain file or directory that `lstat` can see
-          but `realpath` cannot resolve is refused outright — that
-          combination is not the dangling-link case this function is built
-          to repair, and refusing is the safe default when the reason is
-          unclear (see the `EACCES` paragraph above).
-
-          A symlink gets the one-hop check the docblock describes: where does
-          it *claim* to point, resolved relative to the directory holding it?
-          Inside the root, it stays addressable. Outside, or unreadable, it
-          is refused exactly as before.
-        */
-        if (!entry.isSymbolicLink()) throw new OutsideSkillError();
-
-        let linkTarget: string;
-        try {
-          linkTarget = await readlink(probe);
-        } catch {
-          throw new OutsideSkillError();
-        }
-
-        const candidate = isAbsolute(linkTarget)
-          ? linkTarget
-          : join(dirname(probe), linkTarget);
-
-        if (!contains(root, candidate)) throw new OutsideSkillError();
-        return target;
-      }
-
-      const parent = dirname(probe);
-      // `dirname('/')` is `'/'`. Unreachable, because the root itself resolved
-      // a moment ago — but a loop that cannot terminate is worse than a
-      // redundant guard.
-      if (parent === probe) throw new OutsideSkillError();
-      probe = parent;
-      continue;
-    }
-
-    if (!contains(root, real)) throw new OutsideSkillError();
-    return target;
-  }
+  await assertWithinRoot(root, target, MAX_LINK_HOPS);
+  return target;
 }

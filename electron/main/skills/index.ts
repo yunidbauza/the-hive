@@ -284,13 +284,13 @@ export function createSkillsRuntime({
    * bundle root itself, however it got there.
    *
    * `''` is not the property that matters, and checking the request string
-   * for it was the bug: `assertSkillPath` refuses `''`, but it admits plenty
-   * of spellings that resolve to the very same place — `up/graphify` through
-   * a `symlink('..', ...)` planted inside the bundle, `'.'`, `'./'`,
-   * `'sub/..'`. Every one of those clears the boundary's dot-segment rule the
-   * same way `self/SKILL.md` does for {@link isSkillManifest}, and for the
-   * same reason: comparing what a path *resolves to* is the only check that
-   * covers every spelling, where comparing the string that named it covers
+   * for it was the bug: `assertSkillPath` refuses `''`, but it admits at
+   * least one spelling that still resolves to the very same place —
+   * `up/graphify` through a `symlink('..', ...)` planted inside the bundle.
+   * That clears the boundary's dot-segment rule the same way `self/SKILL.md`
+   * does for {@link isSkillManifest}, and for the same reason: comparing what
+   * a path *resolves to* is the only check that covers every spelling a
+   * symlink can produce, where comparing the string that named it covers
    * exactly one.
    */
   const isSkillRoot = async (
@@ -400,13 +400,12 @@ export function createSkillsRuntime({
       /*
         The bundle root itself. `assertSkillPath` already refuses the literal
         `''` at the IPC boundary, but that string is not the property that
-        matters — `up/graphify` through a symlinked `up -> ..`, `'.'`, `'./'`
-        and `sub/..` all clear the boundary's dot-segment rule and resolve to
-        the same root. Checked against the *resolved* path for the same
-        reason the `SKILL.md` guard below is: every other trap in this file
-        is defended a second time here, and an `rm -rf` of the whole skill is
-        exactly the kind of mistake one unguarded caller away should not
-        survive.
+        matters — `up/graphify` through a symlinked `up -> ..` also clears
+        the boundary's dot-segment rule and resolves to the same root.
+        Checked against the *resolved* path for the same reason the
+        `SKILL.md` guard below is: every other trap in this file is defended
+        a second time here, and an `rm -rf` of the whole skill is exactly the
+        kind of mistake one unguarded caller away should not survive.
       */
       if (await isSkillRoot(name, absPath)) {
         throw new Error('Cannot remove the bundle root — remove the skill instead.');
@@ -433,6 +432,19 @@ export function createSkillsRuntime({
 
     async moveFile(name: string, from: string, to: string): Promise<SkillsSnapshot> {
       const source = await resolveInSkill(name, from);
+
+      /*
+        The bundle root itself, for the same reason `removeFile` checks it —
+        and `moveFile('graphify', 'up/graphify', 'archive')` was reachable
+        here too until this landed. It happened to fail already, but only
+        because `rename(2)` refuses to move a directory into its own
+        subtree (`EINVAL`) — a syscall accident, not a defended trap, and the
+        one deliberate exception to this file's rule that every trap is
+        guarded on purpose rather than by what the OS happens to refuse.
+      */
+      if (await isSkillRoot(name, source)) {
+        throw new Error('Cannot move the bundle root — remove or rename the skill instead.');
+      }
 
       /*
         The same protection `removeFile` gives SKILL.md, because a move is a
