@@ -106,10 +106,11 @@ import {
  * 14. `config:choose-directory` is refused `window-bound`, naming HIVE-146.
  * 15. `ledger:changed` and `agents:changed` reach the attached client.
  * 16. A socket killed mid-output resumes contiguously, transcript whole.
- * 17. A gap forced past `REPLAY_BYTES` leaves a seq discontinuity — the thing
- *     the renderer's existing gap notice keys on
- *     (`src/lib/terminal/pty-transport.ts`, asserted at
- *     `tests/lib/terminal/pty-transport.test.ts:463` and not duplicated here).
+ * 17. A gap forced past `REPLAY_BYTES` is marked on attach by one empty
+ *     `pty:data` at the head seq — the discontinuity the renderer's existing
+ *     gap notice keys on (`src/lib/terminal/pty-transport.ts`, asserted at
+ *     `tests/lib/terminal/pty-transport.test.ts:463` and not duplicated here),
+ *     delivered without waiting for output that an idle session never sends.
  *
  * Those cases spawn **real PTYs** through the socket: `pty:spawn` is graded
  * `execute` and a paired device holds `execute`, which is the whole premise the
@@ -1677,22 +1678,46 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
 
       const resumed = await attached({ resumeFrom: { [sessionId]: lastSeq } });
       /*
-        The resuming client is sent **nothing** for a gap — no transcript, by
-        design (`ipc/pty.ts`'s `ResumeResult`) — so the discontinuity only
-        becomes observable on the next live batch. This is that batch.
+        The resuming client is sent no *transcript* for a gap — that is still by
+        design (`ipc/pty.ts`'s `ResumeResult`) — but it is sent one **empty**
+        `pty:data` stamped at the head seq, on attach, and that marker is what
+        this case now waits for.
+
+        It used to force the discontinuity into view with a `printf`, because
+        nothing arrived until the next live batch did. That crutch was hiding
+        the bug it worked around (HIVE-143 review): a client reattaching to a
+        session that has gone *idle* — the ordinary case, a build that finished
+        while it was away — got no frames at all and redrew its cached
+        transcript with an unmarked hole. Waiting for the marker instead is both
+        the stronger assertion and the honest one: the shell here is idle after
+        the flood, so nothing but the marker can arrive.
       */
-      resumed.notify(CH.ptyWrite, { sessionId, data: "printf 'DONE-%s\\n' MARK\r" });
-      const after = await resumed.collectPtyUntil(sessionId, /DONE-MARK/);
+      const after = await resumed.collectPtyCount(sessionId, 1);
+      const marker = after[0]!;
       measurements.push({
         case: '17. seqs across the forced gap',
         lastSeqBeforeKill: lastSeq,
-        firstSeqAfterResume: after[0]?.seq,
+        markerSeq: marker.seq,
+        markerChunkLength: marker.chunk.length,
       });
 
       // A discontinuity is what the renderer's existing gap notice keys on
-      // (`src/lib/terminal/pty-transport.ts`).
-      expect(after[0]!.seq).not.toBe(lastSeq + 1);
-      expect(after[0]!.seq).toBeGreaterThan(lastSeq + 1);
+      // (`src/lib/terminal/pty-transport.ts`), and an empty chunk is what makes
+      // the marker free — the write that follows the check puts nothing on
+      // screen.
+      expect(marker.chunk).toBe('');
+      expect(marker.seq).not.toBe(lastSeq + 1);
+      expect(marker.seq).toBeGreaterThan(lastSeq + 1);
+
+      /*
+        And live output still follows it contiguously: the marker is stamped at
+        the head, so the next real batch is `marker.seq + 1` and the client's
+        assertion is satisfied from here on. A marker that raised a *second*
+        false gap would be worse than the silence it replaced.
+      */
+      resumed.notify(CH.ptyWrite, { sessionId, data: "printf 'DONE-%s\\n' MARK\r" });
+      const live = await resumed.collectPtyUntil(sessionId, /DONE-MARK/);
+      expect(live[1]!.seq).toBe(marker.seq + 1);
     }, 180_000);
   });
 });
