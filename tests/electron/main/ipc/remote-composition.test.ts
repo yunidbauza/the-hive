@@ -160,8 +160,17 @@ describe('remote composition (HIVE-143)', () => {
   it('records a handler for every call and notify channel', () => {
     registerIpcHandlers();
 
-    // 89 call + 6 notify. Asserted as the total so a channel added without a
-    // handler, or a handler registered twice, both fail here.
+    /*
+      89 call + 6 notify. Asserted as the total so a channel added to the
+      contract without a handler — or a `handle`/`on` call that stopped
+      recording — fails here rather than at a socket.
+
+      It does **not** catch a channel registered twice: `recordCall` and
+      `recordNotify` are `Map.set`, so a second registration overwrites the
+      first and leaves the count exactly where it was. That case is covered
+      elsewhere, by the real `ipcMain.handle` refusing a second handler for a
+      channel — not by this number.
+    */
     expect(remoteRegistrySize()).toBe(95);
   });
 

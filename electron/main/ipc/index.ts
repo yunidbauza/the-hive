@@ -1689,11 +1689,18 @@ export function registerIpcHandlers(
     awaiting any of them. Registering the socket's teardown first means its
     synchronous work — terminating every attached client — runs before that
     later hook's synchronous steps do, so nothing can arrive on this socket
-    asking for something `closeAll` is already tearing down. This story's
-    listener answers only a handshake (no call routing yet), so nothing here
-    can actually spawn a run today — but the ordering is the same discipline
-    the next story that adds call routing over this socket will need, stated
-    up front rather than discovered by review.
+    asking for something `closeAll` is already tearing down.
+
+    That stopped being a precaution with HIVE-143 and became the thing keeping
+    this safe. `dispatch` above is a real router now, and `DEVICE_GRANT` in
+    `remote-dispatch.ts` is `'execute'` — so a paired device reaches `pty:spawn`
+    and `agents:run` over this socket, and either can start a process. What
+    makes the ordering sufficient rather than merely first: `listener.stop()`
+    terminates every attached client synchronously, inside its own promise
+    executor, so by the time `runShutdown` reaches the combined hook there is no
+    socket left to deliver a frame; and `agents:run` awaits the memoised
+    `mcp.start()`, so even a call already in flight cannot reach a spawn ahead
+    of a teardown that has begun.
   */
   onShutdown(() => remoteListener?.stop());
 

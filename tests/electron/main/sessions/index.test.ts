@@ -750,6 +750,23 @@ describe('identity: the renderer only ever sees entity ids', () => {
       expect(sessions.resume('hero-refresh', seq)).toEqual({ kind: 'replay', events: [] });
     });
 
+    it('hands a gap back untouched', () => {
+      sessions.open(OPEN);
+      const sessionId = mintedFor('hero-refresh');
+
+      emitData({ sessionId, chunk: 'first' });
+      vi.advanceTimersByTime(8);
+
+      /*
+        A seq beyond anything this process issued — what a client honestly holds
+        after a server restart resets `seq` to 0. The ring answers `gap`, and
+        this asserts the value arrives unchanged: a gap carries no events, so
+        the id rewrite above must not run on this branch and must not invent an
+        `events: []` that would tell the client it had missed nothing.
+      */
+      expect(sessions.resume('hero-refresh', 99)).toEqual({ kind: 'gap' });
+    });
+
     it('answers null for an entity with no live session', () => {
       expect(sessions.resume('ghost', 0)).toBeNull();
     });
