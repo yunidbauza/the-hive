@@ -266,6 +266,32 @@ describe('an unauthenticated socket is untrusted input (HIVE-142 review)', () =>
     expect(reply).toMatchObject({ kind: 'attach-refused', code: 'unauthorized' });
   });
 
+  it('refuses an attach whose resumeFrom is not a map of numbers, rather than throwing', async () => {
+    const { device, token } = mintDevice('MacBook');
+    const url = await start([device]);
+    const reply = await attach(url, {
+      kind: 'attach',
+      protocol: REMOTE_PROTOCOL_VERSION,
+      deviceId: device.id,
+      token,
+      resumeFrom: { 'session-1': 'not-a-number' },
+    });
+    expect(reply).toMatchObject({ kind: 'attach-refused', code: 'unauthorized' });
+  });
+
+  it('accepts an attach with a well-formed resumeFrom', async () => {
+    const { device, token } = mintDevice('MacBook');
+    const url = await start([device]);
+    const reply = await attach(url, {
+      kind: 'attach',
+      protocol: REMOTE_PROTOCOL_VERSION,
+      deviceId: device.id,
+      token,
+      resumeFrom: { 'session-1': 42 },
+    });
+    expect(reply.kind).toBe('attach-accepted');
+  });
+
   it('drops an oversized first frame rather than buffering it', async () => {
     const { device, token } = mintDevice('MacBook');
     const url = await start([device]);

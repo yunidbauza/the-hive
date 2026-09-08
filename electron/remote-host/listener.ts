@@ -91,6 +91,19 @@ function wsUrl(host: string, port: number): string {
   return `ws://${authority}:${String(port)}`;
 }
 
+/**
+ * Whether every value in `value` is a `number` — {@link AttachRequest.resumeFrom}'s
+ * shape, checked so {@link isAttachShaped} does not claim a field it never
+ * inspected. This story never reads `resumeFrom`, but the predicate's return
+ * type says the whole `AttachRequest` is safe to use, and HIVE-143 is the
+ * story that will actually consume this field — a predicate that skipped it
+ * would be handing that story a lie it has no reason to suspect.
+ */
+function isResumeFromShaped(value: unknown): value is Readonly<Record<string, number>> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  return Object.values(value).every((entry) => typeof entry === 'number');
+}
+
 /** Whether `value` has the shape `verifyDevice` and the protocol check can safely use. */
 function isAttachShaped(value: unknown): value is AttachRequest {
   if (value === null || typeof value !== 'object') return false;
@@ -99,7 +112,8 @@ function isAttachShaped(value: unknown): value is AttachRequest {
     candidate.kind === 'attach' &&
     typeof candidate.protocol === 'number' &&
     typeof candidate.deviceId === 'string' &&
-    typeof candidate.token === 'string'
+    typeof candidate.token === 'string' &&
+    (candidate.resumeFrom === undefined || isResumeFromShaped(candidate.resumeFrom))
   );
 }
 
@@ -316,6 +330,18 @@ export function createRemoteListener(options: {
           */
           const status = guard(req.headers);
           if (status !== null) {
+            /*
+              Node removes its own `'error'` listener from a socket the
+              moment `'upgrade'` fires — this is exactly why `ws` installs
+              one as the first statement of its own `handleUpgrade`
+              (`websocket-server.js`). Without one here, writing a refusal to
+              a peer-controlled socket that resets the connection mid-write
+              is an unhandled `'error'` on this raw `net.Socket`, the same
+              uncaught-exception shape as C1, just on a socket `ws` never
+              took ownership of. A no-op is enough: there is nothing to do
+              with a write error to a socket already being destroyed.
+            */
+            socket.on('error', () => {});
             // A real status line, not a silent drop — `ws`'s client parses
             // this as an HTTP response and surfaces it as a connection error
             // rather than hanging. `createOriginGuard` only ever returns 403
