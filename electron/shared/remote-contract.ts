@@ -437,19 +437,26 @@ export const CHANNEL_AUTHORIZATION = {
  * Channels that cannot be answered for a socket, and the ticket that fixes each
  * (HIVE-143).
  *
- * Exactly four channels in the whole surface dereference the Electron event
- * they are handed. Three of them do it for the same reason — resolving a parent
+ * Exactly five channels in the whole surface dereference the Electron event
+ * they are handed. Four of them do it for the same reason — resolving a parent
  * `BrowserWindow` for a native dialog — and server mode opens no window at all,
  * so `BrowserWindow.fromWebContents` has nothing to return. Proxied as-is they
  * would not throw: `config:choose-directory` returns `null` and reads to the
  * user as a cancelled dialog, which is a silent failure rather than a loud one.
  *
  * Refused by name instead, so a remote client gets a code it can act on and a
- * message naming the work. HIVE-146 deletes an entry as it lands each
+ * message naming the work. HIVE-146 deletes three of these as it lands each
  * replacement — a server-side browser for the first, a client-side import and
- * export for the other two — and this table goes away with the last of them.
+ * export for the two theme ones.
  *
- * The fourth, `pty:prompt`, is deliberately absent. It uses the event for a
+ * `skills:file:import` is the fourth and is **not** HIVE-146's, so this table
+ * does not go away with it (HIVE-148). There is nothing to move to a
+ * client-side picker: choosing files for a skill on the server would copy the
+ * *server's* files rather than the user's, which is not a worse version of the
+ * feature but a different and wrong one. `skills:file:drop` already carries
+ * files from the machine the user is sitting at, so the refusal names it.
+ *
+ * The fifth, `pty:prompt`, is deliberately absent. It uses the event for a
  * surface *lifetime* rather than a window, and `watchReporter` already accepts
  * anything with an `.on`, so a socket satisfies it. Refusing it would silently
  * revert HIVE-135's nudge holding for every remote session.
@@ -457,6 +464,8 @@ export const CHANNEL_AUTHORIZATION = {
 export const WINDOW_BOUND = {
   [CH.configChooseDirectory]:
     'Choosing a directory opens a dialog on the server, which has no window. HIVE-146 replaces it with a server-side browser.',
+  [CH.skillsFileImport]:
+    'Adding files to a skill opens a dialog on the server, which has no window — and would copy the server’s files, not yours. Drag them onto the skill instead.',
   [CH.themePick]:
     'Importing a theme reads a file on the machine the user is sitting at. HIVE-146 keeps it on the client.',
   [CH.themeSave]:

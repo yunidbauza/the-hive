@@ -366,16 +366,34 @@ describe('remote contract: an unclassified channel is a compile error', () => {
 });
 
 describe('WINDOW_BOUND', () => {
-  it('names exactly the three dialog channels', () => {
+  it('names exactly the four dialog channels', () => {
     expect(Object.keys(WINDOW_BOUND).sort()).toEqual(
-      [CH.configChooseDirectory, CH.themePick, CH.themeSave].sort(),
+      [
+        CH.configChooseDirectory,
+        CH.skillsFileImport,
+        CH.themePick,
+        CH.themeSave,
+      ].sort(),
     );
   });
 
-  it('gives every entry a reason naming the ticket that removes it', () => {
-    for (const reason of Object.values(WINDOW_BOUND)) {
-      expect(reason).toMatch(/HIVE-146/);
-    }
+  it('names the ticket that removes an entry, where one exists', () => {
+    /*
+      HIVE-146 owns three of these and deletes each as it lands a replacement.
+      `skills:file:import` is the fourth and has no such ticket: picking files
+      for a skill on the *server* would copy the server's files rather than the
+      user's, so there is nothing to move to a client-side picker — the drop
+      verb already does that job, and the reason below says so.
+    */
+    expect(WINDOW_BOUND[CH.configChooseDirectory]).toMatch(/HIVE-146/);
+    expect(WINDOW_BOUND[CH.themePick]).toMatch(/HIVE-146/);
+    expect(WINDOW_BOUND[CH.themeSave]).toMatch(/HIVE-146/);
+  });
+
+  it('tells a remote user what to do instead, for the entry no ticket covers', () => {
+    // A refusal with no route forward is a dead end. This one names the verb
+    // that does work over a socket.
+    expect(WINDOW_BOUND[CH.skillsFileImport]).toMatch(/drag/i);
   });
 
   it('only ever names a call channel', () => {
