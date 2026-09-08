@@ -190,6 +190,20 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * destination that exists rather than replacing it. The argument for the
    * fifth verb is recorded on `BRIDGE_SKILLS_KEYS`.
    *
+   * HIVE-148 grows that namespace to thirteen — a skill became a folder, not
+   * one file, so a pane that can author every file in one cannot address them
+   * by anything but a path. Seven of the eight new verbs carry a
+   * skill-relative path, bounded twice: `assertSkillPath`/`assertSkillDir` at
+   * the boundary, and `resolveInSkill`'s `realpath` containment check behind
+   * it, because a symlink is a fact about the disk and not about the string.
+   * The eighth, `fileDrop`, is the one verb in this whole bridge whose
+   * payload holds an *absolute* path — and the reason that does not reopen
+   * story 082's posture is `pathToken`: it is not `invoke`d at all, runs
+   * synchronously against a map only preload holds, and answers `null` for
+   * any `File` the page did not get from a real drop. A renderer that invents
+   * an id gets nothing back for it. The full argument is recorded on
+   * `BRIDGE_SKILLS_KEYS`.
+   *
    * ## `agents` (HIVE-114)
    *
    * The third namespace that writes to the user's disk, and the first with six
@@ -342,7 +356,15 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    */
   expect(surface.server).toEqual(['pair', 'revoke']);
   expect(surface.skills).toEqual([
+    'fileDrop',
+    'fileImport',
+    'fileMkdir',
+    'fileMove',
+    'fileRead',
+    'fileRemove',
+    'fileWrite',
     'list',
+    'pathToken',
     'read',
     'remove',
     'rename',

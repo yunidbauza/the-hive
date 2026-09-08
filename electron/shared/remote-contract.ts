@@ -39,7 +39,7 @@ export const REMOTE_PROTOCOL_VERSION = 1;
  * promote a `notify` to a `call` and the typing path acquires a round trip.
  *
  * - `call` — request/response. The client asks, the server answers with
- *   `result` or `error`. 89 channels.
+ *   `result` or `error`. 96 channels.
  * - `notify` — fire and forget, client to server, ordered per session. 6
  *   channels. Ordering between a `pty:write` and a `pty:resize` is observable,
  *   so a transport may not reorder them.
@@ -189,6 +189,13 @@ export const FRAME_KIND = {
   [CH.skillsWrite]: 'call',
   [CH.skillsRemove]: 'call',
   [CH.skillsRename]: 'call',
+  [CH.skillsFileRead]: 'call',
+  [CH.skillsFileWrite]: 'call',
+  [CH.skillsFileMkdir]: 'call',
+  [CH.skillsFileRemove]: 'call',
+  [CH.skillsFileMove]: 'call',
+  [CH.skillsFileImport]: 'call',
+  [CH.skillsFileDrop]: 'call',
   [CH.agentsList]: 'call',
   [CH.agentsRead]: 'call',
   [CH.agentsWrite]: 'call',
@@ -217,7 +224,7 @@ export const FRAME_KIND = {
  * should be reviewed as a table, in one diff, before it is the thing standing
  * between a socket and `pty:spawn`.
  *
- * `event` channels carry a class too, because the ticket asks for all 117
+ * `event` channels carry a class too, because the ticket asks for all 124
  * classified exactly once and a hole in a default-deny table is worse than an
  * over-classification. For a push the class is the privilege needed to *receive*
  * it, which is `read` for all 22: a client cannot cause an event, only observe
@@ -228,7 +235,7 @@ export const FRAME_KIND = {
  * `pty:ack` and `pty:prompt` above. Grading a channel by the tone of its name is
  * how both of those came out wrong on the first pass.
  *
- * The twenty-eight `execute` entries, each with its reason. The list is long
+ * The thirty-one `execute` entries, each with its reason. The list is long
  * because the rule was applied by reading each handler rather than by trusting
  * the channel's name, and a surprising number of innocuously-named reads spawn a
  * process:
@@ -243,9 +250,14 @@ export const FRAME_KIND = {
  *   (`ledger/deliver.ts:242`), writing held ledger nudges into the running PTY.
  *   A forged report therefore delivers text into a session of the caller's
  *   choosing, which is the same capability `ledger:post` is graded for.
- * - `fs:write-file`, `skills:write`, `agents:write` — write content the host
- *   later executes. A skill file and an `AGENT.md` are instructions a model
- *   follows with tools in hand; they are code with a friendlier extension.
+ * - `fs:write-file`, `skills:write`, `agents:write`, `skills:file:write`,
+ *   `skills:file:import`, `skills:file:drop` (HIVE-148) — write content the
+ *   host later executes. A skill file and an `AGENT.md` are instructions a
+ *   model follows with tools in hand; they are code with a friendlier
+ *   extension, and that holds for any file inside a skill's bundle, not only
+ *   `SKILL.md` — `import` and `drop` just source their bytes from outside the
+ *   app rather than from the pane's own editor. `skills:file:mkdir` stays
+ *   `mutate`: an empty directory is structure, not content.
  * - `config:set-runtime`, `config:set-project-runtime` — name the command a
  *   session spawns. Whoever writes this writes what `pty:spawn` runs.
  * - `config:clone-start` — runs `git clone` against a caller-supplied URL.
@@ -394,6 +406,13 @@ export const CHANNEL_AUTHORIZATION = {
   [CH.skillsWrite]: 'execute',
   [CH.skillsRemove]: 'mutate',
   [CH.skillsRename]: 'mutate',
+  [CH.skillsFileRead]: 'read',
+  [CH.skillsFileWrite]: 'execute',
+  [CH.skillsFileMkdir]: 'mutate',
+  [CH.skillsFileRemove]: 'mutate',
+  [CH.skillsFileMove]: 'mutate',
+  [CH.skillsFileImport]: 'execute',
+  [CH.skillsFileDrop]: 'execute',
   [CH.agentsList]: 'read',
   [CH.agentsRead]: 'read',
   [CH.agentsWrite]: 'execute',

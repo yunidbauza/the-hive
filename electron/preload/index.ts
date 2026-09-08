@@ -1,4 +1,6 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+import { randomUUID } from 'node:crypto';
+
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
 
 
 import type {
@@ -122,8 +124,14 @@ import type {
   SessionPrRequest,
 } from '@shared/session-history-contract';
 import type {
+  SkillDropRequest,
   SkillFile,
+  SkillFileRead,
+  SkillFileWriteRequest,
+  SkillImportRequest,
+  SkillMoveRequest,
   SkillNameRequest,
+  SkillPathRequest,
   SkillRenameRequest,
   SkillWriteRequest,
   SkillsSnapshot,
@@ -190,6 +198,21 @@ function subscribe<T>(channel: string, callback: (payload: T) => void): () => vo
     ipcRenderer.removeListener(channel, listener);
   };
 }
+
+/**
+ * Paths the browser gave us, keyed by an id the renderer can hold (HIVE-148).
+ *
+ * `skills.fileDrop` has to reach real files, and the renderer must not be able
+ * to name one. `webUtils.getPathForFile` answers only for a `File` the browser
+ * itself produced from a drop and returns `''` for one the page constructed, so
+ * preload is the only place a real path can appear. Keeping the path *here* and
+ * handing out an opaque id means a renderer that invents an id gets nothing —
+ * the difference between a bounded verb and a read-anywhere primitive.
+ *
+ * Entries are consumed on use, so an id is a one-shot ticket rather than a
+ * durable handle to a file the user has since moved on from.
+ */
+const droppedPaths = new Map<string, string>();
 
 const bridge: HiveBridge = {
   appInfo: (): Promise<AppInfo> => ipcRenderer.invoke(CH.appInfo),
@@ -339,12 +362,16 @@ const bridge: HiveBridge = {
       subscribe<FsChangedEvent>(CH.fsChanged, callback),
   },
   /*
-    HIVE-96, and HIVE-99's `rename`. Five verbs, and not one of them names a
-    path — `rename` names two skills, which is still none — see the contract for
-    why that is the whole security design rather than one layer of it, and
-    `BRIDGE_SKILLS_KEYS` for the argument the fifth verb had to make. There is
-    no `onChanged` here on purpose: the pane is the only writer, and every
-    mutating verb answers with the fresh snapshot.
+    HIVE-96, HIVE-99's `rename`, and HIVE-148's eight bundle verbs. The
+    original five still name only a skill, never a path — `rename` names two
+    of them, which is still none. The eight `file*` verbs carry a
+    skill-relative path (`assertSkillPath`/`assertSkillDir` at the boundary,
+    `resolveInSkill`'s `realpath` containment behind it), except `fileDrop`,
+    whose `sources` are absolute — and the only reason that is safe is
+    `pathToken` below, which is the one verb here that never touches IPC at
+    all. See `skills-contract.ts` and `BRIDGE_SKILLS_KEYS` for the full
+    argument. There is no `onChanged` here on purpose: the pane is the only
+    writer, and every mutating verb answers with the fresh snapshot.
   */
   skills: {
     list: (): Promise<SkillsSnapshot> => ipcRenderer.invoke(CH.skillsList),
@@ -356,6 +383,58 @@ const bridge: HiveBridge = {
       ipcRenderer.invoke(CH.skillsRemove, request),
     rename: (request: SkillRenameRequest): Promise<SkillsSnapshot> =>
       ipcRenderer.invoke(CH.skillsRename, request),
+    /**
+     * Mint an opaque, one-shot id for a `File` a real drop produced (HIVE-148).
+     *
+     * `webUtils.getPathForFile` answers a real path only for a `File` the
+     * browser itself built from a drop, and `''` for one a web page
+     * constructed — so this is the one place a real path can appear at all.
+     * The path is kept in {@link droppedPaths} and never returned; only the id
+     * crosses back to the renderer, which is what keeps `fileDrop` from being
+     * a read-anywhere primitive.
+     */
+    pathToken: (file: File): string | null => {
+      const path = webUtils.getPathForFile(file);
+      if (path === '') return null;
+      const id = randomUUID();
+      droppedPaths.set(id, path);
+      return id;
+    },
+    fileRead: (request: SkillPathRequest): Promise<SkillFileRead> =>
+      ipcRenderer.invoke(CH.skillsFileRead, request),
+    fileWrite: (request: SkillFileWriteRequest): Promise<SkillsSnapshot> =>
+      ipcRenderer.invoke(CH.skillsFileWrite, request),
+    fileMkdir: (request: SkillPathRequest): Promise<SkillsSnapshot> =>
+      ipcRenderer.invoke(CH.skillsFileMkdir, request),
+    fileRemove: (request: SkillPathRequest): Promise<SkillsSnapshot> =>
+      ipcRenderer.invoke(CH.skillsFileRemove, request),
+    fileMove: (request: SkillMoveRequest): Promise<SkillsSnapshot> =>
+      ipcRenderer.invoke(CH.skillsFileMove, request),
+    fileImport: (request: SkillImportRequest): Promise<SkillsSnapshot> =>
+      ipcRenderer.invoke(CH.skillsFileImport, request),
+    /**
+     * Resolve each token back to the real path it was minted for, consuming
+     * it, and only then call main (HIVE-148).
+     *
+     * A token that is not in the map — already consumed, or never minted —
+     * is silently dropped rather than turned into a request-shaped hole: the
+     * request main receives holds only paths this process actually vouches
+     * for.
+     */
+    fileDrop: (request: { name: string; dir: string; tokens: string[] }): Promise<SkillsSnapshot> => {
+      const sources: string[] = [];
+      for (const token of request.tokens) {
+        const path = droppedPaths.get(token);
+        if (path === undefined) continue;
+        droppedPaths.delete(token);
+        sources.push(path);
+      }
+      return ipcRenderer.invoke(CH.skillsFileDrop, {
+        name: request.name,
+        dir: request.dir,
+        sources,
+      } satisfies SkillDropRequest);
+    },
   },
   /*
     HIVE-114. The same five path-free verbs as `skills`, plus `onChanged` —

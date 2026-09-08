@@ -121,7 +121,12 @@ import type {
 } from './session-history-contract';
 import type {
   SkillFile,
+  SkillFileRead,
+  SkillFileWriteRequest,
+  SkillImportRequest,
+  SkillMoveRequest,
   SkillNameRequest,
+  SkillPathRequest,
   SkillRenameRequest,
   SkillWriteRequest,
   SkillsSnapshot,
@@ -791,14 +796,31 @@ export const CH = {
   fsUnwatch: 'fs:unwatch',
   fsChanged: 'fs:changed', // main → renderer
   /**
-   * Custom skills (HIVE-96, HIVE-99). Five verbs, and not one of them takes a
-   * path.
+   * Custom skills (HIVE-96, HIVE-99, HIVE-148).
    *
-   * Stricter than the `fs` block above, which has to admit a project-relative
-   * path because the explorer navigates a tree. A skill request names a
-   * **skill**, and main already knows the one directory skills live in — see
-   * `skills-contract.ts` for why that makes traversal unrepresentable rather
-   * than merely filtered. `skills:rename` names two of them and still no path.
+   * This block used to say that five verbs lived here and not one of them
+   * took a path. That was true while a skill was one file. A skill is now a
+   * folder, and a pane that can author every file in one cannot address them
+   * by anything but a path — so five of the thirteen channels below still
+   * name only a **skill** (`list`, `read`, `write`, `remove`, `rename`, the
+   * original set, stricter than the `fs` block above because
+   * `SKILL_NAME_PATTERN` makes traversal unrepresentable rather than merely
+   * filtered) and eight carry a skill-relative path or, for `skillsFileDrop`
+   * alone, an absolute one.
+   *
+   * The bound for those eight is not the shape of the payload: `assertSkillPath`
+   * (five of them) and `assertSkillDir` (`skillsFileImport`, `skillsFileDrop`)
+   * refuse a `..` segment and cap the depth, but a symlink is a fact about the
+   * disk, not the string. `resolveInSkill`'s `realpath` containment check in
+   * `electron/main/skills/paths.ts` is the layer that actually holds a bundle
+   * holding `escape -> /etc` inside its own folder — see `skills-contract.ts`
+   * for the full argument, which this block matches rather than repeats.
+   *
+   * `skillsFileDrop`'s `sources` are the one field in this whole namespace
+   * that is an absolute path, and only preload can produce one — see
+   * `BRIDGE_SKILLS_KEYS` for how the renderer is kept from forging one.
+   * `skillsFileImport` carries no source at all: main opens a native dialog
+   * and chooses for itself.
    *
    * No event channel. A write is request/response and answers with the fresh
    * snapshot, the way the config's mutating verbs do; the Settings pane is the
@@ -809,6 +831,13 @@ export const CH = {
   skillsWrite: 'skills:write',
   skillsRemove: 'skills:remove',
   skillsRename: 'skills:rename',
+  skillsFileRead: 'skills:file:read',
+  skillsFileWrite: 'skills:file:write',
+  skillsFileMkdir: 'skills:file:mkdir',
+  skillsFileRemove: 'skills:file:remove',
+  skillsFileMove: 'skills:file:move',
+  skillsFileImport: 'skills:file:import',
+  skillsFileDrop: 'skills:file:drop',
   /**
    * Agent definitions — the same five verbs as `skills`, and one more thing
    * (HIVE-114).
@@ -1698,13 +1727,23 @@ export interface HiveBridge {
     onChanged(callback: (event: FsChangedEvent) => void): () => void;
   };
   /**
-   * The custom skills The Hive injects into the sessions it starts (HIVE-96).
+   * The custom skills The Hive injects into the sessions it starts (HIVE-96,
+   * HIVE-148).
    *
-   * Five verbs, none of which names a path. `fs` above must accept a
-   * project-relative path and defend containment on the resolved result; here
-   * a request names a skill, and `SKILL_NAME_PATTERN` cannot express a
-   * separator or a dot segment — so main's `join` is total and there is no
-   * second check to forget. `rename` names two skills, which is still no path.
+   * Five of the thirteen verbs still name only a skill, none of them a path:
+   * `fs` above must accept a project-relative path and defend containment on
+   * the resolved result; here `list`, `read`, `write`, `remove` and `rename`
+   * take `SKILL_NAME_PATTERN`, which cannot express a separator or a dot
+   * segment — so main's `join` is total and there is no second check to
+   * forget.
+   *
+   * The other eight — HIVE-148's bundle verbs — carry a skill-relative path
+   * (or, for `fileDrop`'s `sources`, an id that resolves to an absolute one
+   * only in preload). `assertSkillPath`/`assertSkillDir` is the string-shape
+   * half of what bounds them; `resolveInSkill`'s `realpath` containment check
+   * in main is the other half, and neither substitutes for the other. See
+   * `skills-contract.ts` for the full argument and `BRIDGE_SKILLS_KEYS` for
+   * why `pathToken` is what keeps the renderer from naming a path of its own.
    *
    * Every mutating verb answers with the fresh snapshot rather than `void`, so
    * the pane never has to follow a mutation with a read, and the two can never
@@ -1726,6 +1765,46 @@ export interface HiveBridge {
      * replacing it.
      */
     rename(request: SkillRenameRequest): Promise<SkillsSnapshot>;
+    /** One file inside a bundle, for the editor (HIVE-148). */
+    fileRead(request: SkillPathRequest): Promise<SkillFileRead>;
+    /** Write one file inside a bundle, creating its parent directories. */
+    fileWrite(request: SkillFileWriteRequest): Promise<SkillsSnapshot>;
+    /** Create a folder inside a bundle. */
+    fileMkdir(request: SkillPathRequest): Promise<SkillsSnapshot>;
+    /** Remove a file or folder inside a bundle. Refuses `SKILL.md` and the root. */
+    fileRemove(request: SkillPathRequest): Promise<SkillsSnapshot>;
+    /** Move or rename a file or folder inside a bundle. */
+    fileMove(request: SkillMoveRequest): Promise<SkillsSnapshot>;
+    /**
+     * Copy whatever a native open dialog returns into a bundle (HIVE-148).
+     *
+     * Carries no source path: main opens the dialog and chooses. `dir` is the
+     * only field the renderer supplies.
+     */
+    fileImport(request: SkillImportRequest): Promise<SkillsSnapshot>;
+    /**
+     * Copy dropped files into a bundle, named by the ids `pathToken` minted
+     * (HIVE-148).
+     *
+     * The renderer's own shape, distinct from `skills-contract.ts`'s
+     * `SkillDropRequest`: it carries `tokens`, not `sources`. Preload resolves
+     * each token back to the real path it was minted for, consuming it, and
+     * only then calls `skills:file:drop` with the resolved `sources` — so
+     * this method's *request* type never appears on the wire;
+     * `SkillDropRequest` does.
+     */
+    fileDrop(request: { name: string; dir: string; tokens: string[] }): Promise<SkillsSnapshot>;
+    /**
+     * Mint an opaque, one-shot id for a `File` a real drop produced, or `null`
+     * for one the page constructed itself (HIVE-148).
+     *
+     * The only verb in this namespace — in this bridge — that is neither
+     * `invoke` nor a listener: it runs synchronously in preload against a map
+     * only preload holds, and never touches IPC at all. See
+     * `BRIDGE_SKILLS_KEYS` for why that is what keeps `fileDrop` from being a
+     * read-anywhere primitive.
+     */
+    pathToken(file: File): string | null;
   };
   /**
    * External tooling this app can see but does not own (story 106).
@@ -2217,6 +2296,16 @@ export const RESIZE_THROTTLE_MS = 50;
  * argument for it is recorded on {@link BRIDGE_SKILLS_KEYS} rather than here,
  * because it is a change to one namespace and not to the surface.
  *
+ * HIVE-148 adds eight more to that namespace, still nothing to this list. A
+ * skill became a folder rather than one file, so seven of the eight now carry
+ * a path — the first time anything in `skills` has — and the eighth,
+ * `pathToken`, mints an id for a dropped `File` rather than taking or
+ * returning a path at all. Both are namespace changes, not surface ones, and
+ * the full argument for what bounds a path-carrying verb here — `assertSkillPath`
+ * at the boundary, `resolveInSkill`'s `realpath` containment behind it, and why
+ * the renderer still cannot forge a source for `fileDrop` — is recorded on
+ * {@link BRIDGE_SKILLS_KEYS}.
+ *
  * HIVE-111 adds `ledger`. What a web page can now do that it could not before:
  * read the whole correspondence log between every session and the overmind,
  * append to it, and close an open ask — but always **as the overmind**. `post`
@@ -2285,6 +2374,19 @@ export const BRIDGE_KEYS = [
  * main chose. It cannot reach a file `remove` could not already reach, and it
  * refuses a `to` that exists rather than replacing it, so it cannot destroy a
  * skill that `remove` was not already able to destroy.
+ *
+ * ## What the eight bundle verbs widen, and what holds them (HIVE-148)
+ *
+ * Seven of them carry a skill-relative path where the original five carried
+ * only a name, so the bound is no longer the shape of the payload alone. It is
+ * `assertSkillPath` at the boundary and a `realpath` containment check in
+ * `resolveInSkill` behind it, and the second is not optional: a bundle holding
+ * `escape -> /etc` satisfies every string rule.
+ *
+ * `pathToken` is the eighth and takes no path at all in either direction. It
+ * accepts a `File` and answers an opaque id, which is what keeps `fileDrop`
+ * from being a read-anywhere primitive: the renderer never holds a path, so it
+ * cannot name one it was not handed.
  */
 export const BRIDGE_SKILLS_KEYS = [
   'list',
@@ -2292,6 +2394,14 @@ export const BRIDGE_SKILLS_KEYS = [
   'write',
   'remove',
   'rename',
+  'pathToken',
+  'fileRead',
+  'fileWrite',
+  'fileMkdir',
+  'fileRemove',
+  'fileMove',
+  'fileImport',
+  'fileDrop',
 ] as const;
 
 /**

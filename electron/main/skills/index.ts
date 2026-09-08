@@ -18,6 +18,7 @@ import {
   type SkillsSnapshot,
 } from '@shared/skills-contract';
 
+import { copyInto } from './import';
 import { PLUGIN_DIR, resolveInSkill, skillsRoot } from './paths';
 import { writePluginDir } from './plugin';
 import { readUserSkills, type SkillsRead } from './read';
@@ -112,6 +113,26 @@ export interface SkillsRuntime {
    * and this stays a move rather than becoming a move-and-edit.
    */
   rename(from: string, to: string): Promise<SkillsSnapshot>;
+  /**
+   * Copy whatever a native picker returns into a bundle, regenerate, and
+   * answer with the fresh snapshot (HIVE-148).
+   *
+   * `pick` is injected rather than called here for the reason `doneUrl` is a
+   * getter and `version` is passed in rather than read from `app`: this
+   * module's tests run under plain Node, and importing `electron` for a
+   * dialog would give them a runtime they do not have. `ipc/index.ts` owns
+   * the actual `dialog.showOpenDialog` call.
+   */
+  importFiles(name: string, dir: string, pick: () => Promise<string[]>): Promise<SkillsSnapshot>;
+  /**
+   * Copy `sources` — absolute paths only preload can produce — into a bundle,
+   * regenerate, and answer with the fresh snapshot (HIVE-148).
+   *
+   * The bundle sibling of {@link SkillsRuntime.importFiles}: same `copyInto`
+   * underneath, different origin for the paths. See `skills-contract.ts` for
+   * why the renderer cannot forge one of its own.
+   */
+  dropFiles(name: string, dir: string, sources: string[]): Promise<SkillsSnapshot>;
 }
 
 export interface SkillsRuntimeOptions {
@@ -498,6 +519,25 @@ export function createSkillsRuntime({
       // One syscall, so there is no moment in which the skill exists twice or
       // not at all — the whole reason this verb is in main.
       await rename(join(skillsRoot(), from), target);
+      return snapshot(await sync());
+    },
+
+    async importFiles(
+      name: string,
+      dir: string,
+      pick: () => Promise<string[]>,
+    ): Promise<SkillsSnapshot> {
+      const sources = await pick();
+      // A cancelled dialog is not a failure, and re-reading the tree for it
+      // would flash the pane for a user who changed their mind.
+      if (sources.length === 0) return snapshot(await sync());
+
+      await copyInto(name, dir, sources);
+      return snapshot(await sync());
+    },
+
+    async dropFiles(name: string, dir: string, sources: string[]): Promise<SkillsSnapshot> {
+      await copyInto(name, dir, sources);
       return snapshot(await sync());
     },
   };

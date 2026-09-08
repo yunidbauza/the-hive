@@ -95,7 +95,12 @@ import {
   parseSearchPrsRequest,
   parseSessionNoteRequest,
   parseSessionPrRequest,
+  parseSkillDropRequest,
+  parseSkillFileWriteRequest,
+  parseSkillImportRequest,
+  parseSkillMoveRequest,
   parseSkillNameRequest,
+  parseSkillPathRequest,
   parseSkillRenameRequest,
   parseSkillWriteRequest,
   parseWriteRequest,
@@ -3360,13 +3365,17 @@ export function registerIpcHandlers(
   });
 
   /**
-   * Custom skills (HIVE-96, HIVE-99).
+   * Custom skills (HIVE-96, HIVE-99, HIVE-148).
    *
    * The `fs` block above validates twice — a string-shape guard here, then real
    * containment in `fs/paths.ts` — because it accepts a path. These five
    * validate once, and that is not a weaker design: `assertSkillName` admits
    * only `[a-z0-9-]+`, which cannot name a directory other than the one main
    * chooses, so there is no second question to ask. See `skills-contract.ts`.
+   *
+   * The seven bundle verbs below (HIVE-148) validate twice, the same way `fs`
+   * does — see the docblock just above `CH.skillsFileRead` — because a skill
+   * became a folder and a path is exactly how something inside one is named.
    *
    * `skills` is non-null from registration onward; the optional chaining is for
    * the window between module load and `registerIpc`, which is the same reason
@@ -3390,6 +3399,65 @@ export function registerIpcHandlers(
   handle(CH.skillsRename, (_event, payload) => {
     const request = parseSkillRenameRequest(payload);
     return skills?.rename(request.from, request.to);
+  });
+
+  /**
+   * The bundle verbs (HIVE-148).
+   *
+   * `skills:read`/`write`/`remove`/`rename` above validate once, because
+   * `assertSkillName` cannot express anything but the one directory main
+   * chose. These seven cannot make that claim — a path is exactly the thing a
+   * bundle's own SKILL.md, scripts and references are addressed by — so each
+   * validates the request's *shape* here and then leans on
+   * `resolveInSkill`'s `realpath` containment check inside `SkillsRuntime`
+   * for the *disk*. Neither layer substitutes for the other; see
+   * `electron/main/skills/paths.ts`.
+   */
+  handle(CH.skillsFileRead, (_event, payload) => {
+    const request = parseSkillPathRequest(payload);
+    return skills?.readFile(request.name, request.path);
+  });
+
+  handle(CH.skillsFileWrite, (_event, payload) => {
+    const request = parseSkillFileWriteRequest(payload);
+    return skills?.writeFile(request.name, request.path, request.body);
+  });
+
+  handle(CH.skillsFileMkdir, (_event, payload) => {
+    const request = parseSkillPathRequest(payload);
+    return skills?.makeDir(request.name, request.path);
+  });
+
+  handle(CH.skillsFileRemove, (_event, payload) => {
+    const request = parseSkillPathRequest(payload);
+    return skills?.removeFile(request.name, request.path);
+  });
+
+  handle(CH.skillsFileMove, (_event, payload) => {
+    const request = parseSkillMoveRequest(payload);
+    return skills?.moveFile(request.name, request.from, request.to);
+  });
+
+  handle(CH.skillsFileImport, (event, payload) => {
+    const request = parseSkillImportRequest(payload);
+    return skills?.importFiles(request.name, request.dir, async () => {
+      /*
+        Main opens the picker, so no source path crosses IPC inward. The same
+        arrangement `pickTheme()` uses, and the reason `import` is a verb of its
+        own rather than a second shape of `drop`.
+      */
+      const window = BrowserWindow.fromWebContents(event.sender);
+      if (window === null) return [];
+      const result = await dialog.showOpenDialog(window, {
+        properties: ['openFile', 'openDirectory', 'multiSelections'],
+      });
+      return result.canceled ? [] : result.filePaths;
+    });
+  });
+
+  handle(CH.skillsFileDrop, (_event, payload) => {
+    const request = parseSkillDropRequest(payload);
+    return skills?.dropFiles(request.name, request.dir, request.sources);
   });
 
   /**
