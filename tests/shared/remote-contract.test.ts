@@ -8,6 +8,7 @@ import {
   CHANNEL_AUTHORIZATION,
   FRAME_KIND,
   REMOTE_PROTOCOL_VERSION,
+  REMOTE_REFUSED_CHANNELS,
   WINDOW_BOUND,
   authorizationOf,
   frameKindOf,
@@ -319,6 +320,29 @@ describe('remote contract: direction', () => {
   it('refuses an unlisted channel whatever the frame says', () => {
     expect(isClientFrameAllowed('call', 'toString', 'execute')).toBe(false);
     expect(isClientFrameAllowed('notify', 'pty:spwan', 'execute')).toBe(false);
+  });
+});
+
+/**
+ * `skills:file:drop` is graded `execute` — its ceiling — and is still refused
+ * for every remote caller, because the grade assumes the call is genuine and
+ * this channel's local safety argument (preload minted every `sources` entry)
+ * is a fact the wire cannot carry (HIVE-148).
+ */
+describe('remote contract: channels refused over the wire regardless of grant', () => {
+  it('refuses skills:file:drop even at execute, the grade it already holds', () => {
+    expect(isClientFrameAllowed('call', CH.skillsFileDrop, 'execute')).toBe(false);
+  });
+
+  it('is graded execute by CHANNEL_AUTHORIZATION — the refusal is not a lower grade in disguise', () => {
+    expect(authorizationOf(CH.skillsFileDrop)).toBe('execute');
+    expect(isAuthorized(CH.skillsFileDrop, 'execute')).toBe(true);
+  });
+
+  it('does not refuse every skills bundle channel — only drop', () => {
+    expect(REMOTE_REFUSED_CHANNELS.has(CH.skillsFileImport)).toBe(false);
+    expect(isClientFrameAllowed('call', CH.skillsFileImport, 'execute')).toBe(true);
+    expect(isClientFrameAllowed('call', CH.skillsFileWrite, 'execute')).toBe(true);
   });
 });
 

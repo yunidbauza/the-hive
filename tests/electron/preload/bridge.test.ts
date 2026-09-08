@@ -734,28 +734,49 @@ describe('the skills bundle verbs (HIVE-148)', () => {
 
     /*
       Consumed on first use — a token is a one-shot ticket, not a durable
-      handle. A second drop naming the same token resolves to nothing rather
-      than replaying the path it already spent.
+      handle. A second drop naming the same token resolves to nothing at all,
+      which is refused locally rather than invoked with an empty `sources` —
+      see the next test.
     */
-    await skills().fileDrop({ name: 'graphify', dir: '', tokens: [token as string] });
-    expect(ipcRendererMock.invoke).toHaveBeenLastCalledWith(CH.skillsFileDrop, {
-      name: 'graphify',
-      dir: '',
-      sources: [],
-    });
+    await expect(
+      skills().fileDrop({ name: 'graphify', dir: '', tokens: [token as string] }),
+    ).rejects.toThrow();
   });
 
-  it('drops a token the renderer invented, rather than naming a source for it', async () => {
+  it('refuses locally when every token names nothing, rather than invoking a no-op', async () => {
+    /*
+      Invoking with `sources: []` would answer with a fresh snapshot
+      indistinguishable from a drop that copied something. This is the case
+      that must not reach main silently: every token here was never minted.
+    */
+    await expect(
+      skills().fileDrop({
+        name: 'graphify',
+        dir: '',
+        tokens: ['a-token-nobody-minted'],
+      }),
+    ).rejects.toThrow();
+
+    expect(ipcRendererMock.invoke).not.toHaveBeenCalledWith(
+      CH.skillsFileDrop,
+      expect.anything(),
+    );
+  });
+
+  it('still proceeds when only some tokens resolve, dropping just the unknown ones', async () => {
+    getPathForFileMock.mockReturnValueOnce('/Users/yunid/Downloads/run.sh');
+    const token = skills().pathToken(new File(['x'], 'run.sh'));
+
     await skills().fileDrop({
       name: 'graphify',
       dir: '',
-      tokens: ['a-token-nobody-minted'],
+      tokens: [token as string, 'a-token-nobody-minted'],
     });
 
     expect(ipcRendererMock.invoke).toHaveBeenCalledWith(CH.skillsFileDrop, {
       name: 'graphify',
       dir: '',
-      sources: [],
+      sources: ['/Users/yunid/Downloads/run.sh'],
     });
   });
 });

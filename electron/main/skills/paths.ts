@@ -389,3 +389,42 @@ export async function resolveInSkill(
   await assertWithinRoot(root, target, MAX_LINK_HOPS);
   return target;
 }
+
+/**
+ * Whether `absPath` — already resolved by {@link resolveInSkill} — names this
+ * skill's own `SKILL.md`, however it got there.
+ *
+ * Compares `realpath`d canonical paths rather than the request string, which
+ * is the whole point: a request naming `self/SKILL.md` clears
+ * `assertSkillPath` (no dot segment, within the depth cap) and, with a bundle
+ * holding `self -> .`, resolves to the exact same file `SKILL.md` names
+ * directly. Only comparing what the two paths actually resolve *to* catches
+ * that; comparing the strings that named them does not.
+ *
+ * Exported here rather than kept as a private closure inside
+ * `createSkillsRuntime` (where this used to live, guarding `removeFile` and
+ * `moveFile`), because `copyInto` (HIVE-148) needs the identical guard:
+ * `import` and `drop` are a third route to the same file, reachable by a
+ * drag, and duplicating this logic in two modules is exactly how the two
+ * copies drift.
+ */
+export async function isSkillManifest(
+  name: string,
+  absPath: string,
+): Promise<boolean> {
+  let real: string;
+  try {
+    real = await realpath(absPath);
+  } catch {
+    return false; // Nothing there to be SKILL.md.
+  }
+
+  let canonical: string;
+  try {
+    canonical = await realpath(join(skillsRoot(), name, 'SKILL.md'));
+  } catch {
+    return false; // No SKILL.md in this bundle to protect.
+  }
+
+  return real === canonical;
+}

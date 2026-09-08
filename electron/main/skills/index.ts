@@ -19,7 +19,7 @@ import {
 } from '@shared/skills-contract';
 
 import { copyInto } from './import';
-import { PLUGIN_DIR, resolveInSkill, skillsRoot } from './paths';
+import { PLUGIN_DIR, isSkillManifest, resolveInSkill, skillsRoot } from './paths';
 import { writePluginDir } from './plugin';
 import { readUserSkills, type SkillsRead } from './read';
 
@@ -263,42 +263,6 @@ export function createSkillsRuntime({
     })),
     skillsRoot: skillsRoot(),
   });
-
-  /**
-   * Whether `absPath` — already resolved by `resolveInSkill` — names this
-   * skill's own `SKILL.md`, however it got there.
-   *
-   * A closure over `fileFor` rather than a module-level function, for the
-   * reason `fileFor` itself is one: it needs `skillsRoot()` read fresh per
-   * call, the same value `resolveInSkill` resolved its root from.
-   *
-   * Compares `realpath`d canonical paths rather than the request string,
-   * which is the whole point: `removeFile('graphify', 'self/SKILL.md')`
-   * clears `assertSkillPath` (no dot segment, depth 2) and, with a bundle
-   * holding `self -> .`, resolves to the exact same file `SKILL.md` names
-   * directly. Only comparing what the two paths actually resolve *to* catches
-   * that; comparing the strings that named them does not.
-   */
-  const isSkillManifest = async (
-    name: string,
-    absPath: string,
-  ): Promise<boolean> => {
-    let real: string;
-    try {
-      real = await realpath(absPath);
-    } catch {
-      return false; // Nothing there to be SKILL.md.
-    }
-
-    let canonical: string;
-    try {
-      canonical = await realpath(fileFor(name));
-    } catch {
-      return false; // No SKILL.md in this bundle to protect.
-    }
-
-    return real === canonical;
-  };
 
   /**
    * Whether `absPath` — already resolved by `resolveInSkill` — names the

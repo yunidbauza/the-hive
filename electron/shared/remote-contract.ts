@@ -650,10 +650,44 @@ export function isAuthorized(channel: string, granted: Authorization): boolean {
 }
 
 /**
+ * Channels no remote caller may ever reach, whatever grade its device holds
+ * (HIVE-148).
+ *
+ * `Authorization` grades what a call can do to host state **assuming the call
+ * is genuine**. `skills:file:drop` breaks that assumption over a wire:
+ * `parseSkillDropRequest` (`electron/shared/guards.ts`) accepts any string
+ * that starts with `/`, and the only reason that is not a read-anywhere
+ * primitive — copy `/etc/passwd` into a bundle, then read it back with
+ * `skills:file:read` — is `electron/preload/index.ts`'s `pathToken`: a
+ * guarantee that `sources` came from `webUtils.getPathForFile` on a `File` a
+ * real browser drop produced. That guarantee is a property of *this
+ * process's own preload*. A remote client speaks the frame format directly,
+ * with nothing on the wire proving a `sources` entry ever passed through a
+ * preload at all — an attacker-controlled client can simply put
+ * `/etc/passwd` in the field, and this channel is already graded `execute`,
+ * its ceiling, so no stricter grade closes the gap. No `Authorization` value
+ * can express "this channel's safety proof does not survive the wire", so the
+ * channel itself is refused for every remote caller instead, independent of
+ * grant.
+ *
+ * Empty of anything else today, and additions to it should stay rare: this is
+ * not where "a channel feels risky" gets recorded — `CHANNEL_AUTHORIZATION`'s
+ * `execute` grade is. It is only for a channel whose *local* safety argument
+ * relies on a fact the wire cannot carry, the way `skills:file:drop`'s does.
+ * `router.ts`'s remote branch is what will consult this before dispatching a
+ * frame — recording the constraint here first, before that code exists, is
+ * what makes it impossible to wire the remote path through this channel
+ * without whoever does it reading why it is here.
+ */
+export const REMOTE_REFUSED_CHANNELS: ReadonlySet<Channel> = new Set([
+  CH.skillsFileDrop,
+]);
+
+/**
  * The gate a server's receive path actually wants: may a client send this frame,
  * naming this channel, holding this grant?
  *
- * Three ways to fail, and the middle one is the reason this function exists
+ * Four ways to fail, and the middle two are the reason this function exists
  * rather than being left to each caller to remember:
  *
  * 1. The channel is not a channel — {@link frameKindOf} returns `null`.
@@ -662,7 +696,10 @@ export function isAuthorized(channel: string, granted: Authorization): boolean {
  *    never send a frame naming one of the 22 server-to-client `event` channels.
  *    Privilege alone cannot catch this, because those 22 are graded `read` and
  *    `read` is the grant every attached device has.
- * 3. The grant does not reach what the channel costs.
+ * 3. The channel is in {@link REMOTE_REFUSED_CHANNELS} — refused for every
+ *    remote caller regardless of grant, because its local safety argument does
+ *    not survive the wire.
+ * 4. The grant does not reach what the channel costs.
  *
  * `FRAME_KIND` held the information needed for (2) from the first commit; the
  * gap was that nothing consulted it.
@@ -672,5 +709,9 @@ export function isClientFrameAllowed(
   channel: string,
   granted: Authorization,
 ): boolean {
-  return frameKindOf(channel) === frame && isAuthorized(channel, granted);
+  return (
+    frameKindOf(channel) === frame &&
+    !REMOTE_REFUSED_CHANNELS.has(channel as Channel) &&
+    isAuthorized(channel, granted)
+  );
 }

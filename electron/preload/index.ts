@@ -429,6 +429,19 @@ const bridge: HiveBridge = {
         droppedPaths.delete(token);
         sources.push(path);
       }
+      /*
+        Every token named was already consumed, or never minted. Invoking main
+        with `sources: []` would answer with a fresh snapshot indistinguishable
+        from a drop that actually copied something — refusing here, before the
+        round trip, is what makes "nothing happened" visible rather than
+        looking like success. A *partial* resolution still proceeds with
+        whatever did resolve; this is only the case where none did.
+      */
+      if (sources.length === 0 && request.tokens.length > 0) {
+        return Promise.reject(
+          new Error('Nothing to drop — every file had already been used or was never received.'),
+        );
+      }
       return ipcRenderer.invoke(CH.skillsFileDrop, {
         name: request.name,
         dir: request.dir,

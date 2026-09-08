@@ -801,14 +801,16 @@ export const CH = {
    * This block used to say that five verbs lived here and not one of them
    * took a path. That was true while a skill was one file. A skill is now a
    * folder, and a pane that can author every file in one cannot address them
-   * by anything but a path — so five of the thirteen channels below still
+   * by anything but a path — so five of the **twelve channels** below still
    * name only a **skill** (`list`, `read`, `write`, `remove`, `rename`, the
    * original set, stricter than the `fs` block above because
    * `SKILL_NAME_PATTERN` makes traversal unrepresentable rather than merely
-   * filtered) and eight carry a skill-relative path or, for `skillsFileDrop`
-   * alone, an absolute one.
+   * filtered) and **seven carry a path**: skill-relative, or, for
+   * `skillsFileDrop` alone, an absolute one. (`pathToken` — the eighth of
+   * `BRIDGE_SKILLS_KEYS`'s thirteen bridge keys — is not a channel at all; it
+   * never crosses IPC, so it does not appear in this list.)
    *
-   * The bound for those eight is not the shape of the payload: `assertSkillPath`
+   * The bound for those seven is not the shape of the payload: `assertSkillPath`
    * (five of them) and `assertSkillDir` (`skillsFileImport`, `skillsFileDrop`)
    * refuse a `..` segment and cap the depth, but a symlink is a fact about the
    * disk, not the string. `resolveInSkill`'s `realpath` containment check in
