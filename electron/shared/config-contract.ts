@@ -640,8 +640,15 @@ export const BIND_KEYS: readonly (keyof ReceiverBindConfig)[] = [
   'allowedOrigins',
 ];
 
-/** The wildcard bind, refused for a served machine — see {@link isServerBindHost}. */
-const WILDCARD_BIND = '0.0.0.0';
+/**
+ * The wildcard bind, refused for a served machine — see {@link isServerBindHost}.
+ *
+ * Exported so a renderer that wants to name this value in a hint — the
+ * settings pane refuses it before ever sending the request, and says why —
+ * reads the same literal `isServerBindHost` refuses, rather than a second
+ * `'0.0.0.0'` typed by hand that could drift from it.
+ */
+export const WILDCARD_BIND = '0.0.0.0';
 
 /**
  * Whether a value may be `server.bind.host`.

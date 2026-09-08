@@ -8,10 +8,12 @@ import {
   DEFAULT_NOTIFICATIONS,
   type ConfigSnapshot,
   type ProjectStatus,
+  type ServerDevice,
 } from '@shared/config-contract';
 
 import {
   loadProjectConfig,
+  pairDevice,
   projectAccess,
   readAppInfo,
   projectConfigSnapshot,
@@ -24,7 +26,9 @@ import {
   resetProjectConfig,
   resolveProjectRef,
   revealConfigFile,
+  revokeDevice,
   setProjectConfigForTest,
+  setServerConfig,
   subscribeProjectConfig,
 } from '@lib/project-config';
 
@@ -309,6 +313,195 @@ describe('managing projects', () => {
       reorderProjectsInConfig({ ids: [] }),
     ).resolves.toBeUndefined();
     expect(projectConfigSnapshot()).toBeNull();
+  });
+});
+
+/** One `ServerDevice`, for the pairing/revoking tests below. */
+function device(
+  id: string,
+  name: string,
+  revoked = false,
+): ServerDevice {
+  return {
+    id,
+    name,
+    paired: '2026-09-08',
+    revoked,
+    credential: { kind: 'sha256', digest: `${id}-digest` },
+  };
+}
+
+/**
+ * HIVE-142's server-mode verbs (review finding, Minor 3: this file gained no
+ * coverage for these when the group landed, though it gained 70 lines of
+ * real branching — no-bridge, the token branch, the re-fetch, the catch —
+ * and every sibling verb above is tested against exactly this shape).
+ */
+describe('setServerConfig (HIVE-142)', () => {
+  it('installs the snapshot main returns', async () => {
+    const next = snapshot();
+    const setServer = vi.fn().mockResolvedValue(next);
+    (window as { hive?: unknown }).hive = { config: { setServer } };
+
+    await setServerConfig({ enabled: true });
+
+    expect(setServer).toHaveBeenCalledWith({ enabled: true });
+    expect(projectConfigSnapshot()).toBe(next);
+  });
+
+  it('keeps the last good snapshot when refused', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const good = snapshot([{ id: 'alpha', status: 'ok' }]);
+    setProjectConfigForTest(good);
+    (window as { hive?: unknown }).hive = {
+      config: { setServer: vi.fn().mockRejectedValue(new Error('refused')) },
+    };
+
+    await setServerConfig({ enabled: true });
+
+    expect(projectConfigSnapshot()).toBe(good);
+  });
+
+  it('is a no-op with no bridge, like every other verb', async () => {
+    await expect(setServerConfig({ enabled: true })).resolves.toBeUndefined();
+    expect(projectConfigSnapshot()).toBeNull();
+  });
+});
+
+describe('pairDevice (HIVE-142)', () => {
+  function withServerBridge(
+    pair: ReturnType<typeof vi.fn>,
+    get: ReturnType<typeof vi.fn> = vi.fn(),
+  ) {
+    (window as { hive?: unknown }).hive = { server: { pair }, config: { get } };
+  }
+
+  it('is a no-op with no bridge', async () => {
+    await expect(pairDevice('New laptop')).resolves.toEqual({
+      error: 'No bridge available.',
+    });
+    expect(projectConfigSnapshot()).toBeNull();
+  });
+
+  it('returns the token, and re-reads the snapshot so the device list updates', async () => {
+    const afterPair = snapshot([], {
+      server: { ...DEFAULT_SERVER, devices: [device('d_1', 'New laptop')] },
+    });
+    const pair = vi.fn().mockResolvedValue({ token: 'ABCD-EFGH-JKMN-PQRS' });
+    const get = vi.fn().mockResolvedValue(afterPair);
+    withServerBridge(pair, get);
+    const listener = vi.fn();
+    subscribeProjectConfig(listener);
+
+    await expect(pairDevice('New laptop')).resolves.toEqual({
+      token: 'ABCD-EFGH-JKMN-PQRS',
+    });
+
+    expect(pair).toHaveBeenCalledWith({ name: 'New laptop' });
+    expect(projectConfigSnapshot()).toBe(afterPair);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns the refusal reason without touching the snapshot, and never calls get', async () => {
+    const good = snapshot([{ id: 'alpha', status: 'ok' }]);
+    setProjectConfigForTest(good);
+    const pair = vi
+      .fn()
+      .mockResolvedValue({ error: 'A device named "New laptop" already exists.' });
+    const get = vi.fn();
+    withServerBridge(pair, get);
+
+    await expect(pairDevice('New laptop')).resolves.toEqual({
+      error: 'A device named "New laptop" already exists.',
+    });
+
+    expect(get).not.toHaveBeenCalled();
+    expect(projectConfigSnapshot()).toBe(good);
+  });
+
+  it('reports a broken channel as a pairing failure', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const pair = vi.fn().mockRejectedValue(new Error('channel gone'));
+    withServerBridge(pair);
+
+    await expect(pairDevice('New laptop')).resolves.toEqual({
+      error: 'Pairing failed.',
+    });
+    expect(console.error).toHaveBeenCalled();
+  });
+
+  /**
+   * Review finding, Minor 1. A device that minted successfully is already on
+   * disk — a `config:get` that then fails must not turn that success into an
+   * error the caller could mistake for the pair itself having failed, which
+   * would send them to retry a name `server:pair` now refuses as a
+   * duplicate.
+   */
+  it('still returns the token when the snapshot re-read fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const pair = vi.fn().mockResolvedValue({ token: 'ABCD-EFGH-JKMN-PQRS' });
+    const get = vi.fn().mockRejectedValue(new Error('closed window'));
+    withServerBridge(pair, get);
+
+    await expect(pairDevice('New laptop')).resolves.toEqual({
+      token: 'ABCD-EFGH-JKMN-PQRS',
+    });
+    expect(console.error).toHaveBeenCalled();
+  });
+});
+
+describe('revokeDevice (HIVE-142)', () => {
+  it('is a no-op with no bridge', async () => {
+    await expect(revokeDevice('Old laptop')).resolves.toEqual({
+      ok: false,
+      error: 'No bridge available.',
+    });
+  });
+
+  it('returns ok, and re-reads the snapshot so the roster reflects the revoke', async () => {
+    const afterRevoke = snapshot([], {
+      server: { ...DEFAULT_SERVER, devices: [device('d_1', 'Old laptop', true)] },
+    });
+    const revoke = vi.fn().mockResolvedValue(undefined);
+    const get = vi.fn().mockResolvedValue(afterRevoke);
+    (window as { hive?: unknown }).hive = { server: { revoke }, config: { get } };
+    const listener = vi.fn();
+    subscribeProjectConfig(listener);
+
+    await expect(revokeDevice('Old laptop')).resolves.toEqual({ ok: true });
+
+    expect(revoke).toHaveBeenCalledWith({ name: 'Old laptop' });
+    expect(projectConfigSnapshot()).toBe(afterRevoke);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Review finding, Important: the most urgent control on this pane must not
+   * fail silently. `revokeDevice` used to answer `void`; this is the
+   * assertion that would have caught it never reporting a refusal.
+   */
+  it('returns the refusal reason on a broken channel', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const revoke = vi.fn().mockRejectedValue(new Error('channel gone'));
+    (window as { hive?: unknown }).hive = {
+      server: { revoke },
+      config: { get: vi.fn() },
+    };
+
+    await expect(revokeDevice('Old laptop')).resolves.toEqual({
+      ok: false,
+      error: 'Could not revoke the device. Try again.',
+    });
+  });
+
+  it('still returns ok when the snapshot re-read fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const revoke = vi.fn().mockResolvedValue(undefined);
+    const get = vi.fn().mockRejectedValue(new Error('closed window'));
+    (window as { hive?: unknown }).hive = { server: { revoke }, config: { get } };
+
+    await expect(revokeDevice('Old laptop')).resolves.toEqual({ ok: true });
+    expect(console.error).toHaveBeenCalled();
   });
 });
 

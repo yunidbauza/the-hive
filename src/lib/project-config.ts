@@ -225,6 +225,14 @@ export const setServerConfig = (request: SetServerRequest): Promise<void> =>
  * The plaintext token is the return value and nothing else. It is never
  * logged, and this function never writes it anywhere the caller did not ask
  * for it.
+ *
+ * The pair itself and the snapshot re-read are two separate `try` blocks,
+ * deliberately (review finding, Minor 1). A device that minted successfully
+ * is already on disk — a `config:get` that then fails (a closed window, a
+ * broken channel) must not turn that success into `{ error: 'Pairing failed.' }`,
+ * which would send the caller to retry a name `server:pair` now refuses as a
+ * duplicate. The outcome from `server:pair` is captured and returned
+ * regardless of whether the re-read lands.
  */
 export async function pairDevice(
   name: string,
@@ -232,38 +240,67 @@ export async function pairDevice(
   const bridge = window.hive;
   if (!bridge) return { error: 'No bridge available.' };
 
+  let outcome: { token: string } | { error: string };
   try {
-    const outcome = await bridge.server.pair({ name });
-    if ('token' in outcome) {
-      snapshot = await bridge.config.get();
-      emit();
-    }
-    return outcome;
+    outcome = await bridge.server.pair({ name });
   } catch (cause) {
     console.error('[hive] could not pair a device:', cause);
     return { error: 'Pairing failed.' };
   }
+
+  if ('token' in outcome) {
+    try {
+      snapshot = await bridge.config.get();
+    } catch (cause) {
+      console.error(
+        '[hive] paired a device, but could not refresh the config afterward:',
+        cause,
+      );
+    }
+    emit();
+  }
+
+  return outcome;
 }
 
 /**
  * Revoke the device named `name` (HIVE-142).
  *
- * The snapshot is re-read afterward for the same reason {@link pairDevice}
- * reads it: revoking has to reach the caller's device list — the list
- * `ServerModeGroup` renders — without a manual Reload, and this verb returns
- * no snapshot of its own to install.
+ * Answers `{ ok } | { error }` rather than `void` (review finding, Important)
+ * so the pane can say why a Revoke click did nothing — the most urgent
+ * control on this whole surface must not fail silently. The snapshot is
+ * re-read afterward for the same reason {@link pairDevice} reads it:
+ * revoking has to reach the caller's device list — the list `ServerModeGroup`
+ * renders — without a manual Reload, and this verb returns no snapshot of
+ * its own to install.
+ *
+ * The revoke and the snapshot re-read are two separate `try` blocks, for the
+ * same reason {@link pairDevice}'s are: a revoke that actually landed must be
+ * reported as `{ ok: true }` even if the follow-up read fails.
  */
-export async function revokeDevice(name: string): Promise<void> {
+export async function revokeDevice(
+  name: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const bridge = window.hive;
-  if (!bridge) return;
+  if (!bridge) return { ok: false, error: 'No bridge available.' };
 
   try {
     await bridge.server.revoke({ name });
-    snapshot = await bridge.config.get();
   } catch (cause) {
     console.error('[hive] could not revoke the device:', cause);
+    return { ok: false, error: 'Could not revoke the device. Try again.' };
+  }
+
+  try {
+    snapshot = await bridge.config.get();
+  } catch (cause) {
+    console.error(
+      '[hive] revoked a device, but could not refresh the config afterward:',
+      cause,
+    );
   }
   emit();
+  return { ok: true };
 }
 
 /**

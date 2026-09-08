@@ -9,7 +9,7 @@ import type { ServerBindConfig, ServerDevice } from '@shared/config-contract';
 vi.mock('@lib/project-config', () => ({
   setServerConfig: vi.fn(() => Promise.resolve()),
   pairDevice: vi.fn(),
-  revokeDevice: vi.fn(() => Promise.resolve()),
+  revokeDevice: vi.fn(() => Promise.resolve({ ok: true })),
 }));
 
 /**
@@ -51,7 +51,7 @@ describe('ServerModeGroup', () => {
   beforeEach(() => {
     vi.mocked(setServerConfig).mockClear();
     vi.mocked(pairDevice).mockReset();
-    vi.mocked(revokeDevice).mockClear();
+    vi.mocked(revokeDevice).mockReset().mockResolvedValue({ ok: true });
   });
 
   it('is off, and its fields hidden, on a default config', () => {
@@ -247,10 +247,44 @@ describe('ServerModeGroup', () => {
 
       expect(revokeDevice).toHaveBeenCalledWith("Yunid's MacBook");
     });
+
+    /**
+     * Review finding, Important: a failed revoke used to be silent — the row
+     * did not change and nothing said why. Reachable without malice: a name
+     * hand-edited into the config, or paired from the CLI, can carry a
+     * control character `assertText` (`parseRevokeDeviceRequest`) refuses,
+     * so the invoke rejects permanently for a button the user can see and
+     * click.
+     */
+    it('shows why, beside the roster, when a revoke is refused', async () => {
+      vi.mocked(revokeDevice).mockResolvedValue({
+        ok: false,
+        error: 'Could not revoke the device. Try again.',
+      });
+
+      render(
+        <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[ACTIVE_DEVICE]} />,
+      );
+
+      await userEvent.click(screen.getByRole('button', { name: /revoke/i }));
+
+      expect(
+        await screen.findByText(/could not revoke "yunid's macbook"/i),
+      ).toBeInTheDocument();
+    });
   });
 
   describe('pairing', () => {
-    it('shows the token once, and clears it once the roster reflects the pair', async () => {
+    /**
+     * Review finding ("the comment describes a mechanism the code does not
+     * have"): the token used to be cleared by watching `devices` change,
+     * which raced `pairDevice`'s own snapshot re-read and either cleared it
+     * late or, on a different flush order, in the same commit that first
+     * showed it. The token's lifetime must not depend on any of that — it is
+     * proven here by *not* changing `devices` at all and asserting the token
+     * still shows, then dismissing it explicitly.
+     */
+    it('shows the token, and it survives an unrelated re-render, until dismissed', async () => {
       vi.mocked(pairDevice).mockResolvedValue({
         token: 'ABCD-EFGH-JKMN-PQRS',
       });
@@ -265,6 +299,13 @@ describe('ServerModeGroup', () => {
       expect(await screen.findByText(/ABCD-EFGH-JKMN-PQRS/)).toBeInTheDocument();
       expect(pairDevice).toHaveBeenCalledWith('New laptop');
 
+      // An unrelated re-render — same props, a fresh `devices` reference,
+      // exactly the shape a snapshot update elsewhere in the app takes.
+      rerender(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} />);
+      expect(screen.getByText(/ABCD-EFGH-JKMN-PQRS/)).toBeInTheDocument();
+
+      // Even a re-render where the roster genuinely did change does not
+      // clear it — only the explicit "Done" action does.
       const paired: ServerDevice = {
         id: 'd_ef56',
         name: 'New laptop',
@@ -275,6 +316,9 @@ describe('ServerModeGroup', () => {
       rerender(
         <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[paired]} />,
       );
+      expect(screen.getByText(/ABCD-EFGH-JKMN-PQRS/)).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole('button', { name: /^done$/i }));
 
       expect(screen.queryByText(/ABCD-EFGH-JKMN-PQRS/)).not.toBeInTheDocument();
     });
@@ -292,6 +336,31 @@ describe('ServerModeGroup', () => {
       expect(
         await screen.findByText(/already exists/i),
       ).toBeInTheDocument();
+    });
+
+    /**
+     * Review finding, Minor 2: a failed pair used to leave an earlier
+     * success's token rendered beneath the new error.
+     */
+    it('clears a previously shown token once a new pairing attempt fails', async () => {
+      vi.mocked(pairDevice).mockResolvedValueOnce({
+        token: 'ABCD-EFGH-JKMN-PQRS',
+      });
+
+      render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} />);
+
+      await userEvent.type(screen.getByLabelText(/device name/i), 'First device');
+      await userEvent.click(screen.getByRole('button', { name: /^pair$/i }));
+      expect(await screen.findByText(/ABCD-EFGH-JKMN-PQRS/)).toBeInTheDocument();
+
+      vi.mocked(pairDevice).mockResolvedValueOnce({
+        error: 'A device named "First device" already exists.',
+      });
+      await userEvent.type(screen.getByLabelText(/device name/i), 'First device');
+      await userEvent.click(screen.getByRole('button', { name: /^pair$/i }));
+
+      expect(await screen.findByText(/already exists/i)).toBeInTheDocument();
+      expect(screen.queryByText(/ABCD-EFGH-JKMN-PQRS/)).not.toBeInTheDocument();
     });
 
     it('does not pair on an empty name', async () => {

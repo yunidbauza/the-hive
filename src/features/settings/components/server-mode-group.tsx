@@ -7,6 +7,7 @@ import { SettingsGroup } from '@features/settings/components/settings-group';
 import { pairDevice, revokeDevice, setServerConfig } from '@lib/project-config';
 import {
   DEFAULT_SERVER,
+  WILDCARD_BIND,
   isOrigin,
   isServerBindHost,
   type ServerBindConfig,
@@ -52,9 +53,18 @@ import {
  *
  * `pairDevice` (`@lib/project-config`) hands back the plaintext exactly once,
  * as its resolved value — never written into a store, a log, or the config.
- * `justPaired` holds it in local state only until the device roster this
- * component was handed actually changes, which is the proof the pairing
- * round-tripped; nothing here persists it past that.
+ * `justPaired` holds it in local state until something in *this component*
+ * explicitly clears it: the "Done" button beside it, or the next pairing
+ * attempt starting. It is deliberately **not** cleared by watching `devices`
+ * change (review finding, "the comment describes a mechanism the code does
+ * not have"): `pairDevice` re-reads and installs the fresh snapshot itself,
+ * before its promise resolves back to this component's `.then` — so the
+ * render that would prove *this* pairing's roster change already happened
+ * by the time `justPaired` is set, and a clear gated on that prop diffing
+ * either fires late (on some later, unrelated roster change) or, if the
+ * render ordering ever differed, could wipe the token in the same commit
+ * that first showed it. Clearing explicitly makes the guarantee independent
+ * of any of that.
  */
 
 const GRANT =
@@ -65,8 +75,7 @@ const SWITCH_DESCRIPTION = `${GRANT} Takes effect at next launch.`;
 const BIND_HINT =
   'Where this Hive listens for a paired device — a hostname or an IPv4 address reachable from the other side, such as a Tailscale address.';
 const BIND_INVALID = 'A hostname or an IPv4 address only — no scheme, port or path.';
-const BIND_WILDCARD =
-  '0.0.0.0 binds every interface on this machine. Name the address a device actually reaches instead — your Tailscale address is usually right.';
+const BIND_WILDCARD = `${WILDCARD_BIND} binds every interface on this machine. Name the address a device actually reaches instead — your Tailscale address is usually right.`;
 const PORT_HINT = `Leave empty for the default (${DEFAULT_SERVER.bind.port}).`;
 const PORT_INVALID = 'A port from 0 to 65535, or empty for the default.';
 const ORIGINS_HINT =
@@ -110,11 +119,6 @@ interface ServerModeGroupProps {
   bind: ServerBindConfig;
   /** The resolved device roster from the snapshot. */
   devices: readonly ServerDevice[];
-}
-
-/** A stable signature for {@link ServerModeGroupProps.devices} — see `justPaired`'s doc comment. */
-function deviceSignature(devices: readonly ServerDevice[]): string {
-  return devices.map((device) => `${device.id}:${device.revoked}`).join(',');
 }
 
 export function ServerModeGroup({ enabled, bind, devices }: ServerModeGroupProps) {
@@ -161,7 +165,7 @@ export function ServerModeGroup({ enabled, bind, devices }: ServerModeGroupProps
 
   const commitBindHost = () => {
     const next = hostDraft.trim();
-    if (next === '0.0.0.0') {
+    if (next === WILDCARD_BIND) {
       setHostInvalid('wildcard');
       return;
     }
@@ -217,25 +221,14 @@ export function ServerModeGroup({ enabled, bind, devices }: ServerModeGroupProps
     null,
   );
 
-  /*
-    Clears the shown token once the roster this component was handed actually
-    changes — the proof pairing (or a revoke) round-tripped, not merely that
-    something else caused a re-render. A signature rather than reference
-    equality, so an unrelated snapshot update elsewhere in the app — which
-    hands this component a structurally identical but freshly-allocated array
-    — does not erase a token the user has not copied yet.
-  */
-  const [seenDevices, setSeenDevices] = useState(() => deviceSignature(devices));
-  const currentDevices = deviceSignature(devices);
-  if (currentDevices !== seenDevices) {
-    setSeenDevices(currentDevices);
-    setJustPaired(null);
-  }
-
   const handlePair = () => {
     const name = pairName.trim();
     if (name === '') return;
     setPairError(null);
+    // A new attempt starting clears whatever the previous one left behind —
+    // a stale token under a fresh error, or a stale token under a fresh
+    // token — rather than leaving either to linger under the other.
+    setJustPaired(null);
     setPairing(true);
     void pairDevice(name).then((outcome) => {
       setPairing(false);
@@ -245,6 +238,23 @@ export function ServerModeGroup({ enabled, bind, devices }: ServerModeGroupProps
       } else {
         setPairError(outcome.error);
       }
+    });
+  };
+
+  const [revokeError, setRevokeError] = useState<{ name: string; message: string } | null>(
+    null,
+  );
+
+  /**
+   * The most urgent path on this pane must not fail silently (review
+   * finding, Important): `revokeDevice` answers `{ ok } | { error }`, and a
+   * refusal is shown right beside the roster it failed to change, rather
+   * than only reaching `console.error`.
+   */
+  const handleRevoke = (name: string) => {
+    setRevokeError(null);
+    void revokeDevice(name).then((outcome) => {
+      if (!outcome.ok) setRevokeError({ name, message: outcome.error });
     });
   };
 
@@ -318,10 +328,16 @@ export function ServerModeGroup({ enabled, bind, devices }: ServerModeGroupProps
         ) : (
           <div className="flex flex-col divide-y divide-border-soft">
             {devices.map((device) => (
-              <DeviceRow key={device.id} device={device} onRevoke={revokeDevice} />
+              <DeviceRow key={device.id} device={device} onRevoke={handleRevoke} />
             ))}
           </div>
         )}
+
+        {revokeError ? (
+          <p className="text-[11.5px] text-red">
+            Could not revoke &quot;{revokeError.name}&quot;: {revokeError.message}
+          </p>
+        ) : null}
 
         <div className="flex items-end gap-2">
           <TextField
@@ -354,6 +370,14 @@ export function ServerModeGroup({ enabled, bind, devices }: ServerModeGroupProps
             <code className="break-all font-mono text-[12px] text-ink">
               {justPaired.token}
             </code>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-fit"
+              onClick={() => setJustPaired(null)}
+            >
+              Done
+            </Button>
           </div>
         ) : null}
       </div>
