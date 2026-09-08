@@ -2,6 +2,7 @@ import {
   RESERVED_SKILL_NAME,
   SKILL_NAME_PATTERN,
   type SkillFile,
+  type SkillFileRead,
   type SkillsSnapshot,
 } from '@shared/skills-contract';
 
@@ -322,6 +323,111 @@ export async function readSkill(name: string): Promise<SkillFile | null> {
     return await bridge.skills.read({ name });
   } catch (cause) {
     console.error('[hive] could not read the skill:', cause);
+    return null;
+  }
+}
+
+/*
+  The bundle verbs (HIVE-148).
+
+  Six mutators and one reader, all over files *inside* one skill. They go
+  through the same {@link mutate} as the skill-level verbs above, so a refusal
+  reaches the pane as main's own sentence rather than as a resolved promise the
+  caller mistakes for success — the distinction that docblock argues for at
+  length, and which costs more here: a drop that quietly did nothing looks
+  exactly like a drop that worked.
+*/
+
+/** Save one file in a bundle. Its mode comes from the content, in main. */
+export const writeSkillFile = (
+  name: string,
+  path: string,
+  body: string,
+): Promise<string | null> =>
+  mutate((bridge) => bridge.skills.fileWrite({ name, path, body }));
+
+/** Create a folder, so one you made is on disk rather than fictional. */
+export const makeSkillDir = (
+  name: string,
+  path: string,
+): Promise<string | null> =>
+  mutate((bridge) => bridge.skills.fileMkdir({ name, path }));
+
+/** Delete a file, or a folder with what is under it. */
+export const removeSkillFile = (
+  name: string,
+  path: string,
+): Promise<string | null> =>
+  mutate((bridge) => bridge.skills.fileRemove({ name, path }));
+
+/** Rename inside the bundle. */
+export const moveSkillFile = (
+  name: string,
+  from: string,
+  to: string,
+): Promise<string | null> =>
+  mutate((bridge) => bridge.skills.fileMove({ name, from, to }));
+
+/** Open the picker in main and copy what the user chose. */
+export const importIntoSkill = (
+  name: string,
+  dir: string,
+): Promise<string | null> =>
+  mutate((bridge) => bridge.skills.fileImport({ name, dir }));
+
+/**
+ * Copy dropped files, named by ids rather than paths.
+ *
+ * `tokens` is the whole reason this verb is safe: the renderer never holds a
+ * source path, only ids preload minted from real `File`s the browser produced.
+ * See `skills-contract.ts`'s headline docblock.
+ */
+export const dropIntoSkill = (
+  name: string,
+  dir: string,
+  tokens: string[],
+): Promise<string | null> =>
+  mutate((bridge) => bridge.skills.fileDrop({ name, dir, tokens }));
+
+/**
+ * Mint one-shot ids for the files a drop carried.
+ *
+ * Returns only the ids preload could vouch for. A `File` the page constructed
+ * itself answers `null` and is dropped here, which is what keeps the renderer
+ * from naming a path it was never handed.
+ */
+export function skillDropTokens(files: readonly File[]): string[] {
+  const bridge = window.hive;
+  if (!bridge) return [];
+
+  const tokens: string[] = [];
+  for (const file of files) {
+    const token = bridge.skills.pathToken(file);
+    if (token !== null) tokens.push(token);
+  }
+  return tokens;
+}
+
+/**
+ * One file out of a bundle, or `null`.
+ *
+ * `null` is the browser demo or a read that already reported itself, the same
+ * meaning {@link readSkill} gives it. A **refusal** is not `null`: a font comes
+ * back as a `SkillFileRead` with `refused` set, because the pane has a row, a
+ * size and a Delete to offer for one. Written out rather than delegating to
+ * {@link read}, which resolves `void` and exists to publish a snapshot.
+ */
+export async function readSkillFile(
+  name: string,
+  path: string,
+): Promise<SkillFileRead | null> {
+  const bridge = window.hive;
+  if (!bridge) return null;
+
+  try {
+    return await bridge.skills.fileRead({ name, path });
+  } catch (cause) {
+    console.error('[hive] could not read the file:', cause);
     return null;
   }
 }

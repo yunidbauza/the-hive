@@ -2,14 +2,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   deleteSkill,
+  dropIntoSkill,
   frontmatterName,
+  importIntoSkill,
   loadSkills,
+  makeSkillDir,
+  moveSkillFile,
   readSkill,
+  readSkillFile,
+  removeSkillFile,
   renameSkill,
   saveSkill,
+  skillDropTokens,
   skillNameProblem,
   skillsSnapshot,
   subscribeSkills,
+  writeSkillFile,
 } from '@/lib/skills';
 
 import type { SkillsSnapshot } from '@shared/skills-contract';
@@ -404,5 +412,124 @@ describe('skillNameProblem', () => {
 
   it('refuses a name already taken', () => {
     expect(skillNameProblem('standup', ['standup'])).toMatch(/already/i);
+  });
+});
+
+/**
+ * The bundle verbs (HIVE-148).
+ *
+ * Six mutators and one reader over the files *inside* a skill. They inherit the
+ * read/write asymmetry above, and it costs more here than it did for a single
+ * SKILL.md: a drop that quietly did nothing looks exactly like a drop that
+ * worked, so a refusal has to arrive as a value.
+ */
+describe('the bundle verbs', () => {
+  it('publishes the fresh snapshot after a write', async () => {
+    const next = snapshot(['graphify']);
+    bridge({ fileWrite: () => Promise.resolve(next) });
+
+    expect(await writeSkillFile('graphify', 'scripts/a.py', 'x')).toBeNull();
+    expect(skillsSnapshot()).toEqual(next);
+  });
+
+  it("reports main's own words when a write is refused, and keeps the snapshot", async () => {
+    bridge({ list: () => Promise.resolve(snapshot(['graphify'])) });
+    await loadSkills();
+    const held = skillsSnapshot();
+
+    bridge({
+      fileWrite: () =>
+        Promise.reject(new Error('"notes.md" already exists in this skill.')),
+    });
+
+    expect(await writeSkillFile('graphify', 'notes.md', 'x')).toContain(
+      'already exists',
+    );
+    // Nothing on disk changed, so what the pane already holds is still true.
+    expect(skillsSnapshot()).toEqual(held);
+  });
+
+  it('carries a refusal through rather than turning it into an error', async () => {
+    bridge({
+      fileRead: () =>
+        Promise.resolve({
+          name: 'graphify',
+          path: 'assets/Inter.ttf',
+          absPath: '/home/u/.hive/skills/graphify/assets/Inter.ttf',
+          size: 412_000,
+          body: null,
+          refused: 'binary' as const,
+        }),
+    });
+
+    const file = await readSkillFile('graphify', 'assets/Inter.ttf');
+
+    // A font is not a failure. `null` means the channel broke; this did not.
+    expect(file?.refused).toBe('binary');
+    expect(file?.size).toBe(412_000);
+  });
+
+  it('answers null for a read with no bridge, which is the browser demo', async () => {
+    expect(await readSkillFile('graphify', 'SKILL.md')).toBeNull();
+  });
+
+  it('mints a token per file the browser vouched for, and drops the rest', () => {
+    const pathToken = vi
+      .fn<(file: File) => string | null>()
+      .mockReturnValueOnce('id-1')
+      /*
+        A `File` the page constructed itself. `webUtils.getPathForFile` answers
+        '' for one, preload turns that into null, and dropping it here is what
+        stops the renderer naming a path it was never handed.
+      */
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce('id-2');
+    bridge({ pathToken });
+
+    const tokens = skillDropTokens([
+      new File(['a'], 'a.txt'),
+      new File(['b'], 'b.txt'),
+      new File(['c'], 'c.txt'),
+    ]);
+
+    expect(tokens).toEqual(['id-1', 'id-2']);
+  });
+
+  it('mints nothing without a bridge', () => {
+    expect(skillDropTokens([new File(['a'], 'a.txt')])).toEqual([]);
+  });
+
+  it('sends tokens, never paths, when dropping', async () => {
+    const fileDrop = vi.fn(() => Promise.resolve(snapshot(['graphify'])));
+    bridge({ fileDrop });
+
+    await dropIntoSkill('graphify', 'assets', ['id-1']);
+
+    expect(fileDrop).toHaveBeenCalledWith({
+      name: 'graphify',
+      dir: 'assets',
+      tokens: ['id-1'],
+    });
+  });
+
+  it('routes mkdir, remove, move and import at their own verbs', async () => {
+    const calls: string[] = [];
+    const ok = (verb: string) => () => {
+      calls.push(verb);
+      return Promise.resolve(snapshot(['graphify']));
+    };
+    bridge({
+      fileMkdir: ok('mkdir'),
+      fileRemove: ok('remove'),
+      fileMove: ok('move'),
+      fileImport: ok('import'),
+    });
+
+    await makeSkillDir('graphify', 'references');
+    await removeSkillFile('graphify', 'references');
+    await moveSkillFile('graphify', 'a.py', 'scripts/b.py');
+    await importIntoSkill('graphify', '');
+
+    expect(calls).toEqual(['mkdir', 'remove', 'move', 'import']);
   });
 });
