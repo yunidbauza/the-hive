@@ -21,19 +21,26 @@ import { writePluginDir } from '../../../../electron/main/skills/plugin';
 import { readUserSkills } from '../../../../electron/main/skills/read';
 
 /**
- * A pass-through spy on `copyFile`, in the shape `hooks/index.test.ts` already
- * uses for `writeFile`: everything forwards to the real implementation, so
- * every other test in this file that copies a file keeps working unchanged.
- * Only the one test below that asks "did the skip actually skip?" reads the
- * call count, and clears it first so an earlier test's copies do not count
- * toward its own.
+ * Pass-through spies on `copyFile` and `writeFile`, in the shape
+ * `hooks/index.test.ts` already uses for `writeFile`: everything forwards to
+ * the real implementation, so every other test in this file that copies or
+ * writes a file keeps working unchanged. Only the two tests below that ask
+ * "did the skip actually skip?" read call counts, filtered to the one
+ * destination path they care about — every other test in this file also
+ * calls `writeFile` (the manifest, `/done`, every skill's `SKILL.md`), so an
+ * unfiltered total would not isolate the one write under test.
  */
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...actual, copyFile: vi.fn(actual.copyFile) };
+  return {
+    ...actual,
+    copyFile: vi.fn(actual.copyFile),
+    writeFile: vi.fn(actual.writeFile),
+  };
 });
 
 const copyFileSpy = vi.mocked((await import('node:fs/promises')).copyFile);
+const writeFileSpy = vi.mocked((await import('node:fs/promises')).writeFile);
 
 let pluginRoot: string;
 let source: string;
@@ -592,5 +599,116 @@ describe('writePluginDir', () => {
     expect(await readFile(join(dest, 'a.txt'), 'utf8')).toBe('a');
     // Nothing was ever written through the old symlink target.
     expect(await readdir(outside)).toEqual([]);
+  });
+
+  it('does not rewrite an unchanged SKILL.md on a second run', async () => {
+    await writeSkill('standup');
+    const target = join(pluginRoot, 'skills', 'standup', 'SKILL.md');
+    const callsToTarget = (): number =>
+      writeFileSpy.mock.calls.filter((call) => call[0] === target).length;
+
+    // Cleared first: earlier tests in this file also call `writeFile` (the
+    // manifest, `/done`, other skills' `SKILL.md`), and this run's own
+    // manifest and `/done` writes are not what this test is about.
+    writeFileSpy.mockClear();
+
+    await writePluginDir(
+      pluginRoot,
+      '1.0.0',
+      await readUserSkills(source),
+      null,
+    );
+    expect(callsToTarget()).toBe(1);
+
+    await writePluginDir(
+      pluginRoot,
+      '1.0.0',
+      await readUserSkills(source),
+      null,
+    );
+    expect(callsToTarget()).toBe(1);
+  });
+
+  it('never lets a symlinked skill root escape the plugin root', async () => {
+    await writeSkill('standup');
+
+    // A directory outside pluginRoot that a stale symlink could resolve
+    // through, if the recursive `mkdir` for the skill root ever followed it.
+    const outside = await mkdtemp(join(tmpdir(), 'hive-outside-'));
+    await mkdir(join(pluginRoot, 'skills'), { recursive: true });
+    await symlink(outside, join(pluginRoot, 'skills', 'standup'));
+
+    await writePluginDir(
+      pluginRoot,
+      '1.0.0',
+      await readUserSkills(source),
+      null,
+    );
+
+    const dest = join(pluginRoot, 'skills', 'standup');
+    expect((await lstat(dest)).isSymbolicLink()).toBe(false);
+    expect(await readFile(join(dest, 'SKILL.md'), 'utf8')).toBe(
+      '---\nname: standup\ndescription: d\n---\nBody.\n',
+    );
+    // Nothing was ever written through the old symlink target.
+    expect(await readdir(outside)).toEqual([]);
+  });
+
+  it('never lets a symlinked SKILL.md escape the plugin root', async () => {
+    await writeSkill('standup');
+
+    // A file outside pluginRoot that a stale symlink could resolve through,
+    // if the body write ever followed it.
+    const outside = await mkdtemp(join(tmpdir(), 'hive-outside-'));
+    const outsideFile = join(outside, 'escaped.md');
+    await writeFile(outsideFile, 'stale', 'utf8');
+    await mkdir(join(pluginRoot, 'skills', 'standup'), { recursive: true });
+    await symlink(
+      outsideFile,
+      join(pluginRoot, 'skills', 'standup', 'SKILL.md'),
+    );
+
+    await writePluginDir(
+      pluginRoot,
+      '1.0.0',
+      await readUserSkills(source),
+      null,
+    );
+
+    const target = join(pluginRoot, 'skills', 'standup', 'SKILL.md');
+    expect((await lstat(target)).isSymbolicLink()).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(
+      '---\nname: standup\ndescription: d\n---\nBody.\n',
+    );
+    // Nothing was ever written through the old symlink target.
+    expect(await readFile(outsideFile, 'utf8')).toBe('stale');
+  });
+
+  it('replaces a stale directory occupying the SKILL.md path', async () => {
+    await writeSkill('standup');
+
+    await mkdir(join(pluginRoot, 'skills', 'standup', 'SKILL.md'), {
+      recursive: true,
+    });
+    await writeFile(
+      join(pluginRoot, 'skills', 'standup', 'SKILL.md', 'stray.txt'),
+      'x',
+      'utf8',
+    );
+
+    // Must not throw `EISDIR` and must not leave every later regeneration
+    // throwing the same way.
+    await writePluginDir(
+      pluginRoot,
+      '1.0.0',
+      await readUserSkills(source),
+      null,
+    );
+
+    const target = join(pluginRoot, 'skills', 'standup', 'SKILL.md');
+    expect((await stat(target)).isFile()).toBe(true);
+    expect(await readFile(target, 'utf8')).toBe(
+      '---\nname: standup\ndescription: d\n---\nBody.\n',
+    );
   });
 });

@@ -4,6 +4,7 @@ import {
   lstat,
   mkdir,
   readdir,
+  readFile,
   rm,
   stat,
   utimes,
@@ -89,6 +90,29 @@ async function copyIfChanged(from: string, to: string): Promise<void> {
   // moved one step later.
   await chmod(to, source.mode & 0o777);
   await utimes(to, source.atime, source.mtime);
+}
+
+/**
+ * Write `body` to `to` only when it differs from what is already there.
+ *
+ * `writeFile` opens with `O_TRUNC`, so an unconditional write of the one
+ * file a session actually reads first is momentarily zero-length on every
+ * regeneration — the exact window `copyIfChanged`'s comparison exists to
+ * avoid, reopened on the most important file in the bundle. `SKILL.md` is
+ * one small file already read whole into `skill.body`, so a straight string
+ * comparison is enough; this is deliberately not routed through
+ * `copyIfChanged`, which compares `stat` fields against a source *file* on
+ * disk, and there is no file to stat here — only the string `readUserSkills`
+ * already read.
+ */
+async function writeIfChanged(to: string, body: string): Promise<void> {
+  try {
+    if ((await readFile(to, 'utf8')) === body) return;
+  } catch {
+    // Missing, or unreadable. Fall through and write.
+  }
+
+  await writeFile(to, body, 'utf8');
 }
 
 /**
@@ -181,9 +205,10 @@ async function prune(
  * a bundle whose `assets/` or `scripts/` sorts before `SKILL.md` and is large
  * enough can produce a manifest that never lists it — the exact failure this
  * story exists to fix, reproduced one layer along, silently. Writing it
- * unconditionally makes "the file a session executes is missing from the
- * mirror" structurally impossible instead of dependent on another module's
- * walk order or size cap.
+ * unconditionally (structurally, as in "every call reaches this line" —
+ * see `writeIfChanged` for why the write itself is still conditional on
+ * content) makes "the file a session executes is missing from the mirror"
+ * impossible instead of dependent on another module's walk order or size cap.
  */
 export async function writePluginDir(
   pluginRoot: string,
@@ -229,11 +254,19 @@ export async function writePluginDir(
   // explain.
   for (const skill of read.skills) {
     const destination = join(skillsDir, skill.name);
+    // A symlinked skill root would let the recursive `mkdir` below (and every
+    // write under it) resolve through it and land outside `pluginRoot`.
+    await ensureKind(destination, 'directory');
     await mkdir(destination, { recursive: true });
 
+    const skillMdPath = join(destination, 'SKILL.md');
+    // A symlink here would let the write below land outside `pluginRoot`
+    // with no error; a directory here would throw `EISDIR` forever, since
+    // `prune` runs after this and never gets the chance to clear it.
+    await ensureKind(skillMdPath, 'file');
     // Written directly from `skill.body`, not mirrored below — see the
     // docblock's "SKILL.md itself" paragraph for why.
-    await writeFile(join(destination, 'SKILL.md'), skill.body, 'utf8');
+    await writeIfChanged(skillMdPath, skill.body);
 
     const admitted = skill.manifest.entries.filter(
       (entry) => entry.excluded === null && entry.path !== 'SKILL.md',
