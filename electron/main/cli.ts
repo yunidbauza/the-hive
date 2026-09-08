@@ -28,13 +28,27 @@ export type Invocation =
  * in argv; since we only ever look for our own known flags, anything else is
  * silently ignored rather than tripping up the parse.
  */
+/**
+ * Every flag this parser recognizes. Used to reject a `--pair`/`--revoke`
+ * name that is actually the *next* flag rather than a real name — e.g.
+ * `--pair --devices` with no name supplied. We only special-case these four
+ * known flags rather than "anything starting with `-`": a device legitimately
+ * named `--devices` is not a real scenario, but neither is one merely
+ * *starting* with a dash, so there is no case here worth the extra rule.
+ */
+const KNOWN_FLAGS = ['--pair', '--revoke', '--devices', '--server'];
+
 export function parseInvocation(argv: readonly string[], packaged: boolean): Invocation {
   const args = argv.slice(packaged ? 1 : 2);
 
+  // Precedence when several command flags are present together is
+  // deliberate: --pair > --revoke > --devices > --server, independent of
+  // their order in argv. Each branch below returns before the next is
+  // even inspected.
   const pairIndex = args.indexOf('--pair');
   if (pairIndex !== -1) {
     const name = args[pairIndex + 1];
-    if (!name) {
+    if (!name || KNOWN_FLAGS.includes(name)) {
       return {
         kind: 'usage',
         message: 'Usage: the-hive --pair "<device name>"\nA device name is required.',
@@ -46,7 +60,7 @@ export function parseInvocation(argv: readonly string[], packaged: boolean): Inv
   const revokeIndex = args.indexOf('--revoke');
   if (revokeIndex !== -1) {
     const name = args[revokeIndex + 1];
-    if (!name) {
+    if (!name || KNOWN_FLAGS.includes(name)) {
       return {
         kind: 'usage',
         message: 'Usage: the-hive --revoke "<device name>"\nA device name is required.',

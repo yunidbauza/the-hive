@@ -40,6 +40,21 @@ describe('parseInvocation', () => {
     expect(result.kind).toBe('usage');
   });
 
+  it('asks for a name when --revoke has none', () => {
+    const result = parseInvocation(packagedArgv('--revoke'), true);
+    expect(result.kind).toBe('usage');
+  });
+
+  it('asks for a name when the next token after --pair is another flag', () => {
+    const result = parseInvocation(packagedArgv('--pair', '--devices'), true);
+    expect(result.kind).toBe('usage');
+  });
+
+  it('asks for a name when the next token after --revoke is another flag', () => {
+    const result = parseInvocation(packagedArgv('--revoke', '--server'), true);
+    expect(result.kind).toBe('usage');
+  });
+
   it('reads --revoke and --devices', () => {
     expect(parseInvocation(packagedArgv('--revoke', 'iPad'), true)).toEqual({
       kind: 'revoke',
@@ -52,6 +67,13 @@ describe('parseInvocation', () => {
     expect(parseInvocation(packagedArgv('--user-data-dir=/tmp/x', '--server'), true)).toEqual({
       kind: 'app',
       server: true,
+    });
+  });
+
+  it('prefers --pair over --devices when both are present, regardless of order', () => {
+    expect(parseInvocation(packagedArgv('--devices', '--pair', 'MacBook'), true)).toEqual({
+      kind: 'pair',
+      name: 'MacBook',
     });
   });
 });
