@@ -1,9 +1,9 @@
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { StringDecoder } from 'node:string_decoder';
 
 import { AGENTS_PATH, type AgentsDirectory } from '@shared/agent-contract';
-import { DEFAULT_RECEIVER, isLoopbackHost } from '@shared/config-contract';
+import { DEFAULT_RECEIVER } from '@shared/config-contract';
 import { parseLedgerPostBody, parseLedgerReadQuery } from '@shared/guards';
 import {
   CLEAR_REASON,
@@ -52,6 +52,7 @@ import { sessionNameFromPrompt } from '@shared/session-contract';
 
 import { entryContext } from '../ledger/context';
 
+import { createOriginGuard, secretEquals } from './http-guard';
 import { parseMetrics } from './metrics';
 import { ticketKeyFromPrompt } from './ticket-intent';
 
@@ -539,6 +540,8 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     hostAliases = () => new Set([DEFAULT_RECEIVER.hostAlias]),
   } = options;
 
+  const guard = createOriginGuard({ allowedOrigins, host, hostAliases });
+
   /**
    * Background-task kinds already reported, so the warning is **once per kind
    * per receiver** rather than once per `Stop`.
@@ -719,90 +722,6 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   const SESSION_ID_IN_PREFIX = /"session_id"\s*:\s*"([0-9a-fA-F-]+)"/;
 
   /**
-   * Where the request claims it was going, checked before who it claims to be.
-   *
-   * ## Why this is not conditioned on the bind
-   *
-   * The obvious shape is to run this only when `receiver.bind` is widened, since
-   * that is the exposure it answers. That shape was rejected: this app ships
-   * macOS only, where no user sets that config, so the guard would be code that
-   * never runs on the platform that ships — correct in a test and inert in the
-   * world. It also answers something real at the loopback bind. DNS rebinding
-   * points a hostile page's own hostname at `127.0.0.1`, and the browser then
-   * treats this socket as same-origin and will read the responses. The token
-   * still stops the page doing anything, so this is depth rather than a hole
-   * being closed — but Origin and Host are the standard, one-line-each defence,
-   * and there is no argument for owning the socket and skipping them.
-   *
-   * ## Why in `reject`, and before identity
-   *
-   * `reject` is the one function every handler already calls, which is what
-   * makes "every route" true by construction rather than by eight people
-   * remembering. Running before the token and session checks means a hostile
-   * page cannot read which sessions exist out of the difference between 403 and
-   * 404.
-   *
-   * `handleMcp` keeps a stricter Origin rule of its own on top of this one; see
-   * the comment there.
-   */
-  function guard(
-    headers: Record<string, string | string[] | undefined>,
-  ): number | null {
-    /*
-      Absent is the ordinary case and the only one a legitimate caller produces:
-      `claude`, the status line's `curl`, and the MCP host all send no `Origin`.
-      Present-and-listed exists for a local dev server someone points at this
-      app on purpose; with the default empty list, present is always a refusal —
-      which is exactly the rule `POST /mcp` has enforced alone since HIVE-130.
-    */
-    const origin = headers['origin'];
-    if (origin !== undefined) {
-      if (typeof origin !== 'string' || !allowedOrigins.includes(origin)) return 403;
-    }
-
-    /*
-      `Host` is `host[:port]`. Only the host part is compared: the port is this
-      receiver's own and is already settled by the connection having arrived, so
-      checking it would add nothing and would break the moment an ephemeral port
-      changed. An IPv6 literal keeps its brackets, which is how it arrives and
-      what `isLoopbackHost` strips.
-    */
-    const raw = headers['host'];
-    // HTTP/1.1 requires it. A request without one is hand-rolled, and no caller
-    // here is.
-    if (typeof raw !== 'string' || raw === '') return 403;
-    const claimed = raw.startsWith('[')
-      ? raw.slice(0, raw.indexOf(']') + 1)
-      : (raw.split(':')[0] ?? '');
-    const bare = claimed.toLowerCase();
-    if (bare === '') return 403;
-
-    /*
-      Loopback names are admitted whatever the bind, because a caller on this
-      machine legitimately addresses loopback and always has. That is wider than
-      the configured address deliberately: what a client may *claim* to have
-      reached is not the same set as what a user may *configure* as a listen
-      address, which is why `::1` is here and `isHostAlias` refuses it there.
-    */
-    if (isLoopbackHost(bare)) return null;
-    if (bare === host.toLowerCase()) return null;
-    /*
-      And every alias, or a diverged session 403s: a containerised session
-      addresses this app by whichever alias *it* was generated with — the
-      global one, its project's, or its agent's — so the guard has to admit
-      all three, not just the global setting (see `hostAliases`'s own doc
-      comment above for why one was never enough). Read through the getter
-      rather than captured, because the set can change under a config reload
-      or a folder change while this socket stays up.
-    */
-    for (const alias of hostAliases()) {
-      if (bare === alias.toLowerCase()) return null;
-    }
-
-    return 403;
-  }
-
-  /**
    * Token, entity id, and "is this an identity this app still has".
    *
    * Shared by every path because they all need exactly this and in this order —
@@ -854,10 +773,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
      */
     const presented = headers[HOOK_HEADER_TOKEN];
     if (typeof presented !== 'string') return 403;
-    const expected = Buffer.from(tokenFor(entityId), 'utf8');
-    const offered = Buffer.from(presented, 'utf8');
-    if (offered.length !== expected.length) return 403;
-    if (!timingSafeEqual(offered, expected)) return 403;
+    if (!secretEquals(presented, tokenFor(entityId))) return 403;
 
     /**
      * An unknown identity is refused rather than remembered.
