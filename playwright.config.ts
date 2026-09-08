@@ -121,6 +121,16 @@ export default defineConfig({
   fullyParallel: true,
 
   /**
+   * Two workers, deliberately. At Playwright's default (half the cores) the
+   * suite's timeout flake climbs sharply: two sessions in one week lost thirty
+   * to forty minutes each to specs that passed alone. Two workers lowers that
+   * flake without removing it — a failing spec is still re-run alone before it
+   * counts as red — and costs a couple of minutes on a full run. `CI` keeps the
+   * default so a hosted runner sizes itself.
+   */
+  workers: process.env.CI ? undefined : 2,
+
+  /**
    * No retries, deliberately. Story 070's acceptance criteria require the suite
    * to be deterministic across five consecutive runs — retries would convert
    * exactly the flake that criterion is trying to surface into a green tick.

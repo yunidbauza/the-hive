@@ -48,6 +48,30 @@ Zustand · Tailwind v4 · shadcn/ui · pnpm.
 **`pnpm lint` and `pnpm type-check` must both pass before any task is considered
 done.** Neither is optional, and no rule may be disabled inline to make a task pass.
 
+## Working a ticket
+
+An audit of a week of sessions (Sep 2026) found test runs at about a tenth of
+agent time; the hours went to confirmation prompts and to a serial
+implement-review-re-review chain. These rules follow from it:
+
+- **Execute plans inline.** Subagent-driven development is for a plan that spans
+  two or more subsystems with no shared test harness (main process + renderer +
+  a live suite) *and* touches a risk surface (auth, tokens, a wire protocol,
+  concurrency). One subsystem runs inline, however many tasks it has. When
+  subagents are warranted: tasks of twenty implementer-minutes, two fix rounds,
+  and ship's self review is the one whole-branch review.
+- **Ask decisions in one batch.** One `AskUserQuestion` call carries up to four
+  questions; the recommended option goes first. Never one question per turn.
+- **Never sleep-poll a subagent.** Its task notification is the wake-up; a
+  `sleep N; git log` loop overshoots by up to its own length every time.
+- **The tail runs unattended.** After the reconciliation go-ahead, the flow
+  pushes, opens the draft PR and invokes ship in the same turn; auto-merge for
+  this repo is on in `~/.claude/workstream/ship-config.json`.
+- **A failing e2e spec is re-run alone before it counts as red.** Playwright is
+  pinned to two workers here because the timeout flake scales with parallelism;
+  it lowers the flake, it does not remove it. A spec that passes alone is a
+  flake to note, not a finding to fix; an assertion failure is real either way.
+
 ## Deep-dive docs
 
 | When you are working on… | Load |
