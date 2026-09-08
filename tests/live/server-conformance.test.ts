@@ -582,7 +582,48 @@ async function waitFor(predicate: () => boolean, what: string, timeoutMs = 30_00
   throw new Error(`timed out after ${String(timeoutMs)}ms waiting for ${what}`);
 }
 
-/** Bytes on the wire against bytes of `chunk` — the story's framing measurement. */
+/**
+ * Waits until `count` has stopped moving for `quietMs`, or throws naming what
+ * never settled.
+ *
+ * Not a sleep dressed up: it is the only way to say "nothing is armed" about a
+ * debounced watcher from outside the process holding the timer. The agents
+ * registry announces 120ms after the last filesystem event it saw
+ * (`electron/main/agents/registry.ts`), so a counter that has not moved for
+ * several times that has no announce pending behind it — which is exactly what
+ * makes a baseline taken afterwards mean something.
+ */
+async function settled(
+  count: () => number,
+  what: string,
+  quietMs = 600,
+  timeoutMs = 30_000,
+): Promise<void> {
+  const start = Date.now();
+  let last = count();
+  let lastChangedAt = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    await delay(50);
+    const now = count();
+    if (now !== last) {
+      last = now;
+      lastChangedAt = Date.now();
+      continue;
+    }
+    if (Date.now() - lastChangedAt >= quietMs) return;
+  }
+  throw new Error(`timed out after ${String(timeoutMs)}ms waiting for ${what} to go quiet`);
+}
+
+/**
+ * Bytes on the wire against bytes of `chunk` — the story's framing measurement.
+ *
+ * Accounted **per session**, not per socket, because the measurement is a claim
+ * about one flood and a socket sees every session the server is running. Case
+ * 16's shell is still alive when case 17's flood client attaches, so a
+ * socket-wide counter folds that session's trickle into a total the comment
+ * above the PTY cases attributes entirely to the flood (review, item 2).
+ */
 interface PtyTraffic {
   frames: number;
   /** The whole JSON text of every `pty:data` frame, as `ws` delivered it. */
@@ -627,7 +668,8 @@ interface LiveClient {
   kill(): void;
   /** Close it politely. The suite's own teardown, never a case's assertion. */
   close(): void;
-  ptyTraffic(): PtyTraffic;
+  /** What this socket carried for `sessionId` alone. */
+  ptyTraffic(sessionId: string): PtyTraffic;
 }
 
 /** Every client this run opened, so teardown can close one a failing case left behind. */
@@ -649,7 +691,7 @@ async function openClient(
   const events: EventFrame[] = [];
   const ptyEvents: DataEvent[] = [];
   const pending = new Map<string, (frame: ResultFrame | ErrorFrame) => void>();
-  const traffic: PtyTraffic = { frames: 0, wireBytes: 0, chunkBytes: 0 };
+  const traffic = new Map<string, PtyTraffic>();
   let nextCallId = 0;
 
   const frame: AttachRequest = {
@@ -730,9 +772,12 @@ async function openClient(
 
     const event = incoming.payload as DataEvent;
     ptyEvents.push(event);
-    traffic.frames += 1;
-    traffic.wireBytes += Buffer.byteLength(text);
-    traffic.chunkBytes += Buffer.byteLength(event.chunk);
+
+    const counted = traffic.get(event.sessionId) ?? { frames: 0, wireBytes: 0, chunkBytes: 0 };
+    counted.frames += 1;
+    counted.wireBytes += Buffer.byteLength(text);
+    counted.chunkBytes += Buffer.byteLength(event.chunk);
+    traffic.set(event.sessionId, counted);
     /*
       Acked exactly as the renderer acks (`pty-transport.ts`), and not as a
       courtesy: `HIGH_WATER_BYTES` is 512 KiB of unacked output, past which main
@@ -817,7 +862,12 @@ async function openClient(
       else socket.terminate();
     },
 
-    ptyTraffic: () => ({ ...traffic }),
+    ptyTraffic: (sessionId) => ({
+      frames: 0,
+      wireBytes: 0,
+      chunkBytes: 0,
+      ...traffic.get(sessionId),
+    }),
   };
 
   liveClients.push(client);
@@ -1413,36 +1463,92 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
         root and binds (or rebinds) that watcher — without it, a fresh profile
         has nothing to watch and the event would never fire.
       */
+      const agentSource = (name: string): string =>
+        `---\nname: ${name}\ndescription: Proves the fan-out.\nicon: ChatCircleDots\n---\nDo nothing.\n`;
+      const changedCount = (): number =>
+        seen().filter((frame) => frame.channel === CH.agentsChanged).length;
+
       const listed = await client.call(CH.agentsList, undefined);
       expect(listed.kind).toBe('result');
 
-      const written = await client.call(CH.agentsWrite, {
-        name: 'live-proof',
-        source: '---\nname: live-proof\ndescription: Proves the fan-out.\nicon: ChatCircleDots\n---\nDo nothing.\n',
-      });
-      expect(written).toMatchObject({ kind: 'result', payload: { ok: true } });
+      /*
+        **Two writes, and the second is the one this case rests on** (review
+        round 1, item 1).
 
+        Waiting for "any `agents:changed` since attach" is satisfiable without
+        the write emitting anything: `agents:list` above creates the root, and
+        creating a watched folder is itself a filesystem event. A pass would
+        then be evidence for the watcher having been bound, not for the story's
+        claim that `agents:changed` reaches a remote client.
+
+        So the first write drains whatever the root's creation armed, `settled`
+        waits for the watcher to go quiet — nothing pending, because an
+        announce fires within 120ms of the last event and nothing else touches
+        this folder — and only then is the baseline taken. The count moving
+        past it can only be the second write, which is the assertion the
+        acceptance criterion actually wants.
+      */
+      const first = await client.call(CH.agentsWrite, {
+        name: 'live-proof',
+        source: agentSource('live-proof'),
+      });
+      expect(first).toMatchObject({ kind: 'result', payload: { ok: true } });
+      await waitFor(() => changedCount() >= 1, 'a first agents:changed');
+      await settled(changedCount, 'the agents watcher');
+
+      const baseline = changedCount();
+      const second = await client.call(CH.agentsWrite, {
+        name: 'live-proof-two',
+        source: agentSource('live-proof-two'),
+      });
+      expect(second).toMatchObject({ kind: 'result', payload: { ok: true } });
       await waitFor(
-        () => seen().some((frame) => frame.channel === CH.agentsChanged),
-        'an agents:changed event',
+        () => changedCount() > baseline,
+        `an agents:changed past the baseline of ${String(baseline)}, caused by the second write`,
       );
-    }, 60_000);
+
+      /*
+        There is nothing in the frame to identify *which* write it announces —
+        `agents:changed` is emitted with no payload at all (`ipc/index.ts`'s
+        `fanOut.emit(CH.agentsChanged, undefined)`), and `JSON.stringify` drops
+        an `undefined` value's key rather than writing `null`. That absence is
+        itself worth pinning: it is the absent-versus-empty distinction
+        `socket-broadcaster.ts` argues for, and a broadcaster that started
+        substituting `null` would invent a value the local push never had.
+      */
+      measurements.push({
+        case: '15. agents:changed past a baseline',
+        baselineAfterFirstWrite: baseline,
+        countAfterSecondWrite: changedCount(),
+      });
+
+      const announced = seen().find((frame) => frame.channel === CH.agentsChanged);
+      expect(announced).toMatchObject({ kind: 'event', channel: CH.agentsChanged });
+      expect(announced).not.toHaveProperty('payload');
+    }, 90_000);
 
     /*
       JSON framing overhead, measured 2026-09-08 on this repo's dev machine
       (macOS 25.6.0, arm64, the built app from `pnpm desktop:build`): **4.9%**
       over raw chunk bytes, at `BATCH_FLUSH_BYTES`-sized batches. Taken from
-      case 17's own flood — 13 `pty:data` frames, 881,319 bytes of JSON text off
-      the socket against 840,127 bytes of `chunk` inside them — and re-recorded
-      into `finding.json` on every run rather than trusted from this comment.
+      case 17's own flood, and from **that session alone** — 13 `pty:data`
+      frames, 881,320 bytes of JSON text off the socket against 840,127 bytes of
+      `chunk` inside them — and re-recorded into `finding.json` on every run
+      rather than trusted from this comment.
+
+      The per-session filter is why this is a claim about the flood rather than
+      about a socket: a socket sees every session the server is running, and
+      case 16's shell lives on the same server. It happens to be idle by the
+      time case 17 runs, so the filter did not move this figure — the point is
+      that the number no longer depends on that being true.
 
       Where it goes, because the split is the whole argument: the frame envelope
       (`{"kind":"event","channel":"pty:data","payload":{"sessionId":…,"seq":…}}`)
-      is ~60 bytes per frame, so at 64 KiB batches it is under 0.1% and is
+      is ~90 bytes per frame, so at 64 KiB batches it is under 0.2% and is
       *not* what this number is made of. Essentially all of it is JSON string
       escaping — this flood is 20,000 CRLF-terminated lines, and `\r` and `\n`
-      each cost two bytes instead of one, which is 40,000 of the 41,192-byte
-      difference on its own.
+      each cost two bytes instead of one, which is 40,000 of the 41,193-byte
+      difference on its own, and the remaining ~1,200 is the 13 envelopes.
 
       The design left a binary frame for `pty:data` open "only if measurement
       says so". This measurement does not say so: 4.9% on a 64 KiB batch is
@@ -1549,9 +1655,12 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
         data: "yes 0123456789012345678901234567890123456789 | head -n 20000\r",
       });
       await flood.collectPtyBytes(sessionId, REPLAY_BYTES * 2, 120_000);
-      const traffic = flood.ptyTraffic();
+      // This session alone: case 16's shell is still alive on the same server,
+      // and its trickle is not part of a claim about this flood.
+      const traffic = flood.ptyTraffic(sessionId);
       measurements.push({
         case: '17. gap forced past the ring',
+        sessionId,
         ptyDataFrames: traffic.frames,
         wireBytes: traffic.wireBytes,
         chunkBytes: traffic.chunkBytes,
