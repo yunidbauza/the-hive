@@ -255,10 +255,23 @@ export function SkillsSection() {
    */
   const openFile = async (name: string, path: string): Promise<void> => {
     const file = await readSkillFile(name, path);
-    if (file === null) return;
 
     setOpenPath((current) => {
       if (current !== path) return current;
+      /*
+        A rejected read, not `null` left to mean nothing happened (HIVE-148
+        review). `readSkillFile` resolves `null` for a channel that threw —
+        `EISDIR` through a symlink `bundle.ts` used to call a file,
+        `ENOENT` through a dangling one, `OutsideSkillError` through one
+        resolving outside the bundle — and every caller here had already
+        cleared the buffer before this ran. Returning without setting `error`
+        left the pane on its own empty-state text with no way to tell a
+        failed read from nothing selected, and no error line to explain it.
+      */
+      if (file === null) {
+        setError(`"${path}" could not be read.`);
+        return current;
+      }
       if (file.refused === null) {
         setRefusal(null);
         setBuffer(file.body ?? '');
@@ -306,20 +319,44 @@ export function SkillsSection() {
   } | null>(null);
 
   /** Bring files in from outside, through main's own picker. */
-  const importToBundle = (dir: string): void => {
+  const importToBundle = (): void => {
     if (drilled === null) return;
-    void importIntoSkill(drilled, dir).then(setError);
+    void importIntoSkill(drilled, '').then(setError);
   };
 
-  const newFile = (dir: string): void => {
+  const newFile = (): void => {
     if (drilled === null) return;
     const skillName = drilled;
     setPrompt({
       question: 'New file',
       hint: 'A path inside the skill, at most four folders deep.',
       confirmLabel: 'Create',
-      initial: dir === '' ? '' : `${dir}/`,
+      initial: '',
       act: (path) => {
+        /*
+          Refused here, before main ever sees it (HIVE-148 review). Writing
+          an empty body to a path that already holds a file — including
+          `SKILL.md`, which the manifest may not even list (`skill-bundle.tsx`
+          adds that row itself when a large bundle's walk order left it out)
+          — would silently empty it. `write` is the verb for `SKILL.md`,
+          which the pane already uses for it; every other existing file is
+          edited by opening it, not by typing its path into "New file" a
+          second time. Reported the way every other refusal in this pane is:
+          into `error`, a sentence, never a resolved promise the caller
+          mistakes for success.
+        */
+        const bundle = skills.find((entry) => entry.name === skillName);
+        const taken =
+          path === 'SKILL.md' ||
+          (bundle?.manifest.entries.some(
+            (entry) => entry.path === path && entry.kind === 'file',
+          ) ??
+            false);
+        if (taken) {
+          setError(`"${path}" already exists in this skill.`);
+          return;
+        }
+
         /*
           Created empty, and opened. A template would be this pane guessing at
           a file type it has no way to know — the bundle holds Python, JSON,
@@ -337,14 +374,14 @@ export function SkillsSection() {
     });
   };
 
-  const newFolder = (dir: string): void => {
+  const newFolder = (): void => {
     if (drilled === null) return;
     const skillName = drilled;
     setPrompt({
       question: 'New folder',
       hint: 'A path inside the skill, at most four folders deep.',
       confirmLabel: 'Create',
-      initial: dir === '' ? '' : `${dir}/`,
+      initial: '',
       act: (path) => {
         void makeSkillDir(skillName, path).then(setError);
       },
@@ -597,6 +634,38 @@ export function SkillsSection() {
   const drilledSkill = skills.find((skill) => skill.name === drilled);
 
   /**
+   * Back out of a drill-in when a bundle file is left addressing a skill
+   * that just fell out of the valid list (HIVE-148 review).
+   *
+   * `drilledSkill !== undefined` is what the column below already reads to
+   * decide whether it shows `SkillBundle` or the list, and it already swaps
+   * back on its own — that much needs no fix. What does: `drilled` and
+   * `openPath` were never cleared alongside it, so `inFile` kept answering
+   * as though a file inside that bundle were still open, and Save/Delete
+   * kept targeting a skill no longer on screen. Reachable straight from
+   * finding 1's own repair — typing an existing bundle path into "New file"
+   * used to blank it, `readUserSkills` then reports the skill invalid on the
+   * next sync, and it drops out of `skills` while a bundle file was open.
+   *
+   * Scoped to `inFile`, deliberately not to every `drilledSkill === undefined`
+   * — HIVE-99's own recovery state relies on the opposite: mid-rename, with
+   * `openPath` still `'SKILL.md'` (`inFile` false), the skill is reported
+   * *invalid* rather than gone, `open` already followed the move, and the
+   * pane must keep the editor exactly as it is so Save can retry. Resetting
+   * there would silently discard the one state that recovery depends on.
+   */
+  useEffect(() => {
+    if (drilled !== null && drilledSkill === undefined && inFile) {
+      setDrilled(null);
+      setOpenPath(null);
+      setRefusal(null);
+      setBuffer(null);
+      setSaved(null);
+      setError(null);
+    }
+  }, [drilled, drilledSkill, inFile]);
+
+  /**
    * How many files deleting this skill would take with it.
    *
    * Counted from the manifest rather than guessed: "Removes the folder" was
@@ -774,12 +843,23 @@ export function SkillsSection() {
         </div>
         )}
 
-        {buffer === null ? (
-          <div className="flex items-center justify-center rounded-[7px] border border-dashed border-border px-4 text-center text-[11.5px] text-subtle">
-            Select a skill, or write a new one.
-          </div>
-        ) : (
-          <div className="flex min-h-0 flex-col gap-2">
+        {/*
+          `prompt` and `pending` used to render only inside the `buffer !==
+          null` branch below (HIVE-148 review). A read that fails — the
+          previous fix's own new error state — leaves `buffer` `null` on
+          purpose, so the pane can show its error line instead of a stale
+          editor. But `+ Add → New file` still opens through `setPrompt`
+          regardless, and with the old nesting that state rendered nothing at
+          all: the question existed, had no box to show it in, and no key ever
+          reached it. Both now sit beside whichever of the placeholder or the
+          editor is showing, one grid cell, not inside either branch.
+        */}
+        <div className="flex min-h-0 flex-col gap-2">
+          {buffer === null ? (
+            <div className="flex flex-1 items-center justify-center rounded-[7px] border border-dashed border-border px-4 text-center text-[11.5px] text-subtle">
+              Select a skill, or write a new one.
+            </div>
+          ) : (
             <SkillEditor
               path={
                 open === null
@@ -804,37 +884,37 @@ export function SkillsSection() {
               // rename of the whole skill and already asks its own question.
               onRename={inFile ? renameOpenFile : undefined}
             />
+          )}
 
-            {prompt === null ? null : (
-              <SkillPathPrompt
-                question={prompt.question}
-                hint={prompt.hint}
-                confirmLabel={prompt.confirmLabel}
-                initial={prompt.initial}
-                onConfirm={(path) => {
-                  prompt.act(path);
-                  setPrompt(null);
-                }}
-                onCancel={() => {
-                  setPrompt(null);
-                }}
-              />
-            )}
+          {prompt === null ? null : (
+            <SkillPathPrompt
+              question={prompt.question}
+              hint={prompt.hint}
+              confirmLabel={prompt.confirmLabel}
+              initial={prompt.initial}
+              onConfirm={(path) => {
+                prompt.act(path);
+                setPrompt(null);
+              }}
+              onCancel={() => {
+                setPrompt(null);
+              }}
+            />
+          )}
 
-            {pending === null ? null : (
-              <SkillDiscardConfirm
-                question={pending.question}
-                detail={pending.detail}
-                confirmLabel={pending.confirmLabel}
-                onConfirm={() => {
-                  pending.act();
-                  setPending(null);
-                }}
-                onCancel={() => setPending(null)}
-              />
-            )}
-          </div>
-        )}
+          {pending === null ? null : (
+            <SkillDiscardConfirm
+              question={pending.question}
+              detail={pending.detail}
+              confirmLabel={pending.confirmLabel}
+              onConfirm={() => {
+                pending.act();
+                setPending(null);
+              }}
+              onCancel={() => setPending(null)}
+            />
+          )}
+        </div>
       </div>
 
       <p className="text-[11px] text-subtle">

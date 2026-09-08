@@ -683,14 +683,50 @@ export function isAuthorized(channel: string, granted: Authorization): boolean {
  * not where "a channel feels risky" gets recorded — `CHANNEL_AUTHORIZATION`'s
  * `execute` grade is. It is only for a channel whose *local* safety argument
  * relies on a fact the wire cannot carry, the way `skills:file:drop`'s does.
- * `router.ts`'s remote branch is what will consult this before dispatching a
- * frame — recording the constraint here first, before that code exists, is
+ * `remote-dispatch.ts`'s `refuse()` is what consults this before dispatching a
+ * frame — recording the constraint here first, before that code existed, is
  * what makes it impossible to wire the remote path through this channel
  * without whoever does it reading why it is here.
+ *
+ * Keyed with a message beside each channel, the same shape {@link WINDOW_BOUND}
+ * uses and for the same reason (HIVE-148 review): this used to be a bare
+ * `Set`, folded into {@link isClientFrameAllowed} with nothing else to say
+ * about *why* — so a client sending `skills:file:drop` correctly, as a `call`,
+ * with every privilege it holds, was refused `wrong-frame-kind` and told
+ * "skills:file:drop is not a call channel", which is false. That code means a
+ * malformed frame and invites a client to retry with a different shape; no
+ * shape fixes a policy refusal. {@link remoteRefusedReason} is what
+ * `remote-dispatch.ts` now checks first, the same way it already checks
+ * {@link windowBoundReason}, so this gets its own code and its own true
+ * sentence instead of borrowing the direction check's.
  */
-export const REMOTE_REFUSED_CHANNELS: ReadonlySet<Channel> = new Set([
-  CH.skillsFileDrop,
-]);
+export const REMOTE_REFUSED = {
+  [CH.skillsFileDrop]:
+    'Dropping files onto a skill trusts that preload minted every source path from a real browser drop on this device — a guarantee a socket cannot carry, so this channel is refused for every remote caller rather than trusted on its word. Drag the files onto the skill from the machine you are sitting at instead.',
+} as const satisfies Partial<Record<Channel, string>>;
+
+/**
+ * The channels {@link REMOTE_REFUSED} names, as a set — kept for
+ * {@link isClientFrameAllowed}'s own membership check and for the tests that
+ * assert a channel is, or is not, in it. Derived from the same object rather
+ * than listed a second time, so the two cannot name a different set of
+ * channels from each other.
+ */
+export const REMOTE_REFUSED_CHANNELS: ReadonlySet<Channel> = new Set(
+  Object.keys(REMOTE_REFUSED) as Channel[],
+);
+
+/**
+ * Why `channel` is refused for every remote caller, or `null` if it is not.
+ *
+ * The {@link windowBoundReason} of this constant: same shape, same job, same
+ * reason a caller wants the sentence and not just the boolean.
+ */
+export function remoteRefusedReason(channel: string): string | null {
+  return Object.hasOwn(REMOTE_REFUSED, channel)
+    ? REMOTE_REFUSED[channel as keyof typeof REMOTE_REFUSED]
+    : null;
+}
 
 /**
  * The gate a server's receive path actually wants: may a client send this frame,

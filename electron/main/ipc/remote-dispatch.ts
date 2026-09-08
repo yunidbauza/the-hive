@@ -1,6 +1,7 @@
 import {
   frameKindOf,
   isClientFrameAllowed,
+  remoteRefusedReason,
   windowBoundReason,
   type Authorization,
   type CallFrame,
@@ -33,6 +34,7 @@ export type DispatchRefusal =
   | 'unknown-channel'
   | 'wrong-frame-kind'
   | 'window-bound'
+  | 'remote-refused'
   | 'not-ready';
 
 export interface RemoteDispatch {
@@ -50,11 +52,15 @@ export interface RemoteDispatch {
  * and decides nothing; `ipc/router.ts` is explicit that the local path must
  * keep exactly one gate, so nothing below is reachable from a window.
  *
- * The order of the checks is load-bearing. Direction and existence come from
- * `isClientFrameAllowed`, which HIVE-141 shipped and tested, and they come
- * first because they are the cheap default-deny. `window-bound` comes next, and
- * before the registry lookup, so that a channel which *is* registered but
- * cannot work over a socket is refused with the reason rather than run.
+ * The order of the checks is load-bearing. Existence comes from `frameKindOf`
+ * first, because it is the cheap default-deny. `remote-refused` comes next —
+ * before `isClientFrameAllowed`, which still folds the same channels into its
+ * own answer, so that one is checked for the specific reason rather than
+ * falling through to the generic one (HIVE-148 review; see `refuse()`'s own
+ * comment). Direction then comes from `isClientFrameAllowed`, which HIVE-141
+ * shipped and tested. `window-bound` comes last, and before the registry
+ * lookup, so that a channel which *is* registered but cannot work over a
+ * socket is refused with the reason rather than run.
  */
 export function createRemoteDispatch(registry: IpcRegistry): RemoteDispatch {
   /**
@@ -73,9 +79,10 @@ export function createRemoteDispatch(registry: IpcRegistry): RemoteDispatch {
       (HIVE-143 review).
 
       Everything downstream that decides is `Object.hasOwn` — `frameKindOf`,
-      `isClientFrameAllowed` and `windowBoundReason` all key a plain object —
-      and `Object.hasOwn` coerces its key, so `["pty:spawn"]` stringifies to
-      `"pty:spawn"` and clears every gate. `registry.call` is a `Map`, which
+      `isClientFrameAllowed`, `remoteRefusedReason` and `windowBoundReason` all
+      key a plain object — and `Object.hasOwn` coerces its key, so
+      `["pty:spawn"]` stringifies to `"pty:spawn"` and clears every gate.
+      `registry.call` is a `Map`, which
       does not coerce, so the lookup then misses and the frame was answered
       `not-ready`. Nothing unsafe ran; the answer was simply a lie. `not-ready`
       was given its own code to mean "the handlers are not registered yet" — a
@@ -93,6 +100,21 @@ export function createRemoteDispatch(registry: IpcRegistry): RemoteDispatch {
     if (frameKindOf(channel) === null) {
       return { code: 'unknown-channel', message: `no such channel: ${channel}` };
     }
+    /*
+      Checked before `isClientFrameAllowed`, not after (HIVE-148 review).
+
+      `isClientFrameAllowed` still folds `REMOTE_REFUSED_CHANNELS` into its own
+      answer — that is the property its own tests pin, "may a client frame
+      ever reach this at all" — so a remote-refused channel would fall
+      through to the generic check below and come back `wrong-frame-kind`
+      with "skills:file:drop is not a call channel", which is false: it *is*
+      a call channel, correctly directed, at the highest grade a device
+      holds. That code means a malformed frame and tells a client to retry
+      with a different shape, and no shape fixes a policy refusal. Checking
+      the specific reason first is what gives it the true one.
+    */
+    const refused = remoteRefusedReason(channel);
+    if (refused !== null) return { code: 'remote-refused', message: refused };
     if (!isClientFrameAllowed(kind, channel, DEVICE_GRANT)) {
       return {
         code: 'wrong-frame-kind',

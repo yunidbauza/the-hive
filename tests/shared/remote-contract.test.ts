@@ -14,6 +14,7 @@ import {
   frameKindOf,
   isAuthorized,
   isClientFrameAllowed,
+  remoteRefusedReason,
   windowBoundReason,
 } from '@shared/remote-contract';
 
@@ -343,6 +344,32 @@ describe('remote contract: channels refused over the wire regardless of grant', 
     expect(REMOTE_REFUSED_CHANNELS.has(CH.skillsFileImport)).toBe(false);
     expect(isClientFrameAllowed('call', CH.skillsFileImport, 'execute')).toBe(true);
     expect(isClientFrameAllowed('call', CH.skillsFileWrite, 'execute')).toBe(true);
+  });
+
+  /**
+   * The sentence, not only the boolean (HIVE-148 review). Before this,
+   * `remote-dispatch.ts` had nothing to ask *why* `skills:file:drop` was
+   * refused beyond `isClientFrameAllowed`'s own false, so the dispatcher
+   * answered with the generic direction refusal's message — "is not a call
+   * channel" — which is false: it is one, correctly directed, at the
+   * highest grade a device holds. `remoteRefusedReason` is what gives the
+   * true one, the same way `windowBoundReason` already does for its table.
+   */
+  it('gives a true reason for skills:file:drop, not the direction refusal\'s message', () => {
+    const reason = remoteRefusedReason(CH.skillsFileDrop);
+
+    expect(reason).not.toBeNull();
+    expect(reason).not.toMatch(/is not a call channel/);
+    expect(reason).toMatch(/preload/i);
+  });
+
+  it('answers null for a channel that is not remote-refused', () => {
+    expect(remoteRefusedReason(CH.skillsFileImport)).toBeNull();
+    expect(remoteRefusedReason(CH.skillsFileWrite)).toBeNull();
+  });
+
+  it('answers null for an unknown channel rather than throwing', () => {
+    expect(remoteRefusedReason('not:a:channel')).toBeNull();
   });
 });
 

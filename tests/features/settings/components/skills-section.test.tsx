@@ -342,6 +342,200 @@ describe('SkillsSection', () => {
         '',
       );
     });
+
+    /**
+     * `newFile`'s `act` used to call `writeSkillFile(name, path, '')` with no
+     * existence check at all, so typing *any* path already in the bundle —
+     * including `SKILL.md`, which main's own `writeFile` guard now refuses
+     * separately — emptied that file (HIVE-148 review, finding 1's renderer
+     * half). Refused here, before the channel is ever reached, the same way
+     * every other refusal in this pane is: reported into `error`.
+     */
+    it('refuses New file over a path already in the bundle, rather than emptying it', async () => {
+      setSkillsForTest(bundled());
+
+      render(<SkillsSection />);
+      await userEvent.click(screen.getByRole('button', { name: '/graphify' }));
+      await userEvent.click(screen.getByRole('button', { name: '+ Add' }));
+      await userEvent.click(screen.getByRole('button', { name: 'New file' }));
+      await userEvent.type(
+        screen.getByRole('textbox', { name: 'New file' }),
+        'build.py',
+      );
+      await userEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+      expect(writeSkillFile).not.toHaveBeenCalled();
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        '"build.py" already exists in this skill.',
+      );
+    });
+
+    it('refuses New file over SKILL.md by name, not only through main', async () => {
+      setSkillsForTest(bundled());
+
+      render(<SkillsSection />);
+      await userEvent.click(screen.getByRole('button', { name: '/graphify' }));
+      await userEvent.click(screen.getByRole('button', { name: '+ Add' }));
+      await userEvent.click(screen.getByRole('button', { name: 'New file' }));
+      await userEvent.type(
+        screen.getByRole('textbox', { name: 'New file' }),
+        'SKILL.md',
+      );
+      await userEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+      expect(writeSkillFile).not.toHaveBeenCalled();
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        '"SKILL.md" already exists in this skill.',
+      );
+    });
+  });
+
+  /**
+   * A rejected read used to leave the pane on its own placeholder text with
+   * no error and no way out (HIVE-148 review, finding 4). `readSkillFile`
+   * resolves `null` for a channel that threw — `EISDIR` through a symlink
+   * `bundle.ts` used to call a file, `ENOENT` through a dangling one,
+   * `OutsideSkillError` through one resolving outside the bundle — and every
+   * caller had already cleared the buffer before the read settled.
+   */
+  it('reports a failed file read into the error line', async () => {
+    readSkillFile.mockImplementation((name: string, path: string) => {
+      if (path === 'build.py') return Promise.resolve(null);
+      return Promise.resolve({
+        name,
+        path,
+        absPath: `/home/u/.hive/skills/${name}/${path}`,
+        size: file(name).length,
+        body: file(name),
+        refused: null,
+      });
+    });
+    setSkillsForTest(
+      snapshot({
+        skills: [
+          {
+            name: 'graphify',
+            description: 'does a thing',
+            valid: true as const,
+            manifest: {
+              entries: [
+                { path: 'SKILL.md', kind: 'file', size: 10, executable: false, excluded: null },
+                { path: 'build.py', kind: 'file', size: 10, executable: false, excluded: null },
+              ],
+              capped: null,
+            },
+          },
+        ],
+      }),
+    );
+
+    render(<SkillsSection />);
+    await userEvent.click(screen.getByRole('button', { name: '/graphify' }));
+    await userEvent.click(screen.getByRole('button', { name: /build\.py/ }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '"build.py" could not be read.',
+    );
+    // The empty-state placeholder, not a stale editor over a file that
+    // failed to load.
+    expect(
+      screen.getByText('Select a skill, or write a new one.'),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * `prompt` and `pending` used to render only inside the `buffer !== null`
+   * branch, so once a failed read left `buffer` `null`, `+ Add → New file`
+   * set state that had nowhere to render (HIVE-148 review, finding 4). Both
+   * now sit beside the placeholder as well as the editor.
+   */
+  it('still offers the New file prompt after a failed read left the editor empty', async () => {
+    readSkillFile.mockResolvedValueOnce(null);
+    setSkillsForTest(
+      snapshot({
+        skills: [
+          {
+            name: 'graphify',
+            description: 'does a thing',
+            valid: true as const,
+            manifest: { entries: [], capped: null },
+          },
+        ],
+      }),
+    );
+
+    render(<SkillsSection />);
+    await userEvent.click(screen.getByRole('button', { name: '/graphify' }));
+    await screen.findByRole('alert');
+    expect(
+      screen.getByText('Select a skill, or write a new one.'),
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '+ Add' }));
+    await userEvent.click(screen.getByRole('button', { name: 'New file' }));
+
+    expect(
+      screen.getByRole('textbox', { name: 'New file' }),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * `drilled` and `openPath` used to stay set once the skill under an open
+   * *bundle file* left the valid list — removed, or renamed out from under
+   * itself — so `inFile` kept answering as though that file were still open,
+   * and Save/Delete kept targeting a skill no longer on screen (HIVE-148
+   * review, finding 6).
+   *
+   * Scoped to a bundle file deliberately, not to `SKILL.md`: HIVE-99's own
+   * "follows a move that landed before the write failed" test above depends
+   * on the opposite there, and has its own coverage for it.
+   */
+  it('backs out of a drill-in when a bundle file it has open loses its skill', async () => {
+    setSkillsForTest(
+      snapshot({
+        skills: [
+          {
+            name: 'graphify',
+            description: 'does a thing',
+            valid: true as const,
+            manifest: {
+              entries: [
+                { path: 'SKILL.md', kind: 'file', size: 10, executable: false, excluded: null },
+                { path: 'build.py', kind: 'file', size: 10, executable: false, excluded: null },
+              ],
+              capped: null,
+            },
+          },
+        ],
+      }),
+    );
+
+    render(<SkillsSection />);
+    await userEvent.click(screen.getByRole('button', { name: '/graphify' }));
+    await userEvent.click(screen.getByRole('button', { name: /build\.py/ }));
+    await screen.findByLabelText('Skill source');
+
+    // Simulate a sync that no longer reports this skill at all — removed, or
+    // renamed away, by any route. Another skill is left in the snapshot so
+    // the pane stays on its ordinary two-column layout rather than the
+    // separate "write your first skill" screen, which is not what this test
+    // is for. The list column swaps back on its own, just from `drilledSkill`
+    // going `undefined` — that much happened before this fix too.
+    setSkillsForTest(withSkills('other'));
+
+    /*
+      What the fix actually changes: without it, `drilled` and `openPath`
+      stayed set to `graphify`/`build.py`, so the editor kept showing that
+      stale buffer beside a list that no longer named the skill — a Save or
+      Delete from there would still address a bundle not on screen. `buffer`
+      only clears once the effect fires, hence the poll.
+    */
+    await expect
+      .poll(() => screen.queryByLabelText('Skill source'))
+      .toBeNull();
+    expect(
+      screen.getByText('Select a skill, or write a new one.'),
+    ).toBeInTheDocument();
   });
 
   it('counts the files the delete confirm will remove', async () => {

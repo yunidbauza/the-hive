@@ -359,6 +359,28 @@ export function createSkillsRuntime({
 
     async writeFile(name: string, path: string, body: string): Promise<SkillsSnapshot> {
       const absPath = await resolveInSkill(name, path);
+
+      /*
+        SKILL.md is what makes the folder a skill, and this verb has no
+        rename logic behind it — `write` above is what mirrors a changed
+        `name:` into the folder that holds it. Writing here with an empty
+        body, or any body at all, would blank or replace the manifest with
+        nothing to catch the mismatch: `readUserSkills` reports it invalid on
+        the next sync, silently, the same recovery trap `removeFile` and
+        `moveFile` already guard against for delete and rename.
+
+        Checked against the *resolved* path, not the request string, for the
+        reason {@link isSkillManifest} documents: a bundle holding
+        `self -> .` makes `self/SKILL.md` a second, symlinked name for the
+        exact same file, and `assertSkillPath` admits it (no dot segment,
+        depth 2). String equality on the request would miss it.
+      */
+      if (await isSkillManifest(name, absPath)) {
+        throw new Error(
+          'SKILL.md is edited through the skill itself, not the file tree.',
+        );
+      }
+
       await mkdir(dirname(absPath), { recursive: true });
       await writeFile(absPath, body, 'utf8');
       /*
@@ -411,7 +433,16 @@ export function createSkillsRuntime({
       if (await isSkillManifest(name, absPath)) {
         throw new Error('SKILL.md cannot be deleted — delete the skill instead.');
       }
-      await rm(absPath, { recursive: true, force: true });
+      /*
+        `recursive`, not `force`. `force` swallows `ENOENT`, so a path that
+        was never there — `removeFile('graphify', 'never/was/here.txt')` —
+        resolved and reported a successful delete, which is worse than the
+        failure itself: the pane's Delete confirm claims a removal that never
+        happened and the user stops looking for the file. `recursive` alone
+        still removes a real directory and everything under it; nothing here
+        depended on `force` doing more than hiding that one case.
+      */
+      await rm(absPath, { recursive: true });
       return snapshot(await sync());
     },
 

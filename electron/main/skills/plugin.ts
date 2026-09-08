@@ -272,19 +272,49 @@ export async function writePluginDir(
       (entry) => entry.excluded === null && entry.path !== 'SKILL.md',
     );
 
+    /*
+      Per-entry, not per-skill and not per-regeneration (HIVE-148 review).
+
+      `read.ts` and `bundle.ts` both hold the same rule for the walk that
+      produced this list: a bad entry costs that entry, never everything
+      after it. This loop is the one place that rule was not yet applied —
+      `copyIfChanged` now `stat`s and `copyFile`s a file this app did not
+      write, from a tree the user hand-edits (mode `000`, a file deleted
+      between the walk above and this copy), and an uncaught throw here
+      propagated out of `writePluginDir` into `regenerate`'s `catch`, which
+      sets `written` back to `false` — dropping `--plugin-dir` from *every*
+      spawn, including `/done`'s, over one unreadable file in one bundle.
+
+      Not swallowed silently either: `console.info` names the skill and the
+      file, the same channel `regenerate` already uses for its own non-fatal
+      failure, so the one file missing from the mirror is at least
+      discoverable without the pane growing a UI for it.
+    */
     // Directories first, so a file never arrives before its parent exists.
     for (const entry of admitted) {
       if (entry.kind === 'directory') {
         const path = join(destination, entry.path);
-        await ensureKind(path, 'directory');
-        await mkdir(path, { recursive: true });
+        try {
+          await ensureKind(path, 'directory');
+          await mkdir(path, { recursive: true });
+        } catch (cause) {
+          console.info(
+            `[hive] the skill "${skill.name}" could not mirror "${entry.path}" — that folder is missing from the session's copy (${String(cause)})`,
+          );
+        }
       }
     }
     for (const entry of admitted) {
       if (entry.kind === 'file') {
         const to = join(destination, entry.path);
-        await ensureKind(to, 'file');
-        await copyIfChanged(join(skill.dir, entry.path), to);
+        try {
+          await ensureKind(to, 'file');
+          await copyIfChanged(join(skill.dir, entry.path), to);
+        } catch (cause) {
+          console.info(
+            `[hive] the skill "${skill.name}" could not mirror "${entry.path}" — that file is missing from the session's copy (${String(cause)})`,
+          );
+        }
       }
     }
 

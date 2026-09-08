@@ -448,6 +448,43 @@ describe('createSkillsRuntime file verbs', () => {
     ).rejects.toThrow();
   });
 
+  it('refuses to write SKILL.md through the file verb, which would blank it silently', async () => {
+    /*
+      Pinned to the specific message and to the file surviving, not merely
+      that the call threw — the same discipline `removeFile`'s own SKILL.md
+      test below documents. Before this guard, `writeFile('graphify',
+      'SKILL.md', '')` truncated the file to nothing: it still existed, so a
+      bare `.rejects.toThrow()` would have passed on an unrelated failure
+      just as readily as on the refusal this pins.
+    */
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\nBody.\n');
+
+    await expect(
+      skills.writeFile('graphify', 'SKILL.md', ''),
+    ).rejects.toThrow(/SKILL\.md is edited through the skill itself/i);
+    expect(
+      await readFile(join(skillsDir(), 'graphify', 'SKILL.md'), 'utf8'),
+    ).toContain('name: graphify');
+  });
+
+  it('refuses to write SKILL.md through a symlinked alias, not just the literal path', async () => {
+    // The same `self -> .` alias `removeFile`'s own symlink test uses:
+    // `self/SKILL.md` clears `assertSkillPath` (no dot segment, depth 2) and
+    // resolves to the exact same file. A guard comparing the request string
+    // rather than what it resolves to would miss this entirely.
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\nBody.\n');
+    await symlink('.', join(skillsDir(), 'graphify', 'self'));
+
+    await expect(
+      skills.writeFile('graphify', 'self/SKILL.md', ''),
+    ).rejects.toThrow(/SKILL\.md is edited through the skill itself/i);
+    expect(
+      await readFile(join(skillsDir(), 'graphify', 'SKILL.md'), 'utf8'),
+    ).toContain('name: graphify');
+  });
+
   it('refuses to remove SKILL.md, which would break the skill silently', async () => {
     /*
       Pinned to the specific message and to the file surviving, not merely
@@ -1001,6 +1038,24 @@ describe('createSkillsRuntime file verbs', () => {
     } finally {
       await rm(outside, { recursive: true, force: true });
     }
+  });
+
+  it('reports a delete of a path that was never there rather than claiming success', async () => {
+    /*
+      `rm(..., { force: true })` swallows `ENOENT`, so a request naming a
+      path that does not exist used to resolve exactly like a real delete —
+      the pane's confirm dialog would then say "Deleted" about a file that
+      was never on disk. `resolveInSkill` itself does not refuse a
+      not-yet-created path (it has to admit one, for `writeFile` and
+      `mkdir`), so this call reaches `rm` and the guarantee has to come from
+      there.
+    */
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+
+    await expect(
+      skills.removeFile('graphify', 'never/was/here.txt'),
+    ).rejects.toThrow();
   });
 
   it('refuses to move SKILL.md out from under the skill', async () => {

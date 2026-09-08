@@ -223,7 +223,9 @@ describe('SkillBundle', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'New file' }));
 
-    expect(onNewFile).toHaveBeenCalledWith('');
+    // No argument: the menu is a single footer button, not a per-row target,
+    // so there is no folder for it to name (HIVE-148 review).
+    expect(onNewFile).toHaveBeenCalledWith();
     // Closed again, rather than left open over the question it just raised.
     expect(screen.getByRole('button', { name: '+ Add' })).toBeInTheDocument();
   });
@@ -239,6 +241,6 @@ describe('SkillBundle', () => {
       screen.getByRole('button', { name: 'Add from your computer' }),
     );
 
-    expect(onImport).toHaveBeenCalledWith('');
+    expect(onImport).toHaveBeenCalledWith();
   });
 });

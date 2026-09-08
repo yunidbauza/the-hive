@@ -711,4 +711,53 @@ describe('writePluginDir', () => {
       '---\nname: standup\ndescription: d\n---\nBody.\n',
     );
   });
+
+  /**
+   * One unreadable file must cost that file, not the plugin (HIVE-148 review).
+   *
+   * `read.ts` and `bundle.ts` already hold this rule for the walk that
+   * produces a manifest; this is the copy loop that mirrors it, and it did
+   * not hold the rule until this story's review found it. Reproduced the way
+   * the finding names as most likely — a file gone between the walk and the
+   * copy, since `~/.hive/skills` is hand-editable by design — rather than a
+   * permission bit, which a test running as root would not reproduce at all.
+   *
+   * Before the fix this `writePluginDir` call rejected outright: `stat` on
+   * the vanished source threw inside `copyIfChanged`, uncaught, straight out
+   * of the function. `regenerate`'s own `catch` (`electron/main/skills/index.ts`)
+   * is what turns that into `written = false` and drops `--plugin-dir` from
+   * every spawn — including `/done`'s — which is why the assertion below also
+   * checks that `/done` still landed, not only that this one skill survived.
+   */
+  it('mirrors every other file when one goes missing between the walk and the copy', async () => {
+    await mkdir(join(source, 'graphify'), { recursive: true });
+    await writeFile(
+      join(source, 'graphify', 'SKILL.md'),
+      '---\nname: graphify\ndescription: d\n---\nBody.\n',
+      'utf8',
+    );
+    await writeFile(join(source, 'graphify', 'ok.txt'), 'fine', 'utf8');
+    await writeFile(join(source, 'graphify', 'gone.txt'), 'will vanish', 'utf8');
+
+    const read = await readUserSkills(source);
+    await rm(join(source, 'graphify', 'gone.txt'));
+
+    await expect(
+      writePluginDir(pluginRoot, '1.0.0', read),
+    ).resolves.toBeUndefined();
+
+    expect(
+      await readFile(join(pluginRoot, 'skills', 'graphify', 'SKILL.md'), 'utf8'),
+    ).toContain('name: graphify');
+    expect(
+      await readFile(join(pluginRoot, 'skills', 'graphify', 'ok.txt'), 'utf8'),
+    ).toBe('fine');
+    await expect(
+      stat(join(pluginRoot, 'skills', 'graphify', 'gone.txt')),
+    ).rejects.toThrow();
+    // The rest of the plugin, `/done` included, is unaffected.
+    await expect(
+      stat(join(pluginRoot, 'skills', 'done', 'SKILL.md')),
+    ).resolves.toBeDefined();
+  });
 });

@@ -291,17 +291,18 @@ const attachedSockets = new Set<AttachedSocket>();
  * The event object handed to a call handler reached over a socket.
  *
  * There is no `IpcMainInvokeEvent` to give it, because there is no renderer and
- * no window. That is safe rather than lucky: exactly three call channels
- * dereference this, all three for a parent `BrowserWindow`, and all three are
+ * no window. That is safe rather than lucky: exactly four call channels
+ * dereference this, all four for a parent `BrowserWindow`, and all four are
  * in `WINDOW_BOUND` and refused before `remote-dispatch` ever reaches a
- * handler. If a fourth ever grows the dependency, it must be added to that
- * table in the same commit — this cast is the reason that is a rule and not a
- * preference.
+ * handler. `skills:file:import` (HIVE-148) is the fourth — choosing files for
+ * a skill opens the same native dialog the other three needed a window for.
+ * If a fifth ever grows the dependency, it must be added to that table in the
+ * same commit — this cast is the reason that is a rule and not a preference.
  *
  * **And the rule is checked, not merely stated (HIVE-143 review).**
  * `remote-composition.test.ts` reads this file as source text, finds every
  * `handle`/`on` site that binds an `event` parameter it actually uses, and
- * fails if that set is anything other than `WINDOW_BOUND`'s three channels plus
+ * fails if that set is anything other than `WINDOW_BOUND`'s four channels plus
  * `pty:prompt` — the one that dereferences the event deliberately, for a
  * *surface lifetime* rather than a window, which a socket satisfies. That test
  * is what makes the paragraph above enforceable; the `_event` naming

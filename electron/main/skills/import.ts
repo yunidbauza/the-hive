@@ -52,8 +52,8 @@ import { isSkillManifest, resolveInSkill } from './paths';
  * ## What is refused rather than merged: an existing destination
  *
  * `moveFile` refuses a taken destination rather than replacing it, and
- * `removeFile`/`moveFile` both refuse `SKILL.md` itself through
- * {@link isSkillManifest}. Copying in is a third route to the same two
+ * `removeFile`/`moveFile`/`writeFile` all refuse `SKILL.md` itself through
+ * {@link isSkillManifest}. Copying in is a fourth route to the same two
  * mistakes — reachable by a drag — so it is guarded the same way: a file
  * destination that already exists is refused by name, and `SKILL.md`
  * specifically is refused outright, before anything is written. Re-importing
@@ -138,6 +138,21 @@ export async function copyInto(
     if (name === '' || name === '.' || name === '..') {
       throw new Error('That file has no usable name — it was not added.');
     }
+    /*
+      `basename` splits only on `/` — the POSIX separator — so a source
+      dropped as `a\b.txt` keeps its backslash intact as one literal
+      filename. `assertSkillPath` splits an incoming *request* path on
+      `[/\\]` and rejoins with `/`, which is right for a path a person typed
+      on this machine — but it means a file this call actually wrote as
+      `a\b.txt` is addressed afterward as `a/b.txt`, a different path with a
+      different parent, by every verb the pane has: unopenable, unmovable,
+      undeletable except by a text editor reaching past the pane entirely.
+      Refused here, before anything is written, rather than silently
+      creating a file no bundle verb can ever name again.
+    */
+    if (name.includes('/') || name.includes('\\')) {
+      throw new Error(`"${name}" contains a path separator — it was not added.`);
+    }
     if (SKILL_SKIP_ENTRIES.includes(name)) {
       throw new Error(`"${name}" is never sent to a session — it was not added.`);
     }
@@ -169,7 +184,7 @@ export async function copyInto(
       assertDepth(rootRel, name);
 
       const rootTo = await resolveInSkill(skillName, rootRel);
-      await assertDirectoryFree(rootTo, rootRel);
+      await assertDirectoryFree(rootTo, rootRel, planned);
 
       /*
         The folder's own mkdir first, then its children, appended in source
@@ -217,7 +232,7 @@ export async function copyInto(
             folder needs to go is caught at the shallowest point that names
             it, not rediscovered several segments deeper as a raw `ENOTDIR`.
           */
-          await assertDirectoryFree(to, relPath);
+          await assertDirectoryFree(to, relPath, planned);
           planned.push({ from, to, mode: -1 });
           continue;
         }
@@ -312,8 +327,27 @@ async function assertDestinationFree(
  * here, at plan time, for the reason {@link assertDestinationFree} checks a
  * file destination there — a refusal after part of the batch is already on
  * disk is not a refusal.
+ *
+ * `planned`, not only the disk, for the same reason {@link assertDestinationFree}
+ * checks it: `sources = [a/x (file), b/x (directory)]`, in that order, plans a
+ * file at `x` before this ever runs for the directory named the same — the
+ * disk has nothing at `x` yet, so a disk-only check answers "free", the file
+ * is written first, and the directory's own `mkdir` then throws the same raw
+ * `EEXIST` this function exists to turn into a sentence. The reverse order was
+ * already caught; this is the direction that was not. Only a **file** already
+ * planned for `to` collides — two directory sources naming the same folder
+ * both plan `mode: -1` here and are meant to merge, which is the ordinary case
+ * of a folder drop landing partly on one already there.
  */
-async function assertDirectoryFree(to: string, relPath: string): Promise<void> {
+async function assertDirectoryFree(
+  to: string,
+  relPath: string,
+  planned: readonly { to: string; mode: number }[],
+): Promise<void> {
+  if (planned.some((item) => item.to === to && item.mode !== -1)) {
+    throw new Error(`"${relPath}" already exists in this skill.`);
+  }
+
   const info = await lstat(to).catch(() => null);
   if (info !== null && !info.isDirectory()) {
     throw new Error(`"${relPath}" already exists in this skill.`);

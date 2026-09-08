@@ -79,8 +79,42 @@ describe('readBundle', () => {
 
     expect(entry?.excluded?.code).toBe('symlink');
     expect(entry?.excluded?.reason).toMatch(/symlink/i);
+    expect(entry?.kind).toBe('file');
 
     await rm(outside, { recursive: true, force: true });
+  });
+
+  /**
+   * A symlink's real kind, not the hard-coded `'file'` every one used to
+   * report (HIVE-148 review).
+   *
+   * Still excluded either way — a symlink is never copied — but the pane
+   * renders `kind` before it renders `excluded`: a symlink to a directory
+   * reported as `'file'` gave it a clickable row, and clicking called
+   * `readFile`, which resolves the link and `stat`s a directory — `EISDIR`.
+   * Reporting the real kind lets it render, correctly, as an (empty, since
+   * this walk never descends through a link) folder instead.
+   */
+  it('reports a symlink to a directory as a directory, not a file', async () => {
+    const target = await mkdtemp(join(tmpdir(), 'hive-outside-'));
+    await mkdir(join(target, 'inner'), { recursive: true });
+    await symlink(target, join(dir, 'linked-dir'));
+
+    const entry = at(await readBundle(dir), 'linked-dir');
+
+    expect(entry?.kind).toBe('directory');
+    expect(entry?.excluded?.code).toBe('symlink');
+
+    await rm(target, { recursive: true, force: true });
+  });
+
+  it('reports a dangling symlink as a file, the historical default for one with nothing to ask', async () => {
+    await symlink(join(dir, 'nonexistent.txt'), join(dir, 'dangling'));
+
+    const entry = at(await readBundle(dir), 'dangling');
+
+    expect(entry?.kind).toBe('file');
+    expect(entry?.excluded?.code).toBe('symlink');
   });
 
   it('admits a folder at the depth limit and does not enumerate below it', async () => {

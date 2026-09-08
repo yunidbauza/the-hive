@@ -374,6 +374,32 @@ describe('copyInto', () => {
       ).rejects.toThrow();
     });
 
+    /**
+     * The reverse of the collision above, and the direction that was not
+     * caught (HIVE-148 review). `assertDirectoryFree` checked only the disk,
+     * never `planned` — so a file source named `x` planned first looked
+     * "free" to a directory source named `x` right behind it, since neither
+     * had been written yet. The file landed, and the directory's own
+     * `mkdir` then threw a raw `EEXIST` naming the absolute host path, after
+     * part of the batch was already on disk. `assertDestinationFree`
+     * already checked `planned` for the opposite order (directory first,
+     * file second); this is the half that did not.
+     */
+    it('refuses a batch where a file source and a directory source share a basename, file first', async () => {
+      await mkdir(join(outside, 'a'), { recursive: true });
+      await writeFile(join(outside, 'a', 'x'), 'a file', 'utf8');
+      await mkdir(join(outside, 'b', 'x'), { recursive: true });
+      await writeFile(join(outside, 'b', 'x', 'inner.txt'), 'inner', 'utf8');
+
+      await expect(
+        copyInto('graphify', '', [join(outside, 'a', 'x'), join(outside, 'b', 'x')]),
+      ).rejects.toThrow(/already exists in this skill/);
+
+      // Total refusal: the file must not have landed either, even though it
+      // was planned before the collision with the directory was discovered.
+      await expect(stat(join(skillsDir, 'graphify', 'x'))).rejects.toThrow();
+    });
+
     it('still merges a directory drop onto an existing directory of the same name', async () => {
       await mkdir(join(skillsDir, 'graphify', 'refs'), { recursive: true });
       await writeFile(join(skillsDir, 'graphify', 'refs', 'old.txt'), 'old', 'utf8');
@@ -438,6 +464,30 @@ describe('copyInto', () => {
     expect(trailingDotDot.endsWith('/..')).toBe(true);
 
     await expect(copyInto('graphify', '', [trailingDotDot])).rejects.toThrow();
+  });
+
+  /**
+   * `basename` splits only on `/`, the POSIX separator, so a source named
+   * `a\b.txt` keeps its backslash as one literal filename on disk — while
+   * `assertSkillPath` (`electron/shared/guards.ts`), the guard on every
+   * *request* path, splits on `[/\\]` and rejoins with `/`, treating the
+   * same string as two segments, `a/b.txt`. Left unchecked, this call
+   * creates a file no bundle verb can ever address again: every request
+   * naming it resolves to a different path than the one that was written.
+   */
+  it('refuses a source basename containing a backslash, rather than creating an address no verb can resolve again', async () => {
+    await writeFile(join(outside, 'a\\b.txt'), 'x', 'utf8');
+
+    await expect(
+      copyInto('graphify', '', [join(outside, 'a\\b.txt')]),
+    ).rejects.toThrow(/path separator/);
+
+    await expect(
+      stat(join(skillsDir, 'graphify', 'a\\b.txt')),
+    ).rejects.toThrow();
+    await expect(
+      stat(join(skillsDir, 'graphify', 'a', 'b.txt')),
+    ).rejects.toThrow();
   });
 
   /** Minor: a missing source is a sentence, not a raw ENOENT with a host path in it. */

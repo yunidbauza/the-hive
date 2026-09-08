@@ -77,11 +77,31 @@ export async function readBundle(dir: string): Promise<BundleManifest> {
         `Dirent` reports `lstat`, so this is a link and not what it points at —
         which is the whole check. Following one copies whatever is on the other
         end into a directory handed to a model.
+
+        The refusal is unconditional either way — a symlink is never copied,
+        whatever it resolves to — but `kind` is now `stat`'d rather than
+        hard-coded `'file'` (HIVE-148 review). Reporting a symlink to a
+        directory as a `'file'` gave it a clickable row: `skill-bundle.tsx`
+        calls `onOpen`, main's `readFile` resolves the link and `stat`s a
+        directory, and the read throws `EISDIR`. Reporting the real kind lets
+        the pane render it as an (empty, since this walk never descends into
+        a link) folder instead, which is what it is. A dangling link, or one
+        whose target cannot be `stat`'d for any other reason, keeps the old
+        default: there is nothing to ask a real kind of, and `'file'` is what
+        every dangling link reported before this.
       */
       if (item.isSymbolicLink()) {
+        let kind: 'file' | 'directory' = 'file';
+        try {
+          kind = (await stat(join(dir, path))).isDirectory() ? 'directory' : 'file';
+        } catch {
+          // Dangling, or unreadable. Left as the historical default — the
+          // pane's own read (or delete) is what surfaces what is wrong.
+        }
+
         entries.push({
           path,
-          kind: 'file',
+          kind,
           size: 0,
           executable: false,
           excluded: SYMLINK,

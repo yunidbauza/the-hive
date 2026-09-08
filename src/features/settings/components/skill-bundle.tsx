@@ -83,10 +83,21 @@ interface SkillBundleProps {
   dirty: boolean;
   onBack: () => void;
   onOpen: (path: string) => void;
-  onNewFile: (dir: string) => void;
-  onNewFolder: (dir: string) => void;
+  /*
+    No `dir` parameter (HIVE-148 review). `+ Add` is a single footer button,
+    not a per-row menu, so there was never a folder for these three to target
+    — every call site passed `''` and nothing else could reach them. A
+    parameter every call site passes the same literal for is not a parameter;
+    it is a lie about what the caller decides. Root-targeting is the
+    legitimate choice here: the New file / New folder prompt already accepts
+    a full path (`SkillPathPrompt`'s `hint` says so), so typing
+    `scripts/build.py` reaches the same place a per-row "new file here" would
+    have.
+  */
+  onNewFile: () => void;
+  onNewFolder: () => void;
   /** Open main's own picker. No source path is ever named by the renderer. */
-  onImport: (dir: string) => void;
+  onImport: () => void;
   /** Files dropped onto the tree root, or onto one folder row. */
   onDrop: (dir: string, files: readonly File[]) => void;
 }
@@ -317,7 +328,7 @@ export function SkillBundle({
               type="button"
               onClick={() => {
                 setAdding(false);
-                act('');
+                act();
               }}
               className="px-2.5 py-1.5 text-left text-[12.5px] text-muted hover:bg-hover hover:text-ink"
             >

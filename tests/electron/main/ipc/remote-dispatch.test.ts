@@ -85,6 +85,43 @@ describe('createRemoteDispatch call', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  /**
+   * `skills:file:drop` is a correctly-directed `call` channel, at the
+   * highest grade a device holds — `isClientFrameAllowed` still folds
+   * `REMOTE_REFUSED_CHANNELS` into its own answer, so before this fix the
+   * refusal fell through to the generic `wrong-frame-kind` branch and
+   * claimed "skills:file:drop is not a call channel", which is false
+   * (HIVE-148 review). This is the property that regresses if the specific
+   * check is ever removed or reordered after the generic one.
+   */
+  it('refuses a remote-refused channel with its own code, not the generic direction one', async () => {
+    const registry = createIpcRegistry();
+    registry.recordCall(CH.skillsFileDrop, () => ({
+      skills: [],
+      invalid: [],
+      skillsRoot: '/never/reached',
+    }));
+    const dispatch = createRemoteDispatch(registry);
+
+    const frame = await dispatch.call(callFrame(CH.skillsFileDrop));
+
+    expect(frame).toMatchObject({ kind: 'error', code: 'remote-refused' });
+    const message = (frame as { message: string }).message;
+    expect(message).not.toMatch(/is not a call channel/);
+    expect(message).toMatch(/preload/i);
+  });
+
+  it('does not invoke the handler behind a remote-refused channel', async () => {
+    const registry = createIpcRegistry();
+    const handler = vi.fn(() => ({ skills: [], invalid: [], skillsRoot: '/x' }));
+    registry.recordCall(CH.skillsFileDrop, handler);
+    const dispatch = createRemoteDispatch(registry);
+
+    await dispatch.call(callFrame(CH.skillsFileDrop));
+
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it('reports not-ready for a real channel with no handler recorded yet', async () => {
     const dispatch = createRemoteDispatch(createIpcRegistry());
 
