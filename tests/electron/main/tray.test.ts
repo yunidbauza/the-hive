@@ -93,14 +93,18 @@ function makeDevices(): ServerDevice[] {
   ];
 }
 
+type PairAttempt = { token: string } | { error: string };
+
 function makeDeps(overrides: {
   devices?: () => ServerDevice[];
   boundAddress?: () => string | null;
-  onPair?: (name: string) => string | null;
+  onPair?: (name: string) => PairAttempt;
 } = {}) {
   return {
     devices: overrides.devices ?? (() => makeDevices()),
-    onPair: vi.fn(overrides.onPair ?? ((_name: string) => 'K7QM-4XR2-9WFD-A3LP')),
+    onPair: vi.fn(
+      overrides.onPair ?? ((_name: string): PairAttempt => ({ token: 'K7QM-4XR2-9WFD-A3LP' })),
+    ),
     onRevoke: vi.fn(),
     onOpenConsole: vi.fn(),
     boundAddress: overrides.boundAddress ?? (() => '100.101.102.103:7433'),
@@ -159,18 +163,24 @@ describe('buildTrayTemplate', () => {
     expect(writeText).not.toHaveBeenCalled();
   });
 
-  it('refuses rather than silently pairing when onPair cannot mint a unique id', () => {
-    // `onPair` returns `null` when `mintUniqueDevice` gives up after every
-    // retry (HIVE-142 review) — nothing was stored, and the tray must not
-    // show a success dialog with a token that does not exist.
-    const deps = makeDeps({ onPair: () => null });
+  it('refuses rather than silently pairing when onPair reports an error, and shows the accurate reason', () => {
+    // `onPair` answers `{ error }` rather than `{ token }` on refusal
+    // (HIVE-142 review, I4/N4) — nothing was stored, and the dialog must
+    // show *that* reason, not a token that does not exist or a generic
+    // message papering over whatever the real cause was.
+    const deps = makeDeps({
+      onPair: () => ({ error: 'A device named "Device 1" already exists. Revoke it first, or choose another name.' }),
+    });
     const template = buildTrayTemplate(deps) as MenuItem[];
 
     template.find((item) => item.label === 'Pair a device…')?.click?.();
 
     expect(deps.onPair).toHaveBeenCalledTimes(1);
     expect(showMessageBox).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error' }),
+      expect.objectContaining({
+        type: 'error',
+        message: 'A device named "Device 1" already exists. Revoke it first, or choose another name.',
+      }),
     );
     expect(showMessageBox).not.toHaveBeenCalledWith(
       expect.objectContaining({ buttons: ['Copy', 'Done'] }),

@@ -213,6 +213,7 @@ import {
   createSessionNames,
 } from '../notifications';
 import { registerPtyHost } from '../pty-host';
+import { readServerDevicesFromDisk } from '../server/file-backed-io';
 import { createSessions, type Sessions } from '../sessions';
 import {
   createSessionHistory,
@@ -305,6 +306,12 @@ let systemNotificationRefusal: string | null = null;
  * both treat that the same as "not listening" rather than throwing.
  */
 let remoteListener: ReturnType<typeof createRemoteListener> | null = null;
+/**
+ * The port `remoteListener` was actually constructed with (HIVE-142 review,
+ * N3) — captured once, beside `remoteListener` itself, rather than read
+ * again later through `getConfig()`. See the assignment site's own comment.
+ */
+let remoteListenerPort: number | null = null;
 
 let sessions: Sessions | null = null;
 /**
@@ -820,9 +827,26 @@ export function startRemoteListener(): Promise<string | null> {
   return remoteListener ? remoteListener.start() : Promise.resolve(null);
 }
 
-/** What the server-mode socket actually bound to, for the tray's informational item. */
+/** What the server-mode socket actually bound to (host only — see {@link remoteListenerBoundAddress}). */
 export function remoteListenerBoundHost(): string | null {
   return remoteListener?.boundHost ?? null;
+}
+
+/**
+ * `host:port`, for the tray's informational item — both pieces sourced from
+ * what the listener actually bound, not composed from a separate config read
+ * (HIVE-142 review, N3). Before this fix, `index.ts` built the displayed
+ * address from `remoteListenerBoundHost()` plus a fresh
+ * `getConfig().server.bind.port` read; that agreed with the socket only by
+ * coincidence, because nothing else here reads `server.bind` a second time
+ * after construction — a hand-edited port would show in the tray while the
+ * already-listening socket, which cannot rebind without a restart, kept
+ * answering on the old one. `remoteListenerPort` is the exact number
+ * `createRemoteListener` was given, captured once beside it.
+ */
+export function remoteListenerBoundAddress(): string | null {
+  const host = remoteListener?.boundHost ?? null;
+  return host === null || remoteListenerPort === null ? null : `${host}:${String(remoteListenerPort)}`;
 }
 
 /**
@@ -1459,23 +1483,38 @@ export function registerIpcHandlers(
    * `bind` above is: an already-listening socket cannot be moved, and
    * Settings says as much (HIVE-134's rule, restated for HIVE-142).
    */
+  /*
+    Captured once, not read again later through `getConfig()` — this is the
+    exact `port` `createRemoteListener` below binds to, and it is what
+    `remoteListenerBoundAddress()` (below `registerIpcHandlers`) composes the
+    tray's displayed address from (HIVE-142 review, N3). Before that fix, the
+    tray built its address from a *separate*, later `getConfig().server.bind.port`
+    read — harmless while the config cache was frozen for the process's whole
+    life, but no longer once reads elsewhere started calling `reloadConfig()`:
+    a hand-edited port would then show in the tray while the socket, which
+    cannot rebind without a restart, kept listening on the old one.
+  */
+  const serverBind = getConfig().server.bind;
+  remoteListenerPort = serverBind.port;
   remoteListener = createRemoteListener({
-    bind: getConfig().server.bind,
+    bind: serverBind,
     /*
-      `reloadConfig()`, not `getConfig()` (HIVE-142 review, I3). `getConfig()`
-      answers this process's cached `ConfigSnapshot`, and the config file is
-      explicitly not watched (`config/index.ts`'s own module doc comment) — a
-      getter closing over `getConfig()` would still be reading whatever was
-      cached at boot, no matter how many times it is called, which is not
-      what "read fresh" means. `reloadConfig()` actually re-reads the file, so
-      a `--pair` or `--revoke` one-shot run from a terminal in a *different*
-      process is genuinely visible to the very next handshake, with no
-      restart of this process. Called once per handshake by
-      `createRemoteListener` itself (its own doc comment on this option); a
-      handshake is rare enough that a file read on every one of them is not a
-      cost worth optimising away.
+      `readServerDevicesFromDisk()`, not `getConfig()`/`reloadConfig()`
+      (HIVE-142 review, N1). `getConfig()` answers this process's cached
+      `ConfigSnapshot`, permanently frozen at boot; `reloadConfig()` re-reads
+      the file but also **installs the result as that same shared cache** —
+      and this getter is called from `listener.ts`'s connection handler
+      *before* `verifyDevice`, i.e. from an unauthenticated peer that has
+      merely reached the socket. Swapping `projects`, `env`, `shell`, `jira`,
+      `slack` and `receiver` for every subsystem in this process from a path
+      nothing has vouched for yet is not a contract this story gets to
+      change — and `reloadConfig()` skips the invalidations a real reload
+      performs (`forgetProbedRoots()`, `slackBridge?.sync()`, below), so its
+      result could visibly disagree with the rest of the process besides.
+      `readServerDevicesFromDisk()` (`server/file-backed-io.ts`) reads the
+      file itself and returns only `server.devices`, installing nothing.
     */
-    devices: () => reloadConfig().server.devices,
+    devices: readServerDevicesFromDisk,
     // What a client's header indicator renders: "attached · <serverName>".
     // The machine's own hostname identifies *which* served Mac a client is
     // looking at, which matters once more than one exists.

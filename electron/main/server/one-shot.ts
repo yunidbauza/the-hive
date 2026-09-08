@@ -2,7 +2,7 @@ import type { ServerDevice } from '@shared/config-contract';
 
 import type { Invocation } from '../cli';
 
-import { MAX_MINT_ATTEMPTS, mintDevice, mintUniqueDevice, revokeNamed, type MintedDevice } from './devices';
+import { MAX_MINT_ATTEMPTS, mintDevice, pairDevice, revokeDevice, type MintedDevice } from './devices';
 
 /**
  * The CLI one-shots' effects, factored out so `runOneShot` stays pure
@@ -60,41 +60,38 @@ function runPair(
   now: Date | undefined,
   mint: (name: string, now?: Date) => MintedDevice,
 ): number {
-  const devices = io.readDevices();
+  /*
+    The duplicate-name refusal, the collision-safe retry and "persist against
+    the roster you just read" all live in `devices.ts` (`pairDevice`), shared
+    with the tray's own "Pair a device…" path (HIVE-142 review, N2) — one
+    implementation rather than two that can drift. This function's own job is
+    reduced to translating the outcome into the CLI's messages and exit code.
+  */
+  const outcome = pairDevice(name, io, now, mint);
 
-  if (devices.some((device) => device.name === name)) {
-    io.print(`A device named "${name}" already exists. Revoke it first, or choose another name.`);
+  if (!outcome.ok) {
+    io.print(
+      outcome.reason === 'duplicate-name'
+        ? `A device named "${name}" already exists. Revoke it first, or choose another name.`
+        : `Could not mint a unique device id after ${MAX_MINT_ATTEMPTS} attempts. Try again.`,
+    );
     return 1;
   }
 
-  // The collision-safe retry loop lives in `devices.ts` (`mintUniqueDevice`),
-  // shared with the tray's own "Pair a device…" path (HIVE-142 review) — one
-  // implementation of the retry rather than two that can drift.
-  const minted = mintUniqueDevice(name, devices, now, mint);
-
-  if (!minted) {
-    io.print(`Could not mint a unique device id after ${MAX_MINT_ATTEMPTS} attempts. Try again.`);
-    return 1;
-  }
-
-  io.writeDevices([...devices, minted.device]);
-
-  io.print(minted.token);
+  io.print(outcome.token);
   io.print(`This token grants "${name}" access to this Hive over the network.`);
   io.print(`Revoke it any time with: the-hive --revoke "${name}"`);
   return 0;
 }
 
 function runRevoke(name: string, io: OneShotIo): number {
-  const devices = io.readDevices();
-  const result = revokeNamed(devices, name);
+  const outcome = revokeDevice(name, io);
 
-  if (!result.revoked) {
+  if (!outcome.revoked) {
     io.print(`No device named "${name}" is paired.`);
     return 1;
   }
 
-  io.writeDevices(result.devices);
   io.print(`Revoked "${name}". It can no longer reach this Hive.`);
   return 0;
 }

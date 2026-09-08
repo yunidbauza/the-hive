@@ -34,21 +34,28 @@ export interface TrayDeps {
    * Must actually re-read the config file on every call, not merely be
    * called again — `getConfig()` alone answers a snapshot cached at boot
    * (the file is never watched), so a getter that only wraps `getConfig()`
-   * would look fresh while showing the same frozen roster forever. `index.ts`
-   * fulfils this with `reloadConfig()` (HIVE-142 review, I3); a `--pair` or
-   * `--revoke` one-shot run from a terminal in another process is what this
-   * property exists to make visible here with no restart.
+   * would look fresh while showing the same frozen roster forever.
+   * `reloadConfig()` re-reads the file but is also the wrong tool here: it
+   * installs its result as this process's shared config cache, which this
+   * getter (and `onPair`/`onRevoke` below) must not do — see
+   * `readServerDevicesFromDisk()` in `server/file-backed-io.ts`, which
+   * `index.ts` uses instead (HIVE-142 review, N1). A `--pair` or `--revoke`
+   * one-shot run from a terminal in another process is what this property
+   * exists to make visible here with no restart.
    */
   devices: () => readonly ServerDevice[];
   /**
-   * Mints and stores a device named `name`, returning the plaintext token —
-   * once, never stored — or `null` when a unique device id could not be
-   * minted after every retry (`mintUniqueDevice` in `server/devices.ts`; a
-   * 16-bit id space and a real if vanishingly unlikely collision, HIVE-142
-   * review). Nothing is stored on `null` — the caller refuses rather than
-   * silently pairing a device whose id shadows an existing one.
+   * Mints and stores a device named `name`, answering the plaintext token —
+   * once, never stored — or the reason it refused (HIVE-142 review, N4): a
+   * duplicate name (`devices.ts`'s `pairDevice`, shared with `--pair`) or a
+   * device id that could not be minted uniquely after every retry
+   * (`mintUniqueDevice`; a 16-bit id space and a real if vanishingly
+   * unlikely collision). Nothing is stored on refusal — a discriminated
+   * result rather than `string | null` so this menu can show the *accurate*
+   * reason, the same one `runPair` already prints for the CLI, instead of
+   * one generic message papering over two different causes.
    */
-  onPair: (name: string) => string | null;
+  onPair: (name: string) => { token: string } | { error: string };
   onRevoke: (name: string) => void;
   onOpenConsole: () => void;
   /** What `listener.start()` actually bound, or `null` before it has. */
@@ -126,24 +133,25 @@ export function buildTrayTemplate(deps: TrayDeps): MenuItemConstructorOptions[] 
       label: 'Pair a device…',
       click: () => {
         const name = autoPairingName();
-        const token = deps.onPair(name);
+        const attempt = deps.onPair(name);
         /*
           No `BrowserWindow` argument on either dialog below: server mode's
           premise is that no renderer runs, so there is no window to parent
           this to, and a detached dialog is the correct (only) shape here —
           see the module doc comment.
         */
-        if (token === null) {
-          // `onPair` refused rather than pairing a device whose id shadows
-          // an existing one (HIVE-142 review) — nothing was stored, and the
-          // dialog says so plainly rather than showing a broken token.
+        if ('error' in attempt) {
+          // `onPair` refused — a duplicate name or a minting collision, and
+          // `attempt.error` already says which (HIVE-142 review, N4): the
+          // accurate cause, not one generic message standing in for both.
           void dialog.showMessageBox({
             type: 'error',
             title: 'Could not pair a device',
-            message: 'This Hive could not mint a unique device credential. Try again.',
+            message: attempt.error,
           });
           return;
         }
+        const { token } = attempt;
         void dialog
           .showMessageBox({
             type: 'info',

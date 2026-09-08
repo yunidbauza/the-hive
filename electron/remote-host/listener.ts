@@ -120,12 +120,21 @@ function isAttachShaped(value: unknown): value is AttachRequest {
 export function createRemoteListener(options: {
   bind: ServerBindConfig;
   /**
-   * Read once per handshake, never cached at construction.
-   *
-   * `--pair` runs in a separate process from the running server, appending a
-   * device to the config file on disk. The only way an already-listening
-   * server sees that new device without a restart is by calling this getter
-   * fresh on every attach rather than capturing its result once at `start()`.
+   * Read once per handshake, never cached at construction — and the caller
+   * must make that actually true, not merely re-invoke a getter that closes
+   * over an already-cached answer (HIVE-142 review, N5). `--pair` runs in a
+   * separate process from the running server, appending a device to the
+   * config file on disk; the only way an already-listening server sees that
+   * new device without a restart is by this getter genuinely re-reading the
+   * file on every attach, rather than capturing its result once at `start()`
+   * — or, just as silently wrong, wrapping a value that was itself cached
+   * elsewhere. `electron/main/ipc/index.ts` fulfils this with
+   * `readServerDevicesFromDisk()` (`electron/main/server/file-backed-io.ts`),
+   * which is also why it may **not** be a plain `getConfig()`/`reloadConfig()`
+   * call: this getter runs on every inbound connection, before
+   * `verifyDevice` — i.e. from a peer nothing has vouched for yet — and
+   * `reloadConfig()` installs its result as this process's *shared* config
+   * cache, which an unauthenticated path must not be able to do.
    */
   devices: () => readonly ServerDevice[];
   /** What the client renders in its header indicator: "attached · <name>". */

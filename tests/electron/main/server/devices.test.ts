@@ -1,14 +1,30 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { MintedDevice } from '../../../../electron/main/server/devices';
+import type { ServerDevice } from '@shared/config-contract';
+
+import type { DeviceStore, MintedDevice } from '../../../../electron/main/server/devices';
 import {
   MAX_MINT_ATTEMPTS,
   digestOf,
   mintDevice,
   mintUniqueDevice,
+  pairDevice,
+  revokeDevice,
   revokeNamed,
   verifyDevice,
 } from '../../../../electron/main/server/devices';
+
+/** A `DeviceStore` over a plain in-memory array, recording every write. */
+function fakeStore(initial: readonly ServerDevice[]): DeviceStore & { writes: (readonly ServerDevice[])[] } {
+  const writes: (readonly ServerDevice[])[] = [];
+  return {
+    writes,
+    readDevices: vi.fn(() => initial),
+    writeDevices: vi.fn((devices: readonly ServerDevice[]) => {
+      writes.push(devices);
+    }),
+  };
+}
 
 describe('mintDevice', () => {
   it('returns a token in four readable groups of four', () => {
@@ -73,6 +89,82 @@ describe('mintUniqueDevice', () => {
   });
 });
 
+describe('pairDevice', () => {
+  it('reads the store once, mints and persists when the name is free', () => {
+    const existing = mintDevice('iPad').device;
+    const store = fakeStore([existing]);
+
+    const outcome = pairDevice('MacBook', store);
+
+    expect(outcome.ok).toBe(true);
+    expect(store.readDevices).toHaveBeenCalledTimes(1);
+    if (outcome.ok) {
+      expect(outcome.device.name).toBe('MacBook');
+      expect(outcome.token).toMatch(/^[0-9A-HJ-NP-TV-Z]{4}(-[0-9A-HJ-NP-TV-Z]{4}){3}$/);
+    }
+  });
+
+  it('refuses a duplicate name without minting or writing anything', () => {
+    const existing = mintDevice('MacBook').device;
+    const store = fakeStore([existing]);
+    const mint = vi.fn(mintDevice);
+
+    const outcome = pairDevice('MacBook', store, undefined, mint);
+
+    expect(outcome).toEqual({ ok: false, reason: 'duplicate-name' });
+    expect(mint).not.toHaveBeenCalled();
+    expect(store.writeDevices).not.toHaveBeenCalled();
+  });
+
+  it('re-mints on an id collision, then persists the device it settled on', () => {
+    const existing = mintDevice('iPad').device;
+    const store = fakeStore([existing]);
+    const ids = [existing.id, 'd_ffff'];
+    let call = 0;
+    const mint = vi.fn(
+      (name: string): MintedDevice => ({
+        device: { ...mintDevice(name).device, id: ids[call++] ?? 'd_0000' },
+        token: 'K7QM-4XR2-9WFD-A3LP',
+      }),
+    );
+
+    const outcome = pairDevice('MacBook', store, undefined, mint);
+
+    expect(mint).toHaveBeenCalledTimes(2);
+    expect(outcome.ok && outcome.device.id).toBe('d_ffff');
+    expect(store.writes[0]?.map((d) => d.id)).toEqual([existing.id, 'd_ffff']);
+  });
+
+  it(`gives up after ${String(MAX_MINT_ATTEMPTS)} collisions and writes nothing`, () => {
+    const existing = mintDevice('iPad').device;
+    const store = fakeStore([existing]);
+    const mint = vi.fn(() => ({ device: { ...existing, name: 'MacBook' }, token: 'X' }));
+
+    const outcome = pairDevice('MacBook', store, undefined, mint);
+
+    expect(outcome).toEqual({ ok: false, reason: 'mint-failed' });
+    expect(mint).toHaveBeenCalledTimes(MAX_MINT_ATTEMPTS);
+    expect(store.writeDevices).not.toHaveBeenCalled();
+  });
+
+  it('persists against the roster it just read — a device present at read time is never dropped (HIVE-142 review, I3b)', () => {
+    // The exact shape of the earlier bug: a roster that already includes a
+    // device paired by a concurrent `--pair` (or, before this roster's own
+    // fix, by a second tray action) must still be there after this call's
+    // own write — proof, at the unit level, of "persist against the roster
+    // you just read" rather than a stale one.
+    const fromBoot = mintDevice('iPad').device;
+    const pairedConcurrently = mintDevice('Old Phone').device;
+    const store = fakeStore([fromBoot, pairedConcurrently]);
+
+    const outcome = pairDevice('MacBook', store);
+
+    expect(outcome.ok).toBe(true);
+    const written = store.writes[0] ?? [];
+    expect(written.map((d) => d.name).sort()).toEqual(['MacBook', 'Old Phone', 'iPad'].sort());
+  });
+});
+
 describe('verifyDevice', () => {
   it('accepts the token it minted', () => {
     const { device, token } = mintDevice('MacBook');
@@ -115,5 +207,41 @@ describe('revokeNamed', () => {
     const result = revokeNamed([device], 'iPad');
     expect(result.revoked).toBe(false);
     expect(result.devices).toEqual([device]);
+  });
+});
+
+describe('revokeDevice', () => {
+  it('reads the store once, revokes and persists a matching device', () => {
+    const macBook = mintDevice('MacBook').device;
+    const store = fakeStore([macBook]);
+
+    const outcome = revokeDevice('MacBook', store);
+
+    expect(outcome.revoked).toBe(true);
+    expect(store.readDevices).toHaveBeenCalledTimes(1);
+    expect(store.writes[0]?.[0]?.revoked).toBe(true);
+  });
+
+  it('writes nothing for a name it does not hold', () => {
+    const macBook = mintDevice('MacBook').device;
+    const store = fakeStore([macBook]);
+
+    const outcome = revokeDevice('ghost', store);
+
+    expect(outcome.revoked).toBe(false);
+    expect(store.writeDevices).not.toHaveBeenCalled();
+  });
+
+  it('persists against the roster it just read — every other device survives untouched', () => {
+    const macBook = mintDevice('MacBook').device;
+    const iPad = mintDevice('iPad').device;
+    const store = fakeStore([macBook, iPad]);
+
+    revokeDevice('MacBook', store);
+
+    const written = store.writes[0] ?? [];
+    expect(written.map((d) => d.name).sort()).toEqual(['MacBook', 'iPad']);
+    expect(written.find((d) => d.name === 'iPad')?.revoked).toBe(false);
+    expect(written.find((d) => d.name === 'MacBook')?.revoked).toBe(true);
   });
 });

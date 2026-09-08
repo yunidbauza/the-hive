@@ -4,14 +4,14 @@ import { app } from 'electron';
 
 import { applyDevDockIcon } from './app-icon';
 import { parseInvocation } from './cli';
-import { getConfig, reloadConfig, setServer } from './config';
+import { getConfig } from './config';
 import { startLoginEnvImport } from './config/login-env';
 import { installContentSecurityPolicy } from './csp';
-import { remoteListenerBoundHost, startRemoteListener } from './ipc';
+import { remoteListenerBoundAddress, startRemoteListener } from './ipc';
 import { registerIpc } from './ipc/router';
 import { registerLifecycle } from './lifecycle';
-import { mintUniqueDevice, revokeNamed } from './server/devices';
-import { fileBackedIo } from './server/file-backed-io';
+import { pairDevice, revokeDevice } from './server/devices';
+import { fileBackedIo, serverDeviceStore } from './server/file-backed-io';
 import { runOneShot } from './server/one-shot';
 import { onShutdown } from './shutdown';
 import { createServerTray } from './tray';
@@ -198,7 +198,7 @@ if (!app.requestSingleInstanceLock()) {
         Fire-and-forget: a bind failure is not fatal to boot (the tray still
         shows, still lets a human retry after fixing the config), and there is
         nobody at this machine to hand a rejected promise to anyway. The
-        result is not needed here — `remoteListenerBoundHost()` below reads
+        result is not needed here — `remoteListenerBoundAddress()` below reads
         it back once it lands, exactly as `AppInfo` reads the receiver's own
         `boundHost` rather than the promise `hooks.start()` returned.
       */
@@ -217,79 +217,38 @@ if (!app.requestSingleInstanceLock()) {
         registered with `onShutdown` below, so the status item is removed
         cleanly rather than left for the OS to notice the process exited.
       */
+      /*
+        One `DeviceStore`, shared by every call below (HIVE-142 review, N1/N2):
+        reads go through `readServerDevicesFromDisk()` (no shared-cache
+        write — see that function's own doc comment), writes through
+        `setServer`. The same collaborator backs both `devices` (display) and
+        `onPair`/`onRevoke` (mutation) below, and it is the exact shape
+        `pairDevice`/`revokeDevice` in `server/devices.ts` expect — the same
+        functions `one-shot.ts`'s `--pair`/`--revoke` call, so the duplicate-
+        name refusal, the collision retry and "persist against the roster
+        you just read" are each proven once, not reimplemented here worse.
+      */
+      const deviceStore = serverDeviceStore();
       serverTray = createServerTray({
-        /*
-          `reloadConfig()`, not `getConfig()` (HIVE-142 review, I3) — the same
-          fix and the same reason as the listener's own `devices` getter in
-          `ipc/index.ts`: `getConfig()` answers a snapshot cached at boot, and
-          the file is never watched, so a plain `getConfig()` here would show
-          the tray a roster frozen at launch forever, not "fresh on every
-          open" as this option is documented to be.
-        */
-        devices: () => reloadConfig().server.devices,
-        /*
-          Mint, then persist against a freshly re-read roster — `reloadConfig()`
-          again, and load-bearing here in a way it is not for the listener's
-          read-only getter: `setServer` replaces `devices` wholesale
-          (`electron/main/config/index.ts`'s own rule), so building the next
-          array from a *stale* `getConfig()` would silently erase a device
-          paired meanwhile by a concurrent `--pair` one-shot the moment this
-          write lands (HIVE-142 review, I3b — a real data-loss bug the getter
-          fix alone does not touch, since this is a write path, not a read).
-
-          `mintUniqueDevice`, not a bare `mintDevice` call — the collision
-          check `--pair`'s own `runOneShot` path already has (HIVE-142
-          review). Nothing is written on `null`; the tray tells the user to
-          try again rather than pairing a device whose id shadows one already
-          stored, which `verifyDevice` would then never see past the first.
-
-          Neither of these closes the race entirely — two processes can still
-          write between this read and this write — but that is the same
-          bounded, documented gap `--pair`'s own one-shot already lives with
-          (spec §8's "Concurrency" note): the writer is atomic and preserves
-          unknown keys, so the failure mode is a lost update, not a corrupt
-          file, and pairing is manual and rare enough that this is recorded
-          rather than engineered around.
-        */
+        devices: deviceStore.readDevices,
         onPair: (name) => {
-          const devices = reloadConfig().server.devices;
-          /*
-            Refuses a duplicate name before minting anything, matching
-            `runPair`'s own check in `one-shot.ts` (HIVE-142 review, minor).
-            Without it, two same-named devices become an un-separable entry:
-            `revokeNamed` below — shared by this path and `--revoke` — matches
-            by name and revokes *every* device carrying it, with no way to
-            single one out. `autoPairingName` (`tray.ts`) is timestamp-based,
-            so a real collision needs two tray pairings inside the same
-            second; rare, but the check costs nothing against a failure mode
-            that would otherwise be silent.
-          */
-          if (devices.some((device) => device.name === name)) return null;
-          const minted = mintUniqueDevice(name, devices);
-          if (!minted) return null;
-          setServer({ devices: [...devices, minted.device] });
-          return minted.token;
+          const outcome = pairDevice(name, deviceStore);
+          if (outcome.ok) return { token: outcome.token };
+          return {
+            error:
+              outcome.reason === 'duplicate-name'
+                ? `A device named "${name}" already exists. Revoke it first, or choose another name.`
+                : 'This Hive could not mint a unique device credential. Try again.',
+          };
         },
         onRevoke: (name) => {
-          const result = revokeNamed(reloadConfig().server.devices, name);
-          if (result.revoked) setServer({ devices: result.devices });
+          revokeDevice(name, deviceStore);
         },
         onOpenConsole: () => createWindow({ withSplash: true }),
-        /*
-          `remoteListenerBoundHost()` answers the host alone — `boundHost`'s
-          established meaning across this codebase (`hooks.boundHost()`,
-          `Receiver.boundHost`, `RemoteListener.boundHost` all agree: "the
-          address the kernel actually bound", not a connectable URL). The
-          port is fixed and configured rather than OS-assigned (spec §4 — a
-          client's config and a LaunchAgent both have to name it ahead of
-          time), so appending it here is safe: it is the same number the
-          socket is actually listening on whenever `remoteListenerBoundHost()`
-          is non-null.
-        */
-        boundAddress: () => {
-          const host = remoteListenerBoundHost();
-          return host === null ? null : `${host}:${String(getConfig().server.bind.port)}`;
-        },
+        // Both pieces sourced from what the listener actually bound, not
+        // composed from a separate config read — see that function's own
+        // doc comment (HIVE-142 review, N3).
+        boundAddress: remoteListenerBoundAddress,
       });
     }
   });

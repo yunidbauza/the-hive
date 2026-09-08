@@ -140,6 +140,66 @@ export function mintUniqueDevice(
   return null;
 }
 
+/**
+ * The read/write seam every caller that mints or revokes a *persisted*
+ * device goes through (HIVE-142 review, N2) — `--pair`/`--revoke` (backed by
+ * `OneShotIo` in `one-shot.ts`) and the tray's "Pair a device…"/"Revoke"
+ * (backed by `index.ts`'s own device store) alike.
+ *
+ * `readDevices` is called exactly once per {@link pairDevice} or
+ * {@link revokeDevice} call — freshness (or the lack of it) is entirely the
+ * caller's business, and both real implementations read from disk on every
+ * call rather than a cache, which is what makes "persist against the roster
+ * you just read" true rather than aspirational.
+ */
+export interface DeviceStore {
+  readDevices: () => readonly ServerDevice[];
+  writeDevices: (devices: readonly ServerDevice[]) => void;
+}
+
+export type PairOutcome =
+  | { ok: true; device: ServerDevice; token: string }
+  /** A device already holds this name — refused before anything is minted. */
+  | { ok: false; reason: 'duplicate-name' }
+  /** {@link mintUniqueDevice} gave up after {@link MAX_MINT_ATTEMPTS} collisions. */
+  | { ok: false; reason: 'mint-failed' };
+
+/**
+ * Mints and persists a device named `name`, or refuses — the one
+ * implementation `--pair` and the tray's "Pair a device…" both call
+ * (HIVE-142 review, N2), so the duplicate-name refusal, the collision retry
+ * and "write the roster you just read, not a stale one" are each proven
+ * once rather than twice.
+ *
+ * `store.readDevices()` is called exactly once, and the write — when there
+ * is one — is built from that same array plus the one device this call
+ * added, never from a second, later read. That is the whole of what makes a
+ * concurrent pairing from elsewhere survive: two callers racing this
+ * function each still write *their own* read plus their own addition, so
+ * the loser of the race overwrites the winner's addition only if the two
+ * writes land in exactly the wrong order — the same bounded, documented gap
+ * `--pair`'s one-shot always had (spec §8's "Concurrency" note), not a new
+ * one this function introduces.
+ */
+export function pairDevice(
+  name: string,
+  store: DeviceStore,
+  now?: Date,
+  mint: (name: string, now?: Date) => MintedDevice = mintDevice,
+): PairOutcome {
+  const devices = store.readDevices();
+
+  if (devices.some((device) => device.name === name)) {
+    return { ok: false, reason: 'duplicate-name' };
+  }
+
+  const minted = mintUniqueDevice(name, devices, now, mint);
+  if (!minted) return { ok: false, reason: 'mint-failed' };
+
+  store.writeDevices([...devices, minted.device]);
+  return { ok: true, device: minted.device, token: minted.token };
+}
+
 /** SHA-256 of the rendered token string, hex-encoded. */
 export function digestOf(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -192,4 +252,17 @@ export function revokeNamed(
   });
 
   return found ? { devices: next, revoked: true } : { devices, revoked: false };
+}
+
+/**
+ * Revokes the device named `name` against a freshly-read roster, and
+ * persists the result — the one implementation `--revoke` and the tray's
+ * "Revoke" both call (HIVE-142 review, N2), for the same reason
+ * {@link pairDevice} exists: `store.readDevices()` is called exactly once,
+ * and a no-op (unknown name) writes nothing at all.
+ */
+export function revokeDevice(name: string, store: DeviceStore): { revoked: boolean } {
+  const result = revokeNamed(store.readDevices(), name);
+  if (result.revoked) store.writeDevices(result.devices);
+  return { revoked: result.revoked };
 }
