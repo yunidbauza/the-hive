@@ -149,17 +149,32 @@ export function ContainerAliasGroup({ hostAlias, bind }: ContainerAliasGroupProp
     because that direction is always safe — retreating to loopback never needs a
     second confirming step the way widening does.
 
-    The `if (exposed && !open) setOpen(true)` below is the same "follow the
-    snapshot" idea as `seen` above, applied to visibility rather than to a
-    draft: if Reload or Reset (or another session) leaves the resolved config
-    genuinely widened, the fields must be showing regardless of what this
-    control last did locally — there is no such thing as a hidden exposed bind.
-    It never forces the switch closed, symmetrically: a user who has opened the
-    fields to type an address should not have them yanked shut out from under
-    them just because the file, at this instant, still reads loopback.
+    The re-open lives inside the `bindChanged` block below, alongside the
+    three draft fields it resets — the same "follow the snapshot" idea as
+    `seen` above, applied to visibility rather than to a draft: if Reload or
+    Reset (or another session) leaves the resolved config genuinely widened,
+    the fields must be showing regardless of what this control last did
+    locally — there is no such thing as a hidden exposed bind. It never forces
+    the switch closed, symmetrically: a user who has opened the fields to type
+    an address should not have them yanked shut out from under them just
+    because the file, at this instant, still reads loopback.
+
+    It is gated on `bindChanged` — the resolved `bind` prop having actually
+    moved since it was last seen — and deliberately **not** on a bare
+    `if (exposed && !open) setOpen(true)` recomputed fresh every render, which
+    is what this used to be (HIVE-134 review, finding 2). That version
+    reopened the switch on the very next render after `onCheckedChange` closed
+    it locally: `setOpen(false)` re-renders before the `setReceiverConfig`
+    write it triggers has round-tripped back through the snapshot, so `bind`
+    (and therefore `exposed`) still read the old, widened config on that next
+    render — and the bare check flipped `open` straight back to `true`. Worse,
+    on a write that never lands at all (a read-only config file, `EPERM`) the
+    prop never changes, so that bare check held the switch "on" forever with
+    only the generic config-error surface to explain why. Gating on
+    `bindChanged` fixes both: the switch reflects what the user just did until
+    the store actually disagrees with it.
   */
   const [open, setOpen] = useState(exposed);
-  if (exposed && !open) setOpen(true);
 
   const [hostDraft, setHostDraft] = useState(bind.host);
   const [hostInvalid, setHostInvalid] = useState(false);
@@ -192,6 +207,10 @@ export function ContainerAliasGroup({ hostAlias, bind }: ContainerAliasGroupProp
     setPortInvalid(false);
     setOriginsDraft(bind.allowedOrigins.join(', '));
     setOriginsInvalid(false);
+    // See the long comment above `open`: re-open only on a genuine change to
+    // the resolved bind, and only toward exposed — never toward closed, which
+    // would yank an in-progress edit shut under the user.
+    if (exposed) setOpen(true);
   }
 
   const commitBindHost = () => {
@@ -210,6 +229,20 @@ export function ContainerAliasGroup({ hostAlias, bind }: ContainerAliasGroupProp
 
   const commitPort = () => {
     const raw = portDraft.trim();
+    /*
+      `Number(raw)` alone accepts more than a field labelled "Port" should:
+      `Number('0x1f')` is 31 and `Number('1e3')` is 1000, and both are
+      `Number.isInteger` and in range, so hex and exponent notation used to
+      pass through untouched. Not a security issue — the result is still a
+      valid port — but a text field for decimal digits should read decimal
+      digits. This gate runs first and admits only `\d+`, which is ASCII
+      decimal digits and nothing else — no sign, no fraction, no exponent, no
+      hex prefix.
+    */
+    if (raw !== '' && !/^\d+$/.test(raw)) {
+      setPortInvalid(true);
+      return;
+    }
     // Empty is 0, which is what "any free port" is spelled as on the wire.
     const next = raw === '' ? 0 : Number(raw);
     if (!Number.isInteger(next) || next < 0 || next > 65_535) {

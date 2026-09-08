@@ -681,6 +681,94 @@ describe('createHookRuntime — boundHost', () => {
 });
 
 /**
+ * The host set's transport follows the *bound* address, not the config
+ * (HIVE-134 review, finding 1).
+ *
+ * `hookSettings`'s `transport` parameter defaults to `'http'`, and until this
+ * fix `createHookRuntime` never passed anything else — `writeHookSettings`
+ * and `writeAgentSettings` always wrote `type: 'http'` handlers, whatever
+ * `receiver.bind.host` actually resolved to. Claude Code refuses an http hook
+ * addressed to a non-loopback private or link-local address outright
+ * (`ERR_HTTP_HOOK_BLOCKED_ADDRESS` — the same guard `container/generated.ts`
+ * already routes around with `command`/`curl`), and it does so silently: a
+ * hook failure is not a turn failure, so status, the inbox, the header gauges
+ * and `/done` all just stop updating with nothing on screen to explain why.
+ *
+ * The two cases below are the two branches of that decision, read back off
+ * the files on disk rather than off any intermediate value, because the file
+ * is what a real `claude` process reads. `0.0.0.0` is the same off-loopback
+ * bind the `boundHost` block above already uses — Node's `server.address()`
+ * hands the literal string back unresolved, so `isLoopbackHost` sees exactly
+ * what a real bridge or LAN address would look like.
+ */
+describe('createHookRuntime — transport follows the bound host (HIVE-134)', () => {
+  let dir: string;
+  let ledger: Ledger;
+  let runtime: HookRuntime | undefined;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'hive-hooks-transport-'));
+    ledger = createLedger({ dir, knowsParty: () => true });
+  });
+
+  afterEach(async () => {
+    await runtime?.stop();
+    runtime = undefined;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('keeps the host set on http for the default loopback bind — the byte-identical default path', async () => {
+    runtime = createHookRuntime({ userDataPath: dir, sessionMetrics: () => false, ledger });
+    await runtime.start(noopHandlers);
+
+    const settings = JSON.parse(
+      await readFile(join(dir, 'hive', 'claude-hooks.settings.json'), 'utf8'),
+    ) as { hooks: { Stop: [{ hooks: [{ type: string }] }] } };
+    const agent = JSON.parse(
+      await readFile(join(dir, 'hive', 'claude-agent.settings.json'), 'utf8'),
+    ) as { hooks: { Stop: [{ hooks: [{ type: string }] }] } };
+
+    expect(settings.hooks.Stop[0].hooks[0].type).toBe('http');
+    expect(agent.hooks.Stop[0].hooks[0].type).toBe('http');
+  });
+
+  it('writes the host set as command hooks once the receiver binds off loopback', async () => {
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      bind: { host: '0.0.0.0', port: 0, allowedOrigins: [] },
+      ledger,
+    });
+    await runtime.start(noopHandlers);
+
+    const settingsText = await readFile(
+      join(dir, 'hive', 'claude-hooks.settings.json'),
+      'utf8',
+    );
+    const agentText = await readFile(
+      join(dir, 'hive', 'claude-agent.settings.json'),
+      'utf8',
+    );
+    const settings = JSON.parse(settingsText) as {
+      hooks: { Stop: [{ hooks: [{ type: string; command?: string }] }] };
+    };
+    const agent = JSON.parse(agentText) as {
+      hooks: { Stop: [{ hooks: [{ type: string; command?: string }] }] };
+    };
+
+    expect(settings.hooks.Stop[0].hooks[0].type).toBe('command');
+    expect(settings.hooks.Stop[0].hooks[0].command).toContain('curl');
+    expect(agent.hooks.Stop[0].hooks[0].type).toBe('command');
+    expect(agent.hooks.Stop[0].hooks[0].command).toContain('curl');
+
+    // Never a bare `http` handler anywhere in either file — the whole point,
+    // since a single surviving one would still be refused.
+    expect(settingsText).not.toContain('"type": "http"');
+    expect(agentText).not.toContain('"type": "http"');
+  });
+});
+
+/**
  * `HookRuntimeOptions.bind` reaching `createReceiver` (HIVE-134).
  *
  * Before this block, `bind` was not a field this runtime read at all —

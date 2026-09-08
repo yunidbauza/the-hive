@@ -354,17 +354,24 @@ export function agentSettings(
  * Write the agent settings file, mirroring {@link writeHookSettings}'s shape
  * for the one file this runtime writes once and never rewrites — see
  * {@link AGENT_SETTINGS_FILE}.
+ *
+ * `transport` defaults to `'http'` for the same reason {@link writeHookSettings}'s
+ * does: the loopback path — every caller before HIVE-134 — must emit the exact
+ * bytes it always has. `hooks/index.ts` is the one caller that ever passes
+ * `'command'`, and only once it has read back the bound address and found it
+ * off loopback.
  */
 export async function writeAgentSettings(
   userDataPath: string,
   url: string,
   readyUrl?: string,
+  transport: HookTransport = 'http',
 ): Promise<string> {
   await mkdir(join(userDataPath, HOOK_SETTINGS_DIR), { recursive: true });
   const path = join(userDataPath, AGENT_SETTINGS_FILE);
   await writeFile(
     path,
-    `${JSON.stringify(agentSettings(url, readyUrl), null, 2)}\n`,
+    `${JSON.stringify(agentSettings(url, readyUrl, undefined, transport), null, 2)}\n`,
     'utf8',
   );
   return path;
@@ -477,12 +484,39 @@ exit 0
  * spawn path never writes anything — it picks a path — so a theme toggle can
  * never race a session that is starting, and a session's settings stay the
  * bytes it was started with for as long as it runs.
+ *
+ * ## `transport` (HIVE-134)
+ *
+ * Defaults to `'http'`, and that default is load-bearing: every call site that
+ * predates a widened `receiver.bind.host` — which is every call site outside
+ * `hooks/index.ts`, plus that one whenever the bind is loopback — must keep
+ * emitting the exact bytes this always has. `hooks/index.ts` is the only
+ * caller that ever passes `'command'`, and only after it has read back the
+ * *actual* bound address (`Receiver.boundHost`, a kernel answer, not the
+ * config's) and found it off loopback. An http hook addressed to a private or
+ * link-local host is refused outright by Claude Code
+ * (`ERR_HTTP_HOOK_BLOCKED_ADDRESS` — see `statusCommand`'s doc comment in
+ * `hook-contract.ts` for the measured error), silently, because a hook failure
+ * is not a turn failure: status, the inbox, the header gauges and `/done` all
+ * stop updating with nothing on screen to explain why. `command` is exactly
+ * the escape hatch the container set already uses for the same reason
+ * (HIVE-137) — `curl` is not the binary's HTTP client, so it is never subject
+ * to the guard.
+ *
+ * The status line script (`metricsScript`, above) is unaffected either way: it
+ * has always been `curl` inside a shell script, never an `http` hook entry, so
+ * a widened bind was never going to touch it. Same for `/ready`
+ * (`readyCommand`) — already a `command` hook. The `hooks` block this function
+ * builds through {@link hookSettings} is the *only* place in the host settings
+ * file that ever spelled `type: 'http'`, which is what makes one parameter
+ * here sufficient.
  */
 export async function writeHookSettings(
   userDataPath: string,
   url: string,
   metricsUrl?: string,
   readyUrl?: string,
+  transport: HookTransport = 'http',
 ): Promise<string> {
   await mkdir(join(userDataPath, HOOK_SETTINGS_DIR), { recursive: true });
 
@@ -502,7 +536,7 @@ export async function writeHookSettings(
   }
 
   const path = join(userDataPath, HOOK_SETTINGS_FILE);
-  const settings = hookSettings(url, readyUrl);
+  const settings = hookSettings(url, readyUrl, undefined, transport);
   if (statusLine !== undefined) settings.statusLine = statusLine;
   await writeFile(path, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
 

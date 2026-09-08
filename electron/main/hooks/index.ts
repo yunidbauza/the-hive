@@ -4,6 +4,7 @@ import type { AgentContainer, AgentsDirectory } from '@shared/agent-contract';
 import {
   DEFAULT_BIND,
   DEFAULT_RECEIVER,
+  isLoopbackHost,
   type ReceiverBindConfig,
   type ResolvedContainer,
 } from '@shared/config-contract';
@@ -34,7 +35,7 @@ import type { Ledger } from '../ledger';
 
 import { withHostAlias } from './container-origin';
 import { createReceiver, type Receiver } from './receiver';
-import { writeAgentSettings, writeHookSettings } from './settings';
+import { type HookTransport, writeAgentSettings, writeHookSettings } from './settings';
 
 /**
  * The hook pipeline, as one thing the session layer can hold (HIVE-62).
@@ -459,6 +460,28 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
         return;
       }
 
+      /*
+        `command` only once the address the kernel actually bound is
+        demonstrably off loopback (HIVE-134) — never derived from `resolvedBind`
+        or any other pre-bind config, so a host alias, a DNS quirk or a bind
+        that silently fell back to a different address can never disagree with
+        what gets written below. `liveBoundHost` is the same value just
+        captured above, before the sweep and these two writes, and by the time
+        `url` is non-null it is guaranteed non-null too — `receiver.ts` only
+        ever resolves them together (both set, or both cleared on a bind
+        `error`) — but the `null` arm still reads `'http'`, the byte-identical
+        default, rather than assume that invariant here a second time.
+
+        Getting this wrong in either direction is a real regression: `'http'`
+        on a widened bind silently kills status, the inbox, the header gauges
+        and `/done` for every host session (Claude Code refuses an http hook to
+        a non-loopback private/link-local address with no visible error — see
+        `writeHookSettings`'s doc comment); `'command'` on the default loopback
+        bind changes the bytes this PR promises stay identical.
+      */
+      const transport: HookTransport =
+        liveBoundHost !== null && !isLoopbackHost(liveBoundHost) ? 'command' : 'http';
+
       try {
         /*
           The metrics URL rides along rather than being written separately: one
@@ -495,6 +518,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
             `direnv` again.
           */
           created.readyUrl ?? undefined,
+          transport,
         );
         /*
           Written right after its sibling, with the same `url`/`readyUrl` — the
@@ -502,11 +526,17 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
           status line (HIVE-119). Unlike `settingsPath`, this file's content is
           fixed once the receiver is up: no wake ever calls this again, so
           there is nothing here to keep in sync on a later re-bind.
+
+          Same `transport` as its sibling above, and for the same reason: an
+          agent's headless turn (`writeAgentSettings` docs it) reports through
+          this exact receiver, so a widened bind refuses its http hooks exactly
+          as it refuses the interactive set's.
         */
         const newAgentSettingsPath = await writeAgentSettings(
           userDataPath,
           url,
           created.readyUrl ?? undefined,
+          transport,
         );
 
         /*

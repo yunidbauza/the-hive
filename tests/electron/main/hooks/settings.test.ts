@@ -321,6 +321,36 @@ describe('agentSettings', () => {
       ask: ['*'],
     });
   });
+
+  /**
+   * `writeAgentSettings`'s own `transport` (HIVE-134), the same parameter and
+   * the same default as `writeHookSettings` — an agent's headless turn
+   * reports through the same receiver a session does, so a widened bind
+   * refuses its http hooks exactly as it refuses the interactive set's.
+   */
+  it('defaults to http', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hive-settings-'));
+    const path = await writeAgentSettings(dir, 'http://127.0.0.1:1/hook');
+    const written = JSON.parse(await readFile(path, 'utf8')) as {
+      hooks: { Stop: [{ hooks: [{ type: string }] }] };
+    };
+    expect(written.hooks.Stop[0].hooks[0].type).toBe('http');
+  });
+
+  it('writes command hooks when told the bind is off loopback', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hive-settings-'));
+    const path = await writeAgentSettings(
+      dir,
+      'http://172.17.0.1:1/hook',
+      undefined,
+      'command',
+    );
+    const written = JSON.parse(await readFile(path, 'utf8')) as {
+      hooks: { Stop: [{ hooks: [{ type: string; command?: string }] }] };
+    };
+    expect(written.hooks.Stop[0].hooks[0].type).toBe('command');
+    expect(written.hooks.Stop[0].hooks[0].command).toContain('curl');
+  });
 });
 
 describe('statusLineSettings', () => {
@@ -499,6 +529,44 @@ describe('writeHookSettings', () => {
       disableAgentView?: boolean;
     };
     expect(written.disableAgentView).toBe(true);
+  });
+
+  /**
+   * `transport` (HIVE-134). `hooks/index.ts` is the one caller that ever
+   * passes `'command'`, once it has read the bound address back and found it
+   * off loopback — see the long comment beside `writeHookSettings`'s
+   * signature. This unit-level pair pins the parameter itself; the
+   * higher-level "does the running receiver actually derive it right"
+   * question lives in `hooks/index.test.ts`'s
+   * `createHookRuntime — transport follows the bound host` block.
+   */
+  it('defaults to http — the byte-identical path every pre-HIVE-134 caller relies on', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hive-settings-'));
+
+    const path = await writeHookSettings(dir, 'http://127.0.0.1:1234/hook');
+
+    const written = JSON.parse(await readFile(path, 'utf8')) as {
+      hooks: { Stop: [{ hooks: [{ type: string }] }] };
+    };
+    expect(written.hooks.Stop[0].hooks[0].type).toBe('http');
+  });
+
+  it('writes command hooks when told the bind is off loopback', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hive-settings-'));
+
+    const path = await writeHookSettings(
+      dir,
+      'http://172.17.0.1:1234/hook',
+      undefined,
+      undefined,
+      'command',
+    );
+
+    const written = JSON.parse(await readFile(path, 'utf8')) as {
+      hooks: { Stop: [{ hooks: [{ type: string; command?: string }] }] };
+    };
+    expect(written.hooks.Stop[0].hooks[0].type).toBe('command');
+    expect(written.hooks.Stop[0].hooks[0].command).toContain('curl');
   });
 });
 

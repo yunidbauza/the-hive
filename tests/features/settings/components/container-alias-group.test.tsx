@@ -250,6 +250,34 @@ describe('the off-loopback bind', () => {
     expect(setReceiverConfig).toHaveBeenCalledWith({ bind: { host: '127.0.0.1' } });
   });
 
+  /**
+   * The bug this guards against (HIVE-134 review, finding 2): the switch used
+   * to reopen itself on the very render right after the user turned it off,
+   * because that render still saw the *old*, widened `bind` prop — the write
+   * `onCheckedChange` triggers is async and has not round-tripped back
+   * through the snapshot yet. A bare `if (exposed && !open) setOpen(true)`,
+   * recomputed fresh every render from `bind.host` alone, could not tell "the
+   * prop genuinely changed" apart from "the prop hasn't changed yet", so it
+   * flipped the switch straight back on a moment after the click closed it —
+   * and on a write that never lands at all (a read-only config file, EPERM),
+   * it stayed stuck on forever, since nothing ever changes `bind` to make the
+   * check pass a second time in the other direction.
+   *
+   * No `rerender` here, deliberately: this is the render immediately after
+   * the click, with `bind` still exactly what it was passed in as — the
+   * window the bug lived in. `writes loopback back when switched off` above
+   * covers that the write itself still fires; this covers that the control
+   * does not lie about its own state in the meantime.
+   */
+  it('stays off immediately after the user turns it off, before the snapshot catches up', async () => {
+    renderGroup({ host: '172.17.0.1', port: 0, allowedOrigins: [] });
+
+    await userEvent.click(screen.getByRole('switch', { name: /off loopback/i }));
+
+    expect(screen.getByRole('switch', { name: /off loopback/i })).not.toBeChecked();
+    expect(setReceiverConfig).toHaveBeenCalledWith({ bind: { host: '127.0.0.1' } });
+  });
+
   it('commits an address on blur', async () => {
     renderGroup({ host: '172.17.0.1', port: 0, allowedOrigins: [] });
 
@@ -296,6 +324,15 @@ describe('the off-loopback bind', () => {
   it.each([
     ['out of range', '99999'],
     ['not an integer', '12.5'],
+    /*
+      `Number('0x1f')` is 31 and `Number('1e3')` is 1000 — both pass
+      `Number.isInteger` and the 0..65535 range check, so a bare `Number(raw)`
+      let hex and exponent notation slip through a field labelled "Port"
+      untouched (not a security issue, since the result is still a valid
+      port, but a text field for decimal digits should mean decimal digits).
+    */
+    ['hex notation', '0x1f'],
+    ['exponent notation', '1e3'],
   ])('refuses to send a port that is %s', async (_label, value) => {
     renderGroup({ host: '172.17.0.1', port: 0, allowedOrigins: [] });
 
