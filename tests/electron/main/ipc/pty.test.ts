@@ -576,9 +576,10 @@ describe('resume', () => {
     emitExit({ sessionId: 'a', exitCode: 0 });
     vi.advanceTimersByTime(8);
 
-    // The ring lives on the Channel, so the existing `channels.delete` frees
-    // it. Asserted because "it is freed with the channel" is only true while
-    // nothing starts holding the ring somewhere else.
+    // The channel is never deleted — it stays for `diagnostics()` — so nothing
+    // frees the ring for free. `resume` returning `null` here is proof of the
+    // explicit reset at the exit site: `channel.exited = true` is set right
+    // alongside `channel.replay = []` and `replayBytes = 0`.
     expect(ipc.resume('a', 0)).toBeNull();
   });
 

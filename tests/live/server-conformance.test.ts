@@ -1543,12 +1543,16 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       that the number no longer depends on that being true.
 
       Where it goes, because the split is the whole argument: the frame envelope
-      (`{"kind":"event","channel":"pty:data","payload":{"sessionId":…,"seq":…}}`)
-      is ~90 bytes per frame, so at 64 KiB batches it is under 0.2% and is
-      *not* what this number is made of. Essentially all of it is JSON string
-      escaping — this flood is 20,000 CRLF-terminated lines, and `\r` and `\n`
-      each cost two bytes instead of one, which is 40,000 of the 41,193-byte
-      difference on its own, and the remaining ~1,200 is the 13 envelopes.
+      (`{"kind":"event","channel":"pty:data","payload":{"sessionId":…,"chunk":…,"seq":…}}`)
+      is ~120 bytes per frame counted directly against that JSON with a
+      realistic (UUID) session id, so at 64 KiB batches it is still under 0.2%
+      and is *not* what this number is made of. Essentially all of it is JSON
+      string escaping — this flood is 20,000 CRLF-terminated lines, and `\r`
+      and `\n` each cost two bytes instead of one, which is 40,000 of the
+      41,193-byte difference on its own, and the remaining ~1,200 is the 13
+      envelopes this flood actually sent. Those land nearer 90 bytes each,
+      not 120: `live-gap`, this case's own session id, is eight characters,
+      well short of the UUID a real session gets.
 
       The design left a binary frame for `pty:data` open "only if measurement
       says so". This measurement does not say so: 4.9% on a 64 KiB batch is

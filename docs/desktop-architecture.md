@@ -78,6 +78,18 @@ Posture, non-negotiable and asserted in `tests/e2e/electron/security.spec.ts`:
 `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, plus a
 strict CSP applied on the session (not only as a `<meta>` tag).
 
+Server mode reaches this same surface rather than building a second one
+(HIVE-143): `ipc/registry.ts` records which handler answers which channel as
+`handle()`/`on()` already register them, since `ipcMain.handle` gives no way to
+ask Electron for that function back. A socket's frames meet those handlers in
+`ipc/remote-dispatch.ts`, which holds every piece of remote-only policy — an
+unknown channel, the wrong frame kind, a channel that dereferences a
+`BrowserWindow` server mode has none of — so the local path in `ipc/router.ts`
+keeps its one gate. Pushes go out through a second `Broadcaster`
+(`ipc/socket-broadcaster.ts`), fanned out alongside the existing window
+broadcaster so a server that does have a window attached keeps painting
+locally too.
+
 ## The workspace config
 
 `~/.hive/config.json` — overridable by `HIVE_CONFIG_PATH` — maps a project id
@@ -486,6 +498,14 @@ is held until the session's last data has flushed — delivering it early trunca
 the final output, which is usually the error. Per-session counters (bytes in,
 bytes acked, pauses, batches, drops) ride out on `app:info`; flow-control bugs are
 otherwise diagnosed by staring at a slow terminal and guessing.
+
+Main also keeps a bounded ring of each session's already-sent batches
+(HIVE-143), sized to match the pty host's own `SCROLLBACK_BYTES` since both are
+bounded transcripts of the same stream. A reconnecting socket calls
+`resume(sessionId, lastSeq)` and gets back exactly what it missed, a `gap` once
+the ring can't reach that far, or `null` for a session that never existed —
+the ring is reclaimed the moment a channel's `exited` flag is set rather than
+held for the rest of the process's life.
 
 ### Sessions: what actually runs (story 096)
 
