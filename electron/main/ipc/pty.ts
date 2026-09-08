@@ -232,6 +232,12 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
       const event = channel.exitEvent;
       channel.exitEvent = null;
       channel.exited = true;
+      // The channel stays in `channels` for diagnostics, but a resumed
+      // session is never coming back for this one — reclaiming the ring here
+      // stops every exited session holding up to `replayBytes` for the rest
+      // of the process's life on an always-on host (HIVE-143).
+      channel.replay = [];
+      channel.replayBytes = 0;
       send(CH.ptyExit, event);
     }
   }
@@ -352,6 +358,10 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
       // Its host is gone, so nothing more is coming. Marking it exited stops
       // in-flight output being delivered to a terminal that is already dead.
       channel.exited = true;
+      // Same reclamation as the ordinary-exit path: nothing will ever resume
+      // this session again, so the ring is dead weight on an always-on host.
+      channel.replay = [];
+      channel.replayBytes = 0;
     }),
   ];
 
