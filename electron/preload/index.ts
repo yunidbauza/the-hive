@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
 
 
@@ -214,6 +212,20 @@ function subscribe<T>(channel: string, callback: (payload: T) => void): () => vo
  */
 const droppedPaths = new Map<string, string>();
 
+/**
+ * An id, from the **Web** Crypto global rather than `node:crypto`.
+ *
+ * This preload runs with `sandbox: true` (`electron/main/window.ts:176`), and a
+ * sandboxed preload has no Node APIs at all. `import { randomUUID } from
+ * 'node:crypto'` therefore throws while the module is still loading, which
+ * takes down the *entire* bridge — every feature in the app, not just this one
+ * — and leaves the renderer in its no-bridge browser-demo state with no error
+ * anyone would connect to skills. It shipped that way once; the unit suites
+ * could not see it, because they mock this module, and only the built app
+ * shows it. `globalThis.crypto` is a browser global and is present.
+ */
+const mintId = (): string => globalThis.crypto.randomUUID();
+
 const bridge: HiveBridge = {
   appInfo: (): Promise<AppInfo> => ipcRenderer.invoke(CH.appInfo),
   config: {
@@ -396,7 +408,7 @@ const bridge: HiveBridge = {
     pathToken: (file: File): string | null => {
       const path = webUtils.getPathForFile(file);
       if (path === '') return null;
-      const id = randomUUID();
+      const id = mintId();
       droppedPaths.set(id, path);
       return id;
     },

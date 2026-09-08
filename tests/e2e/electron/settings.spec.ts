@@ -317,3 +317,77 @@ test('renames a skill by its frontmatter, leaving one folder', async ({}, testIn
     await app.close();
   }
 });
+
+test('adds a file to a skill bundle, on disk beside its SKILL.md', async ({}, testInfo) => {
+  /**
+   * The whole of HIVE-148's authoring half, on a real disk.
+   *
+   * A skill is a folder now, and the unit suites prove each half of that
+   * separately: the pane calls `writeSkillFile`, main writes under a path it
+   * resolved itself. What neither can prove is the thing the story is about —
+   * that a file created by a click in the **built app** lands in the skill's
+   * own folder, at the path the user typed, beside a SKILL.md that is still
+   * intact.
+   *
+   * So the load-bearing lines are the two `readdirSync`s and the `readFileSync`
+   * at the end. Everything above them is setup, and the same lesson HIVE-99
+   * paid for applies: a row appearing in the DOM proved nothing there either.
+   */
+  const { app, page, configPath } = await launchWithConfig(
+    (name) => testInfo.outputPath(name),
+    EMPTY_CONFIG,
+  );
+  const skillsDir = join(dirname(configPath), 'skills');
+
+  try {
+    await openSettings(page);
+    await page.getByRole('button', { name: 'Skills' }).click();
+    await page.getByRole('button', { name: '+ New skill' }).click();
+    await page
+      .getByLabel('Skill source')
+      .fill('---\nname: graphify\ndescription: Build a graph\n---\nRun it.\n');
+    await page.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByRole('button', { name: '/graphify' })).toBeVisible();
+
+    // Drill in. The column becomes this skill's files, so the crumb and the
+    // tree both appear — and the settings nav still has its own `Skills`
+    // button, which is why the tree is found by its label rather than by role.
+    await page.getByRole('button', { name: '/graphify' }).click();
+    const tree = page.getByLabel('Files in graphify');
+    await expect(tree).toBeVisible();
+
+    await page.getByRole('button', { name: '+ Add' }).click();
+    await page.getByRole('button', { name: 'New file' }).click();
+    await page.getByRole('textbox', { name: 'New file' }).fill('scripts/build.py');
+    await page.getByRole('button', { name: 'Create' }).click();
+
+    // The file is on disk, under the path that was typed, in this skill.
+    await expect
+      .poll(() => readdirSync(join(skillsDir, 'graphify')).sort())
+      .toEqual(['SKILL.md', 'scripts']);
+    expect(readdirSync(join(skillsDir, 'graphify', 'scripts'))).toEqual([
+      'build.py',
+    ]);
+
+    // Created empty and opened, so the next keystroke edits the new file.
+    await page.getByLabel('Skill source').fill('print(1)\n');
+    await page.getByRole('button', { name: 'Save' }).click();
+
+    await expect
+      .poll(() =>
+        readFileSync(join(skillsDir, 'graphify', 'scripts', 'build.py'), 'utf8'),
+      )
+      .toBe('print(1)\n');
+
+    /*
+      And the manifest is untouched. Routing a bundle file through the
+      skill-level save would have written `print(1)` into SKILL.md under the
+      frontmatter name, which is the defect this asserts against.
+    */
+    expect(
+      readFileSync(join(skillsDir, 'graphify', 'SKILL.md'), 'utf8'),
+    ).toContain('name: graphify');
+  } finally {
+    await app.close();
+  }
+});
