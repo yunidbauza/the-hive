@@ -6,7 +6,7 @@ import { applyDevDockIcon } from './app-icon';
 import { getConfig } from './config';
 import { startLoginEnvImport } from './config/login-env';
 import { installContentSecurityPolicy } from './csp';
-import { registerIpcHandlers } from './ipc';
+import { registerIpc } from './ipc/router';
 import { registerLifecycle } from './lifecycle';
 import { startUpdateChecks } from './updates';
 import { createWindow } from './window';
@@ -110,7 +110,13 @@ if (!app.requestSingleInstanceLock()) {
     shell: getConfig().shell,
   });
 
-  registerIpcHandlers();
+  /*
+    Through the router rather than straight to `registerIpcHandlers` (HIVE-141).
+    `'local'` is the only mode that resolves today; the constant is here so the
+    boot path already has the shape server mode needs, and so the day it takes a
+    mode from config is a one-line change rather than a rewrite of this function.
+  */
+  registerIpc('local');
 
   /**
    * The CSP has to be installed before any renderer loads, and

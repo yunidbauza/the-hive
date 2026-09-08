@@ -725,16 +725,26 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
      */
     'setReceiver',
     'setRuntime',
-    /*
-      HIVE-124 added `setSlack` to `CONFIG_KEYS` and to the preload, but not to
-      this list, so this assertion has been failing since that story merged —
-      the same gap the `ledger`/`slack` note above `surface.top` already
-      records, and there is no PR CI here to have caught either. The
-      socket-mode switch and the commander allow-list, written through the same
-      guarded path as every other config verb; the two tokens are not here,
-      because they have their own namespace (`slack.setTokens`) rather than
-      being config.
-    */
+    /**
+     * HIVE-124's Socket Mode switch, and it reached the bridge in 52fb16b
+     * without reaching this list — so the assertion was red on `main` before
+     * HIVE-141 touched anything. Added here rather than left for whoever tripped
+     * over it next: a surface test nobody can get green is a surface test people
+     * learn to skip.
+     *
+     * It is a mild addition on the terms this list already uses. The payload is
+     * the socket-mode boolean and the commander allow-list — no path, no
+     * hostname, no destination of any kind — and it carries **no tokens**: the
+     * app and bot secrets are on the `slack` namespace, refused here by
+     * `parseSetSlackRequest` as unexpected keys, for the identical reason
+     * `setJira` above cannot carry Jira's. The one file the bridge can write is
+     * still chosen by main.
+     *
+     * What it genuinely grants is the switch that lets a Slack message wake an
+     * agent. That is a real capability, and it is bounded on the far side rather
+     * than here: the allow-list names who may command, and the agent permission
+     * fence decides what a woken run may do.
+     */
     'setSlack',
     'startClone',
   ]);
