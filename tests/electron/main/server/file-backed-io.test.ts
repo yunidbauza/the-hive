@@ -5,9 +5,10 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { CONFIG_PATH_ENV } from '@shared/config-contract';
+
 import { getConfig, reloadConfig } from '../../../../electron/main/config';
 import { readServerDevicesFromDisk } from '../../../../electron/main/server/file-backed-io';
-import { CONFIG_PATH_ENV } from '../../../../electron/shared/config-contract';
 
 /**
  * `readServerDevicesFromDisk` against a real file (HIVE-142 review, N1).

@@ -76,8 +76,8 @@ const BIND_HINT =
   'Where this Hive listens for a paired device — a hostname or an IPv4 address reachable from the other side, such as a Tailscale address.';
 const BIND_INVALID = 'A hostname or an IPv4 address only — no scheme, port or path.';
 const BIND_WILDCARD = `${WILDCARD_BIND} binds every interface on this machine. Name the address a device actually reaches instead — your Tailscale address is usually right.`;
-const PORT_HINT = `Leave empty for the default (${DEFAULT_SERVER.bind.port}).`;
-const PORT_INVALID = 'A port from 0 to 65535, or empty for the default.';
+const PORT_HINT = `Leave empty for the default (${DEFAULT_SERVER.bind.port}). Fixed, not OS-assigned — a paired device has to be told this number ahead of time.`;
+const PORT_INVALID = 'A port from 1 to 65535, or empty for the default. 0 asks the OS for a free port, which a paired device could never be told in advance.';
 const ORIGINS_HINT =
   'Comma separated, as in https://example.test. Empty refuses every request from a browser — most paired devices need none.';
 const ORIGINS_INVALID = 'Each entry is a scheme and a host, as in https://example.test.';
@@ -136,7 +136,11 @@ export function ServerModeGroup({ enabled, bind, devices }: ServerModeGroupProps
 
   const [hostDraft, setHostDraft] = useState(bind.host);
   const [hostInvalid, setHostInvalid] = useState<'invalid' | 'wildcard' | null>(null);
-  const [portDraft, setPortDraft] = useState(bind.port === 0 ? '' : String(bind.port));
+  // Unlike the receiver's own bind group, `bind.port` here is never 0 — the
+  // config reader and `config:set-server` both refuse it (HIVE-142 review,
+  // I3) — so, unlike that sibling field, there is no "0 means empty" case to
+  // special-case on the way in.
+  const [portDraft, setPortDraft] = useState(String(bind.port));
   const [portInvalid, setPortInvalid] = useState(false);
   const [originsDraft, setOriginsDraft] = useState(bind.allowedOrigins.join(', '));
   const [originsInvalid, setOriginsInvalid] = useState(false);
@@ -157,7 +161,7 @@ export function ServerModeGroup({ enabled, bind, devices }: ServerModeGroupProps
     setSeenBind(bind);
     setHostDraft(bind.host);
     setHostInvalid(null);
-    setPortDraft(bind.port === 0 ? '' : String(bind.port));
+    setPortDraft(String(bind.port));
     setPortInvalid(false);
     setOriginsDraft(bind.allowedOrigins.join(', '));
     setOriginsInvalid(false);
@@ -186,12 +190,14 @@ export function ServerModeGroup({ enabled, bind, devices }: ServerModeGroupProps
       return;
     }
     const next = raw === '' ? DEFAULT_SERVER.bind.port : Number(raw);
-    if (!Number.isInteger(next) || next < 0 || next > 65_535) {
+    // 0 is a legal port number in general but not here — see PORT_INVALID
+    // and `assertServerBindPort` (`electron/shared/guards.ts`) for why.
+    if (!Number.isInteger(next) || next < 1 || next > 65_535) {
       setPortInvalid(true);
       return;
     }
     setPortInvalid(false);
-    setPortDraft(next === 0 ? '' : String(next));
+    setPortDraft(String(next));
     if (next === bind.port) return;
     void setServerConfig({ bind: { port: next } });
   };

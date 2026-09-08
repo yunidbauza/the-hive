@@ -165,7 +165,25 @@ describe('ServerModeGroup', () => {
       await userEvent.tab();
 
       expect(setServerConfig).not.toHaveBeenCalled();
-      expect(screen.getByText(/port from 0 to 65535/i)).toBeInTheDocument();
+      expect(screen.getByText(/port from 1 to 65535/i)).toBeInTheDocument();
+    });
+
+    /**
+     * Unlike the receiver's own bind, `server.bind.port` cannot be 0 — a
+     * client's config and a LaunchAgent both have to be told this number
+     * ahead of time (HIVE-142 review, I3). The field refuses it client-side
+     * rather than sending a request `config:set-server` would refuse anyway.
+     */
+    it('refuses port 0, unlike the receiver bind', async () => {
+      render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} />);
+
+      const field = screen.getByLabelText(/^port$/i);
+      await userEvent.clear(field);
+      await userEvent.type(field, '0');
+      await userEvent.tab();
+
+      expect(setServerConfig).not.toHaveBeenCalled();
+      expect(screen.getByText(/port from 1 to 65535/i)).toBeInTheDocument();
     });
 
     it('commits allowed origins split on commas', async () => {

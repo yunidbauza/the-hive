@@ -69,7 +69,8 @@ export interface MintedDevice {
  * 80 bits is plenty: an offline attack against a leaked SHA-256 digest costs
  * roughly 2^80 hashes, which at 10^12 hashes/second is on the order of 38,000
  * years, and there is no online guessing surface worth naming — this socket
- * is reached over Tailscale and refuses on the first wrong token. Because the
+ * is reached over Tailscale and refuses every wrong token immediately, with
+ * no lockout state to bypass. Because the
  * input is 80 uniform random bits rather than a low-entropy human password,
  * a KDF (bcrypt/argon2) would be cargo cult, and a salt buys nothing when the
  * thing being hashed is already unguessable. That is why {@link digestOf} is
@@ -159,10 +160,29 @@ export interface DeviceStore {
 
 export type PairOutcome =
   | { ok: true; device: ServerDevice; token: string }
-  /** A device already holds this name — refused before anything is minted. */
+  /** An *active* device already holds this name — refused before anything is minted. */
   | { ok: false; reason: 'duplicate-name' }
   /** {@link mintUniqueDevice} gave up after {@link MAX_MINT_ATTEMPTS} collisions. */
   | { ok: false; reason: 'mint-failed' };
+
+/**
+ * The one place a `PairOutcome` becomes a message a person reads (HIVE-142
+ * review, I1/minor) — `--pair`, the tray's "Pair a device…", and the
+ * Settings pane's `server:pair` handler all had their own copy of this
+ * ternary, verbatim in two of the three, differently worded in the third.
+ * One mapping means the wording can only drift by being changed here.
+ */
+export function pairOutcomeMessage(
+  outcome: Extract<PairOutcome, { ok: false }>,
+  name: string,
+): string {
+  switch (outcome.reason) {
+    case 'duplicate-name':
+      return `A device named "${name}" already exists. Revoke it first, or choose another name.`;
+    case 'mint-failed':
+      return `Could not mint a unique device credential after ${String(MAX_MINT_ATTEMPTS)} attempts. Try again.`;
+  }
+}
 
 /**
  * Mints and persists a device named `name`, or refuses — the one
@@ -180,6 +200,22 @@ export type PairOutcome =
  * writes land in exactly the wrong order — the same bounded, documented gap
  * `--pair`'s one-shot always had (spec §8's "Concurrency" note), not a new
  * one this function introduces.
+ *
+ * ## A name held only by revoked devices is free (HIVE-142 review, I1)
+ *
+ * `revokeNamed` flips the flag on *every* device matching `name`, which only
+ * makes sense if names are unique among devices someone could still use —
+ * an invariant this function has to maintain, not just assume. Refusing a
+ * name forever because some now-dead device once held it would make revoking
+ * a stolen laptop and buying a replacement of the same model an unfixable
+ * dead end (the review's exact scenario), and it would grow `config.json`
+ * without bound — `config.json` is not an audit log. So a name is refused
+ * only when an *active* device holds it; every revoked row with that name is
+ * dropped in the same write that adds the new one. Nothing is lost: a
+ * revoked device's digest can never verify again (`verifyDevice` checks
+ * `revoked` after a successful digest compare, so a revoked credential is
+ * already permanently dead), so there is no audit value being discarded,
+ * only a disabled row that would otherwise sit there forever.
  */
 export function pairDevice(
   name: string,
@@ -189,14 +225,20 @@ export function pairDevice(
 ): PairOutcome {
   const devices = store.readDevices();
 
-  if (devices.some((device) => device.name === name)) {
+  const holders = devices.filter((device) => device.name === name);
+  if (holders.some((device) => !device.revoked)) {
     return { ok: false, reason: 'duplicate-name' };
   }
 
-  const minted = mintUniqueDevice(name, devices, now, mint);
+  // Every existing holder of this name (if any) is revoked. Drop them here —
+  // not in a separate "forget" step — so `revokeNamed`'s uniqueness
+  // assumption holds again the moment a fresh device takes the name.
+  const survivors = devices.filter((device) => device.name !== name);
+
+  const minted = mintUniqueDevice(name, survivors, now, mint);
   if (!minted) return { ok: false, reason: 'mint-failed' };
 
-  store.writeDevices([...devices, minted.device]);
+  store.writeDevices([...survivors, minted.device]);
   return { ok: true, device: minted.device, token: minted.token };
 }
 

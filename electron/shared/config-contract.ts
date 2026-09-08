@@ -705,11 +705,12 @@ export interface ServerDevice {
   /**
    * The digest, and deliberately not the token.
    *
-   * A server verifying a credential never needs to hold one. The token is 128
-   * uniform bits, so a SHA-256 digest of it is not brute-forceable and no KDF
-   * is warranted — that is why there is no salt here, rather than an omission.
-   * The plaintext exists in exactly two places: stdout at mint time, and the
-   * client's own `safeStorage`.
+   * A server verifying a credential never needs to hold one. The token is 80
+   * uniform bits (`randomBytes(10)`, rendered as 16 Crockford-base32
+   * characters — see `devices.ts`'s `mintDevice`), so a SHA-256 digest of it
+   * is not brute-forceable and no KDF is warranted — that is why there is no
+   * salt here, rather than an omission. The plaintext exists in exactly two
+   * places: stdout at mint time, and the client's own `safeStorage`.
    */
   credential: ServerCredential;
 }
@@ -1512,7 +1513,11 @@ export function emptySnapshot(
     notifications: { ...DEFAULT_NOTIFICATIONS },
     jira: { ...DEFAULT_JIRA },
     receiver: { ...DEFAULT_RECEIVER },
-    server: { ...DEFAULT_SERVER },
+    // `devices` gets its own fresh array rather than `DEFAULT_SERVER.devices`
+    // itself — the same reason `loadConfig` and `writeConfig` give it one:
+    // one shared array instance handed to every empty snapshot is exactly
+    // what `readServerDevicesFromDisk`'s own doc comment warns against.
+    server: { ...DEFAULT_SERVER, devices: [] },
     slack: { ...DEFAULT_SLACK },
     errors: [],
   };

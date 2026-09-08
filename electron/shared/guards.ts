@@ -1334,6 +1334,24 @@ function assertServerBindHost(value: unknown, label: string): string {
 }
 
 /**
+ * `server.bind.port` (HIVE-142 review, I3).
+ *
+ * Restates {@link assertPort}'s bound and then refuses the one value the
+ * receiver's own bind accepts and this one cannot: `0`. Unlike
+ * {@link ReceiverBindConfig.port}, `server.bind.port` cannot be OS-assigned —
+ * a client's config and a LaunchAgent both have to be told the number ahead
+ * of time, and neither can be handed one the kernel only picks at boot (see
+ * {@link ServerBindConfig.port}'s own doc comment).
+ */
+function assertServerBindPort(value: unknown, label: string): number {
+  const port = assertPort(value, label);
+  if (port === 0) {
+    return fail(`${label}: must be fixed, not 0 — a client and any LaunchAgent need to be told the port ahead of time`);
+  }
+  return port;
+}
+
+/**
  * Payload of `config:set-server` (HIVE-142).
  *
  * Shaped exactly like {@link parseSetReceiverRequest}, field for field, and for
@@ -1377,7 +1395,7 @@ export function parseSetServerRequest(input: unknown): SetServerRequest {
         ? { host: assertServerBindHost(rawBind.host, 'setServer.bind.host') }
         : {}),
       ...(rawBind.port !== undefined
-        ? { port: assertPort(rawBind.port, 'setServer.bind.port') }
+        ? { port: assertServerBindPort(rawBind.port, 'setServer.bind.port') }
         : {}),
       ...(allowedOrigins !== undefined ? { allowedOrigins } : {}),
     };

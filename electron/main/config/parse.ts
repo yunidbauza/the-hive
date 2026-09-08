@@ -859,12 +859,16 @@ const HEX_SHA256 = /^[0-9a-f]{64}$/;
 /**
  * HIVE-142's nested `server.bind` block.
  *
- * Structurally {@link optionalBind}'s twin, with the one difference the shape
+ * Structurally {@link optionalBind}'s twin, with two differences the shape
  * forces: `host` is checked against {@link isServerBindHost}, not
  * {@link isHostAlias}, and `0.0.0.0` gets its own message naming the value
  * rather than the generic "expected a hostname" — see
  * {@link isServerBindHost}'s doc comment for why the wildcard is refused here
- * and not for the receiver.
+ * and not for the receiver. `port` gets the same treatment for `0`: unlike
+ * {@link ReceiverBindConfig.port}, `server.bind.port` cannot be OS-assigned —
+ * see {@link ServerBindConfig.port}'s own doc comment for why — so `0` is
+ * refused here rather than the generic "using the default" salvage
+ * `optionalPort` would otherwise apply.
  */
 function optionalServerBind(
   record: Record<string, unknown>,
@@ -904,8 +908,14 @@ function optionalServerBind(
     }
   }
 
-  const port = optionalPort(value, 'port', at, errors);
-  if (port !== null) bind.port = port;
+  if (value.port === 0) {
+    errors.push(
+      `${at}.port: 0 asks the OS for any free port, but server.bind.port must be fixed — a client's config and a LaunchAgent both have to name this port ahead of time — using the default`,
+    );
+  } else {
+    const port = optionalPort(value, 'port', at, errors);
+    if (port !== null) bind.port = port;
+  }
 
   const origins = value.allowedOrigins;
   if (origins !== undefined) {

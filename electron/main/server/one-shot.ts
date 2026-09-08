@@ -2,7 +2,13 @@ import type { ServerDevice } from '@shared/config-contract';
 
 import type { Invocation } from '../cli';
 
-import { MAX_MINT_ATTEMPTS, mintDevice, pairDevice, revokeDevice, type MintedDevice } from './devices';
+import {
+  mintDevice,
+  pairDevice,
+  pairOutcomeMessage,
+  revokeDevice,
+  type MintedDevice,
+} from './devices';
 
 /**
  * The CLI one-shots' effects, factored out so `runOneShot` stays pure
@@ -65,16 +71,14 @@ function runPair(
     the roster you just read" all live in `devices.ts` (`pairDevice`), shared
     with the tray's own "Pair a device…" path (HIVE-142 review, N2) — one
     implementation rather than two that can drift. This function's own job is
-    reduced to translating the outcome into the CLI's messages and exit code.
+    reduced to translating the outcome into the CLI's exit code — the message
+    itself is `pairOutcomeMessage`'s, the same one the tray and the Settings
+    pane show (HIVE-142 review, I1/minor).
   */
   const outcome = pairDevice(name, io, now, mint);
 
   if (!outcome.ok) {
-    io.print(
-      outcome.reason === 'duplicate-name'
-        ? `A device named "${name}" already exists. Revoke it first, or choose another name.`
-        : `Could not mint a unique device id after ${MAX_MINT_ATTEMPTS} attempts. Try again.`,
-    );
+    io.print(pairOutcomeMessage(outcome, name));
     return 1;
   }
 

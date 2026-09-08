@@ -159,11 +159,16 @@ export function loadConfig(): ConfigSnapshot {
     // Defaults *under* whatever the file named, exactly as `receiver` does
     // above (HIVE-142) and for the same reason: `bind` is a nested block, so a
     // one-level spread would let a file naming only `bind.host` erase the
-    // default port and origin list.
+    // default port and origin list. `devices` gets the same explicit
+    // fallback for a different reason: `DEFAULT_SERVER.devices` is one array
+    // instance, and a bare `...DEFAULT_SERVER` spread would hand that same
+    // instance to every snapshot that names no roster — exactly what
+    // `readServerDevicesFromDisk`'s own doc comment says to avoid.
     server: {
       ...DEFAULT_SERVER,
       ...parsed.server,
       bind: { ...DEFAULT_SERVER.bind, ...parsed.server?.bind },
+      devices: parsed.server?.devices ?? [],
     },
     // Defaults *under* whatever the file named, exactly as `jira` and
     // `receiver` do above (HIVE-124). A plain spread suffices here too.

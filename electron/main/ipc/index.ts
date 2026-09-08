@@ -217,7 +217,7 @@ import {
   createSessionNames,
 } from '../notifications';
 import { registerPtyHost } from '../pty-host';
-import { pairDevice, revokeDevice } from '../server/devices';
+import { pairDevice, pairOutcomeMessage, revokeDevice } from '../server/devices';
 import { readServerDevicesFromDisk, serverDeviceStore } from '../server/file-backed-io';
 import { createSessions, type Sessions } from '../sessions';
 import {
@@ -2840,12 +2840,7 @@ export function registerIpcHandlers(
       const { name } = parsePairDeviceRequest(payload);
       const outcome = pairDevice(name, serverDeviceStore());
       if (outcome.ok) return { token: outcome.token };
-      return {
-        error:
-          outcome.reason === 'duplicate-name'
-            ? `A device named "${name}" already exists. Revoke it first, or choose another name.`
-            : 'This Hive could not mint a unique device credential. Try again.',
-      };
+      return { error: pairOutcomeMessage(outcome, name) };
     },
   );
   /**

@@ -9,6 +9,7 @@ import {
   mintDevice,
   mintUniqueDevice,
   pairDevice,
+  pairOutcomeMessage,
   revokeDevice,
   revokeNamed,
   verifyDevice,
@@ -147,6 +148,51 @@ describe('pairDevice', () => {
     expect(store.writeDevices).not.toHaveBeenCalled();
   });
 
+  it('a name held only by revoked devices is free to re-pair, and the old digest is gone (HIVE-142 review, I1)', () => {
+    // The scenario verbatim: pair, revoke, pair the same name again.
+    const first = mintDevice('MacBook');
+    const store = fakeStore([first.device]);
+
+    const revokeOutcome = revokeDevice('MacBook', store);
+    expect(revokeOutcome.revoked).toBe(true);
+
+    const afterRevoke = store.writes[0] ?? [];
+    // The second `pairDevice` call reads whatever the revoke just wrote, the
+    // same "read once, act on it" shape every other call in this store goes
+    // through — a second `fakeStore` seeded with that result stands in for
+    // the real `DeviceStore`'s next `readDevices()`.
+    const store2 = fakeStore(afterRevoke);
+    const outcome = pairDevice('MacBook', store2);
+
+    expect(outcome.ok).toBe(true);
+    const written = store2.writes[0] ?? [];
+    // Exactly one "MacBook" survives, and it is not the revoked one.
+    const macBooks = written.filter((d) => d.name === 'MacBook');
+    expect(macBooks).toHaveLength(1);
+    expect(macBooks[0]?.revoked).toBe(false);
+    expect(macBooks[0]?.credential.digest).not.toBe(first.device.credential.digest);
+    if (outcome.ok) {
+      expect(verifyDevice(written, outcome.device.id, outcome.token)).toBe('ok');
+    }
+    // The dead credential no longer verifies against anything in the roster.
+    expect(written.some((d) => d.credential.digest === first.device.credential.digest)).toBe(
+      false,
+    );
+  });
+
+  it('still refuses a name held by an active device, even alongside revoked rows of the same name', () => {
+    const revokedHolder = { ...mintDevice('MacBook').device, revoked: true };
+    const activeHolder = mintDevice('MacBook').device;
+    const store = fakeStore([revokedHolder, activeHolder]);
+    const mint = vi.fn(mintDevice);
+
+    const outcome = pairDevice('MacBook', store, undefined, mint);
+
+    expect(outcome).toEqual({ ok: false, reason: 'duplicate-name' });
+    expect(mint).not.toHaveBeenCalled();
+    expect(store.writeDevices).not.toHaveBeenCalled();
+  });
+
   it('persists against the roster it just read — a device present at read time is never dropped (HIVE-142 review, I3b)', () => {
     // The exact shape of the earlier bug: a roster that already includes a
     // device paired by a concurrent `--pair` (or, before this roster's own
@@ -162,6 +208,20 @@ describe('pairDevice', () => {
     expect(outcome.ok).toBe(true);
     const written = store.writes[0] ?? [];
     expect(written.map((d) => d.name).sort()).toEqual(['MacBook', 'Old Phone', 'iPad'].sort());
+  });
+});
+
+describe('pairOutcomeMessage', () => {
+  it('names the device for a duplicate-name refusal', () => {
+    expect(pairOutcomeMessage({ ok: false, reason: 'duplicate-name' }, 'MacBook')).toBe(
+      'A device named "MacBook" already exists. Revoke it first, or choose another name.',
+    );
+  });
+
+  it('names the attempt cap for a mint-failed refusal', () => {
+    expect(pairOutcomeMessage({ ok: false, reason: 'mint-failed' }, 'MacBook')).toBe(
+      `Could not mint a unique device credential after ${String(MAX_MINT_ATTEMPTS)} attempts. Try again.`,
+    );
   });
 });
 

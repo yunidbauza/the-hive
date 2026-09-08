@@ -15,6 +15,16 @@ export type Invocation =
   | { kind: 'usage'; message: string };
 
 /**
+ * Every flag this parser recognizes. Used to reject a `--pair`/`--revoke`
+ * name that is actually the *next* flag rather than a real name — e.g.
+ * `--pair --devices` with no name supplied. We only special-case these four
+ * known flags rather than "anything starting with `-`": a device legitimately
+ * named `--devices` is not a real scenario, but neither is one merely
+ * *starting* with a dash, so there is no case here worth the extra rule.
+ */
+const KNOWN_FLAGS = ['--pair', '--revoke', '--devices', '--server'];
+
+/**
  * Parse `process.argv` into a typed `Invocation`.
  *
  * `packaged` (from `app.isPackaged`) says how many leading elements are the
@@ -28,16 +38,6 @@ export type Invocation =
  * in argv; since we only ever look for our own known flags, anything else is
  * silently ignored rather than tripping up the parse.
  */
-/**
- * Every flag this parser recognizes. Used to reject a `--pair`/`--revoke`
- * name that is actually the *next* flag rather than a real name — e.g.
- * `--pair --devices` with no name supplied. We only special-case these four
- * known flags rather than "anything starting with `-`": a device legitimately
- * named `--devices` is not a real scenario, but neither is one merely
- * *starting* with a dash, so there is no case here worth the extra rule.
- */
-const KNOWN_FLAGS = ['--pair', '--revoke', '--devices', '--server'];
-
 export function parseInvocation(argv: readonly string[], packaged: boolean): Invocation {
   const args = argv.slice(packaged ? 1 : 2);
 

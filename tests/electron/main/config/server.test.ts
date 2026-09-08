@@ -113,6 +113,20 @@ describe('the server bind block', () => {
     expect(parsed.errors.join(' ')).toContain('server.bind.host');
   });
 
+  /**
+   * The one port the receiver's own bind accepts as legal and this one must
+   * not (HIVE-142 review, I3): `0` asks the OS for a free port, but a client
+   * and any LaunchAgent both have to be told `server.bind.port` ahead of
+   * time, so it falls back to the default rather than being honored.
+   */
+  it('refuses port 0 and falls back to the default, unlike the receiver bind', () => {
+    const parsed = parseConfig(doc({ server: { bind: { port: 0 } } }), 'config');
+
+    expect(resolved(parsed).bind.port).toBe(DEFAULT_SERVER.bind.port);
+    expect(parsed.errors.join(' ')).toContain('server.bind.port');
+    expect(parsed.fatal).toBe(false);
+  });
+
   it('refuses a port outside the range and an origin that is not one', () => {
     const parsed = parseConfig(
       doc({ server: { bind: { port: 70000, allowedOrigins: ['http://ok.test', 'nope'] } } }),

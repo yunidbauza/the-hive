@@ -10,7 +10,7 @@ import { installContentSecurityPolicy } from './csp';
 import { remoteListenerBoundAddress, startRemoteListener } from './ipc';
 import { registerIpc } from './ipc/router';
 import { registerLifecycle } from './lifecycle';
-import { pairDevice, revokeDevice } from './server/devices';
+import { pairDevice, pairOutcomeMessage, revokeDevice } from './server/devices';
 import { fileBackedIo, serverDeviceStore } from './server/file-backed-io';
 import { runOneShot } from './server/one-shot';
 import { onShutdown } from './shutdown';
@@ -89,7 +89,10 @@ if (invocation.kind !== 'app') {
 }
 
 /**
- * The single-instance lock, first, before anything else is wired.
+ * The single-instance lock, before anything else is wired — everything below
+ * this point, that is. The one-shot dispatch above it runs earlier still,
+ * deliberately: see that block's own comment for why a one-shot must not
+ * wait on this lock at all.
  *
  * `requestSingleInstanceLock()` returns false in the *second* process, which
  * must exit immediately — the first process gets a `second-instance` event and
@@ -234,12 +237,7 @@ if (!app.requestSingleInstanceLock()) {
         onPair: (name) => {
           const outcome = pairDevice(name, deviceStore);
           if (outcome.ok) return { token: outcome.token };
-          return {
-            error:
-              outcome.reason === 'duplicate-name'
-                ? `A device named "${name}" already exists. Revoke it first, or choose another name.`
-                : 'This Hive could not mint a unique device credential. Try again.',
-          };
+          return { error: pairOutcomeMessage(outcome, name) };
         },
         onRevoke: (name) => {
           revokeDevice(name, deviceStore);

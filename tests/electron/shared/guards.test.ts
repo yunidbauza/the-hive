@@ -1211,6 +1211,18 @@ describe('parseSetServerRequest (HIVE-142)', () => {
     }
   });
 
+  /**
+   * The one port `setReceiver`'s bind accepts and this one must not
+   * (HIVE-142 review, I3): `0` asks the OS for any free port, but a client's
+   * config and a LaunchAgent both have to be told `server.bind.port` ahead
+   * of time — neither can be handed a number the kernel only picks at boot.
+   */
+  it('refuses 0, unlike the receiver bind', () => {
+    expect(() => parseSetServerRequest({ bind: { port: 0 } })).toThrow(
+      /setServer\.bind\.port/,
+    );
+  });
+
   it('refuses an origin that is not one, naming the entry', () => {
     expect(() =>
       parseSetServerRequest({ bind: { allowedOrigins: ['http://ok.test', 'nope'] } }),

@@ -311,11 +311,16 @@ export function writeConfig(
         `server`. Two levels, for the same reason `receiver`'s comment above
         states: `bind` is a nested block, and a one-level spread would let a
         write naming only `bind.host` erase the default port and origin list.
+        `devices` gets the same explicit fallback `loadConfig` uses, for the
+        same reason: `DEFAULT_SERVER.devices` is one array instance, and a
+        bare `...DEFAULT_SERVER` spread would hand every snapshot that names
+        no roster that same shared instance.
       */
       server: {
         ...DEFAULT_SERVER,
         ...validated.server,
         bind: { ...DEFAULT_SERVER.bind, ...validated.server?.bind },
+        devices: validated.server?.devices ?? [],
       },
       /*
         Resolved here as well as in `loadConfig` (HIVE-124), for the same
