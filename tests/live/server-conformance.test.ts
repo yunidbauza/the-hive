@@ -1,12 +1,13 @@
 // @vitest-environment node
 import assert from 'node:assert/strict';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { get as httpGet } from 'node:http';
 import { createRequire } from 'node:module';
 import { connect as netConnect, createServer as createNetServer } from 'node:net';
-import { homedir, networkInterfaces, tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
@@ -49,11 +50,11 @@ import { REMOTE_PROTOCOL_VERSION } from '../../electron/shared/remote-contract';
  * 7. `config.json` is read back and contains no token — checked against the
  *    literal string the mint printed, not a shape assertion.
  * 8. A config asking for `0.0.0.0` is refused with a message naming why, the
- *    app keeps serving on the safe loopback fallback, and — skipped with a
- *    stated reason if this machine has no non-loopback IPv4 address — a
- *    connection to a real external address on this machine is genuinely
- *    refused, which is the only observation that actually distinguishes a
- *    refused wildcard from an honoured one (both answer on loopback).
+ *    app keeps serving on the safe loopback fallback, and the served
+ *    process's own listening socket — inspected with `lsof`, not a network
+ *    probe — is bound to `127.0.0.1` and never the wildcard, with a positive
+ *    control proving that same check can see a genuine wildcard bind on this
+ *    machine when one exists.
  * 9. Pairing a second device from the CLI while the server runs does not
  *    erase the first — the data-loss half of the same freshness fix, added
  *    here because an earlier implementation of it replaced the whole roster
@@ -130,6 +131,8 @@ import { REMOTE_PROTOCOL_VERSION } from '../../electron/shared/remote-contract';
 
 const RUN = process.env['HIVE_LIVE_SERVER_PROOF'] === '1';
 
+const execFileAsync = promisify(execFile);
+
 /** The one path this file must never write to. See the header comment. */
 const REAL_CONFIG_PATH = join(homedir(), '.hive', 'config.json');
 
@@ -156,24 +159,6 @@ const electronBinary = createRequire(import.meta.url)('electron') as string;
 
 /** The built app's entry point — the same file `desktop:build` produces and `package.json`'s `main` names. */
 const MAIN_ENTRY = join(import.meta.dirname, '../../out/main/index.js');
-
-/**
- * The first non-loopback IPv4 address this machine has, or `null` if it has
- * none (no network interface up at all). The only observation that actually
- * distinguishes "the wildcard bind was honoured" from "it was refused and
- * fell back to loopback": both answer identically on `127.0.0.1`, since the
- * wildcard *includes* loopback. Computed once, at module load — a real
- * property of the machine running this suite, not something any scenario
- * changes.
- */
-const EXTERNAL_IPV4 = (() => {
-  for (const addrs of Object.values(networkInterfaces())) {
-    for (const addr of addrs ?? []) {
-      if (addr.family === 'IPv4' && !addr.internal) return addr.address;
-    }
-  }
-  return null;
-})();
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -215,37 +200,59 @@ async function waitForListener(host: string, port: number, deadlineMs: number): 
 }
 
 /**
- * Attempts a raw TCP connect and reports how it resolved: `'connected'` or
- * `'refused'`. Used for case 8b's actual discriminator (a bind that honoured
- * the wildcard would accept this; one that fell back to loopback refuses it)
- * — unlike {@link waitForListener}, this does not retry, because a retry loop
- * here would blur exactly the distinction the case exists to draw.
+ * Every `host:port` a pid is listening on over TCP, exactly as `lsof` reports
+ * it — `127.0.0.1:54321` for a loopback-only bind, `*:54321` for a wildcard
+ * one.
  *
- * A silent timeout counts as `'refused'`, not as an inconclusive third state
- * — measured against this machine's own non-loopback address, a real accept
- * completes almost immediately (it never leaves the LAN), while a closed
- * port on a non-loopback interface commonly gets no `RST` at all: macOS's
- * Application Firewall defaults to "stealth mode", which drops an
- * unsolicited `SYN` rather than answering it, and that is indistinguishable
- * from "nothing is listening" for this test's purposes.
+ * This replaces an earlier version of case 8 that tried to tell a wildcard
+ * bind apart from a loopback one by connecting from a real non-loopback
+ * address on this machine and treating a refusal (or a timeout) as proof of
+ * the latter. Review caught the vacuity that left in place: macOS's
+ * Application Firewall filters *inbound* TCP per application and silently
+ * drops a `SYN` to a binary outside its allow list — which is not a corner
+ * case for an unsigned, unnotarized dev build, it is the common one. A
+ * wildcard bind that *was* genuinely listening on that address could produce
+ * the exact same silence a refused one does, so the probe could pass with
+ * the bug present. Asking the kernel what a pid actually holds open sidesteps
+ * every bit of that: no packet leaves the machine, no firewall is consulted,
+ * and the answer is exact rather than inferred from a socket's behaviour.
  */
-function attemptConnect(host: string, port: number, timeoutMs: number): Promise<'connected' | 'refused'> {
-  return new Promise((resolve) => {
-    const socket = netConnect({ host, port });
-    const timer = setTimeout(() => {
-      socket.destroy();
-      resolve('refused');
-    }, timeoutMs);
-    socket.once('connect', () => {
-      clearTimeout(timer);
-      socket.end();
-      resolve('connected');
-    });
-    socket.once('error', () => {
-      clearTimeout(timer);
-      resolve('refused');
-    });
-  });
+async function listeningAddresses(pid: number): Promise<string[]> {
+  try {
+    /*
+      `-a` is load-bearing, and its absence does not fail loudly: `lsof`
+      combines separate selection options (`-p`, `-i`) with OR by default, not
+      AND, so `-p <pid> -iTCP -sTCP:LISTEN` without it lists every listening
+      TCP socket on the *machine* — this pid's or anyone else's — not this
+      pid's alone. Measured directly against this repo's own dev machine: it
+      returned 90-odd sockets belonging to Docker, VS Code, Redis, and every
+      other unrelated LISTEN owner on the box, identical for two different
+      pids. The port-specific filter below still happened to find the right
+      line either way, purely because a TCP port is unique machine-wide, so
+      the original bug hid behind a coincidentally-correct answer — `-a`
+      makes the query actually mean what it claims rather than working by
+      accident on this one property of the address space.
+    */
+    const { stdout } = await execFileAsync('lsof', [
+      '-a',
+      '-nP',
+      '-p',
+      String(pid),
+      '-iTCP',
+      '-sTCP:LISTEN',
+    ]);
+    return stdout
+      .split('\n')
+      .map((line) => /(\S+:\d+)\s*\(LISTEN\)\s*$/u.exec(line.trim())?.[1])
+      .filter((address): address is string => address !== undefined);
+  } catch (err) {
+    // Some `lsof` builds exit non-zero rather than printing an empty table
+    // when a pid holds no matching socket at all — itself a fact worth
+    // returning to the caller rather than a suite failure. Anything else
+    // (no `lsof` on PATH, a permissions failure) still throws.
+    if (typeof err === 'object' && err !== null && 'stdout' in err) return [];
+    throw err;
+  }
 }
 
 /** The HTTP status a plain GET gets back — proof the socket is a real HTTP(S) upgrade server, not merely an open file descriptor. */
@@ -456,10 +463,11 @@ function runOneShot(
   });
 }
 
-/** What one attach attempt resolved to: a parsed frame, or the HTTP status an upgrade was refused with. */
+/** What one attach attempt resolved to: a parsed frame, the HTTP status an upgrade was refused with, or (logged, never returned to a caller — see `attach`'s `'error'` handler) the message a raw socket error carried. */
 interface AttachOutcome {
   httpStatus?: number;
   frame?: Record<string, unknown>;
+  error?: string;
 }
 
 /** One call to {@link attach}, kept for `finding.json` regardless of pass/fail — the suite's most likely failure is frame-level, which argv/exit-code evidence alone cannot show. */
@@ -511,6 +519,18 @@ function attach(
     socket.on('close', () => settle({}));
     socket.on('error', (err) => {
       if (settled) return;
+      settled = true;
+      // The one outcome `settle` never produces, because a caller expecting
+      // a rejection should still get one — but it is still logged, so a
+      // genuine connection failure (a stale `url` from a killed app, say)
+      // leaves a trace in `finding.json` instead of only a thrown error the
+      // test framework already reports elsewhere (HIVE-142 review, low 2).
+      attachLog.push({
+        at: new Date().toISOString(),
+        url,
+        frame,
+        outcome: { error: err instanceof Error ? err.message : String(err) },
+      });
       reject(err);
     });
   });
@@ -800,9 +820,9 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       appRecord = booted.record;
       port = booted.port;
       // The health check inside `bootServerApp` already confirms the
-      // fallback host (`127.0.0.1`) answers — see the `it`s below for why
-      // that alone does not yet distinguish a refused wildcard from an
-      // honoured one.
+      // fallback host (`127.0.0.1`) answers — see case 8b below for why that
+      // alone does not yet distinguish a refused wildcard from an honoured
+      // one, and for the actual proof.
     }, 90_000);
 
     afterAll(async () => {
@@ -842,17 +862,69 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       expect(devices.code).toBe(0);
     });
 
-    it.skipIf(EXTERNAL_IPV4 === null)(
-      '8b. the wildcard bind is genuinely refused, checked against a real non-loopback address',
-      async () => {
-        // The actual discriminator: a bind that honoured `0.0.0.0` would
-        // accept a connection here too, because the wildcard listens on
-        // every interface including this one. A refusal is what proves the
-        // fallback to `127.0.0.1` in case 8 was a real, narrower bind and not
-        // merely a coincidentally-reachable loopback address.
-        const outcome = await attemptConnect(EXTERNAL_IPV4 as string, port, 3_000);
-        expect(outcome).toBe('refused');
-      },
-    );
+    it('8b. the OS-level bind is loopback-only — the socket itself, not a network probe', async () => {
+      /*
+        Review round 2's finding: an earlier version of this case connected
+        from a real non-loopback address on this machine and treated a
+        refusal (or a timeout) as proof the wildcard was never bound. That is
+        vacuous on macOS by default — the Application Firewall drops an
+        inbound SYN to an unsigned/unnotarised binary's listening socket
+        whether or not that socket is actually the wildcard, so the exact
+        failure this case exists to catch could pass through the same
+        silence a correct refusal produces.
+
+        Asking the kernel what the served app's own pid actually holds open
+        has no such hole: no packet leaves the machine, no firewall is
+        consulted, and `lsof` reports `127.0.0.1:<port>` or `*:<port>`
+        exactly, not an inference from how a connection attempt behaved.
+      */
+      assert(app?.pid !== undefined, 'the served app must have a pid to inspect with lsof');
+
+      const addresses = await listeningAddresses(app.pid);
+      console.info(`8b lsof -p ${String(app.pid)} -iTCP -sTCP:LISTEN ->`, addresses);
+      const forThisPort = addresses.filter((address) => address.endsWith(`:${String(port)}`));
+
+      expect(
+        forThisPort,
+        `lsof -p ${String(app.pid)} reported: ${addresses.join(', ') || '(nothing)'}`,
+      ).toHaveLength(1);
+      // Not merely "not the wildcard" — the exact loopback address the
+      // fallback names, so this fails just as loudly if the fallback itself
+      // ever changed to some other non-wildcard host.
+      expect(forThisPort[0]).toBe(`127.0.0.1:${String(port)}`);
+    });
+
+    it('8c. the lsof-based check above genuinely can see a wildcard bind, on this same machine', async () => {
+      /*
+        A positive control for case 8b's own mechanism, per review: 8b's
+        result is a negative ("not found in the list"), and a negative is
+        only meaningful if the same check can also return a positive on this
+        machine. Rather than relying on network topology (a second interface,
+        a firewall's exact posture) the control stays entirely inside this
+        process: bind a throwaway `net` server to the real wildcard, in this
+        Vitest worker's own pid, and confirm `listeningAddresses` reports it
+        as `*:<port>` — proving the parsing in `listeningAddresses` is not
+        itself the reason 8b found nothing.
+      */
+      const probePort = await freePort();
+      const probe = createNetServer();
+      await new Promise<void>((resolve, reject) => {
+        probe.once('error', reject);
+        probe.listen(probePort, '0.0.0.0', () => resolve());
+      });
+
+      try {
+        const addresses = await listeningAddresses(process.pid);
+        console.info(`8c lsof -p ${String(process.pid)} -iTCP -sTCP:LISTEN ->`, addresses);
+        const forThisPort = addresses.filter((address) => address.endsWith(`:${String(probePort)}`));
+        expect(
+          forThisPort,
+          `lsof -p ${String(process.pid)} reported: ${addresses.join(', ') || '(nothing)'}`,
+        ).toHaveLength(1);
+        expect(forThisPort[0]).toMatch(/^(\*|0\.0\.0\.0):/u);
+      } finally {
+        await new Promise<void>((resolve) => probe.close(() => resolve()));
+      }
+    });
   });
 });
