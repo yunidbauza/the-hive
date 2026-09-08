@@ -1,0 +1,264 @@
+// @vitest-environment node
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { ServerDevice } from '../../../electron/shared/config-contract';
+
+/**
+ * The server-mode tray's content and wiring (HIVE-142).
+ *
+ * `buildTrayTemplate` is asserted as a pure value — the same way
+ * `menu.test.ts` treats `buildMenuTemplate` — so the menu's shape is provable
+ * with no real `Tray`. `createServerTray` gets a thin smoke test over the
+ * `electron` mock below, for the one thing a pure template cannot prove:
+ * that it is actually wired to a `Tray` instance.
+ */
+
+class FakeTray {
+  static instances: FakeTray[] = [];
+  icon: unknown;
+  toolTip: string | undefined;
+  destroyed = false;
+  handlers = new Map<string, () => void>();
+  constructor(icon: unknown) {
+    this.icon = icon;
+    FakeTray.instances.push(this);
+  }
+  setToolTip(tip: string): void {
+    this.toolTip = tip;
+  }
+  on(event: string, handler: () => void): void {
+    this.handlers.set(event, handler);
+  }
+  popUpContextMenu = vi.fn();
+  destroy(): void {
+    this.destroyed = true;
+  }
+}
+
+const showMessageBox = vi.fn(() => Promise.resolve({ response: 1 }));
+const writeText = vi.fn();
+
+vi.mock('electron', () => ({
+  app: { isPackaged: true }, // packaged: `devIconPath` answers `undefined`, so no real file I/O.
+  Tray: FakeTray,
+  Menu: { buildFromTemplate: vi.fn((template: unknown) => template) },
+  dialog: { showMessageBox },
+  clipboard: { writeText },
+  nativeImage: {
+    createEmpty: vi.fn(() => ({ isEmpty: () => true })),
+    createFromPath: vi.fn(() => ({ isEmpty: () => false })),
+  },
+}));
+
+const { buildTrayTemplate, createServerTray } = await import(
+  '../../../electron/main/tray'
+);
+
+type MenuItem = {
+  label?: string;
+  enabled?: boolean;
+  role?: string;
+  submenu?: MenuItem[];
+  click?: () => void;
+};
+
+function makeDevices(): ServerDevice[] {
+  return [
+    {
+      id: 'd_1',
+      name: 'MacBook',
+      paired: '2026-09-07',
+      revoked: false,
+      credential: { kind: 'sha256', digest: 'abc' },
+    },
+    {
+      id: 'd_2',
+      name: 'Old Phone',
+      paired: '2026-01-01',
+      revoked: true,
+      credential: { kind: 'sha256', digest: 'def' },
+    },
+  ];
+}
+
+function makeDeps(overrides: {
+  devices?: () => ServerDevice[];
+  boundAddress?: () => string | null;
+} = {}) {
+  return {
+    devices: overrides.devices ?? (() => makeDevices()),
+    onPair: vi.fn((_name: string) => 'K7QM-4XR2-9WFD-A3LP'),
+    onRevoke: vi.fn(),
+    onOpenConsole: vi.fn(),
+    boundAddress: overrides.boundAddress ?? (() => '100.101.102.103:7433'),
+  };
+}
+
+beforeEach(() => {
+  FakeTray.instances.length = 0;
+  vi.clearAllMocks();
+  showMessageBox.mockResolvedValue({ response: 1 });
+});
+
+describe('buildTrayTemplate', () => {
+  it('offers Pair a device…, which mints and shows the token in the dialog detail', async () => {
+    const deps = makeDeps();
+    const template = buildTrayTemplate(deps) as MenuItem[];
+
+    const pair = template.find((item) => item.label === 'Pair a device…');
+    expect(pair).toBeDefined();
+
+    pair?.click?.();
+    await Promise.resolve(); // let the `.then` on `showMessageBox` settle
+
+    expect(deps.onPair).toHaveBeenCalledTimes(1);
+    expect(typeof deps.onPair.mock.calls[0]?.[0]).toBe('string');
+    expect(showMessageBox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        detail: 'K7QM-4XR2-9WFD-A3LP',
+        buttons: ['Copy', 'Done'],
+      }),
+    );
+  });
+
+  it('copies the token to the clipboard when Copy is chosen', async () => {
+    showMessageBox.mockResolvedValue({ response: 0 });
+    const deps = makeDeps();
+    const template = buildTrayTemplate(deps) as MenuItem[];
+
+    template.find((item) => item.label === 'Pair a device…')?.click?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(writeText).toHaveBeenCalledWith('K7QM-4XR2-9WFD-A3LP');
+  });
+
+  it('does not touch the clipboard when Done is chosen', async () => {
+    showMessageBox.mockResolvedValue({ response: 1 });
+    const deps = makeDeps();
+    const template = buildTrayTemplate(deps) as MenuItem[];
+
+    template.find((item) => item.label === 'Pair a device…')?.click?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it('lists one Paired devices entry per device, with the count in the label', () => {
+    const deps = makeDeps();
+    const template = buildTrayTemplate(deps) as MenuItem[];
+
+    const paired = template.find((item) => item.label === 'Paired devices (2)');
+    expect(paired?.submenu).toHaveLength(2);
+    expect(paired?.submenu?.map((entry) => entry.label)).toEqual([
+      'MacBook',
+      'Old Phone (revoked)',
+    ]);
+  });
+
+  it("clicking an active device's entry revokes it by name", () => {
+    const deps = makeDeps();
+    const template = buildTrayTemplate(deps) as MenuItem[];
+
+    const paired = template.find((item) => item.label === 'Paired devices (2)');
+    const macBook = paired?.submenu?.find((entry) => entry.label === 'MacBook');
+
+    macBook?.click?.();
+
+    expect(deps.onRevoke).toHaveBeenCalledWith('MacBook');
+    expect(macBook?.enabled).toBe(true);
+  });
+
+  it('disables an already-revoked device entry', () => {
+    const deps = makeDeps();
+    const template = buildTrayTemplate(deps) as MenuItem[];
+
+    const paired = template.find((item) => item.label === 'Paired devices (2)');
+    const oldPhone = paired?.submenu?.find((entry) => entry.label === 'Old Phone (revoked)');
+
+    expect(oldPhone?.enabled).toBe(false);
+  });
+
+  it('names the bound address as a disabled, informational item', () => {
+    const deps = makeDeps({ boundAddress: () => '100.101.102.103:7433' });
+    const template = buildTrayTemplate(deps) as MenuItem[];
+
+    const address = template.find((item) => item.label === 'Serving 100.101.102.103:7433');
+    expect(address?.enabled).toBe(false);
+  });
+
+  it('says so when nothing is bound yet', () => {
+    const deps = makeDeps({ boundAddress: () => null });
+    const template = buildTrayTemplate(deps) as MenuItem[];
+
+    const address = template.find((item) => item.label === 'Not yet listening');
+    expect(address?.enabled).toBe(false);
+  });
+
+  it('Open The Hive calls onOpenConsole', () => {
+    const deps = makeDeps();
+    const template = buildTrayTemplate(deps) as MenuItem[];
+
+    template.find((item) => item.label === 'Open The Hive')?.click?.();
+
+    expect(deps.onOpenConsole).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers Quit with the platform role, not a hand-rolled handler', () => {
+    const deps = makeDeps();
+    const template = buildTrayTemplate(deps) as MenuItem[];
+
+    const quit = template.find((item) => item.label === 'Quit');
+    expect(quit?.role).toBe('quit');
+  });
+
+  it('reads devices() fresh on every call, so a --pair elsewhere shows up unrestarted', () => {
+    let count = 1;
+    const deps = makeDeps({
+      devices: () =>
+        Array.from({ length: count }, (_, index) => ({
+          id: `d_${String(index)}`,
+          name: `Device ${String(index)}`,
+          paired: '2026-09-07',
+          revoked: false,
+          credential: { kind: 'sha256', digest: 'x' } as const,
+        })),
+    });
+
+    expect((buildTrayTemplate(deps) as MenuItem[])[1]?.label).toBe(
+      'Paired devices (1)',
+    );
+
+    count = 2;
+    expect((buildTrayTemplate(deps) as MenuItem[])[1]?.label).toBe(
+      'Paired devices (2)',
+    );
+  });
+});
+
+describe('createServerTray', () => {
+  it('constructs a Tray, sets a tooltip, and wires click and right-click to a rebuilt menu', () => {
+    const deps = makeDeps();
+    createServerTray(deps);
+
+    expect(FakeTray.instances).toHaveLength(1);
+    const tray = FakeTray.instances[0]!;
+    expect(tray.toolTip).toBe('The Hive · serving');
+
+    tray.handlers.get('click')?.();
+    expect(tray.popUpContextMenu).toHaveBeenCalledTimes(1);
+
+    tray.handlers.get('right-click')?.();
+    expect(tray.popUpContextMenu).toHaveBeenCalledTimes(2);
+  });
+
+  it('destroy() destroys the underlying Tray', () => {
+    const { destroy } = createServerTray(makeDeps());
+    const tray = FakeTray.instances[0]!;
+
+    destroy();
+
+    expect(tray.destroyed).toBe(true);
+  });
+});

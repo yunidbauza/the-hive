@@ -1,6 +1,6 @@
 import { spawn, type SpawnOptions } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import {
@@ -15,6 +15,7 @@ import {
   type IpcMainInvokeEvent,
 } from 'electron';
 
+import { createRemoteListener } from '@remote-host/listener';
 import {
   AGENT_LIMIT_DEFAULTS,
   formatRunCost,
@@ -295,6 +296,15 @@ function handle<T>(
  * two accounts of the same system.
  */
 let systemNotificationRefusal: string | null = null;
+
+/**
+ * The server-mode socket (HIVE-142), constructed unconditionally below but
+ * only ever `start()`-ed by `index.ts`, and only in server mode. `null` here
+ * means "not yet composed" (before `registerIpcHandlers` runs, or in a test
+ * that never calls it) — `startRemoteListener` and `remoteListenerBoundHost`
+ * both treat that the same as "not listening" rather than throwing.
+ */
+let remoteListener: ReturnType<typeof createRemoteListener> | null = null;
 
 let sessions: Sessions | null = null;
 /**
@@ -796,6 +806,23 @@ let envDiagnosticInFlight = false;
 /** The live sessions layer, or `null` before registration. Test-only reach-in. */
 export function sessionsLayer(): Sessions | null {
   return sessions;
+}
+
+/**
+ * Starts the server-mode socket (HIVE-142). Resolves the bound `ws://` URL,
+ * or `null` on bind failure — see {@link createRemoteListener}'s own `start`.
+ *
+ * Called from `index.ts`, and only when this run is server mode; every other
+ * launch leaves {@link remoteListener} constructed but never started, so no
+ * port is ever bound on a machine that never asked for one.
+ */
+export function startRemoteListener(): Promise<string | null> {
+  return remoteListener ? remoteListener.start() : Promise.resolve(null);
+}
+
+/** What the server-mode socket actually bound to, for the tray's informational item. */
+export function remoteListenerBoundHost(): string | null {
+  return remoteListener?.boundHost ?? null;
 }
 
 /**
@@ -1419,6 +1446,49 @@ export function registerIpcHandlers(
       ).container,
     ledger,
   });
+
+  /**
+   * The server-mode socket (HIVE-142), constructed beside the receiver
+   * above: same file, same composition pass, same reason for existing —
+   * paired devices reach this Hive over the network the way Claude Code's
+   * hooks reach the receiver.
+   *
+   * Built unconditionally, on every launch, but only `start()`-ed from
+   * `index.ts` when this run is server mode — see {@link startRemoteListener}.
+   * `bind` is read once, not through a getter, for the same reason `hooks`'s
+   * `bind` above is: an already-listening socket cannot be moved, and
+   * Settings says as much (HIVE-134's rule, restated for HIVE-142).
+   */
+  remoteListener = createRemoteListener({
+    bind: getConfig().server.bind,
+    /*
+      A getter, not the array itself — this is what lets a `--pair` or
+      `--revoke` one-shot, run from a terminal in a *different* process,
+      reach a server that is already listening with no restart. Read fresh on
+      every handshake by `createRemoteListener` itself; see that option's own
+      doc comment for the full argument.
+    */
+    devices: () => getConfig().server.devices,
+    // What a client's header indicator renders: "attached · <serverName>".
+    // The machine's own hostname identifies *which* served Mac a client is
+    // looking at, which matters once more than one exists.
+    serverName: hostname(),
+  });
+  /*
+    Registered here, immediately, rather than folded into the large combined
+    teardown hook below that finalizes every live run and calls `closeAll` —
+    the ordering this file documents throughout (HIVE-120, HIVE-124):
+    `runShutdown` invokes every hook body, in registration order, before
+    awaiting any of them. Registering the socket's teardown first means its
+    synchronous work — terminating every attached client — runs before that
+    later hook's synchronous steps do, so nothing can arrive on this socket
+    asking for something `closeAll` is already tearing down. This story's
+    listener answers only a handshake (no call routing yet), so nothing here
+    can actually spawn a run today — but the ordering is the same discipline
+    the next story that adds call routing over this socket will need, stated
+    up front rather than discovered by review.
+  */
+  onShutdown(() => remoteListener?.stop());
 
   skills = createSkillsRuntime({
     userDataPath: app.getPath('userData'),
@@ -3599,6 +3669,14 @@ export function registerIpcHandlers(
 
 /** Test-only: drop the sessions layer and its timers. */
 export function resetIpcHandlers(): void {
+  /*
+    HIVE-142. Most tests never call `startRemoteListener`, so this is usually
+    stopping a socket that was never bound — cheap, per `listener.ts`'s own
+    `stop()`. The ones that do start it (a live suite, or a future test of
+    this composition) must not leak a bound port into the next test.
+  */
+  void remoteListener?.stop();
+  remoteListener = null;
   sessions?.dispose();
   sessions = null;
   cloneFlow?.dispose();

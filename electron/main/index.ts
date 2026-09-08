@@ -4,13 +4,16 @@ import { app } from 'electron';
 
 import { applyDevDockIcon } from './app-icon';
 import { parseInvocation } from './cli';
-import { getConfig } from './config';
+import { getConfig, setServer } from './config';
 import { startLoginEnvImport } from './config/login-env';
 import { installContentSecurityPolicy } from './csp';
+import { remoteListenerBoundHost, startRemoteListener } from './ipc';
 import { registerIpc } from './ipc/router';
 import { registerLifecycle } from './lifecycle';
+import { mintDevice, revokeNamed } from './server/devices';
 import { fileBackedIo } from './server/file-backed-io';
 import { runOneShot } from './server/one-shot';
+import { createServerTray } from './tray';
 import { startUpdateChecks } from './updates';
 import { createWindow } from './window';
 
@@ -138,6 +141,18 @@ if (!app.requestSingleInstanceLock()) {
   registerIpc('local');
 
   /**
+   * Server mode is `server.enabled` in the config file — set for good on the
+   * unattended Mac mini this ships to run on — **or** the one-off `--server`
+   * flag, which enables it for this run only and never writes the file
+   * (HIVE-142, spec §5.1, §3.4). Computed once, here, rather than inside
+   * `whenReady`'s callback below: `registerLifecycle` needs the same answer
+   * to decide whether its own `whenReady` handler may open a window, and
+   * racing two separate reads of `getConfig()` against two separate
+   * `whenReady` callbacks would risk the file changing under it between them.
+   */
+  const serverMode = invocation.server || getConfig().server.enabled;
+
+  /**
    * The CSP has to be installed before any renderer loads, and
    * `session.defaultSession` is only available once the app is ready.
    */
@@ -158,7 +173,64 @@ if (!app.requestSingleInstanceLock()) {
      * able to stop a window from opening.
      */
     startUpdateChecks();
+
+    if (serverMode) {
+      /**
+       * No renderer runs in server mode: the console is the tray, not a
+       * window (HIVE-142). Hiding the dock icon is what tells a served
+       * machine's own screen — reached only by screen-sharing into the mini —
+       * that this is a background service, not an app someone forgot to quit.
+       * `app.dock` is `undefined` off macOS, which is the only platform this
+       * app ships on today; the optional chain is defensive rather than load-
+       * bearing.
+       */
+      app.dock?.hide();
+      /*
+        Fire-and-forget: a bind failure is not fatal to boot (the tray still
+        shows, still lets a human retry after fixing the config), and there is
+        nobody at this machine to hand a rejected promise to anyway. The
+        result is not needed here — `remoteListenerBoundHost()` below reads
+        it back once it lands, exactly as `AppInfo` reads the receiver's own
+        `boundHost` rather than the promise `hooks.start()` returned.
+      */
+      void startRemoteListener();
+      createServerTray({
+        devices: () => getConfig().server.devices,
+        /*
+          Mint, then persist: `setServer` spreads onto the current block
+          (`electron/main/config/index.ts`'s own rule), so this never rebuilds
+          `bind` or drops a device paired by a concurrent `--pair` one-shot —
+          the same wholesale-replace-of-`devices`-only shape `fileBackedIo`
+          uses for the CLI path.
+        */
+        onPair: (name) => {
+          const { device, token } = mintDevice(name);
+          setServer({ devices: [...getConfig().server.devices, device] });
+          return token;
+        },
+        onRevoke: (name) => {
+          const result = revokeNamed(getConfig().server.devices, name);
+          if (result.revoked) setServer({ devices: result.devices });
+        },
+        onOpenConsole: () => createWindow({ withSplash: true }),
+        /*
+          `remoteListenerBoundHost()` answers the host alone — `boundHost`'s
+          established meaning across this codebase (`hooks.boundHost()`,
+          `Receiver.boundHost`, `RemoteListener.boundHost` all agree: "the
+          address the kernel actually bound", not a connectable URL). The
+          port is fixed and configured rather than OS-assigned (spec §4 — a
+          client's config and a LaunchAgent both have to name it ahead of
+          time), so appending it here is safe: it is the same number the
+          socket is actually listening on whenever `remoteListenerBoundHost()`
+          is non-null.
+        */
+        boundAddress: () => {
+          const host = remoteListenerBoundHost();
+          return host === null ? null : `${host}:${String(getConfig().server.bind.port)}`;
+        },
+      });
+    }
   });
 
-  registerLifecycle({ createWindow });
+  registerLifecycle({ createWindow, serverMode });
 }

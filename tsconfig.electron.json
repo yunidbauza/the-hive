@@ -29,7 +29,16 @@
 
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["./electron/shared/*"]
+      "@shared/*": ["./electron/shared/*"],
+      /* The server half of server mode (HIVE-142). Mirrored in
+         `vite.aliases.mjs` and the root `tsconfig.json`; this is the config
+         that actually type-checks `electron/main/**`, which is where
+         `@remote-host` is first imported (`ipc/index.ts`) — missing it here
+         resolves in the editor (root `tsconfig.json` covers `src`/`tests`)
+         and fails only `pnpm type-check`'s electron pass, per AGENTS.md's
+         rule that an alias missing from either config resolves in the editor
+         and fails at runtime. */
+      "@remote-host/*": ["./electron/remote-host/*"]
     }
   },
   "include": ["electron"]

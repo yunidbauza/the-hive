@@ -19,6 +19,16 @@ export interface LifecycleDeps {
   createWindow: (options?: { withSplash?: boolean }) => unknown;
   platform?: NodeJS.Platform;
   isDev?: boolean;
+  /**
+   * Server mode boots with no window at all (HIVE-142).
+   *
+   * `index.ts` decides *whether* this run is server mode before either of
+   * these handlers exists, so the mode has to travel in rather than be raced:
+   * without this flag, `whenReady`'s own `createWindow({ withSplash: true })`
+   * below would open the console on every boot regardless of what `index.ts`
+   * branched on, defeating the entire feature.
+   */
+  serverMode?: boolean;
 }
 
 /** Set once `before-quit` fires, so teardown runs exactly once. */
@@ -33,21 +43,33 @@ export function registerLifecycle({
   createWindow,
   platform = process.platform,
   isDev = Boolean(process.env.ELECTRON_RENDERER_URL),
+  serverMode = false,
 }: LifecycleDeps): void {
   const isMac = platform === 'darwin';
 
   /**
-   * Focus the existing window instead of opening a second one.
+   * Focus the existing window instead of opening a second one — or, on a
+   * served machine, open the console for the first time.
    *
    * Mandatory, not optional. Once story 092 lands, a second instance means a
    * second set of PTYs running `claude` against the same repositories — two
    * agents editing one working tree. The lock has to exist *before* PTYs do.
+   *
+   * A windowless app is now a real state (HIVE-142, server mode), not merely
+   * a gap between windows — so "no window" here means "open one", not
+   * "nothing to focus". Without this, screen-sharing into a served Mac mini
+   * and launching the app a second time did nothing at all, silently: the
+   * single-instance lock handed this process the event, `primaryWindow()`
+   * answered `undefined`, and the handler returned.
    */
   app.on('second-instance', () => {
     // The *app's* window, not merely the first one open — with the About panel
     // up and the main window closed, the first one is the panel.
     const existing = primaryWindow();
-    if (!existing) return;
+    if (!existing) {
+      createWindow();
+      return;
+    }
     if (existing.isMinimized()) existing.restore();
     existing.focus();
   });
@@ -75,8 +97,14 @@ export function registerLifecycle({
     }
     /**
      * The only launch that gets the splash — this is the cold start it covers.
+     *
+     * Skipped in server mode (HIVE-142): the console is the tray, not a
+     * window, and `index.ts` composes the listener and the tray itself once
+     * this promise resolves. Without this branch, server mode would open a
+     * window on every boot no matter what `index.ts` decided, because this
+     * handler runs unconditionally on its own `whenReady`.
      */
-    createWindow({ withSplash: true });
+    if (!serverMode) createWindow({ withSplash: true });
   });
 
   /**

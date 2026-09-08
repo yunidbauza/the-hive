@@ -155,6 +155,40 @@ describe('second-instance', () => {
 
     await expect(fire('second-instance')).resolves.not.toThrow();
   });
+
+  it('opens the console on a second launch when no window exists (HIVE-142)', async () => {
+    // The served case: a screen-share into the mini and a second launch must
+    // do something, not nothing — see the handler's own comment.
+    const createWindow = vi.fn();
+    await register({ createWindow, platform: 'darwin' });
+
+    await fire('second-instance');
+
+    expect(createWindow).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('server mode (HIVE-142)', () => {
+  it('does not create a window on boot when serverMode is set', async () => {
+    const { Menu } = await import('electron');
+    const createWindow = vi.fn();
+
+    registerLifecycle({ createWindow, platform: 'darwin', serverMode: true });
+    // No `createWindow` call to wait on — that is exactly what this proves —
+    // so wait on the menu install, which still happens on the same tick.
+    await vi.waitFor(() => expect(Menu.setApplicationMenu).toHaveBeenCalled());
+
+    expect(createWindow).not.toHaveBeenCalled();
+  });
+
+  it('still creates the splash window on boot when serverMode is not set', async () => {
+    const createWindow = vi.fn();
+
+    registerLifecycle({ createWindow, platform: 'darwin' });
+    await vi.waitFor(() => expect(createWindow).toHaveBeenCalledTimes(1));
+
+    expect(createWindow).toHaveBeenCalledWith({ withSplash: true });
+  });
 });
 
 describe('before-quit', () => {
