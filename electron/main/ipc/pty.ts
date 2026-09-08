@@ -139,8 +139,20 @@ interface Channel {
    * flow control and is emptied by an ack. This holds *content*, and an ack
    * says nothing about whether it can be discarded: a client that acked a
    * batch and then lost its socket still needs that batch on reconnect.
+   *
+   * `bytes` is carried on the entry rather than re-measured on the way out
+   * (HIVE-143 review). The ring accrues the batch's `pendingBytes` — the sum of
+   * `Buffer.byteLength` over the individual `onData` pieces — and the trim used
+   * to subtract `Buffer.byteLength(entry.chunk)`, which is the length of those
+   * same pieces *joined*. Those are not the same number: a surrogate pair split
+   * across two pty reads is two lone surrogates measuring 3 bytes each and one
+   * astral character measuring 4 once joined, so every emoji landing on a read
+   * boundary left `replayBytes` two bytes permanently high and the ring trimmed
+   * that much early, for the life of the session. Storing the number that was
+   * added is what makes the two sides the same measure by construction rather
+   * than by two expressions agreeing.
    */
-  replay: { seq: number; chunk: string }[];
+  replay: { seq: number; chunk: string; bytes: number }[];
   replayBytes: number;
 
   /** Held until the last data for this session has been flushed. */
@@ -221,7 +233,7 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
         what was actually put on the wire, and recording first would leave a
         batch in the ring that a throwing `send` never delivered.
       */
-      channel.replay.push({ seq: channel.seq, chunk });
+      channel.replay.push({ seq: channel.seq, chunk, bytes });
       channel.replayBytes += bytes;
       while (channel.replayBytes > replayBytes && channel.replay.length > 0) {
         // Whole batches from the front, the way `Scrollback` drops whole
@@ -229,7 +241,9 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
         // fragment, and the seq is the only thing making resume possible.
         const dropped = channel.replay.shift();
         if (dropped === undefined) break;
-        channel.replayBytes -= Buffer.byteLength(dropped.chunk);
+        // The batch's own recorded `bytes`, not a fresh measurement of its
+        // joined text — see `Channel.replay` for why those differ.
+        channel.replayBytes -= dropped.bytes;
       }
 
       /**

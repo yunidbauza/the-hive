@@ -586,6 +586,41 @@ describe('resume', () => {
     expect(ipc.resume('a', 0)).toBeNull();
   });
 
+  /**
+   * HIVE-143 review: the ring accrued `pendingBytes` — the sum of
+   * `Buffer.byteLength` over the individual `onData` pieces — and trimmed by
+   * `Buffer.byteLength` of those same pieces *joined*. A surrogate pair split
+   * across two pty reads makes those two different numbers, so `replayBytes`
+   * drifted permanently upward and the ring trimmed early. Reachable whenever a
+   * PTY emits an emoji at a read boundary, which is every day.
+   */
+  it('accounts a batch by the bytes it measured, not by the bytes of its joined text', () => {
+    // The discrimination, stated rather than implied: a lone surrogate is
+    // encoded as U+FFFD at 3 bytes each, and the pair joined is one 4-byte
+    // character. Six going in, four coming out, under the old code.
+    expect(Buffer.byteLength('\uD83D') + Buffer.byteLength('\uDE80')).toBe(6);
+    expect(Buffer.byteLength('🚀')).toBe(4);
+
+    ipc.dispose();
+    sent = [];
+    ipc = build({ replayBytes: 8 });
+    ipc.spawn(SPAWN);
+
+    // One batch of 6 measured bytes, then one of 8 — 14 in an 8-byte ring, so
+    // exactly one batch has to go. Subtracting the joined 4 instead of the
+    // measured 6 leaves the ring believing it still holds 10 and dropping the
+    // second batch as well, which turns this `replay` into a `gap`.
+    emitData({ sessionId: 'a', chunk: '\uD83D' });
+    emitData({ sessionId: 'a', chunk: '\uDE80' });
+    vi.advanceTimersByTime(8);
+    beat('cccccccc');
+
+    expect(ipc.resume('a', 1)).toEqual({
+      kind: 'replay',
+      events: [{ sessionId: 'a', chunk: 'cccccccc', seq: 2 }],
+    });
+  });
+
   it('does not let the ring grow without bound under a flood', () => {
     ipc.dispose();
     sent = [];
