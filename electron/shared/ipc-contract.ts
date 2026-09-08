@@ -806,7 +806,7 @@ export const CH = {
    * original set, stricter than the `fs` block above because
    * `SKILL_NAME_PATTERN` makes traversal unrepresentable rather than merely
    * filtered) and **seven carry a path**: skill-relative, or, for
-   * `skillsFileDrop` alone, an absolute one. (`pathToken` — the eighth of
+   * `skillsFileDrop` alone, an absolute one. (`pathToken` — the sixth of
    * `BRIDGE_SKILLS_KEYS`'s thirteen bridge keys — is not a channel at all; it
    * never crosses IPC, so it does not appear in this list.)
    *

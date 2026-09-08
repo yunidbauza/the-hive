@@ -276,12 +276,118 @@ describe('copyInto', () => {
       await writeFile(forged, 'forged manifest', 'utf8');
       await chmod(forged, 0o755);
 
-      await expect(copyInto('graphify', '', [forged])).rejects.toThrow();
+      /*
+        `isSkillManifest` true implies `pathExists` true — SKILL.md always
+        exists on disk if it is the actual manifest — so the check cannot
+        change *whether* this is refused, only *why*. Asserting the specific
+        message is what makes this test fail if the `isSkillManifest` branch
+        is ever removed, rather than passing on the generic "already exists"
+        refusal underneath it.
+      */
+      await expect(copyInto('graphify', '', [forged])).rejects.toThrow(
+        /SKILL\.md cannot be replaced/,
+      );
 
       const stillThere = await readFile(join(skillsDir, 'graphify', 'SKILL.md'), 'utf8');
       expect(stillThere).toContain('original');
       const mode = (await stat(join(skillsDir, 'graphify', 'SKILL.md'))).mode;
       expect(mode & 0o111).toBe(0); // still not executable
+    });
+  });
+
+  it('refuses two sources with the same basename in one batch, rather than letting the second silently win', async () => {
+    await mkdir(join(outside, 'p'), { recursive: true });
+    await mkdir(join(outside, 'q'), { recursive: true });
+    await writeFile(join(outside, 'p', 'notes.md'), 'from p', 'utf8');
+    await writeFile(join(outside, 'q', 'notes.md'), 'from q', 'utf8');
+
+    await expect(
+      copyInto('graphify', '', [
+        join(outside, 'p', 'notes.md'),
+        join(outside, 'q', 'notes.md'),
+      ]),
+    ).rejects.toThrow(/named twice/);
+
+    // Total refusal: the first of the pair, processed before the collision
+    // was found, must not have landed either.
+    await expect(stat(join(skillsDir, 'graphify', 'notes.md'))).rejects.toThrow();
+  });
+
+  /**
+   * A directory destination was never checked against the disk at all —
+   * `assertDestinationFree` runs only on the two file branches. Driven with a
+   * bundle already holding a *file* named `refs` and a batch of
+   * `[first.txt, refs/]`: planning found nothing wrong (a directory
+   * destination was simply never asked about), `first.txt` copied first, and
+   * the write loop's own `mkdir('…/refs', { recursive: true })` then threw a
+   * raw `EEXIST` naming the resolved host path — after `first.txt` was
+   * already on disk, contradicting the refusal the caller received.
+   */
+  describe('directory destination collisions', () => {
+    it('refuses a batch where a directory destination collides with an existing file, writing nothing at all', async () => {
+      await writeFile(join(skillsDir, 'graphify', 'refs'), 'a file, not a folder', 'utf8');
+      await writeFile(join(outside, 'first.txt'), 'first', 'utf8');
+      await mkdir(join(outside, 'refs'), { recursive: true });
+      await writeFile(join(outside, 'refs', 'inner.txt'), 'inner', 'utf8');
+
+      await expect(
+        copyInto('graphify', '', [join(outside, 'first.txt'), join(outside, 'refs')]),
+      ).rejects.toThrow();
+
+      // Total refusal: `first.txt` was planned and would have been written
+      // *before* the colliding directory in the old, unguarded write loop.
+      await expect(stat(join(skillsDir, 'graphify', 'first.txt'))).rejects.toThrow();
+      // The pre-existing file is untouched, not silently replaced by a folder.
+      expect(
+        await readFile(join(skillsDir, 'graphify', 'refs'), 'utf8'),
+      ).toBe('a file, not a folder');
+    });
+
+    /**
+     * Reachable nested, not only at the top level: a bundle holding a file at
+     * `a/b`, with a dropped folder `a` containing `b/c.txt`. `readBundle`
+     * always lists a directory entry before its own children, so the `a/b`
+     * directory entry is checked — and refused — before `b/c.txt` is ever
+     * reached, rather than surfacing several segments later as a raw
+     * `ENOTDIR` from a deeper `mkdir`.
+     */
+    it('refuses a nested directory collision several segments deep', async () => {
+      await mkdir(join(skillsDir, 'graphify', 'a'), { recursive: true });
+      await writeFile(join(skillsDir, 'graphify', 'a', 'b'), 'a file, not a folder', 'utf8');
+
+      await mkdir(join(outside, 'a', 'b'), { recursive: true });
+      await writeFile(join(outside, 'a', 'b', 'c.txt'), 'x', 'utf8');
+
+      /*
+        A clean sentence, not merely a rejection: this is what `mkdir`'s own
+        `EEXIST`/`ENOTDIR` cannot produce on its own, so asserting the message
+        (rather than only `.rejects.toThrow()`) is what proves this is caught
+        at plan time by `assertDirectoryFree`, not by the raw failure the
+        write loop's own `mkdir` would still surface even with no check here.
+      */
+      await expect(copyInto('graphify', '', [join(outside, 'a')])).rejects.toThrow(
+        /already exists in this skill/,
+      );
+
+      await expect(
+        stat(join(skillsDir, 'graphify', 'a', 'b', 'c.txt')),
+      ).rejects.toThrow();
+    });
+
+    it('still merges a directory drop onto an existing directory of the same name', async () => {
+      await mkdir(join(skillsDir, 'graphify', 'refs'), { recursive: true });
+      await writeFile(join(skillsDir, 'graphify', 'refs', 'old.txt'), 'old', 'utf8');
+      await mkdir(join(outside, 'refs'), { recursive: true });
+      await writeFile(join(outside, 'refs', 'new.txt'), 'new', 'utf8');
+
+      await copyInto('graphify', '', [join(outside, 'refs')]);
+
+      expect(
+        await readFile(join(skillsDir, 'graphify', 'refs', 'old.txt'), 'utf8'),
+      ).toBe('old');
+      expect(
+        await readFile(join(skillsDir, 'graphify', 'refs', 'new.txt'), 'utf8'),
+      ).toBe('new');
     });
   });
 
