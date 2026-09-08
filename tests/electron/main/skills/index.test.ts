@@ -14,7 +14,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { BundleManifest } from '@shared/skills-contract';
+import { MAX_BUNDLE_FILE_BYTES, type BundleManifest } from '@shared/skills-contract';
 
 import { createSkillsRuntime } from '../../../../electron/main/skills';
 
@@ -578,8 +578,69 @@ describe('createSkillsRuntime file verbs', () => {
     const skills = runtime();
     await skills.write('graphify', '---\nname: graphify\n---\n');
 
-    await expect(skills.removeFile('graphify', '')).rejects.toThrow();
+    await expect(skills.removeFile('graphify', '')).rejects.toThrow(
+      /cannot remove the bundle root/i,
+    );
     expect(await readdir(join(skillsDir(), 'graphify'))).toContain('SKILL.md');
+  });
+
+  it('refuses to remove the bundle root by a spelling other than the empty string', async () => {
+    /*
+      `''` was never the property that mattered — resolving to the root was.
+      `symlink('..', up)` plus `up/graphify` clears `assertSkillPath` (no dot
+      segment, no `..` segment in the *request* — the traversal happens on
+      disk, not in the string) and resolves to the exact same root a string
+      check on `''` alone would have missed entirely.
+    */
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+    await symlink('..', join(skillsDir(), 'graphify', 'up'));
+
+    await expect(
+      skills.removeFile('graphify', 'up/graphify'),
+    ).rejects.toThrow(/cannot remove the bundle root/i);
+    expect(await readdir(join(skillsDir(), 'graphify'))).toContain('SKILL.md');
+  });
+
+  it('lets a stale symlink pointing inside the bundle be deleted', async () => {
+    /*
+      Refusing to *climb past* an unresolvable link is right — that is the
+      write-escape fix above. Refusing to *address* it at all is not: a
+      dangling link is the ordinary accident of a dotfiles-managed skill
+      folder (`index.ts`'s `exists()` names exactly this population), and one
+      that declares a target still inside the bundle must stay deletable, or
+      the pane's own Delete button fails forever with no recovery but a text
+      editor.
+    */
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+    // Points at a sibling that was never created — dangling, and its
+    // declared target resolves inside the root.
+    await symlink('nonexistent.txt', join(skillsDir(), 'graphify', 'stale'));
+
+    await expect(skills.removeFile('graphify', 'stale')).resolves.toBeDefined();
+    expect(await readdir(join(skillsDir(), 'graphify'))).not.toContain('stale');
+  });
+
+  it('still refuses a stale symlink whose declared target is outside the bundle', async () => {
+    // The fix above must not swing the other way: a dangling link is only
+    // legitimate when what it *claims* to point to is inside the root.
+    const skills = runtime();
+    await skills.write('graphify', '---\nname: graphify\n---\n');
+    const outside = await mkdtemp(join(tmpdir(), 'hive-outside-'));
+    const outsideTarget = join(outside, 'not-yet.txt');
+    try {
+      await symlink(outsideTarget, join(skillsDir(), 'graphify', 'stale-outside'));
+
+      await expect(
+        skills.removeFile('graphify', 'stale-outside'),
+      ).rejects.toThrow(/outside the skill folder/i);
+      expect(await readdir(join(skillsDir(), 'graphify'))).toContain(
+        'stale-outside',
+      );
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 
   it('refuses to move SKILL.md out from under the skill', async () => {
@@ -614,11 +675,11 @@ describe('createSkillsRuntime file verbs — boundaries', () => {
 
     await writeFile(
       join(skillsDir(), 'graphify', 'at-cap.bin'),
-      Buffer.alloc(5_000_000, 'a'),
+      Buffer.alloc(MAX_BUNDLE_FILE_BYTES, 'a'),
     );
     await writeFile(
       join(skillsDir(), 'graphify', 'over-cap.bin'),
-      Buffer.alloc(5_000_001, 'a'),
+      Buffer.alloc(MAX_BUNDLE_FILE_BYTES + 1, 'a'),
     );
 
     const atCap = await skills.readFile('graphify', 'at-cap.bin');
@@ -626,7 +687,7 @@ describe('createSkillsRuntime file verbs — boundaries', () => {
 
     expect(atCap.refused).toBeNull();
     expect(overCap.refused).toBe('too-large');
-    expect(overCap.size).toBe(5_000_001);
+    expect(overCap.size).toBe(MAX_BUNDLE_FILE_BYTES + 1);
   });
 
   it('writes exactly "#!" as 755', async () => {
