@@ -446,6 +446,38 @@ describe('useServingDeviceCount', () => {
     expect(readAppInfo).not.toHaveBeenCalled();
     expect(result.current).toBe(0);
   });
+
+  /**
+   * The roster changes from the pane this number is rendered on (HIVE-144
+   * review, M7).
+   *
+   * The effect used to depend on `hasSnapshot`, a boolean — a `false → true`
+   * edge that fires once. Right for a bind that cannot move for the life of
+   * the process, wrong for a count a user edits: `pairDevice` and
+   * `revokeDevice` both install a fresh snapshot when they land, and this had
+   * to be keyed on that to follow them.
+   */
+  it('re-reads when a pairing installs a new snapshot', async () => {
+    setProjectConfigForTest(snapshot({}));
+    readAppInfo.mockResolvedValue(deviceCountInfo(1));
+
+    const { result } = renderHook(() => useServingDeviceCount());
+    await waitFor(() => {
+      expect(result.current).toBe(1);
+    });
+
+    readAppInfo.mockResolvedValue(deviceCountInfo(2));
+    // A *different* snapshot object, which is what every mutating verb in
+    // `@lib/project-config` installs — the effect must re-run on the identity
+    // change, not only on the null-to-value edge.
+    act(() => {
+      setProjectConfigForTest(snapshot({ host: '127.0.0.1' }));
+    });
+
+    await waitFor(() => {
+      expect(result.current).toBe(2);
+    });
+  });
 });
 
 /** Same shape as {@link renderValue}, but for `useAttachedServer`. */

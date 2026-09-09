@@ -197,9 +197,54 @@ async function mutate(
   emit();
 }
 
-/** Ask main for the config. Called once at startup. */
-export const loadProjectConfig = (): Promise<void> =>
-  read((bridge) => bridge.config.get());
+/**
+ * How the boot read backs off when it lands on an unbound channel (HIVE-144
+ * review, M8) — 250 ms, doubling, seven attempts, so the last one is about
+ * 16 s after the first.
+ *
+ * Sized against what it is waiting out. A boot attach unbinds the local
+ * surface *before* it dials, and `CLIENT_ATTACH_TIMEOUT_MS` bounds that dial
+ * at 10 s — after which `switchIpcMode` rebinds local and `config:get` starts
+ * answering again. A window shorter than that would give up while the app is
+ * still on its way to being usable; a fixed short interval would spend seven
+ * reads inside the first two seconds and miss the same moment.
+ *
+ * Exported so the test asserts against the real schedule rather than a
+ * duplicated magic number, exactly as `LATE_BIND_RETRY_MS` is.
+ */
+export const BOOT_READ_BACKOFF_MS = [250, 500, 1_000, 2_000, 4_000, 8_000] as const;
+
+/**
+ * Ask main for the config, retrying while the answer has not landed
+ * (HIVE-144 review, M8).
+ *
+ * A single unretried read raced the boot dial. `switchIpcMode('remote')`
+ * unbinds every local channel synchronously and only rebinds when the dial
+ * settles, so a `config:get` issued in that window rejects — and {@link read}
+ * correctly treats a broken channel as "stay permissive", which leaves the
+ * snapshot `null` **permanently**, until someone finds the Reload button in a
+ * pane the snapshot being `null` renders as an empty state. It compounds with
+ * the dial having had no deadline at all before this review round.
+ *
+ * Retries only while the snapshot is still `null`, so a read that succeeded
+ * costs nothing extra, and never in the browser demo, where the absence of a
+ * bridge is the answer rather than a failure to get one.
+ *
+ * Not shared with {@link reloadProjectConfig}: that one is a user pressing a
+ * button and watching for a result, so a failure should be visible at once
+ * rather than retried behind a UI that looks like it is doing nothing.
+ */
+export async function loadProjectConfig(): Promise<void> {
+  await read((bridge) => bridge.config.get());
+
+  for (const delay of BOOT_READ_BACKOFF_MS) {
+    // `window.hive` rather than a captured flag: the browser demo has no
+    // bridge and never will, and there is nothing here to wait for.
+    if (snapshot !== null || window.hive === undefined) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, delay));
+    await read((bridge) => bridge.config.get());
+  }
+}
 
 /** Re-read the file the user just edited, without restarting the app. */
 export const reloadProjectConfig = (): Promise<void> =>

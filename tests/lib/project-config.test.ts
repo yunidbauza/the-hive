@@ -9,6 +9,7 @@ import {
 } from '@shared/config-contract';
 
 import {
+  BOOT_READ_BACKOFF_MS,
   loadProjectConfig,
   pairDevice,
   projectAccess,
@@ -191,6 +192,72 @@ describe('loadProjectConfig', () => {
     expect(projectConfigSnapshot()).toBeNull();
     expect(projectAccess('nova-web').spawnable).toBe(true);
     expect(console.error).toHaveBeenCalled();
+  });
+
+  /**
+   * The boot read races the boot dial (HIVE-144 review, M8).
+   *
+   * `switchIpcMode('remote')` unbinds every local channel synchronously and
+   * only rebinds when the dial settles, so a `config:get` issued in that
+   * window rejects. A single unretried read then left the snapshot `null`
+   * **permanently**, until someone found the Reload button in a pane that
+   * `null` renders as an empty state.
+   */
+  it('retries a rejected boot read until the channel answers', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const expected = snapshot([{ id: 'nova-web', status: 'ok' }]);
+    let attempts = 0;
+    withBridge(() => {
+      attempts += 1;
+      // The channel comes back on the third ask, which is inside the schedule
+      // and after more than one failure — a hook that retried exactly once
+      // would still be null here.
+      return attempts < 3
+        ? Promise.reject(new Error('No handler registered for config:get'))
+        : Promise.resolve(expected);
+    });
+
+    const loading = loadProjectConfig();
+    await vi.advanceTimersByTimeAsync(BOOT_READ_BACKOFF_MS[0] + BOOT_READ_BACKOFF_MS[1]);
+    await loading;
+
+    expect(projectConfigSnapshot()).toBe(expected);
+    vi.useRealTimers();
+  });
+
+  it('gives up after the schedule rather than retrying forever', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    let attempts = 0;
+    withBridge(() => {
+      attempts += 1;
+      return Promise.reject(new Error('No handler registered for config:get'));
+    });
+
+    const loading = loadProjectConfig();
+    await vi.advanceTimersByTimeAsync(
+      BOOT_READ_BACKOFF_MS.reduce((total, delay) => total + delay, 0),
+    );
+    await loading;
+
+    // One first read plus one per backoff step, and no eighth.
+    expect(attempts).toBe(BOOT_READ_BACKOFF_MS.length + 1);
+    expect(projectConfigSnapshot()).toBeNull();
+    vi.useRealTimers();
+  });
+
+  /** A read that landed costs nothing extra — the loop is for failures only. */
+  it('does not retry once the first read has landed', async () => {
+    let attempts = 0;
+    withBridge(() => {
+      attempts += 1;
+      return Promise.resolve(snapshot());
+    });
+
+    await loadProjectConfig();
+
+    expect(attempts).toBe(1);
   });
 
   it('stops notifying a listener that unsubscribed', async () => {

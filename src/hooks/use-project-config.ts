@@ -284,14 +284,24 @@ export function useServerExposure(): string | null {
  * Gated on `useProjectConfig` having resolved, the same proxy for "the bridge
  * is actually up" every hook in this file uses, so the browser demo (no
  * bridge, snapshot stays `null`) correctly never calls `readAppInfo` at all.
+ *
+ * **Keyed on the snapshot, not on `hasSnapshot` (HIVE-144 review, M7).** It
+ * used to depend on the boolean, which is a `false → true` edge and therefore
+ * fires exactly once — right for a bind that cannot move for the life of the
+ * process, wrong for a roster the user edits from the pane this number is
+ * rendered on. `pairDevice` and `revokeDevice` both install a fresh snapshot
+ * when they land, so keying on the snapshot itself is what makes the count
+ * follow a pairing or a revocation instead of describing the roster as it was
+ * when Settings first opened. It is the identical correction Ruling 29 made to
+ * {@link useAttachedServer} below, for the identical reason, and it costs one
+ * `app:info` per config write to a `PROCESS_LOCAL` channel.
  */
 export function useServingDeviceCount(): number {
   const snapshot = useProjectConfig();
-  const hasSnapshot = snapshot !== null;
   const [count, setCount] = useState(0);
 
   useEffect(() => {
-    if (!hasSnapshot) return;
+    if (snapshot === null) return;
 
     let cancelled = false;
     void readAppInfo().then((info) => {
@@ -301,7 +311,7 @@ export function useServingDeviceCount(): number {
     return () => {
       cancelled = true;
     };
-  }, [hasSnapshot]);
+  }, [snapshot]);
 
   return count;
 }
