@@ -153,14 +153,28 @@ describe('registerRemoteProxy', () => {
     expect(client.call).not.toHaveBeenCalled();
   });
 
+  /**
+   * Drives every event channel, not just `pty:data` (review round 1). A
+   * single-channel version of this test cannot fail against a proxy that
+   * hard-codes `broadcaster.emit('pty:data', payload)` regardless of what
+   * channel actually fired — "it arrived" and "it arrived as itself" are two
+   * properties, and firing 22 distinct channels with distinct payloads is
+   * what makes the second one checkable: a hard-coded channel mismatches on
+   * the very first one that isn't `pty:data`.
+   */
   it('pumps a client event into the broadcaster on the same channel', () => {
+    expect(eventChannels.length).toBe(22);
+
     const client = fakeClient();
     const broadcaster = fakeBroadcaster();
     registerRemoteProxy({ client, broadcaster });
 
-    client.emit('pty:data', { seq: 1 });
-
-    expect(broadcaster.emit).toHaveBeenCalledWith('pty:data', { seq: 1 });
+    for (const channel of eventChannels) {
+      const payload = { channel };
+      client.emit(channel, payload);
+      expect(broadcaster.emit).toHaveBeenCalledWith(channel, payload);
+    }
+    expect(broadcaster.emit).toHaveBeenCalledTimes(eventChannels.length);
   });
 
   it("refuses each WINDOW_BOUND channel locally with the table's own reason", async () => {
@@ -207,6 +221,47 @@ describe('registerRemoteProxy', () => {
     expect(client.notify).not.toHaveBeenCalled();
   });
 
+  /**
+   * The sibling `ipc/index.ts`'s own `on()` guards against, by name in its
+   * own comment (review round 1): a `send` channel has no reply, so a throw
+   * from the handler must not escape `ipcMain.on`'s callback — it is logged
+   * and dropped instead. Not hypothetical: `client.notify` throws
+   * `RemoteCallError('frame-too-large', …)` past
+   * `POST_ATTACH_FRAME_MAX_BYTES`, and a large `pty:write` paste is the
+   * realistic trigger named in `socket.ts`'s own comment.
+   */
+  it('logs and drops a notify that throws, rather than letting it escape', () => {
+    const client = fakeClient();
+    const thrown = new Error('frame too large');
+    client.notify.mockImplementation(() => {
+      throw thrown;
+    });
+    registerRemoteProxy({ client, broadcaster: fakeBroadcaster() });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const listener = listeners.get('pty:write');
+    if (listener === undefined) throw new Error('pty:write was never bound');
+
+    expect(() => listener(trustedEvent, { data: 'a very large paste' })).not.toThrow();
+    expect(consoleError).toHaveBeenCalledWith('[hive] rejected pty:write:', thrown);
+
+    consoleError.mockRestore();
+  });
+
+  /**
+   * Without this guard, a second `registerRemoteProxy()` call would silently
+   * reassign `bindings` and `unsubscribe`, orphaning the first registration's
+   * `notify` listeners against a stale client — `ipcMain.on` does not refuse
+   * a duplicate the way `ipcMain.handle` does (review round 1).
+   */
+  it('refuses a second registration without a reset in between', () => {
+    registerRemoteProxy({ client: fakeClient(), broadcaster: fakeBroadcaster() });
+
+    expect(() =>
+      registerRemoteProxy({ client: fakeClient(), broadcaster: fakeBroadcaster() }),
+    ).toThrow(/resetRemoteProxy/);
+  });
+
   it('unbinds every channel and stops pumping events on reset', () => {
     const client = fakeClient();
     const broadcaster = fakeBroadcaster();
@@ -214,8 +269,12 @@ describe('registerRemoteProxy', () => {
 
     resetRemoteProxy();
 
-    expect(removeHandler).toHaveBeenCalledTimes(callChannels.length + notifyChannels.length);
-    expect(removeAllListeners).toHaveBeenCalledTimes(callChannels.length + notifyChannels.length);
+    // 105 (99 call + 6 notify), the same literal `records every binding`
+    // pins — not `callChannels.length + notifyChannels.length`, which would
+    // recompute its own expectation from the same source the code under test
+    // reads and could never catch a channel silently lost between the two.
+    expect(removeHandler).toHaveBeenCalledTimes(105);
+    expect(removeAllListeners).toHaveBeenCalledTimes(105);
     expect(remoteProxyBindingsSize()).toBe(0);
 
     client.emit('pty:data', { seq: 2 });

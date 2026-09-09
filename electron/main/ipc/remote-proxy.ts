@@ -46,8 +46,24 @@ let unsubscribe: (() => void) | null = null;
  * this process's own sandboxed renderer, and a subframe forging a channel
  * call is exactly as unwelcome talking to a socket as it is talking to a
  * local handler.
+ *
+ * Refuses a second call without a `resetRemoteProxy()` in between (review
+ * round 1). Without this, a re-registration would silently reassign
+ * `bindings` and `unsubscribe`, orphaning the first registration: its `call`
+ * channels would throw on Electron's own "second handler" refusal mid-loop,
+ * but its `notify` channels do not — `ipcMain.on` happily adds a second
+ * listener — so the stale first client would keep answering `pty:write`
+ * alongside the new one, unbindable because nothing still references it.
  */
 export function registerRemoteProxy(deps: { client: RemoteClient; broadcaster: Broadcaster }): void {
+  if (bindings !== null) {
+    throw new Error(
+      'registerRemoteProxy is already registered. Call resetRemoteProxy() first — ' +
+        'registering again without it would leave the previous registration’s notify ' +
+        'listeners bound against a stale client, since ipcMain.on does not refuse a duplicate.',
+    );
+  }
+
   const { client, broadcaster } = deps;
 
   bindings = createBindings(ipcMain);
@@ -82,7 +98,22 @@ export function registerRemoteProxy(deps: { client: RemoteClient; broadcaster: B
     } else if (kind === 'notify') {
       ipcMain.on(channel, (event: IpcMainEvent, payload: unknown) => {
         assertSender(event);
-        client.notify(channel as Channel, payload);
+        /*
+          Mirrors `ipc/index.ts`'s own `on()` wrapper exactly, and for the
+          reason its comment gives: a `send` channel has no reply, so a throw
+          here would be an unhandled exception in main rather than an error
+          the renderer sees (review round 1). It is not hypothetical for this
+          proxy — `client.notify` (`remote-client/socket.ts`) throws
+          `RemoteCallError('frame-too-large', …)` past
+          `POST_ATTACH_FRAME_MAX_BYTES`, and a very large `pty:write` paste is
+          the realistic way that happens. Logged and dropped, exactly as the
+          local path drops it — never acted on, never escaping this wrapper.
+        */
+        try {
+          client.notify(channel as Channel, payload);
+        } catch (cause) {
+          console.error(`[hive] rejected ${channel}:`, cause);
+        }
       });
       bindings.record(channel);
     }
