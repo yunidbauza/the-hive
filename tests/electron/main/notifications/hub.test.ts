@@ -692,7 +692,20 @@ describe('robustness', () => {
 });
 
 describe('the foreground gate', () => {
-  it('raises an already-read row and presents nothing', () => {
+  /**
+   * The gate moved, and this is where it went (HIVE-145).
+   *
+   * The hub used to refuse to present at all while `isForeground` answered
+   * true. It cannot any more: with two devices attached that question has two
+   * answers, and one device watching a session must not silence the
+   * interruption for another device that is not. So the hub hands every toast
+   * to its presenter and the presenter — `createToastRoute` in production —
+   * asks the question once per surface.
+   *
+   * What `isForeground` still decides here is `unread`, which is genuinely the
+   * any-surface question: a row somebody has seen is a row that has been seen.
+   */
+  it('marks an already-seen row read, and still offers it to the presenter', () => {
     const present = vi.fn();
     const hub = makeHub({ present, isForeground: () => true });
 
@@ -703,8 +716,16 @@ describe('the foreground gate', () => {
     });
 
     expect(raised?.unread).toBe(false);
-    expect(present).not.toHaveBeenCalled();
     expect(hub.list()).toHaveLength(1);
+
+    // Offered with the action, which is the only thing that lets the router
+    // work out which surfaces are already looking at it.
+    expect(present).toHaveBeenCalledTimes(1);
+    expect(present.mock.calls[0][0]).toMatchObject({
+      id: raised?.id,
+      kind: 'session.blocked',
+      action: { type: 'session', entityId: 'term-3' },
+    });
   });
 
   it('leaves the unread count untouched', () => {
@@ -1042,13 +1063,16 @@ describe('the toast’s name for a subject', () => {
       subject: 'sess-11',
       action: { type: 'session', entityId: 'sess-11' },
     })!;
-    expect(present).not.toHaveBeenCalled();
+    // Offered under the name it had then (HIVE-145: the hub no longer gates on
+    // foreground — the router does, per surface). What matters here is the
+    // *second* call's title, read again at promotion time.
+    expect(present.mock.calls[0][0].title).toBe('sess-11 is yours again');
 
     name = 'mutex-explanation';
     foreground = false;
     hub.promote(raised.id);
 
-    expect(present.mock.calls[0][0].title).toBe(
+    expect(present.mock.calls[1][0].title).toBe(
       'mutex-explanation is yours again',
     );
   });

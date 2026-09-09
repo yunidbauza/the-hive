@@ -832,3 +832,7 @@ export type {
 } from './hub';
 export { createSessionNames } from './names';
 export type { SessionNames } from './names';
+export { createToastRoute } from './toast-route';
+export type { ToastRouteOptions } from './toast-route';
+export { createToastQueue, TOAST_QUEUE_KINDS } from './toast-queue';
+export type { ToastQueue } from './toast-queue';

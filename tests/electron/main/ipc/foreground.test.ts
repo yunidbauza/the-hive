@@ -149,6 +149,11 @@ vi.mock('../../../../electron/main/notifications', async () => {
     },
     createNotifier: () => ({ observe: vi.fn(), reevaluateForeground: vi.fn() }),
     createSessionNames: actual.createSessionNames,
+    // Real (HIVE-145): this suite fakes the hub to capture the predicate it is
+    // handed, and the router is a consumer of that predicate rather than
+    // something standing between this test and it.
+    createToastRoute: actual.createToastRoute,
+    createToastQueue: actual.createToastQueue,
   };
 });
 

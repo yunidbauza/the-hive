@@ -277,6 +277,13 @@ export interface HiveNotification {
  */
 export interface ToastPayload {
   id: string;
+  /**
+   * Carried because the **queue** filters on it: only kinds a person must
+   * answer are replayed when a device attaches after nobody was looking, and
+   * `NOTIFICATION_KIND_SPECS` is keyed by this. A receiver may also read it —
+   * it is the one fact about a toast that the words do not already state.
+   */
+  kind: NotificationKind;
   title: string;
   body: string;
   action: NotificationAction;

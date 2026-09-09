@@ -40,10 +40,29 @@ import {
  * that needs a reason first.
  */
 
-/** Show one notification. The real one wraps Electron's `Notification`. */
+/**
+ * Show one notification.
+ *
+ * The real one is `createToastRoute` (`./toast-route.ts`), which decides *who*
+ * is interrupted and either raises Electron's `Notification` on this machine or
+ * sends the toast to an attached client. Before HIVE-145 it was the bare
+ * Electron call, because there was one surface and no question to answer.
+ *
+ * `id` and `action` travel with the words because the router cannot decide
+ * without them: `action` is what says which session this is about, so a surface
+ * already watching it can be skipped, and `id` is what lets the router avoid
+ * interrupting the same surface twice about one event when a held row is later
+ * promoted.
+ *
+ * `onClick` is still a closure, and still the hub's: it is what the *local*
+ * presenter runs. Nothing of it crosses a socket — see `ToastPayload`.
+ */
 export type NotificationPresenter = (options: {
+  id: string;
+  kind: NotificationKind;
   title: string;
   body: string;
+  action: NotificationAction;
   onClick: () => void;
 }) => void;
 
@@ -511,8 +530,11 @@ export function createNotificationHub(
 
       if (delivery === 'both') {
         present({
+          id: entry.id,
+          kind: entry.kind,
           title: toastTitle(entry),
           body: entry.body,
+          action: entry.action,
           onClick: () => {
             /**
              * Dismissed, not merely marked read (HIVE-81).
@@ -777,10 +799,25 @@ export function createNotificationHub(
 
         broadcast(notification);
 
-        if (delivery === 'both' && !foreground) {
+        /*
+          No `!foreground` gate here since HIVE-145: suppression is the
+          router's, per surface. One device watching a session must not silence
+          the interruption for another device that is not — and the router
+          remembers who it has told, so the promotion that follows when the
+          watching surface looks away reaches only that surface.
+
+          `foreground` still decides `unread` above, and still gates the
+          notifier's `pendingForeground`. Those are the any-surface question —
+          has anybody seen this — which is a different one and still has one
+          right answer.
+        */
+        if (delivery === 'both') {
           present({
+            id: notification.id,
+            kind: notification.kind,
             title: toastTitle(notification),
             body: notification.body,
+            action: notification.action,
             /**
              * Dismissed, not merely marked read (HIVE-81) — with one
              * exception, `ask` (HIVE-118 whole-branch review, finding 1).

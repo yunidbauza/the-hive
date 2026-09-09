@@ -130,6 +130,7 @@ import type {
   JiraTransition,
 } from '@shared/jira-contract';
 import { LEDGER_DIR, OVERMIND } from '@shared/ledger-contract';
+import type { NotificationAction } from '@shared/notification-contract';
 import { SNAPSHOT_CHANNELS } from '@shared/remote-contract';
 import { SESSION_NAME_DISPLAY_MAX } from '@shared/session-contract';
 import {
@@ -231,6 +232,8 @@ import {
   createNotificationHub,
   createNotifier,
   createSessionNames,
+  createToastQueue,
+  createToastRoute,
 } from '../notifications';
 import { registerPtyHost } from '../pty-host';
 import {
@@ -308,6 +311,20 @@ const remoteRegistry = createIpcRegistry();
  * it, and a live mode switch tears down and re-registers around it.
  */
 const surfaces = createSurfaceRegistry();
+
+/**
+ * Interruptions raised while nobody was looking (HIVE-145).
+ *
+ * Only the kinds a person must answer, bounded by age and by subject — see the
+ * module for why a faithful replay would be the worse product. Flushed the
+ * moment a surface arrives.
+ *
+ * Module scope beside `surfaces`, and for the same two reasons: it holds
+ * nothing that belongs to one registration, and `resetIpcHandlers` has to be
+ * able to empty it. A mode switch that left it full would raise the departed
+ * mode's questions at the machine you just attached to.
+ */
+const toastQueue = createToastQueue();
 
 /**
  * The surface behind an IPC event, registering it on first sight.
@@ -1368,9 +1385,24 @@ export function registerIpcHandlers(
    */
   const sessionNames = createSessionNames();
 
-  const hub = createNotificationHub({
-    prefs: () => getConfig().notifications,
-    present: ({ title, body, onClick }) => {
+  /**
+   * Raise a toast on **this machine's** desktop.
+   *
+   * Named and lifted out of the hub's options in HIVE-145: it is no longer the
+   * whole of what presenting means. The hub now hands its toasts to
+   * `createToastRoute`, which decides which surfaces should be interrupted and
+   * calls this only for a local window — an attached client raises its own,
+   * because a served Mac's desktop is not where the user is.
+   */
+  const presentLocally = ({
+    title,
+    body,
+    onClick,
+  }: {
+    title: string;
+    body: string;
+    onClick: () => void;
+  }): void => {
       // False on a Linux box with no notification daemon. Checked per send
       // rather than once at boot: the daemon can arrive or go away while the
       // app is running, and constructing one when unsupported throws.
@@ -1428,52 +1460,18 @@ export function registerIpcHandlers(
        * notification is entitled to; the **badge** is the part that persists,
        * and it persists honestly because it is a count rather than an alarm.
        */
-      app.dock?.bounce('informational');
-    },
-    /**
-     * Straight to the surfaces, not through `send` (HIVE-75).
-     *
-     * `send` taps the notifier, and the notifier produces into the hub — so
-     * broadcasting a notification through it would feed the hub's own output
-     * back into its input. `observe` ignores the channel, so nothing would
-     * actually loop today, but the cycle would be one `if` away from existing
-     * and nobody would see it coming.
-     *
-     * `fanOut.emit` rather than a hand-rolled window loop (HIVE-141): the
-     * bypass is of the *tap*, not of the fan-out. A remote client that never
-     * received these three would show an empty inbox on a busy server, which is
-     * exactly the bug a second copy of the loop invites.
-     */
-    broadcast: (notification) => {
-      fanOut.emit(CH.notificationsNew, notification);
-    },
-    announceRead: (id, unread) => {
-      fanOut.emit(CH.notificationsRead, {
-        id,
-        unread,
-      } satisfies NotificationReadEvent);
-    },
-    announceDismissed: (id) => {
-      fanOut.emit(CH.notificationsDismissed, {
-        id,
-      } satisfies NotificationDismissedEvent);
-    },
-    /**
-     * The count on the dock icon.
-     *
-     * Empty string, not `'0'`, clears it — that is Electron's API, and a badge
-     * reading `0` is a worse lie than no badge, because it says the app has
-     * something to report and the something is nothing.
-     *
-     * Off macOS `app.dock` is undefined and this is a no-op. Windows has a
-     * taskbar overlay that would serve the same purpose and needs an icon
-     * rather than a string, so it is left for whoever ships a Windows build
-     * rather than approximated here.
-     */
-    announceUnread: (count) => {
-      app.dock?.setBadge(count > 0 ? String(count) : '');
-    },
-    activate: (action) => {
+    app.dock?.bounce('informational');
+  };
+
+  /**
+   * Open whatever a notification is about.
+   *
+   * Lifted out of the hub's options in HIVE-145 for the reason `presentLocally`
+   * was: the toast queue's flush needs the same behaviour on a click, and a
+   * held toast that activated differently from a live one would be a second
+   * definition of what clicking a notification means.
+   */
+  const activateNotification = (action: NotificationAction): void => {
       /**
        * Main focuses the window; the renderer opens the session.
        *
@@ -1576,7 +1574,77 @@ export function registerIpcHandlers(
         type: 'entity',
         entityId: action.entityId,
       } satisfies NotificationActivateEvent);
+  };
+
+  /**
+   * Declared before the hub so the arrival flush below can reach it, and
+   * before `presentLocally`'s consumer for the same reason: `createToastRoute`
+   * closes over collaborators that are all already built by this line.
+   */
+  const routeToast = createToastRoute({
+    surfaces: () => surfaces.all(),
+    isForegroundFor,
+    present: presentLocally,
+    queue: (payload) => { toastQueue.push(payload); },
+  });
+
+  const hub = createNotificationHub({
+    prefs: () => getConfig().notifications,
+    /**
+     * Who gets interrupted (HIVE-145).
+     *
+     * The hub decides *whether* a notification is worth a toast — prefs,
+     * delivery, supersession — and that stays here. This decides *who*, which
+     * is a question that did not exist while there was one surface: it
+     * suppresses per surface rather than globally, sends an attached client the
+     * toast to raise itself, and holds the interruption when nobody is looking
+     * at all.
+     */
+    present: routeToast,
+    /**
+     * Straight to the surfaces, not through `send` (HIVE-75).
+     *
+     * `send` taps the notifier, and the notifier produces into the hub — so
+     * broadcasting a notification through it would feed the hub's own output
+     * back into its input. `observe` ignores the channel, so nothing would
+     * actually loop today, but the cycle would be one `if` away from existing
+     * and nobody would see it coming.
+     *
+     * `fanOut.emit` rather than a hand-rolled window loop (HIVE-141): the
+     * bypass is of the *tap*, not of the fan-out. A remote client that never
+     * received these three would show an empty inbox on a busy server, which is
+     * exactly the bug a second copy of the loop invites.
+     */
+    broadcast: (notification) => {
+      fanOut.emit(CH.notificationsNew, notification);
     },
+    announceRead: (id, unread) => {
+      fanOut.emit(CH.notificationsRead, {
+        id,
+        unread,
+      } satisfies NotificationReadEvent);
+    },
+    announceDismissed: (id) => {
+      fanOut.emit(CH.notificationsDismissed, {
+        id,
+      } satisfies NotificationDismissedEvent);
+    },
+    /**
+     * The count on the dock icon.
+     *
+     * Empty string, not `'0'`, clears it — that is Electron's API, and a badge
+     * reading `0` is a worse lie than no badge, because it says the app has
+     * something to report and the something is nothing.
+     *
+     * Off macOS `app.dock` is undefined and this is a no-op. Windows has a
+     * taskbar overlay that would serve the same purpose and needs an icon
+     * rather than a string, so it is left for whoever ships a Windows build
+     * rather than approximated here.
+     */
+    announceUnread: (count) => {
+      app.dock?.setBadge(count > 0 ? String(count) : '');
+    },
+    activate: activateNotification,
     now: () => Date.now(),
     isForeground: (action) =>
       action.type === 'session' && isForeground(action.entityId),
@@ -1786,6 +1854,35 @@ export function registerIpcHandlers(
     private copies of this loop would be five chances to disagree about who is
     live.
   */
+  /*
+    Somebody is looking again, so raise what was held while nobody was
+    (HIVE-145).
+
+    On the empty-to-non-empty edge, not on every arrival: a second device
+    attaching to a server the first is already watching has missed nothing, and
+    replaying to it would interrupt about events the surface beside it was told
+    of at the time. The queue is emptied by the flush, so the toasts route
+    exactly once — through the same router, which means the arriving surface's
+    own foreground state still suppresses what it is already looking at.
+  */
+  surfaces.onFirst(() => {
+    for (const held of toastQueue.flush()) {
+      routeToast({
+        ...held,
+        /*
+          The same click behaviour a live toast has, built from the same two
+          pieces (HIVE-81, HIVE-118): dismiss the row, except for an `ask`,
+          whose click reveals the card rather than answering it and must not
+          delete the thing it was meant to reveal.
+        */
+        onClick: () => {
+          if (held.action.type !== 'ask') hub.dismiss(held.id);
+          activateNotification(held.action);
+        },
+      });
+    }
+  });
+
   surfaces.onGone((surfaceId) => {
     deliver.onSurfaceGone(surfaceId);
     /*
@@ -4753,6 +4850,7 @@ export function resetIpcHandlers(options: { flush?: boolean } = {}): void {
   */
   remoteRegistry.clear();
   surfaces.clear();
+  toastQueue.clear();
   /*
     HIVE-144. This makes the test-only reset and the production mode switch
     the same path: a live switch calls this to leave `ipcMain` clean before
