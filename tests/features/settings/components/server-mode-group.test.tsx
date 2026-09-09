@@ -965,6 +965,39 @@ describe('ServerModeGroup', () => {
     });
 
     /*
+      The other half of the same guard, and the trap Ruling 29 briefly swapped
+      the first one for: **configured but not attached**.
+
+      Ruling 19 deliberately leaves this machine's `remote.mode` at `'remote'`
+      when a boot attach fails, so the next launch retries. That is the state a
+      user is in after a server goes away, and this switch is the only thing
+      that stops it dialling at every launch. Keyed on `attachedServerName`
+      alone the click writes nothing — the panel collapses, the file still says
+      `'remote'`, and the next launch dials again.
+
+      Note what distinguishes this from the case above: there, the file said
+      `'local'` and the socket was live; here the file says `'remote'` and there
+      is no socket. Both are "turn it off", and a guard reading either half
+      alone answers one of them by collapsing a panel.
+    */
+    it('stops a failed boot attach from retrying, with no socket to detach from', async () => {
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={ATTACHED_REMOTE}
+          attachedServer={null}
+          attachedServerName={null}
+        />,
+      );
+
+      await userEvent.click(screen.getByRole('switch', { name: 'Attach to a server' }));
+
+      expect(setRemoteConfig).toHaveBeenCalledWith({ mode: 'local' });
+    });
+
+    /*
       The address, the port and the pairing controls describe `remote.host`
       and `remote.port` — the *server's*, while attached. Hidden rather than
       disabled: disabling leaves the wrong values on screen with an

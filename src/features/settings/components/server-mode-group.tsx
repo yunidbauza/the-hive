@@ -680,12 +680,25 @@ export function ServerModeGroup({
           // the write actually lands (see its own doc comment for why this
           // is not `setAttachOpen(next)` up front).
           //
-          // `attached`, not `remote.mode === 'remote'` (Ruling 29). This guard
-          // is the whole exit from remote mode, and keyed on the proxied
-          // snapshot it read `'local'` on every attached window — so the one
-          // click that could have detached fell through to `setAttachOpen`
-          // and merely collapsed a panel.
-          if (!next && attached) {
+          // **Either half, not one of them** (Ruling 29, and its own review).
+          //
+          // `attached` had to be added: keyed on the proxied snapshot alone,
+          // `remote.mode` read `'local'` on every attached window — that is
+          // the far machine's config, which knows nothing of this one's
+          // socket — so the one click that could have detached fell through
+          // to `setAttachOpen` and merely collapsed a panel.
+          //
+          // `remote.mode` had to stay: the two are not the same state, and
+          // the case only the file knows about is a **configured but
+          // unattached** window. Ruling 19 deliberately leaves this machine's
+          // `remote.mode` at `'remote'` when a boot attach fails, precisely so
+          // the next launch retries — so a user who wants it to stop retrying
+          // has this switch and nothing else. Keyed on `attached` alone, their
+          // click writes nothing, the panel collapses, and the next launch
+          // dials again; the only way out is a text editor. Trading one trap
+          // for another is not a fix, and the seed at `:396` already reads
+          // both halves for the same reason.
+          if (!next && (attached || remote.mode === 'remote')) {
             handleDetach();
             return;
           }
