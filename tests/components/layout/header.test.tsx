@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -494,17 +494,138 @@ describe('Header', () => {
         logPath: '/Users/dev/Library/Logs/The Hive',
         receiverBoundHost: '172.17.0.1',
         serverBoundHost: '100.101.102.103',
+        servingDeviceCount: 2,
+        attachedServerName: null,
       });
 
       render(<Header />);
 
       const chips = screen.getByTestId('header-chips');
-      await waitFor(() => expect(chips).toHaveTextContent('100.101.102.103'));
+      await waitFor(() => expect(chips).toHaveTextContent('serving · 2 devices'));
 
       const names = Array.from(chips.children).map((child) => child.textContent);
-      expect(names.indexOf('Serving 100.101.102.103')).toBeGreaterThan(
+      expect(names.indexOf('serving · 2 devices')).toBeGreaterThan(
         names.indexOf('172.17.0.1'),
       );
+    });
+  });
+
+  /**
+   * `AttachedChip`'s own states belong to its own spec; what is pinned here
+   * is only that it is actually mounted in the `header-chips` cluster, after
+   * `ServingChip` (HIVE-144, Task 13) — the same shape the exposure and
+   * serving blocks above use.
+   */
+  describe('the attached chip (HIVE-144)', () => {
+    it('is absent from the chips cluster when there is no config snapshot', () => {
+      render(<Header />);
+
+      const chips = screen.getByTestId('header-chips');
+      expect(chips).not.toHaveTextContent('attached ·');
+    });
+
+    it('joins the cluster, after ServingChip, once this window attaches', async () => {
+      setProjectConfigForTest(emptySnapshot('/Users/dev/.hive/config.json'));
+      readAppInfo.mockResolvedValue({
+        version: '0.1.0',
+        electron: '38.0.0',
+        chrome: '140.0.0',
+        node: '22.0.0',
+        platform: 'darwin',
+        logPath: '/Users/dev/Library/Logs/The Hive',
+        receiverBoundHost: null,
+        serverBoundHost: '100.101.102.103',
+        servingDeviceCount: 2,
+        attachedServerName: 'mini',
+      });
+
+      render(<Header />);
+
+      const chips = screen.getByTestId('header-chips');
+      await waitFor(() => expect(chips).toHaveTextContent('attached · mini'));
+
+      const names = Array.from(chips.children).map((child) => child.textContent);
+      expect(names.indexOf('attached · mini')).toBeGreaterThan(
+        names.indexOf('serving · 2 devices'),
+      );
+    });
+  });
+
+  /**
+   * The two facts this task adds together (HIVE-144, Task 13) — proven both
+   * ways, not just as "the row is non-empty": a header that rendered one
+   * chip twice, or collapsed both into one node, would still make the row
+   * non-empty.
+   */
+  describe('serving and attached together', () => {
+    it('shows both chips when serving and attached at once', async () => {
+      setProjectConfigForTest(emptySnapshot('/Users/dev/.hive/config.json'));
+      readAppInfo.mockResolvedValue({
+        version: '0.1.0',
+        electron: '38.0.0',
+        chrome: '140.0.0',
+        node: '22.0.0',
+        platform: 'darwin',
+        logPath: '/Users/dev/Library/Logs/The Hive',
+        receiverBoundHost: null,
+        serverBoundHost: '100.101.102.103',
+        servingDeviceCount: 2,
+        attachedServerName: 'mini',
+      });
+
+      render(<Header />);
+
+      const chips = screen.getByTestId('header-chips');
+      await waitFor(() => expect(chips).toHaveTextContent('attached · mini'));
+
+      // Both present, as two distinct child nodes — not one node carrying
+      // both strings concatenated, and not one chip standing in for both.
+      const names = Array.from(chips.children).map((child) => child.textContent);
+      expect(names).toContain('serving · 2 devices');
+      expect(names).toContain('attached · mini');
+      expect(names.filter((name) => name === 'serving · 2 devices' || name === 'attached · mini')).toHaveLength(2);
+    });
+
+    /*
+      Local mode at the default bind: every one of the three remote-attach
+      chips reads a fact that is genuinely off here, not merely a snapshot
+      that never resolved — the "no config snapshot" tests above already
+      cover that weaker case. The positive control is the test just above:
+      it proves this same `readAppInfo` mock and the same `header-chips`
+      query can and do surface these two chips' text when the facts are on,
+      so this test's silence cannot be explained by a broken query or a
+      component that always renders nothing.
+    */
+    it('shows no chip in local mode at the default bind', async () => {
+      setProjectConfigForTest(emptySnapshot('/Users/dev/.hive/config.json'));
+      readAppInfo.mockResolvedValue({
+        version: '0.1.0',
+        electron: '38.0.0',
+        chrome: '140.0.0',
+        node: '22.0.0',
+        platform: 'darwin',
+        logPath: '/Users/dev/Library/Logs/The Hive',
+        receiverBoundHost: null,
+        serverBoundHost: null,
+        servingDeviceCount: 0,
+        attachedServerName: null,
+      });
+
+      render(<Header />);
+
+      // Waited on directly rather than via `waitFor(toHaveTextContent(...))`:
+      // there is nothing here to wait to *appear*, so this instead drains the
+      // same `readAppInfo` microtask the positive test above resolves before
+      // asserting, or a genuinely broken assertion could pass on a render
+      // that simply hadn't finished its effects yet.
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      const chips = screen.getByTestId('header-chips');
+      expect(chips).not.toHaveTextContent('serving ·');
+      expect(chips).not.toHaveTextContent('attached ·');
+      expect(chips).not.toHaveTextContent(/\d\.\d+\.\d+\.\d+/);
     });
   });
 });

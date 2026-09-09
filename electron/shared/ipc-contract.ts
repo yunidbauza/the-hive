@@ -1463,6 +1463,53 @@ export interface AppInfo {
    */
   serverBoundHost: string | null;
   /**
+   * How many devices are paired to this Hive's server mode, right now
+   * (HIVE-142, HIVE-144 Task 13).
+   *
+   * Read from `server.devices` on disk — `readServerDevicesFromDisk()`, the
+   * same source `createRemoteListener`'s own `devices` getter uses so a
+   * `--pair` run in another process is visible without a restart — rather
+   * than the config snapshot's cached copy, for a much smaller version of
+   * {@link AppInfo.serverBoundHost}'s own reason: a snapshot taken at launch
+   * cannot see a device paired since. The header's serving chip
+   * (`ServingChip`) is the one consumer, and trades the address
+   * `serverBoundHost` used to carry for this count — see that component's
+   * own doc comment for why the address stopped being the interesting fact.
+   */
+  servingDeviceCount: number;
+  /**
+   * The name of the server this window is attached to over a socket, or
+   * `null` in `'local'` mode (HIVE-144 Task 13).
+   *
+   * **Runtime-derived, and deliberately not `ConfigSnapshot.attachedServer`
+   * (Task 12) — read that field's own doc comment together with this one
+   * before touching either.** That field is a *control's* readout: it names
+   * the machine whose config file `config:get` is answering right now, which
+   * while attached is genuinely the far end, exactly as `RemoteConfig`'s own
+   * doc comment says. This field is a *status* readout: it names whether a
+   * socket is actually open. The two can disagree in **both** directions —
+   * Ruling 19 deliberately leaves `config.json` saying `remote` in
+   * `config.json` after an already-remote re-switch fails and rebinds local,
+   * so a config-derived chip would keep claiming an attachment that is no
+   * longer there; and, symmetrically, would deny one on the next launch
+   * before the boot attach has even been attempted. A chip sourced from this
+   * field instead is wrong in neither direction, because it says what
+   * `electron/main/ipc/router.ts`'s own `attached` variable — the socket
+   * `switchIpcMode` actually opened — is holding right now, not what the
+   * file says should be true.
+   *
+   * The name itself comes from `RemoteClient.serverName()` (Task 7), built
+   * "for the header chip": the far end's `hostname()`, handed over in the
+   * attach handshake (`AttachAccepted.serverName`), not derived from
+   * `remote.host` the way `ConfigSnapshot.attachedServer.name` has to be —
+   * config only knows the address it dials, the live socket knows the name
+   * the machine actually gave itself.
+   *
+   * The header's attached chip (`AttachedChip`, `useAttachedServer`) is the
+   * one consumer.
+   */
+  attachedServerName: string | null;
+  /**
    * Per-session flow-control counters (story 093).
    *
    * Flow-control bugs are otherwise diagnosed by staring at a slow terminal

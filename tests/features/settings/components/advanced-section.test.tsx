@@ -45,6 +45,8 @@ const info = (over: Partial<AppInfo> = {}): AppInfo => ({
   logPath: '/Users/me/Library/Logs/The Hive',
   receiverBoundHost: null,
   serverBoundHost: null,
+  servingDeviceCount: 0,
+  attachedServerName: null,
   ...over,
 });
 

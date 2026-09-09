@@ -252,3 +252,91 @@ export function useServerExposure(): string | null {
 
   return boundHost;
 }
+
+/**
+ * How many devices are paired to this Hive's server mode, right now, or `0`
+ * before the first read lands (HIVE-142, HIVE-144 Task 13).
+ *
+ * A separate hook from {@link useServerExposure} rather than a second field on
+ * its return, because the two answer genuinely different questions that
+ * happen to share a source object: `useServerExposure` gates whether
+ * `ServingChip` renders at all (is a socket bound?), and this hook answers how
+ * many devices are paired **independent of that** — `AppInfo.servingDeviceCount`
+ * reads `server.devices` off disk, which exists whether or not anything is
+ * currently listening. Folding them into one return would force every caller
+ * of the gate to also destructure a count it may not want, and would make "is
+ * this hook's `null` the gate or the count" a question the type alone cannot
+ * answer.
+ *
+ * No late-bind retry, unlike `useServerExposure`: pairing a device
+ * (`pairDevice`, `@lib/project-config`) writes `server.devices` synchronously,
+ * not over a DNS lookup that can outlast this hook's first round trip, so a
+ * `0` here is never ambiguous between "really zero" and "not read yet" the
+ * way a fresh bind's `null` is for {@link useServerExposure}.
+ *
+ * Gated on `useProjectConfig` having resolved, the same proxy for "the bridge
+ * is actually up" every hook in this file uses, so the browser demo (no
+ * bridge, snapshot stays `null`) correctly never calls `readAppInfo` at all.
+ */
+export function useServingDeviceCount(): number {
+  const snapshot = useProjectConfig();
+  const hasSnapshot = snapshot !== null;
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    if (!hasSnapshot) return;
+
+    let cancelled = false;
+    void readAppInfo().then((info) => {
+      if (!cancelled) setCount(info?.servingDeviceCount ?? 0);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hasSnapshot]);
+
+  return count;
+}
+
+/**
+ * The name of the server this window is attached to over a socket, or `null`
+ * in `'local'` mode (HIVE-144, Task 13).
+ *
+ * Sourced from `AppInfo.attachedServerName`, never from
+ * `ConfigSnapshot.attachedServer` — see that field's own doc comment, and
+ * `AppInfo.attachedServerName`'s, for the full config-versus-runtime split.
+ * This hook reads the runtime half exactly as `useServerExposure` and
+ * `useReceiverExposure` read theirs.
+ *
+ * One-shot, not the two-read late-bind retry those hooks carry: that retry
+ * exists because a *hostname* bind resolves via DNS on a timeline a first
+ * `readAppInfo` round trip can outrun, so a bare `null` is ambiguous between
+ * "off" and "not yet resolved." Attaching has no equivalent race from here —
+ * `readAppInfo()` itself does not resolve until whichever process is
+ * answering it has already finished computing the answer, so a `null` this
+ * hook sees is always the real one, not a read that landed early.
+ *
+ * Gated on `useProjectConfig` having resolved, the same proxy for "the bridge
+ * is actually up" every hook in this file uses.
+ */
+export function useAttachedServer(): string | null {
+  const snapshot = useProjectConfig();
+  const hasSnapshot = snapshot !== null;
+  const [serverName, setServerName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!hasSnapshot) return;
+
+    let cancelled = false;
+    void readAppInfo().then((info) => {
+      if (!cancelled) setServerName(info?.attachedServerName ?? null);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hasSnapshot]);
+
+  return serverName;
+}

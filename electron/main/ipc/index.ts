@@ -1229,10 +1229,19 @@ export function remoteListenerBindError(): string | null {
  * (HIVE-144). See {@link ModeSwitcher} for why it arrives as an argument
  * rather than as an import, and {@link noModeSwitcher} for why its default
  * throws instead of quietly succeeding.
+ *
+ * @param attachedServerName What `AppInfo.attachedServerName` answers
+ * (HIVE-144 Task 13) — `router.ts`'s own `attachedServerName()`, handed down
+ * for the identical reason `switchMode` is: `router.ts` already imports this
+ * module, so importing it back would close a cycle. Defaults to a function
+ * that always answers `null`, matching what a process with no `router.ts`
+ * wrapping it (every existing test that calls this directly) actually is —
+ * never attached to anything.
  */
 export function registerIpcHandlers(
   broadcaster: Broadcaster = createWindowBroadcaster(),
   switchMode: ModeSwitcher = noModeSwitcher,
+  attachedServerName: () => string | null = () => null,
 ): void {
   /*
     Both surfaces, always (HIVE-143). In local mode the socket half iterates an
@@ -2884,6 +2893,20 @@ export function registerIpcHandlers(
       // `?.boundHost` is `null` on every other launch, which is the correct
       // answer for "is anything reachable off this socket right now."
       serverBoundHost: remoteListener?.boundHost ?? null,
+      // Read fresh on every call, from disk, not from `getConfig()` — the
+      // same `readServerDevicesFromDisk()` `remoteListener`'s own `devices`
+      // getter uses, so a `--pair` run in another process is reflected
+      // without a restart. Not gated on `remoteListener?.boundHost`: paired
+      // devices exist whether or not the socket happens to be listening this
+      // instant, and the header's serving chip already gates its own
+      // rendering on `serverBoundHost`, so nothing here needs to duplicate
+      // that check.
+      servingDeviceCount: readServerDevicesFromDisk().length,
+      // `router.ts`'s own runtime fact, handed down rather than imported —
+      // see `registerIpcHandlers`'s own doc comment on this parameter, and
+      // `AppInfo.attachedServerName`'s for the config-versus-runtime split
+      // this answers the runtime half of.
+      attachedServerName: attachedServerName(),
       // Omitted rather than empty when nothing has run, so the field's presence
       // means something.
       ...(diagnostics.length > 0 ? { pty: diagnostics } : {}),

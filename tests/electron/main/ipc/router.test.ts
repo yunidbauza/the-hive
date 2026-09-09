@@ -58,7 +58,7 @@ describe('registerIpc', () => {
 
     registerIpc('local', { broadcaster });
 
-    expect(registerIpcHandlers).toHaveBeenCalledWith(broadcaster, switchIpcMode);
+    expect(registerIpcHandlers).toHaveBeenCalledWith(broadcaster, switchIpcMode, expect.any(Function));
   });
 
   /**
@@ -73,7 +73,7 @@ describe('registerIpc', () => {
   it('hands the handlers the real mode switch', () => {
     registerIpc('local');
 
-    expect(registerIpcHandlers).toHaveBeenCalledWith(undefined, switchIpcMode);
+    expect(registerIpcHandlers).toHaveBeenCalledWith(undefined, switchIpcMode, expect.any(Function));
   });
 
   /**
@@ -85,7 +85,21 @@ describe('registerIpc', () => {
   it('leaves the default broadcaster to the handlers when none is given', () => {
     registerIpc('local');
 
-    expect(registerIpcHandlers).toHaveBeenCalledWith(undefined, expect.any(Function));
+    expect(registerIpcHandlers).toHaveBeenCalledWith(undefined, expect.any(Function), expect.any(Function));
+  });
+
+  /**
+   * `router.ts`'s own `attachedServerName()` (HIVE-144, Task 13) — handed
+   * down the same way `switchIpcMode` is and for the identical reason: the
+   * reverse import would close a cycle. A registration that forgot this
+   * argument would leave `AppInfo.attachedServerName` answering `null` off
+   * `registerIpcHandlers`'s own no-op default forever, in every mode.
+   */
+  it('hands the handlers the real attachedServerName reader', async () => {
+    registerIpc('local');
+
+    const { attachedServerName } = await import('../../../../electron/main/ipc/router');
+    expect(registerIpcHandlers).toHaveBeenCalledWith(undefined, switchIpcMode, attachedServerName);
   });
 
   it('registers the remote proxy in remote mode, and binds nothing locally', () => {

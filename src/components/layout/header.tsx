@@ -3,6 +3,7 @@ import { Bell, Gear, Moon, Sun } from '@phosphor-icons/react';
 import { cn } from '@/lib/utils';
 
 
+import { AttachedChip } from '@components/layout/attached-chip';
 import { BrandBlock } from '@components/layout/brand-block';
 import { DemoChip } from '@components/layout/demo-chip';
 import { ExposureChip } from '@components/layout/exposure-chip';
@@ -195,6 +196,7 @@ export function Header() {
           <ModelChip />
           <ExposureChip />
           <ServingChip />
+          <AttachedChip />
         </div>
       </div>
 

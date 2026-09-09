@@ -86,7 +86,7 @@ export function registerIpc(mode: IpcMode, options: RegisterIpcOptions = {}): vo
     owns which mode is bound, and the handler asks it rather than reaching into
     it.
   */
-  registerIpcHandlers(options.broadcaster, switchIpcMode);
+  registerIpcHandlers(options.broadcaster, switchIpcMode, attachedServerName);
 }
 
 /**
@@ -137,6 +137,29 @@ export interface SwitchIpcOptions {
  * ownership of a resource, and nothing else derives from it.
  */
 let attached: RemoteClient | null = null;
+
+/**
+ * The name of the server `attached` is open against, or `null` when this
+ * process is not attached to one (HIVE-144 Task 13).
+ *
+ * `registerIpcHandlers` is handed this the same way it is handed
+ * `switchIpcMode` — as an argument, not an import — for the identical reason
+ * {@link ModeSwitcher}'s own doc comment gives: `ipc/index.ts` already imports
+ * this module, so the reverse import would close the `import/no-cycle` this
+ * repo enforces. It reads the module-scope `attached` fresh on every call
+ * rather than closing over a snapshot of it, because `registerIpcHandlers`
+ * runs once at boot while `attached` changes underneath it on every
+ * `switchIpcMode` call this session makes.
+ *
+ * `client.serverName()` (`RemoteClient`, Task 7) is the far end's own
+ * `hostname()`, carried over in the attach handshake — see
+ * `AppInfo.attachedServerName`'s own doc comment for why this is the
+ * *runtime* half of the config-versus-runtime split `ConfigSnapshot.attachedServer`
+ * draws the other half of.
+ */
+export function attachedServerName(): string | null {
+  return attached?.serverName() ?? null;
+}
 
 /**
  * Leave `ipcMain` clean, whichever surface was on it.
