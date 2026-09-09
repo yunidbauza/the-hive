@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parseConfig } from '../../../../electron/main/config/parse';
 import { defaultShell } from '../../../../electron/main/config/shell';
 import { writeConfig } from '../../../../electron/main/config/write';
-import { CONFIG_PATH_ENV } from '../../../../electron/shared/config-contract';
+import { CONFIG_PATH_ENV, DEFAULT_REMOTE } from '../../../../electron/shared/config-contract';
 
 /**
  * The single write path (story 101).
@@ -148,6 +148,32 @@ describe('writeConfig — the round trip', () => {
       socketMode: true,
       commanders: ['U1'],
     });
+  });
+
+  /**
+   * The returned snapshot has to resolve `remote` the same way `loadConfig`
+   * does (HIVE-144) — this is the snapshot every mutating verb hands back and
+   * that becomes the in-memory cache, so a regression here would ship
+   * `remote.host === undefined` to the renderer even though the file on disk
+   * and `loadConfig` both agree on the default. A file naming only `mode`
+   * proves the merge, not just persistence: `host` and `port` come from
+   * `DEFAULT_REMOTE`, not from the mutation.
+   */
+  it('persists a partial remote block and resolves it in the returned snapshot', () => {
+    seed({ version: 2, projects: [] });
+
+    const result = writeConfig((draft) => ({
+      ...draft,
+      remote: { mode: 'remote' },
+    }));
+
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.snapshot.remote).toEqual({
+      mode: 'remote',
+      host: DEFAULT_REMOTE.host,
+      port: DEFAULT_REMOTE.port,
+    });
+    expect(JSON.parse(readFileSync(path, 'utf8')).remote).toEqual({ mode: 'remote' });
   });
 });
 

@@ -1053,8 +1053,23 @@ export function isLoopbackHost(host: string): boolean {
  * side of the range and were never Tailscale's to hand out; a predicate that
  * loosens this to the whole second octet admits half the internet's `100.x`
  * space as if it were the tailnet.
+ *
+ * The third and fourth octets are bounded exactly as the first two are —
+ * `(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)`, 0 through 255 and nothing past it —
+ * rather than the looser `\d{1,3}` a first draft of this regex used. `\d{1,3}`
+ * admits `256` through `999`, and a string like `100.64.0.257` is not an IPv4
+ * address at all: `net.isIPv4('100.64.0.257')` is `false`, so `net.connect`
+ * hands the whole string to the DNS **resolver as a hostname**. A user who
+ * typos `100.64.0.25` as `100.64.0.257` on a machine with a `search` suffix
+ * gets a query for `100.64.0.257.<suffix>`; a resolver that hijacks NXDOMAIN
+ * can answer with an arbitrary public address, and the device credential this
+ * predicate is supposed to keep on the tailnet goes there instead — with this
+ * function having said the address was in range. Bounding every octet is what
+ * makes "in the CGNAT range" a claim that can only be true of a real IPv4
+ * literal.
  */
-const TAILNET_V4 = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}$/;
+const TAILNET_V4 =
+  /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/;
 
 /**
  * Whether a value is a Tailscale address for this node's tailnet (HIVE-144).
@@ -1085,11 +1100,25 @@ export function isTailnetHost(value: string): boolean {
  * internet, and a host that wrongly satisfies this predicate is that
  * credential handed to whoever controls the address it names.
  *
+ * `isHostAlias` for shape first — exactly as {@link isServerBindHost} does —
+ * *before* either branch below, not merely inside {@link isTailnetHost}.
+ * `isLoopbackHost`'s own rule trims, lowercases and strips brackets, so
+ * `' 127.0.0.1 '` and `'[127.0.0.1]'` satisfy it; without this gate a value
+ * shaped that way would pass validation and be stored verbatim, then fail at
+ * `net.connect` with `ENOTFOUND` — failing closed, so not a hole, but not the
+ * value that was actually validated either. Gating here means the string this
+ * predicate approves is the string that gets dialled.
+ *
+ * `unknown`, and a type guard, matching {@link isServerBindHost} at `:707` —
+ * Task 5's `setRemote` IPC verb validates a payload of unknown shape through
+ * this same predicate, so the signature has to widen for that caller anyway.
+ *
  * `isLoopbackHost(value) || isTailnetHost(value)` — deliberately an "or" of
  * two independently-reasoned predicates rather than one merged rule, so each
  * keeps its own doc comment and its own tests.
  */
-export function isRemoteTarget(value: string): boolean {
+export function isRemoteTarget(value: unknown): value is string {
+  if (!isHostAlias(value)) return false;
   return isLoopbackHost(value) || isTailnetHost(value);
 }
 
