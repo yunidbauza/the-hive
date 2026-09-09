@@ -287,12 +287,20 @@ describe('isLiveTerminal', () => {
  * over the transcript the user is reading to find out what happened.
  */
 describe('terminals', () => {
+  it('hands the terminal transport the directory the terminal started in', () => {
+    withBridge();
+    const id = useHiveStore.getState().spawnTerminal('nova-web', { cwd: '/repos/nova-web/pkg' });
+    resolveTransport(id);
+    expect(createTerminalTransport).toHaveBeenCalledWith(id, 'nova-web', '/repos/nova-web/pkg');
+  });
+
   it('gives a terminal the terminal transport on desktop, and counts it live', () => {
     withBridge();
     const id = useHiveStore.getState().spawnTerminal('nova-web');
 
     expect(resolveTransport(id)).toBe(terminalMarker);
-    expect(createTerminalTransport).toHaveBeenCalledWith(id, 'nova-web');
+    // No config snapshot in this file, so the terminal has no directory to name.
+    expect(createTerminalTransport).toHaveBeenCalledWith(id, 'nova-web', undefined);
     expect(isLiveTerminal(id)).toBe(true);
   });
 

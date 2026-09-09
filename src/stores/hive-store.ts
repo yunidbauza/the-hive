@@ -44,6 +44,7 @@ import { buildTicketSearchJql } from '@lib/jira-search';
 import { ledgerRows } from '@lib/ledger/console-rows';
 import {
   projectConfigSnapshot,
+  projectContainerised,
   projectPath,
   resolveProjectRef,
   subscribeProjectConfig,
@@ -298,6 +299,16 @@ export interface SetSessionTicketOptions {
   source?: 'prompt' | 'branch' | 'rename';
 }
 
+/** What `spawnTerminal` may be told beyond the project (entry points). */
+export interface SpawnTerminalOptions {
+  /**
+   * Where the shell starts. Absent means the project's path. "Terminal here"
+   * passes a session's observed cwd, which differs from the project path
+   * exactly when the session has moved into a worktree.
+   */
+  cwd?: string;
+}
+
 interface HiveState {
   entities: Record<string, Entity>;
   order: string[];
@@ -438,7 +449,21 @@ interface HiveState {
    * (terminals). The entity is created at once; on desktop the spawn is asked
    * for and a refusal is written to the console, as `spawnSession` does.
    */
-  spawnTerminal: (projectId: string) => string;
+  /**
+   * Open a terminal in a project: a login shell with no Claude typed into it
+   * (terminals). `options.cwd` is "terminal here" naming where the shell
+   * starts; absent means the project's path.
+   */
+  spawnTerminal: (projectId: string, options?: SpawnTerminalOptions) => string;
+  /**
+   * A shell beside an entity: the same project, the same directory (entry
+   * points). A session contributes its observed `cwd`, falling back to the
+   * project path where none has been observed — or where the project is
+   * containerised, since that cwd is a container path and a terminal is
+   * host-only; a terminal contributes its own. Anything else answers null and
+   * opens nothing.
+   */
+  spawnTerminalBeside: (entityId: string) => string | null;
   /**
    * The host reported what holds the tty. `null` is the prompt. Status is
    * derived here, in the same write — the only writer of either field.
@@ -968,6 +993,7 @@ const HELP_ROWS: readonly (readonly [ParsedCommand['kind'], string])[] = [
   ['ask', '  ask <agent> <message>      ask an agent a question'],
   ['answer', '  answer <id> <text>         answer an open ask'],
   ['spawn', '  spawn <project> <task>     start a new session on a project'],
+  ['term', '  term [<project>]           open a terminal in a project, or beside the selected session'],
   ['agents', '  agents                     one line per agent'],
   ['run', '  run <agent> [prompt]       wake an agent now, optionally saying why'],
   ['pause', '  pause <agent>              stop an agent waking'],
@@ -1937,7 +1963,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
    * is here rather than left to the surface: main's message names the config
    * file to edit, and the console is the only place with room to say so.
    */
-  spawnTerminal: (projectId) => {
+  spawnTerminal: (projectId, options = {}) => {
     const id = nextTerminalId(get().entities);
 
     const terminal: Terminal = {
@@ -1945,14 +1971,14 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       id,
       project: projectId,
       /**
-       * The project's path, or empty when the config cannot answer.
+       * The directory the shell starts in: the caller's when it named one,
+       * else the project's path, else empty when the config cannot answer.
        *
        * Empty rather than a guess: the row shows a `cwd` tail and an invented
-       * one would name a directory the shell is not in. Main resolves the real
-       * working directory for the spawn regardless — this field is what the row
-       * *displays*, not what the pty is started with.
+       * one would name a directory the shell is not in. Main starts the pty at
+       * the project's path when this is empty.
        */
-      cwd: projectPath(projectId) ?? '',
+      cwd: options.cwd ?? projectPath(projectId) ?? '',
       status: 'prompt',
       createdAt: Date.now(),
       /**
@@ -1970,7 +1996,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     }));
 
     if (isDesktop()) {
-      void requestSpawnTerminal(id, projectId).then((outcome) => {
+      void requestSpawnTerminal(id, projectId, options.cwd).then((outcome) => {
         if (outcome.ok) return;
         set((state) => ({
           orchLines: capLines([
@@ -1991,6 +2017,27 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     useUiStore.getState().openTab(id);
 
     return id;
+  },
+
+  spawnTerminalBeside: (entityId) => {
+    const entity = get().entities[entityId];
+    if (entity === undefined) return null;
+    if (isTerminal(entity)) {
+      return get().spawnTerminal(entity.project, entity.cwd === '' ? {} : { cwd: entity.cwd });
+    }
+    if (isSession(entity)) {
+      /*
+        A container session's observed `cwd` is the hook's — Claude's, inside
+        the container (`/workspace`) — and a terminal is host-only. Starting a
+        host shell there would fail on a path that does not exist, so a
+        containerised project falls back to its host path (#205 review).
+      */
+      const cwd = projectContainerised(entity.project)
+        ? (projectPath(entity.project) ?? undefined)
+        : (entity.cwd ?? projectPath(entity.project) ?? undefined);
+      return get().spawnTerminal(entity.project, cwd === undefined ? {} : { cwd });
+    }
+    return null;
   },
 
   /**
@@ -2310,6 +2357,56 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
      * reconstruct it — reconstructing it at two call sites is how `open` came to
      * report a cleared session as terminated. `null` means the target is live.
      */
+    /**
+     * A project reference — a key, an id or a name — resolved for a console
+     * verb, or `null` after the refusal has been written (HIVE-94; shared by
+     * `spawn` and `term`).
+     *
+     * The config decides what exists, exactly as the rail and picker do — one
+     * source for "which projects exist". **On desktop, no snapshot means
+     * permissive, not empty**: `main.tsx` fires `loadProjectConfig()` without
+     * awaiting, so the input passes through and main — which has the file —
+     * gives the refusal if there is one. **In a browser it means empty**: no
+     * bridge, no refusal downstream, and being permissive would mint a
+     * phantom row.
+     *
+     * Ambiguity is its own answer, not a miss: two folders both called `api`
+     * is ordinary, and picking whichever sat first would start work in the
+     * wrong repository. The keys are listed on a miss because they are the
+     * shortest thing that works and what the Settings row shows.
+     */
+    const resolveProjectForConsole = (ref: string): string | null => {
+      const snapshot = projectConfigSnapshot();
+      const resolved =
+        snapshot === null
+          ? ({ kind: 'none' } as const)
+          : resolveProjectRef(ref, snapshot.projects);
+
+      if (resolved.kind === 'ambiguous') {
+        const ids = resolved.projects.map((project) => project.id).join(', ');
+        pushOrch(
+          `  ${ref} names ${resolved.projects.length} projects (${ids}) — use a key`,
+          'red',
+        );
+        return null;
+      }
+
+      if (resolved.kind === 'none' && !(snapshot === null && isDesktop())) {
+        const keys = snapshot?.projects.map((project) => project.key) ?? [];
+        const suffix =
+          keys.length === 0
+            ? ' — add one in Settings › Projects'
+            : ` — try a key from Settings › Projects (${keys.join(', ')})`;
+        pushOrch(`  unknown project: ${ref}${suffix}`, 'red');
+        return null;
+      }
+
+      // The **resolved id**, never what was typed: an entity recorded under a
+      // key or a display name would point at nothing the moment that alias
+      // was edited.
+      return resolved.kind === 'match' ? resolved.project.id : ref;
+    };
+
     const resolve = (
       ref: string,
     ): { id: string; label: string; ended: string | null } | null => {
@@ -2654,94 +2751,27 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       }
 
       case 'spawn': {
-        /**
-         * The config decides what exists, exactly as the rail and picker do.
-         *
-         * This read `state.projects` — the store's own slice — which worked
-         * only because that slice was seeded with five demo projects at boot.
-         * Emptying the seed left it always empty, so every `spawn` answered
-         * "unknown project" for projects sitting right there in the Projects
-         * panel. One source for "which projects exist", and it is the config.
-         *
-         * **On desktop, no snapshot means permissive, not empty.** `main.tsx`
-         * fires `loadProjectConfig()` without awaiting, and `project-config.ts`
-         * leaves the snapshot `null` when that read throws — deliberately, so a
-         * broken IPC hop degrades rather than locks the app. Treating `null` as
-         * "no projects" would make this verb refuse every project during the first
-         * frames of launch, and refuse them *permanently* after a failed read.
-         * `can.spawnSessionIn` already answers `true` with no snapshot; this
-         * agrees with it, and lets main — which has the file in front of it —
-         * give the refusal if there is one.
-         *
-         * **In a browser it means empty, and the distinction is load-bearing.**
-         * There is no bridge, so the snapshot is `null` *forever* rather than
-         * briefly, and nothing downstream can ever refuse: `spawnSession` skips
-         * `requestSpawn` off-desktop, so no main-side refusal arrives and the
-         * row stays. Being permissive there would let `spawn anything` mint a
-         * session with a fabricated transcript that the header counts and the
-         * rails list — a phantom fleet, which is the exact lie this branch
-         * exists to delete.
-         */
-        const snapshot = projectConfigSnapshot();
-        /**
-         * A key, an id or a name — resolved once, in `lib/` (HIVE-94).
-         *
-         * The store used to compare `project.id === command.repo` inline, which
-         * made the console the only surface with an opinion about what names a
-         * project. The picker now shares this resolver, so a project reachable
-         * from one is reachable from the other by exactly the same spellings.
-         */
-        const resolved =
-          snapshot === null
-            ? ({ kind: 'none' } as const)
-            : resolveProjectRef(command.project, snapshot.projects);
-
-        /*
-          Ambiguity is its own answer, not a miss (HIVE-94). Display names are
-          never uniqueness-checked — two folders both called `api` is ordinary —
-          and picking whichever sat first in the file would start an agent in the
-          wrong repository, which is the exact failure the exactness rule exists
-          to prevent. Naming the ids is what makes the advice actionable: the key
-          is the way to say which one.
-        */
-        if (resolved.kind === 'ambiguous') {
-          const ids = resolved.projects.map((project) => project.id).join(', ');
-          pushOrch(
-            `  ${command.project} names ${resolved.projects.length} projects (${ids}) — use a key`,
-            'red',
-          );
-          return;
-        }
-
-        if (resolved.kind === 'none' && !(snapshot === null && isDesktop())) {
-          /*
-            The keys, in config order, because they are the shortest thing that
-            works and the row in Settings shows them. Listing ids instead would
-            answer "what could I have typed?" with the very strings this story
-            exists to stop people typing.
-          */
-          const keys = snapshot?.projects.map((project) => project.key) ?? [];
-          const suffix =
-            keys.length === 0
-              ? ' — add one in Settings › Projects'
-              : ` — try a key from Settings › Projects (${keys.join(', ')})`;
-          pushOrch(`  unknown project: ${command.project}${suffix}`, 'red');
-          return;
-        }
-
-        /*
-          The **resolved id**, never what was typed. `spawnSession` stores it on
-          the entity as `entity.project`, and a session recorded under a key or
-          a display name would be a session pointing at nothing the moment that
-          alias was edited. With no snapshot there is nothing to resolve
-          against, so the input is passed through and main — which has the file
-          — gives the refusal if there is one.
-        */
-        const target =
-          resolved.kind === 'match' ? resolved.project.id : command.project;
+        const target = resolveProjectForConsole(command.project);
+        if (target === null) return;
         // No confirmation line here: `spawnSession` writes it, so both this
         // command and the picker log exactly once.
         get().spawnSession(target, command.task);
+        return;
+      }
+
+      case 'term': {
+        if (command.project !== undefined) {
+          const target = resolveProjectForConsole(command.project);
+          if (target === null) return;
+          get().spawnTerminal(target);
+          return;
+        }
+        // Bare: beside the fleet table's caret. The console is the stage, so
+        // the selected row is the only "session you are looking at" it has.
+        const selected = useUiStore.getState().selId;
+        if (selected === null || get().spawnTerminalBeside(selected) === null) {
+          pushOrch(`  ${USAGE.term}`, 'red');
+        }
         return;
       }
 
@@ -6210,6 +6240,8 @@ export const useSpawnSession = () => useHiveStore((state) => state.spawnSession)
 /** Open a plain shell on a project (terminals). */
 export const useSpawnTerminal = () =>
   useHiveStore((state) => state.spawnTerminal);
+export const useSpawnTerminalBeside = () =>
+  useHiveStore((state) => state.spawnTerminalBeside);
 
 /** The host's poll reported what holds a terminal's tty (terminals). */
 export const useSetTerminalForeground = () =>

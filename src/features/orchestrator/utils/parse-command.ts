@@ -152,6 +152,16 @@ export function parseCommand(raw: string): ParsedCommand {
       return { kind: 'spawn', raw: input, project, task };
     }
 
+    case 'term': {
+      // An argument that may be quoted, and no tail — the one shape the
+      // grammar lacked. Everything after a bare word is part of the name and
+      // resolves to nothing, which is reported as an unknown project.
+      const project = rest.trim();
+      if (project === '') return { kind: 'term', raw: input };
+      const [word, tail] = takeArgument(project);
+      return { kind: 'term', raw: input, project: tail === '' ? word : `${word} ${tail}` };
+    }
+
     /**
      * The only verb in the grammar with flags.
      *

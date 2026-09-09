@@ -33,6 +33,8 @@ export type TerminalKeyAction =
   | 'app-chord'
   /** A rail-collapse chord. Not xterm's, not the pty's. Let it bubble. */
   | 'rail-chord'
+  /** The terminal-here chord. Not xterm's, not the pty's. Let it bubble. */
+  | 'terminal-chord'
   /**
    * A bare `←` the app wanted and could not have (HIVE-79).
    *
@@ -200,6 +202,23 @@ export function isBackChord(event: KeyEventLike, isMac: boolean): boolean {
  * for `undefined` alone would treat that `''` as a real, non-matching code and
  * never fall back to `key` for exactly the events most likely to omit it.
  */
+/**
+ * Ctrl and the backtick key, no other modifier, on every platform (entry
+ * points). VS Code's chord for its terminal, which is why it needs no per-
+ * platform variant. Inside a terminal this would otherwise reach the pty as a
+ * NUL byte, so `decideTerminalKey` claims it first.
+ */
+export function isTerminalHereChord(event: KeyEventLike): boolean {
+  const isBackquote = event.code ? event.code === 'Backquote' : event.key === '`';
+  return (
+    isBackquote &&
+    event.ctrlKey &&
+    !event.metaKey &&
+    !event.shiftKey &&
+    event.altKey !== true
+  );
+}
+
 export function isRailChord(
   event: KeyEventLike,
   isMac: boolean,
@@ -650,8 +669,11 @@ export interface TerminalChordDetail {
    * terminal (see {@link isRailChord}). Carried up for the same reason `back`
    * is: the app must not sniff every `keydown` on `window`, where these
    * combinations belong to whatever else has focus.
+   *
+   * `terminal-here` — a shell beside the entity on screen (entry points; see
+   * {@link isTerminalHereChord}). Carried up for the reason the others are.
    */
-  chord: 'back' | 'back-declined' | 'rail-left' | 'rail-right';
+  chord: 'back' | 'back-declined' | 'rail-left' | 'rail-right' | 'terminal-here';
 }
 
 /** How that chord is written in the key-hint row. */
@@ -694,6 +716,8 @@ export function decideTerminalKey(
   if (isBackChord(event, isMac)) return 'app-chord';
 
   if (isRailChord(event, isMac)) return 'rail-chord';
+
+  if (isTerminalHereChord(event)) return 'terminal-chord';
 
   /**
    * A terminal whose process has ended gives `←` back to the app (story 108).

@@ -464,7 +464,7 @@ export interface Terminal {
   kind: 'terminal';
   id: string; // 'term-02'
   project: string;
-  /** Where the shell was started: the project's path. */
+  /** Where the shell started: the project's path, or the directory "terminal here" named. */
   cwd: string;
   status: TerminalStatus;
   /**

@@ -1120,6 +1120,24 @@ describe('TerminalSurface', () => {
       }
     });
 
+    it('announces terminal-here for Ctrl+backtick and keeps it from the pty', () => {
+      const seen: string[] = [];
+      const onChord = (event: Event) => {
+        seen.push((event as CustomEvent<{ chord: string }>).detail.chord);
+      };
+      window.addEventListener(TERMINAL_CHORD_EVENT, onChord);
+
+      try {
+        renderInteractive();
+        const handled = press({ key: '`', ctrlKey: true });
+
+        expect(handled).toBe(false);
+        expect(seen).toEqual(['terminal-here']);
+      } finally {
+        window.removeEventListener(TERMINAL_CHORD_EVENT, onChord);
+      }
+    });
+
     it('announces nothing for an ordinary key', () => {
       const seen: string[] = [];
       const onChord = () => seen.push('fired');

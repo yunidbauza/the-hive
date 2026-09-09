@@ -497,4 +497,28 @@ describe('parseCommand', () => {
     const input = 'send lead-form hello';
     expect(parseCommand(input)).toEqual(parseCommand(input));
   });
+
+  describe('term', () => {
+    it('takes no argument, meaning the selected session', () => {
+      expect(parseCommand('term')).toEqual({ kind: 'term', raw: 'term' });
+    });
+
+    it('takes a project by key, id or quoted name', () => {
+      expect(parseCommand('term hive')).toEqual({ kind: 'term', raw: 'term hive', project: 'hive' });
+      expect(parseCommand('term "The Hive"')).toEqual({
+        kind: 'term',
+        raw: 'term "The Hive"',
+        project: 'The Hive',
+      });
+    });
+
+    it('treats anything after the project as part of a misspelt project', () => {
+      // No tail: `term nova-web fix it` is not a task, it is a name that resolves to nothing.
+      expect(parseCommand('term nova-web fix it')).toEqual({
+        kind: 'term',
+        raw: 'term nova-web fix it',
+        project: 'nova-web fix it',
+      });
+    });
+  });
 });

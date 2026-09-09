@@ -533,6 +533,7 @@ export function requestSpawn(
 export function requestSpawnTerminal(
   entityId: string,
   projectId: string,
+  cwd?: string,
 ): Promise<SpawnOutcome> {
   return withSpawnChannel(entityId, () =>
     pty().spawnTerminal({
@@ -540,6 +541,10 @@ export function requestSpawnTerminal(
       projectId,
       cols: DEFAULT_COLS,
       rows: DEFAULT_ROWS,
+      // Spread, never `cwd: undefined`: the guard refuses a key it did not
+      // expect, and an own property whose value is undefined survives the
+      // structured clone as a present key.
+      ...(cwd === undefined ? {} : { cwd }),
     }),
   );
 }
@@ -658,11 +663,14 @@ export function createPtyTransport(
 export function createTerminalTransport(
   entityId: string,
   projectId: string,
+  cwd?: string,
 ): TerminalTransport {
   return createTransport(entityId, (channel) =>
     // The same attach-never-respawn guard the session path mounts behind: a tab
-    // switch back to a shell that has exited must not start a second one.
-    ensureSpawned(channel, () => requestSpawnTerminal(entityId, projectId)),
+    // switch back to a shell that has exited must not start a second one — and
+    // the same directory it was opened at, so a lazy re-spawn never silently
+    // re-roots the shell.
+    ensureSpawned(channel, () => requestSpawnTerminal(entityId, projectId, cwd)),
   );
 }
 

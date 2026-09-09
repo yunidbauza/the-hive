@@ -7,6 +7,7 @@ import { AttachedChip } from '@components/layout/attached-chip';
 import { BrandBlock } from '@components/layout/brand-block';
 import { DemoChip } from '@components/layout/demo-chip';
 import { ExposureChip } from '@components/layout/exposure-chip';
+import { HeaderTerminalMenu } from '@components/layout/header-terminal-menu';
 import { ModelChip } from '@components/layout/model-chip';
 import { ServingChip } from '@components/layout/serving-chip';
 import { StatusCounts } from '@components/layout/status-counts';
@@ -332,20 +333,29 @@ export function Header() {
           <Badge count={unread} className="absolute -right-1 -top-1" />
         </button>
 
-        <button
-          type="button"
-          /*
-            Wrapped, not passed by reference: `openPicker` takes an optional
-            ticket key since HIVE-73, and handing it straight to `onClick` would
-            feed it the MouseEvent as that key — a picker headed "Start a
-            session for [object Object]". The header's button is the
-            no-ticket entry point, so it calls with no argument.
-          */
-          onClick={() => openPicker()}
-          className="flex h-9 shrink-0 items-center rounded-full bg-brand-fill px-4 text-sm font-bold text-on-brand hover:bg-brand-fill-hover [-webkit-app-region:no-drag]"
-        >
-          New session
-        </button>
+        {/*
+          One pill, two controls (entry points). The button is unchanged — same
+          name, same picker; the chevron opens a terminal in a project with no
+          screen between. Both islands are `no-drag`, or the pill drags the
+          window.
+        */}
+        <div className="flex shrink-0 items-center">
+          <button
+            type="button"
+            /*
+              Wrapped, not passed by reference: `openPicker` takes an optional
+              ticket key since HIVE-73, and handing it straight to `onClick`
+              would feed it the MouseEvent as that key — a picker headed "Start
+              a session for [object Object]". The header's button is the
+              no-ticket entry point, so it calls with no argument.
+            */
+            onClick={() => openPicker()}
+            className="flex h-9 shrink-0 items-center rounded-l-full bg-brand-fill px-4 text-sm font-bold text-on-brand hover:bg-brand-fill-hover [-webkit-app-region:no-drag]"
+          >
+            New session
+          </button>
+          <HeaderTerminalMenu />
+        </div>
       </div>
     </header>
   );

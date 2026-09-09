@@ -271,6 +271,14 @@ Seven zones, left to right: brand block, model chip (sessions only), spacer,
 fleet status counts, theme toggle, inbox bell, New session. 56px tall, `gap-14px`,
 `px-4`.
 
+**New session is a split pill** (terminals). The button keeps its exact name
+and opens the picker; the chevron beside it is `HeaderTerminalMenu`
+(`layout/header-terminal-menu.tsx`), a radix `DropdownMenu` headed
+`New terminal in…` that lists every project in config order — never a hand-off
+to the picker, which is a session surface. Its trigger is named `Terminal in a project` —
+never beginning with "new" — so a locator that finds `New session` by name
+still finds exactly one control. Both halves carry `no-drag`.
+
 **The header composes and nothing else.** Every zone that reads domain state owns
 its own subscription, so a session changing status repaints one span rather than
 the whole bar. Its three sub-components are tested independently; the header's own
@@ -578,7 +586,13 @@ function SessionMetaBar(props: { entity: Session }): JSX.Element
 ```
 
 The bar above the terminal in the **session** view (040): a back pill, the
-entity id, its one-line task, and status chips — branch, status, and PR.
+entity id, its one-line task, status chips — branch, status, and PR — and, at
+the right end, `terminal here` (terminals): a shell at the session's observed
+`cwd`, not the project root. Named `Terminal here in <id>`; its chord `⌃\``
+is one of the three in `hooks/use-app-chords.ts`, a small table that shares the
+window-keydown and terminal-chord-event entry points across the rail-collapse
+chords and this one. On a terminal tab, which has no bar, the chord opens a
+sibling.
 
 It took an `Entity` and rendered a `dedicated agent` chip for the other kind
 until HIVE-116, which gave agents a view of their own. The prop narrowed to

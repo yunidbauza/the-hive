@@ -1,11 +1,17 @@
-import { ArrowLeft, GitBranch, GitPullRequest } from '@phosphor-icons/react';
+import {
+  ArrowLeft,
+  GitBranch,
+  GitPullRequest,
+  Terminal as TerminalGlyph,
+} from '@phosphor-icons/react';
 
 import { branchLabel, entityLabel, type Session } from '@/types/entity';
 
 import { Chip } from '@components/ui/chip';
 import { StatusDot, statusLabel, statusText } from '@components/ui/status-dot';
 import { prStateText } from '@features/shared/pr-presentation';
-import { useSessionPr } from '@stores/hive-store';
+import { useProjectContainerised } from '@hooks/use-project-config';
+import { useSessionPr, useSpawnTerminalBeside } from '@stores/hive-store';
 import { useBackToOrch } from '@stores/ui-store';
 
 interface SessionMetaBarProps {
@@ -35,6 +41,8 @@ interface SessionMetaBarProps {
  */
 export function SessionMetaBar({ entity }: SessionMetaBarProps) {
   const backToOrch = useBackToOrch();
+  const spawnTerminalBeside = useSpawnTerminalBeside();
+  const containerised = useProjectContainerised(entity.project);
   /**
    * The PR chip's subject, resolved from the live GitHub list (HIVE-100).
    *
@@ -134,6 +142,28 @@ export function SessionMetaBar({ entity }: SessionMetaBarProps) {
           </Chip>
         </a>
       ) : null}
+
+      {/*
+        A shell where this session is standing (entry points). Not the project
+        root — the difference that matters in a worktree, which is where the
+        session's observed `cwd` points. The chord in the title is the same
+        action from the keyboard; on a terminal tab, which has no bar, the
+        chord is the only path to a sibling.
+      */}
+      <button
+        type="button"
+        onClick={() => spawnTerminalBeside(entity.id)}
+        title={
+          containerised
+            ? 'Terminal at the project root on this Mac (⌃`) — this session runs in a container, and a terminal is host-only'
+            : 'Terminal here (⌃`)'
+        }
+        aria-label={`Terminal here in ${entity.id}`}
+        className="ml-auto flex shrink-0 items-center gap-1.5 rounded-full bg-chip px-2.5 py-1 font-mono text-[11.5px] text-muted hover:text-ink"
+      >
+        <TerminalGlyph size={12} weight="bold" aria-hidden="true" />
+        terminal here
+      </button>
     </div>
   );
 }

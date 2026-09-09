@@ -345,6 +345,14 @@ describe('Header', () => {
   });
 
   describe('New session', () => {
+    it('keeps the button the only exact "New session", beside a terminal chevron', () => {
+      render(<Header />);
+      expect(screen.getAllByRole('button', { name: 'New session' })).toHaveLength(1);
+      expect(
+        screen.getByRole('button', { name: 'Terminal in a project' }),
+      ).toBeInTheDocument();
+    });
+
     it('opens the picker', async () => {
       const user = userEvent.setup();
       render(<Header />);

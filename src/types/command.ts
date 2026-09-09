@@ -17,6 +17,7 @@ export type UsageCommand =
   | 'open'
   | 'send'
   | 'spawn'
+  | 'term'
   | 'ledger'
   | 'ask'
   | 'answer'
@@ -53,6 +54,14 @@ export type ParsedCommand =
    * spawns into any directory a PTY can take as a `cwd`.
    */
   | { kind: 'spawn'; raw: string; project: string; task: string }
+  /**
+   * `term`, or `term <project>` (terminals).
+   *
+   * `project` is a raw reference like `spawn`'s — a key, an id or a quoted
+   * name — and absent means "beside the selected session": the console is the
+   * stage, so the fleet table's caret is the only thing on screen it can mean.
+   */
+  | { kind: 'term'; raw: string; project?: string }
   /**
    * The ledger tail (HIVE-113).
    *
@@ -123,6 +132,7 @@ export const USAGE: Record<UsageCommand, string> = {
   open: 'usage: open <session>',
   send: 'usage: send <session> <message>',
   spawn: 'usage: spawn <project> <task>',
+  term: 'usage: term [<project>] — or select a session first',
   ledger: 'usage: ledger [--open] [--events] [--from <party>] [--to <party>] [-n <count>]',
   ask: 'usage: ask <agent> <message>',
   answer: 'usage: answer <id> <text>',
@@ -176,6 +186,7 @@ export const CONSOLE_VERBS = [
   'ask',
   'answer',
   'spawn',
+  'term',
   /*
     The agent verbs sit after the session ones and before `clear`, keeping the
     file's "read, then act" order within a second group rather than

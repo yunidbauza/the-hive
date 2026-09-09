@@ -324,6 +324,8 @@ export interface OpenTerminalRequest {
   projectId: string;
   cols: number;
   rows: number;
+  /** Where the shell starts. Absent means the project's path. */
+  cwd?: string;
 }
 
 export interface Sessions {
@@ -2540,7 +2542,10 @@ export function createSessions(options: SessionsOptions): Sessions {
       try {
         startProcess({
           entityId: request.entityId,
-          cwd: project.path,
+          // "Terminal here" names a directory; every other entry point means
+          // the project root. A directory that is gone is not repaired: the
+          // host's spawn error reaches the tab with its reason.
+          cwd: request.cwd ?? project.path,
           file: runtime.shell,
           args: LOGIN_SHELL_ARGS,
           cols: request.cols,

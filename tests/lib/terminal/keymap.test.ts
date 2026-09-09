@@ -12,6 +12,7 @@ import {
   isEmptyClaudePrompt,
   isNewlineChord,
   isRailChord,
+  isTerminalHereChord,
   lineMotion,
   isLineKillChord,
   type CursorContext,
@@ -288,6 +289,25 @@ describe('the back chord', () => {
     expect(
       decideTerminalKey(key({ key: 'ArrowLeft', ctrlKey: true, shiftKey: true }), PC),
     ).toBe('app-chord');
+  });
+});
+
+describe('the terminal-here chord', () => {
+  it('is Ctrl and the backtick with no other modifier, on both platforms', () => {
+    expect(isTerminalHereChord(key({ key: '`', ctrlKey: true }))).toBe(true);
+    expect(isTerminalHereChord(key({ key: '`', metaKey: true }))).toBe(false);
+    expect(isTerminalHereChord(key({ key: '`', ctrlKey: true, shiftKey: true }))).toBe(false);
+    expect(isTerminalHereChord(key({ key: '`', ctrlKey: true, altKey: true }))).toBe(false);
+    expect(isTerminalHereChord(key({ key: '~', ctrlKey: true }))).toBe(false);
+  });
+
+  it('matches by physical key when a layout remaps the character', () => {
+    expect(isTerminalHereChord(key({ key: 'Dead', code: 'Backquote', ctrlKey: true }))).toBe(true);
+  });
+
+  it('is claimed inside a terminal on both platforms, never sent to the pty', () => {
+    expect(decideTerminalKey(key({ key: '`', ctrlKey: true }), MAC)).toBe('terminal-chord');
+    expect(decideTerminalKey(key({ key: '`', ctrlKey: true }), PC)).toBe('terminal-chord');
   });
 });
 

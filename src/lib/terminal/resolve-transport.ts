@@ -144,7 +144,13 @@ export function resolveTransport(entityId: string): TerminalTransport {
    * other id here does — `pty-transport.ts` reads no store.
    */
   if (isTerminal(entity)) {
-    return createTerminalTransport(entity.id, entity.project);
+    // An empty `cwd` is a terminal created with no config snapshot to name
+    // one; it must not reach main as a path.
+    return createTerminalTransport(
+      entity.id,
+      entity.project,
+      entity.cwd === '' ? undefined : entity.cwd,
+    );
   }
 
   /**

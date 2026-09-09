@@ -1082,6 +1082,109 @@ describe('hive-store', () => {
         });
       };
 
+      describe('term', () => {
+        it('opens a terminal in a project named by key, id or quoted name', () => {
+          seedDistinctProject();
+          run('term hive');
+          const id = useHiveStore.getState().order.at(-1)!;
+          expect(useHiveStore.getState().entities[id]).toMatchObject({ kind: 'terminal', project: 'the-hive' });
+          expect(useUiStore.getState().activeTab).toBe(id);
+
+          run('term "The Hive"');
+          expect(useHiveStore.getState().entities[useHiveStore.getState().order.at(-1)!]).toMatchObject({
+            kind: 'terminal',
+            project: 'the-hive',
+          });
+        });
+
+        it('refuses an unknown project with the message spawn gives', () => {
+          const before = useHiveStore.getState().order.length;
+          run('term nope');
+          expect(useHiveStore.getState().order).toHaveLength(before);
+          expect(lastLine()).toMatchObject({
+            text: `  unknown project: nope — try a key from Settings › Projects (${projectKeys().join(', ')})`,
+            color: 'red',
+          });
+        });
+
+        it('with no argument opens a terminal beside the selected session, at its directory', () => {
+          act(() =>
+            useHiveStore
+              .getState()
+              .setSessionBranch('hero-refresh', 'feat/x', '/repos/nova-web/.claude/worktrees/x'),
+          );
+          useUiStore.getState().setSelId('hero-refresh');
+          run('term');
+          const id = useHiveStore.getState().order.at(-1)!;
+          expect(useHiveStore.getState().entities[id]).toMatchObject({
+            kind: 'terminal',
+            project: 'nova-web',
+            cwd: '/repos/nova-web/.claude/worktrees/x',
+          });
+        });
+
+        it('with no argument and a selected terminal opens a sibling', () => {
+          const first = useHiveStore.getState().spawnTerminal('nova-web', { cwd: '/repos/nova-web/pkg' });
+          useUiStore.getState().setSelId(first);
+          run('term');
+          const id = useHiveStore.getState().order.at(-1)!;
+          expect(id).not.toBe(first);
+          expect(useHiveStore.getState().entities[id]).toMatchObject({ kind: 'terminal', cwd: '/repos/nova-web/pkg' });
+        });
+
+        it('with no argument and nothing selected prints the usage line', () => {
+          useUiStore.getState().setSelId(null);
+          const before = useHiveStore.getState().order.length;
+          run('term');
+          expect(useHiveStore.getState().order).toHaveLength(before);
+          expect(lastLine()).toMatchObject({
+            text: '  usage: term [<project>] — or select a session first',
+            color: 'red',
+          });
+        });
+
+        it('with no argument and an agent selected prints the usage line', () => {
+          useUiStore.getState().setSelId('slack-agent');
+          const before = useHiveStore.getState().order.length;
+          run('term');
+          expect(useHiveStore.getState().order).toHaveLength(before);
+          expect(lastLine()).toMatchObject({ text: '  usage: term [<project>] — or select a session first' });
+        });
+      });
+
+      describe('spawnTerminalBeside', () => {
+        it("uses a session's observed cwd, or its project path before one is observed", () => {
+          const fresh = useHiveStore.getState().spawnSession('nova-web');
+          const id = useHiveStore.getState().spawnTerminalBeside(fresh);
+          expect(useHiveStore.getState().entities[id!]).toMatchObject({ project: 'nova-web', cwd: '/repos/nova-web' });
+        });
+
+        it('uses the host project path, not the observed cwd, for a container session', () => {
+          const current = projectConfigSnapshot()!;
+          setProjectConfigForTest({
+            ...current,
+            projects: current.projects.map((project) =>
+              project.id === 'nova-web'
+                ? { ...project, container: { workspace: '/workspace', hiveDir: '/hive' } }
+                : project,
+            ),
+          });
+          const boxed = useHiveStore.getState().spawnSession('nova-web');
+          act(() => useHiveStore.getState().setSessionBranch(boxed, 'main', '/workspace'));
+
+          const id = useHiveStore.getState().spawnTerminalBeside(boxed);
+
+          expect(useHiveStore.getState().entities[id!]).toMatchObject({ cwd: '/repos/nova-web' });
+        });
+
+        it('answers null for an agent and for an unknown id, opening nothing', () => {
+          const before = useHiveStore.getState().order.length;
+          expect(useHiveStore.getState().spawnTerminalBeside('slack-agent')).toBeNull();
+          expect(useHiveStore.getState().spawnTerminalBeside('nope')).toBeNull();
+          expect(useHiveStore.getState().order).toHaveLength(before);
+        });
+      });
+
       it('creates a session on a known project and opens it', () => {
         const before = useHiveStore.getState().order.length;
         run('spawn nova-web tidy the footer');
@@ -3868,6 +3971,20 @@ describe('hive-store', () => {
    * make every one of them a statement about this feature.
    */
   describe('terminals', () => {
+    it('spawnTerminal records and sends a directory when given one', () => {
+      vi.mocked(isDesktop).mockReturnValue(true);
+      const id = useHiveStore.getState().spawnTerminal('nova-web', { cwd: '/repos/nova-web/pkg' });
+      expect(useHiveStore.getState().entities[id]).toMatchObject({ cwd: '/repos/nova-web/pkg' });
+      expect(requestSpawnTerminal).toHaveBeenCalledWith(id, 'nova-web', '/repos/nova-web/pkg');
+    });
+
+    it('spawnTerminal without a directory sends none and records the project path', () => {
+      vi.mocked(isDesktop).mockReturnValue(true);
+      const id = useHiveStore.getState().spawnTerminal('nova-web');
+      expect(useHiveStore.getState().entities[id]).toMatchObject({ cwd: '/repos/nova-web' });
+      expect(requestSpawnTerminal).toHaveBeenCalledWith(id, 'nova-web', undefined);
+    });
+
     it('spawnTerminal mints term-NN, opens the tab, and asks for a plain shell on desktop', () => {
       vi.mocked(isDesktop).mockReturnValue(true);
       const id = useHiveStore.getState().spawnTerminal('nova-web');
@@ -3887,7 +4004,7 @@ describe('hive-store', () => {
       expect(entity).not.toHaveProperty('foreground');
       expect(useHiveStore.getState().order.at(-1)).toBe(id);
       expect(useUiStore.getState().activeTab).toBe(id);
-      expect(requestSpawnTerminal).toHaveBeenCalledWith(id, 'nova-web');
+      expect(requestSpawnTerminal).toHaveBeenCalledWith(id, 'nova-web', undefined);
       // The one mistake that would put `claude` in a window opened as a shell.
       expect(requestSpawn).not.toHaveBeenCalled();
     });

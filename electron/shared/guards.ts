@@ -394,13 +394,31 @@ export function parseSpawnTerminalRequest(input: unknown): SpawnTerminalRequest 
     input,
     ['sessionId', 'projectId', 'cols', 'rows'],
     'spawn-terminal',
+    ['cwd'],
   );
   return {
     sessionId: assertId(raw.sessionId, 'spawn-terminal.sessionId'),
     projectId: assertId(raw.projectId, 'spawn-terminal.projectId'),
     cols: assertDimension(raw.cols, 'spawn-terminal.cols'),
     rows: assertDimension(raw.rows, 'spawn-terminal.rows'),
+    /**
+     * Spread rather than `cwd: undefined`: this module's own tests compare the
+     * returned object key-for-key. Absolute first, then the same length cap
+     * and control-character ban as any text — the pair the container paths
+     * use, for the same reason: this string becomes a process's cwd.
+     */
+    ...(raw.cwd === undefined
+      ? {}
+      : { cwd: assertAbsolutePath(raw.cwd, 'spawn-terminal.cwd') }),
   };
+}
+
+/** An absolute POSIX path with `assertText`'s bounds on top. */
+function assertAbsolutePath(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !value.startsWith('/')) {
+    return fail(`${label}: must be an absolute path`);
+  }
+  return assertText(value, label);
 }
 
 /**

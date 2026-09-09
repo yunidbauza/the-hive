@@ -815,6 +815,23 @@ describe('requestSpawn', () => {
  * `claude` in a window the user opened as a shell.
  */
 describe('requestSpawnTerminal', () => {
+  it('sends the directory when given, and no cwd key when not', async () => {
+    await requestSpawnTerminal('term-10', 'nova-web', '/repos/nova-web/pkg');
+    expect(bridge.spawnTerminal).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sessionId: 'term-10', cwd: '/repos/nova-web/pkg' }),
+    );
+    await requestSpawnTerminal('term-11', 'nova-web');
+    expect(bridge.spawnTerminal.mock.calls.at(-1)![0]).not.toHaveProperty('cwd');
+  });
+
+  it('a terminal transport re-spawns at the same directory it was created for', () => {
+    const transport = createTerminalTransport('term-12', 'nova-web', '/repos/nova-web/pkg');
+    transport.onData(() => {});
+    expect(bridge.spawnTerminal).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sessionId: 'term-12', cwd: '/repos/nova-web/pkg' }),
+    );
+  });
+
   it('asks the bridge for a terminal with the project and the default geometry, once', async () => {
     await requestSpawnTerminal('term-01', 'nova-web');
     await requestSpawnTerminal('term-01', 'nova-web');

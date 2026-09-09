@@ -3230,6 +3230,14 @@ describe('container spawn (HIVE-133)', () => {
 const TERMINAL = { entityId: 'term-01', projectId: 'nova-web', cols: 80, rows: 24 };
 
 describe('terminals', () => {
+  it('starts at the requested directory when one is given, and at the project path otherwise', () => {
+    sessions.openTerminal({ ...TERMINAL, cwd: '/repos/nova-web/.claude/worktrees/hero' });
+    expect(spawned[0]!.cwd).toBe('/repos/nova-web/.claude/worktrees/hero');
+
+    sessions.openTerminal({ ...TERMINAL, entityId: 'term-02' });
+    expect(spawned[1]!.cwd).toBe('/repos/nova-web');
+  });
+
   it('spawns the login shell in the project directory with the foreground flag, and types nothing', () => {
     sessions.openTerminal(TERMINAL);
     const sessionId = mintedFor('term-01');

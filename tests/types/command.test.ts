@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ADVERTISED_VERBS, CONSOLE_VERBS, QUIET_VERBS } from '@/types/command';
+import { ADVERTISED_VERBS, CONSOLE_VERBS, QUIET_VERBS, USAGE } from '@/types/command';
 
 /**
  * The grammar has two lists — what parses and what is taught — and the second
@@ -26,5 +26,12 @@ describe('ADVERTISED_VERBS', () => {
     for (const verb of QUIET_VERBS) {
       expect(CONSOLE_VERBS).toContain(verb);
     }
+  });
+
+  it('advertises term right after spawn', () => {
+    const at = CONSOLE_VERBS.indexOf('term');
+    expect(at).toBe(CONSOLE_VERBS.indexOf('spawn') + 1);
+    expect(ADVERTISED_VERBS).toContain('term');
+    expect(USAGE.term).toBe('usage: term [<project>] — or select a session first');
   });
 });

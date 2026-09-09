@@ -554,6 +554,15 @@ export function TerminalSurface({
             event.preventDefault();
             return false;
           }
+          /** Same contract as `rail-chord`, with its own name in the event. */
+          case 'terminal-chord': {
+            const detail: TerminalChordDetail = { chord: 'terminal-here' };
+            container.dispatchEvent(
+              new CustomEvent(TERMINAL_CHORD_EVENT, { detail, bubbles: true }),
+            );
+            event.preventDefault();
+            return false;
+          }
           /**
            * Announced **and** handed on — the one branch that does both
            * (HIVE-79).

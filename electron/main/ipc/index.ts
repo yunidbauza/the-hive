@@ -4448,6 +4448,7 @@ export function registerIpcHandlers(
       projectId: request.projectId,
       cols: request.cols,
       rows: request.rows,
+      ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
     });
   });
 

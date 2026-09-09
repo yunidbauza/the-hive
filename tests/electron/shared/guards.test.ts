@@ -1709,6 +1709,30 @@ describe('parseSetProjectRuntimeRequest container', () => {
 const validTerminal = { sessionId: 'term-01', projectId: 'proj-1', cols: 80, rows: 24 };
 
 describe('parseSpawnTerminalRequest', () => {
+  describe('cwd (entry points)', () => {
+    it('passes an absolute directory through', () => {
+      expect(
+        parseSpawnTerminalRequest({ ...validTerminal, cwd: '/repos/x/.claude/worktrees/y' }).cwd,
+      ).toBe('/repos/x/.claude/worktrees/y');
+    });
+
+    it('is absent when not sent', () => {
+      expect(parseSpawnTerminalRequest({ ...validTerminal })).not.toHaveProperty('cwd');
+    });
+
+    it('refuses a relative path, an empty one, and control characters', () => {
+      expect(() => parseSpawnTerminalRequest({ ...validTerminal, cwd: 'repos/x' })).toThrow(
+        /spawn-terminal\.cwd/,
+      );
+      expect(() => parseSpawnTerminalRequest({ ...validTerminal, cwd: '' })).toThrow(
+        /spawn-terminal\.cwd/,
+      );
+      expect(() => parseSpawnTerminalRequest({ ...validTerminal, cwd: '/repos/x\n' })).toThrow(
+        /spawn-terminal\.cwd/,
+      );
+    });
+  });
+
   it('accepts a well-formed request and returns exactly its four fields', () => {
     expect(parseSpawnTerminalRequest({ ...validTerminal })).toEqual(validTerminal);
     expect(Object.keys(parseSpawnTerminalRequest({ ...validTerminal })).sort()).toEqual([

@@ -1115,16 +1115,21 @@ export interface SpawnRequest {
 }
 
 /**
- * A terminal spawn (terminals, phase 1).
+ * A terminal spawn (terminals).
  *
- * Four fields and no more: a terminal takes exactly one input, the project.
- * There is no task, model, effort, name or resume — the guard refuses each.
+ * The project, a size, and — for "terminal here" — the directory to start in.
+ * `cwd` is optional because every other entry point means the project's path,
+ * and absent is how they say so; when present it is a session's observed
+ * working directory, which differs from the project path exactly when the
+ * session has moved into a worktree. There is still no task, model, effort,
+ * name or resume — the guard refuses each.
  */
 export interface SpawnTerminalRequest {
   sessionId: string;
   projectId: string;
   cols: number;
   rows: number;
+  cwd?: string;
 }
 
 export interface WriteRequest {
