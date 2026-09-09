@@ -45,6 +45,48 @@ describe('isLoopbackHost', () => {
   });
 });
 
+/**
+ * The sibling of `isTailnetHost`'s spelling suite below, and it exists for the
+ * same finding arriving twice. `LOOPBACK_V4` shipped in HIVE-134 with the loose
+ * `\d{1,3}` octets that review round 1 had already made this branch bound out
+ * of `TAILNET_V4` — inert while the predicate only classified a bind address,
+ * live the moment HIVE-144 routed {@link isRemoteTarget} through it and made it
+ * decide what this app dials with a device credential over a plaintext socket.
+ *
+ * Every case here therefore asserts through `isRemoteTarget` as well as through
+ * `isLoopbackHost`: the predicate is the unit, but the security property is the
+ * verb, and a future refactor that re-loosens the regex has to fail both.
+ */
+describe('isLoopbackHost — spelling attacks (loopback half of the same finding)', () => {
+  /**
+   * `net.isIPv4('127.999.999.999')` is `false`, so `net.connect` hands the whole
+   * string to the DNS resolver as a hostname. With a `search` suffix and a
+   * resolver that hijacks NXDOMAIN, that is the device credential going to an
+   * arbitrary public address — see `LOOPBACK_V4`'s doc comment.
+   */
+  it('refuses an octet past 255, so a typo cannot fall through to the resolver', () => {
+    for (const host of ['127.999.999.999', '127.0.0.256', '127.256.0.1', '127.0.300.1']) {
+      expect(isLoopbackHost(host)).toBe(false);
+      expect(isRemoteTarget(host)).toBe(false);
+    }
+  });
+
+  it('refuses a leading-zero octet, which some resolvers still read as octal', () => {
+    for (const host of ['127.00.00.01', '127.064.0.1', '0127.0.0.1']) {
+      expect(isLoopbackHost(host)).toBe(false);
+      expect(isRemoteTarget(host)).toBe(false);
+    }
+  });
+
+  /* The bounds are inclusive at both ends: 0 and 255 are real octets. */
+  it('still accepts both ends of every octet it bounds', () => {
+    for (const host of ['127.0.0.0', '127.255.255.255', '127.0.255.0', '127.255.0.255']) {
+      expect(isLoopbackHost(host)).toBe(true);
+      expect(isRemoteTarget(host)).toBe(true);
+    }
+  });
+});
+
 describe('the remote block', () => {
   it('defaults to local mode with no address, so a never-attached install carries no target', () => {
     expect(DEFAULT_REMOTE).toEqual({ mode: 'local', host: '', port: 7433 });

@@ -1018,8 +1018,30 @@ export function isHostAlias(value: unknown): value is string {
   return value.split('.').every((label) => HOST_ALIAS_LABEL.test(label));
 }
 
-/** `127.0.0.0/8`, in the dotted-quad spelling `isHostAlias` admits. */
-const LOOPBACK_V4 = /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+/**
+ * `127.0.0.0/8`, in the dotted-quad spelling {@link isHostAlias} admits.
+ *
+ * Every octet after the fixed `127` is bounded `(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)`
+ * — 0 through 255 and nothing past it — exactly as {@link TAILNET_V4} bounds
+ * its own, and for the same reason spelled out there. The looser `\d{1,3}` this
+ * regex used through HIVE-134 admits `256` through `999`, and `127.999.999.999`
+ * is not an IPv4 address at all: `net.isIPv4` says `false`, so `net.connect`
+ * hands the whole string to the **DNS resolver as a hostname**.
+ *
+ * That was inert while this predicate only classified a *bind* address — a
+ * nonsense host was refused by the OS at bind time either way. HIVE-144 gave it
+ * a second job through {@link isRemoteTarget}, where it decides what this app
+ * will **dial with a device credential over a plaintext socket**, and a loose
+ * octet there is the exfiltration path `TAILNET_V4` documents: a typo plus a
+ * `search` suffix plus a resolver that hijacks NXDOMAIN sends the credential to
+ * an arbitrary public address, with this predicate having called it loopback.
+ *
+ * Tightening cuts nothing real loose. The strings it stops matching were never
+ * IPv4 literals, so no bind, dial or `Host` header they appear in could have
+ * reached this machine; every one of them now classifies as *not* loopback,
+ * which is the failing-closed direction at all four call sites.
+ */
+const LOOPBACK_V4 = /^127\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/;
 
 /**
  * Whether a bind address reaches only this machine (HIVE-134).
