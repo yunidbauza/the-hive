@@ -4509,8 +4509,38 @@ export function registerIpcHandlers(
  * to leave `ipcMain` clean before `registerIpcHandlers` runs again against a
  * different set of layers. See the `bindings.unbindAll()` comment below for
  * why the switch can trust this path.
+ *
+ * ## `flush`, and why a live switch is not a test teardown (HIVE-144, fix round 1)
+ *
+ * `history` and `agentState` both write on a 400 ms debounce, and this function
+ * has always **cancelled** that timer rather than letting it fire —
+ * deliberately, because a test's paths point at whatever `configPath()` and
+ * `app.getPath` were stubbed to return, and writing there on teardown is how a
+ * unit test comes to leave a file behind.
+ *
+ * That was correct while the only caller was a teardown. It stopped being
+ * correct the moment a live mode switch called it: `runs?.closeAll('reset')`
+ * below finalises every headless run in flight and schedules an `agents.json`
+ * write carrying that run's summary, its `runsSinceRotate`, its `nextRunAt` —
+ * and its `sessionUuid`, which is what the next wake `--resume`s from
+ * (`agents/runs.ts`). The very next statement then cancelled it. A user who
+ * attached, detached, or simply suffered a failed attach while an agent was
+ * mid-run lost that conversation's continuity with no error anywhere: the next
+ * wake would start a fresh conversation instead of resuming.
+ *
+ * The tell was that the shutdown hook (`onShutdown`, above) already performs
+ * this exact sequence with `flush()` — one path flushed and the other dropped,
+ * for the same data. So the choice is now the caller's, and the two production
+ * callers make the same one.
+ *
+ * The default is **drop**, which keeps every existing suite writing nothing,
+ * and `unbindEverything` in `ipc/router.ts` is the one caller that opts in.
+ * The flush sits exactly where the shutdown hook's does — *after*
+ * `runs.closeAll`, never before, or it would write the state as it was before
+ * the run was finalised, which is the same loss with an extra file.
  */
-export function resetIpcHandlers(): void {
+export function resetIpcHandlers(options: { flush?: boolean } = {}): void {
+  const { flush = false } = options;
   /*
     HIVE-142. Most tests never call `startRemoteListener`, so this is usually
     stopping a socket that was never bound — cheap, per `listener.ts`'s own
@@ -4550,7 +4580,12 @@ export function resetIpcHandlers(): void {
     `dispose()` rather than just dropping the reference — the debounce timer
     closes over the write directly, so an unreferenced history still fires one
     last `writeFileSync` at that stubbed path.
+
+    Unless the caller asked for a flush (HIVE-144) — a live mode switch is not
+    a teardown, and the fleet as it stood a moment before the switch is the
+    fleet the next launch should show.
   */
+  if (flush) history?.flush();
   history?.dispose();
   history = null;
   /*
@@ -4610,6 +4645,19 @@ export function resetIpcHandlers(): void {
   permissions = null;
   runs?.closeAll('reset');
   runs = null;
+  /*
+    **After `closeAll`, never before** (HIVE-144, fix round 1). `closeAll`
+    finalises every live run synchronously, and `finalizeRun` writes that run's
+    summary and its `sessionUuid` into this state on the way — so a flush that
+    ran first would write the state as it was *before* the run was finalised,
+    which loses exactly what this flush exists to keep and leaves a file behind
+    to prove it did something.
+
+    This is the same statement, in the same position, as the shutdown hook's
+    own `runs?.closeAll('app-closed'); agentState?.flush();`. The two paths
+    finally agree.
+  */
+  if (flush) agentState?.flush();
   agentState?.dispose();
   agentState = null;
   /*

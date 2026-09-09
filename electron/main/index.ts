@@ -163,9 +163,23 @@ if (!app.requestSingleInstanceLock()) {
   */
   registerIpc('local');
   if (getConfig().remote.mode === 'remote') {
-    void switchIpcMode('remote').then((outcome) => {
-      if (!outcome.ok) console.error('[hive] could not attach at boot:', outcome);
-    });
+    void switchIpcMode('remote')
+      .then((outcome) => {
+        if (!outcome.ok) console.error('[hive] could not attach at boot:', outcome);
+      })
+      /*
+        `switchIpcMode` answers a refusal as a value, but it can still *reject*:
+        nothing wraps its unbind, and its own rebind-local arm can throw if
+        `ipcMain` refuses a channel. Unhandled, that becomes an unhandled
+        rejection at boot over precisely the state this whole story exists to
+        prevent — a window with no IPC — which is the one failure that must
+        not be silent. Logged and swallowed: there is nothing better to do
+        here, and crashing the app over a failed attach would be worse than
+        the local surface the switch has already tried to restore.
+      */
+      .catch((cause: unknown) => {
+        console.error('[hive] the boot attach threw:', cause);
+      });
   }
 
   /**

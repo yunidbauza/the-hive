@@ -1060,7 +1060,8 @@ describe('the mode switch (HIVE-144)', () => {
    * A settings pane commits the address field on blur while still in local
    * mode, which reaches the switch as `local` when local is already bound.
    * Tearing down and rebuilding for that would dispose the sessions layer —
-   * killing this machine's PTYs over a keystroke in a text field.
+   * which does not kill this machine's ptys but **orphans** them, still
+   * running and no longer reachable, over a keystroke in a text field.
    */
   it('does not touch a local surface that is already bound', async () => {
     const local = boundLocally();
@@ -1071,6 +1072,41 @@ describe('the mode switch (HIVE-144)', () => {
     // Identity, not a count: a teardown and rebuild lands on the same number.
     expect(sessionsLayer()).toBe(layer);
     expect(ipcBindingsSize()).toBe(local);
+  });
+
+  /**
+   * The rebind itself can fail, and when it does the switch **rejects** rather
+   * than answering an outcome (HIVE-144, fix round 1).
+   *
+   * Nothing wraps `registerIpc('local', …)` in the catch arm, so a channel
+   * `ipcMain` refuses — here, one bound behind the switch's back, exactly as a
+   * half-torn-down surface would leave it — comes out as a rejected promise.
+   * That is the honest shape: it is a programming error, not a runtime
+   * condition, and flattening it into `connect-failed` would hide the one
+   * state this whole story exists to prevent behind a message about the
+   * network. It is also why `electron/main/index.ts`'s boot attach carries a
+   * `.catch()`: unhandled, this is an unhandled rejection over a window with
+   * no IPC.
+   */
+  it('rejects rather than lying when the rebind itself fails', async () => {
+    boundLocally();
+    // A squatter on one channel, so `registerIpcHandlers` hits the fake
+    // `ipcMain.handle`'s duplicate refusal partway through its rebind.
+    handledChannels.delete(CH.configGet);
+    resetIpcHandlers();
+    handledChannels.set(CH.configGet, () => undefined);
+
+    await expect(
+      switchIpcMode('remote', opts({ connect: () => Promise.reject(new Error('down')) })),
+    ).rejects.toThrow(/second handler/);
+
+    /*
+      Swept up here rather than in `beforeEach`. The squatter is by definition
+      a channel neither recorder knows about, so nothing in the shared teardown
+      can reach it — and a `handledChannels.clear()` there would also erase the
+      *real* leak this fixture's duplicate-handler refusal exists to catch.
+    */
+    handledChannels.delete(CH.configGet);
   });
 
   /**

@@ -55,4 +55,27 @@ describe('the boot path chooses an IPC mode', () => {
   it('attaches behind the stored mode, not unconditionally', () => {
     expect(source).toMatch(/getConfig\(\)\.remote\.mode === 'remote'/);
   });
+
+  /**
+   * `switchIpcMode` answers a *refusal* as a value, but it can still reject —
+   * nothing wraps its unbind, and its own rebind-local arm throws if `ipcMain`
+   * refuses a channel (`remote-composition.test.ts` drives exactly that). At
+   * boot, unhandled, that is an unhandled rejection over the one state this
+   * story exists to prevent: a window with no IPC and nothing said about it.
+   */
+  it('handles a boot attach that throws, not only one that refuses', () => {
+    const attach = source.slice(source.indexOf("switchIpcMode('remote'"));
+    const nextStatement = attach.indexOf('\n  const ');
+
+    expect(
+      nextStatement === -1 ? attach : attach.slice(0, nextStatement),
+      'the boot attach needs a .catch() — a rejection here is an app with no IPC',
+      /*
+        Anchored to the start of a line, so it matches a link in the promise
+        chain and not the word inside the comment that explains it. Caught by
+        the mutation for this case, whose first spelling put ".catch(" in its
+        own marker and went green on it.
+      */
+    ).toMatch(/^\s*\.catch\(/m);
+  });
 });

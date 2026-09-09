@@ -94,6 +94,34 @@ vi.mock('../../../../electron/main/shutdown', () => ({
   onShutdown: (hook: () => void) => shutdownHooks.push(hook),
 }));
 
+/**
+ * A fully inert scheduler — ported from `remote-composition.test.ts`, and this
+ * file needs it more than that one does (HIVE-144, fix round 1).
+ *
+ * The real scheduler is a live `setInterval` plus an immediate
+ * `tickSchedules()` at `start()`, and `start()` fires behind the real,
+ * unmocked `mcp.start()`'s file write — a promise this fixture does not
+ * control the timing of and nothing here awaits. This file points
+ * `CONFIG_PATH_ENV` at a directory it removes after every case, and a tick
+ * landing after that teardown writes into it while `rmSync` is walking it:
+ * `ENOTEMPTY`. Seen once under `test:coverage`, where everything is slower.
+ *
+ * The first attempt at this was `rmSync(…, { maxRetries: 10, retryDelay: 25 })`
+ * — a 250 ms budget against a 400 ms debounce, which cannot win. Removing the
+ * writer is the fix; retrying around it was not.
+ */
+vi.mock('../../../../electron/main/agents/scheduler', () => ({
+  createScheduler: () => ({
+    onEntry: () => {},
+    onRunClosed: () => {},
+    onResume: () => {},
+    onEvent: () => {},
+    manualWake: () => ({ ok: false, status: 'stopped' }),
+    start: () => {},
+    stop: () => {},
+  }),
+}));
+
 const { CH } = await import('../../../../electron/shared/ipc-contract');
 const { reloadConfig } = await import('../../../../electron/main/config');
 const { registerIpcHandlers, resetIpcHandlers } = await import(
@@ -157,15 +185,23 @@ beforeEach(() => {
 afterEach(() => {
   resetIpcHandlers();
   /*
-    Retried, because this directory is not only the config file's (HIVE-144).
-    `registerIpcHandlers` composes an agents runtime, a ledger and a skills
-    runtime that all live *beside* `configPath()`, and several of them write on
-    a debounce that `resetIpcHandlers` cancels rather than awaits. A file
-    landing between the `readdir` and the `rmdir` is `ENOTEMPTY`, which is one
-    of the codes `maxRetries` exists for — seen once under `test:coverage`,
-    where everything is slower.
+    The `createScheduler` mock above is the fix; this is the backstop, and it
+    is here on evidence rather than on principle (HIVE-144, fix round 1).
+
+    This directory is not only the config file's — the agents registry, the
+    ledger and the skills runtime all live *beside* `configPath()` — so
+    anything still writing there after teardown lands between this call's
+    `readdir` and its `rmdir` and fails `ENOTEMPTY`. Removing the scheduler
+    removed the writer we could name. With retries removed entirely, this file
+    still failed once in a scoped batch, unattributed and not reproduced in
+    fourteen runs since, so at least one latecomer remains unidentified.
+
+    The budget matters and the first attempt got it wrong: 10 × 25 ms is 250 ms
+    against a 400 ms debounce, which cannot win and is worse than nothing
+    because it looks handled. 30 × 50 ms is 1.5 s, which outlasts the longest
+    debounce this composition arms.
   */
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 25 });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 30, retryDelay: 50 });
   if (originalConfigPath === undefined) delete process.env[CONFIG_PATH_ENV];
   else process.env[CONFIG_PATH_ENV] = originalConfigPath;
 });
@@ -258,6 +294,28 @@ describe('config:set-remote (HIVE-144, Ruling 19)', () => {
     await expect(setRemoteVerb({ mode: 'both' })).rejects.toThrow(/setRemote\.mode/);
 
     expect(switchMode).not.toHaveBeenCalled();
+    expect(onDisk()).not.toHaveProperty('remote');
+  });
+
+  /**
+   * The default {@link ModeSwitcher} (HIVE-144, fix round 1).
+   *
+   * `registerIpc` always hands the real switch down, so production cannot land
+   * here — but the default has to be a loud failure rather than a quiet
+   * `{ ok: true }`, or a registration that forgot the argument would let this
+   * verb write `mode: "remote"` to disk over a switch that never happened.
+   * That is the exact state Ruling 19 exists to make impossible, arriving
+   * through the wiring rather than through the ordering, and until this case
+   * nothing asserted it: every other case in this file injects a switcher.
+   */
+  it('refuses, and writes nothing, when no mode switcher was wired', async () => {
+    resetIpcHandlers();
+    handlers.clear();
+    registerIpcHandlers();
+
+    await expect(setRemoteVerb({ mode: 'remote', host: '100.64.0.1' })).rejects.toThrow(
+      /no mode switcher/,
+    );
     expect(onDisk()).not.toHaveProperty('remote');
   });
 

@@ -2028,10 +2028,19 @@ export type SwitchOutcome =
  * pane needs to know which happened. `config` is the snapshot as it now
  * stands — **the old one, untouched, whenever {@link switched} is not `ok`**.
  * The handler validates, switches, and writes only on success, so there is no
- * revert path and no window in which the file and the running process
- * disagree: a refused switch leaves `config.json` exactly as it was, and the
- * next launch does not attach to a server the user was just told it could not
- * attach to.
+ * revert path: a refused switch leaves `config.json` exactly as it was, and
+ * the next launch does not attach to a server the user was just told it could
+ * not attach to.
+ *
+ * **This is not "the file always matches the running mode".** It cannot be,
+ * and should not be. An app already attached that re-dials and fails is
+ * rebound *local* while `config.json` still says `remote` — correctly, because
+ * that is still what the user asked for and the next launch should retry it.
+ * The same is true of a boot attach that fails. What the ruling actually
+ * guarantees is narrower and is the half that matters: **a target the app was
+ * never able to reach is never written**, so the file can say "attach to the
+ * mini" while this run could not, and can never say "attach to a machine you
+ * were just told is unreachable".
  */
 export interface SetRemoteResult {
   switched: SwitchOutcome;

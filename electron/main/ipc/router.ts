@@ -157,7 +157,18 @@ let attached: RemoteClient | null = null;
  */
 function unbindEverything(): void {
   resetRemoteProxy();
-  resetIpcHandlers();
+  /*
+    `{ flush: true }` is what makes this a switch rather than a teardown
+    (HIVE-144, fix round 1). `resetIpcHandlers` finalises every headless run in
+    flight and then, by default, *cancels* the `agents.json` write that
+    finalisation scheduled — dropping the closed run's `sessionUuid`, so the
+    next wake starts a fresh conversation instead of `--resume`-ing. Correct
+    for a unit test, whose paths are stubbed; silent data loss for a user who
+    attaches, detaches, or merely suffers a failed attach while an agent is
+    mid-run. The shutdown hook has always flushed here; this is the second
+    production caller, and it makes the same choice.
+  */
+  resetIpcHandlers({ flush: true });
   /*
     Whoever opened it closes it. `registerRemoteProxy` is handed a client it
     did not open and does not own, so `resetRemoteProxy` correctly leaves it
@@ -262,10 +273,14 @@ export async function switchIpcMode(
     /*
       Already local, and already bound: nothing to undo, and undoing it anyway
       would be destructive rather than merely wasteful. `resetIpcHandlers`
-      disposes the sessions layer, which kills this machine's PTYs — so a
-      settings pane committing the address field while in local mode (a
-      request whose *effective* mode is unchanged) must not pass through here
-      as a teardown.
+      disposes the sessions layer, and that does **not** kill the ptys — it
+      **orphans** them. `ptyIpc.dispose()` (`ipc/pty.ts`) only unsubscribes,
+      and `registry.clear()` drops the references, so every `claude` this
+      machine was running keeps running: still burning tokens, invisible to
+      the app, and no longer reachable by anything that could stop it. Worse
+      than a leak and worse than a kill. A settings pane committing the
+      address field while in local mode — a request whose *effective* mode is
+      unchanged — must not pass through here as a teardown.
 
       Read off the two recorders themselves rather than a remembered mode.
       They are what `ipcMain` actually holds, so they cannot drift from it;
