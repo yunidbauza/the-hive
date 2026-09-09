@@ -13,7 +13,11 @@ import { ContainerAliasGroup } from '@features/settings/components/container-ali
 import { ServerModeGroup } from '@features/settings/components/server-mode-group';
 import { SettingsGroup } from '@features/settings/components/settings-group';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
-import { useProjectConfig, useRemoteCapabilities } from '@hooks/use-project-config';
+import {
+  useAttachedServer,
+  useProjectConfig,
+  useRemoteCapabilities,
+} from '@hooks/use-project-config';
 import {
   readAppInfo,
   reloadProjectConfig,
@@ -186,6 +190,13 @@ function updateLine(
 export function AdvancedSection() {
   const snapshot = useProjectConfig();
   const { revealConfig } = useRemoteCapabilities();
+  /*
+    The runtime half of the attach half's state (Ruling 29). Read through the
+    shared hook rather than off `info` below, which is this section's own
+    one-shot `app:info` for the About box: that read never repeats, and this
+    value changes the moment a socket opens or closes.
+  */
+  const attachedServerName = useAttachedServer();
   const downloadingPhrase = useSwarmPhrase('loading.update');
   const readyPhrase = useSwarmPhrase('complete.update');
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -358,12 +369,21 @@ export function AdvancedSection() {
         bind={snapshot.receiver.bind}
       />
 
+      {/*
+        `attachedServerName` comes from the runtime, not the snapshot beside
+        it (HIVE-144, Ruling 29) — see `ServerModeGroupProps`' own two doc
+        comments for why the attach half needs both sources and which question
+        each one answers. `useAttachedServer` is the same hook the header chip
+        reads, so the pane and the chip can never disagree about whether a
+        socket is open.
+      */}
       <ServerModeGroup
         enabled={snapshot.server.enabled}
         bind={snapshot.server.bind}
         devices={snapshot.server.devices}
         remote={snapshot.remote}
         attachedServer={snapshot.attachedServer}
+        attachedServerName={attachedServerName}
       />
 
       <SettingsGroup

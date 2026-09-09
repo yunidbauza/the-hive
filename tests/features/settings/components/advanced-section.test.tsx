@@ -232,11 +232,23 @@ describe('AdvancedSection', () => {
     // Raw, not humanised — the ratios are what diagnose a flow-control bug.
     expect(screen.getByText('2048')).toBeInTheDocument();
     expect(screen.getByText('paused')).toBeInTheDocument();
-    expect(readAppInfo).toHaveBeenCalledTimes(1);
+
+    /*
+      A baseline, not a literal (HIVE-144, Ruling 29). This section is no
+      longer the only `readAppInfo` caller under this render:
+      `useAttachedServer` reads the same channel for the attach half's
+      `attachedServerName`, so the count at rest is now two rather than one.
+      What this case is actually about is that **Refresh causes exactly one
+      more read** — asserting that against a baseline keeps it true the next
+      time another consumer of the same channel appears, instead of failing
+      for a reason that has nothing to do with the button.
+    */
+    const atRest = readAppInfo.mock.calls.length;
+    expect(atRest).toBeGreaterThan(0);
 
     await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     await waitFor(() => {
-      expect(readAppInfo).toHaveBeenCalledTimes(2);
+      expect(readAppInfo).toHaveBeenCalledTimes(atRest + 1);
     });
   });
 

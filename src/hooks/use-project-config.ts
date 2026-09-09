@@ -320,14 +320,29 @@ export function useServingDeviceCount(): number {
  *
  * Gated on `useProjectConfig` having resolved, the same proxy for "the bridge
  * is actually up" every hook in this file uses.
+ *
+ * **Re-read on every snapshot, not only on the first one (HIVE-144, Ruling
+ * 29).** Its two siblings above key their effect on `hasSnapshot`, which is a
+ * `false → true` edge and therefore fires once — right for a bind that cannot
+ * move for the life of the process, wrong for this one. Attachment changes
+ * *during* a session, and the moment it changes is a `config:set-remote` that
+ * also replaces the snapshot: attaching swaps in the far end's, detaching swaps
+ * back to this machine's. Keying on the snapshot itself is what makes this
+ * value follow the socket rather than describe whatever was true at boot — and
+ * it is load-bearing now that Settings reads it, because a stale `null` there
+ * hides the detach control and a stale name offers one that has nothing to
+ * detach. The header chip gets the same correction for free; it was quietly
+ * stale after any switch before this.
+ *
+ * The extra reads this costs are one `app:info` per config write, to a channel
+ * that is `PROCESS_LOCAL` and answered without touching a socket at all.
  */
 export function useAttachedServer(): string | null {
   const snapshot = useProjectConfig();
-  const hasSnapshot = snapshot !== null;
   const [serverName, setServerName] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!hasSnapshot) return;
+    if (snapshot === null) return;
 
     let cancelled = false;
     void readAppInfo().then((info) => {
@@ -337,7 +352,7 @@ export function useAttachedServer(): string | null {
     return () => {
       cancelled = true;
     };
-  }, [hasSnapshot]);
+  }, [snapshot]);
 
   return serverName;
 }

@@ -2412,6 +2412,17 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
      */
     const servedProjectId = 'served-fleet';
     const clientProjectId = 'client-only';
+    /**
+     * A **second** project on the client, and only on the client (Ruling 29).
+     *
+     * The two configs have to differ in project *count*, not only in ids,
+     * because case 21h needs a signal that the Advanced pane's Reload button
+     * was answered by one machine rather than the other — and the only thing
+     * that button renders is "Reloaded — N projects." One each would print the
+     * same sentence for both, which is a wait that cannot tell the two apart
+     * and therefore a wait that proves nothing.
+     */
+    const clientProjectId2 = 'client-only-two';
 
     let serverDir: string;
     let serverConfigPath: string;
@@ -2425,6 +2436,7 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
     let clientConfigPath: string;
     let clientUserDataDir: string;
     let clientProjectDir: string;
+    let clientProjectDir2: string;
     let clientApp: ChildProcess | undefined;
     let clientRecord: ProcessRecord | undefined;
     let renderer: RendererDriver | undefined;
@@ -2469,6 +2481,7 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       clientConfigPath = join(clientDir, 'config.json');
       clientUserDataDir = join(clientDir, 'user-data');
       clientProjectDir = mkdtempSync(join(tmpdir(), 'hive-live-two-app-client-project-'));
+      clientProjectDir2 = mkdtempSync(join(tmpdir(), 'hive-live-two-app-client-project-two-'));
       assertScratchPath(clientConfigPath);
       scratchConfigPaths.push(clientConfigPath);
       writeFileSync(
@@ -2480,6 +2493,7 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
             claudeCommand: 'true; false',
             projects: [
               { id: clientProjectId, name: 'Client Only', path: clientProjectDir, icon: 'ph-cube' },
+              { id: clientProjectId2, name: 'Client Two', path: clientProjectDir2, icon: 'ph-cube' },
             ],
           },
           null,
@@ -2512,7 +2526,7 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       expect(
         config.projects.map((project) => project.id),
         `the attaching app's stderr so far:\n${clientRecord?.stderr || '(empty)'}`,
-      ).toEqual([clientProjectId]);
+      ).toEqual([clientProjectId, clientProjectId2]);
       expect(config.remote.mode).toBe('local');
 
       const info = await renderer.evaluate<AppInfo>('window.hive.appInfo()');
@@ -2606,7 +2620,7 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
         else.
       */
       const after = await renderer.evaluate<ConfigSnapshot>('window.hive.config.get()');
-      expect(after.projects.map((project) => project.id)).toEqual([clientProjectId]);
+      expect(after.projects.map((project) => project.id)).toEqual([clientProjectId, clientProjectId2]);
       expect(readFileSync(clientConfigPath, 'utf8')).not.toContain(String(deadPort));
     }, 90_000);
 
@@ -2828,7 +2842,7 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       // Answering locally again: this window's own project is back, and the
       // server's is gone from it.
       const config = await renderer.evaluate<ConfigSnapshot>('window.hive.config.get()');
-      expect(config.projects.map((project) => project.id)).toEqual([clientProjectId]);
+      expect(config.projects.map((project) => project.id)).toEqual([clientProjectId, clientProjectId2]);
 
       // And the runtime readout agrees with the file, which is the pair
       // `AppInfo.attachedServerName`'s doc comment says can disagree.
@@ -2856,9 +2870,258 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       });
     }, 120_000);
 
-    it('21h. a detached client is answered by its own process again, end to end', async () => {
+    it('21h. the Settings switch attaches and detaches, clicked for real (Ruling 29)', async () => {
       /*
-        21g proves the detach; this proves the surface it left behind is a
+        ## The control, not the channel
+
+        21g proves `config:set-remote` detaches this window. It says nothing
+        about whether a **user** can reach it — and for one commit they could
+        not. Everything in the attach half keyed on `remote.mode`, which while
+        attached is read off the *server's* snapshot and says `'local'`, so the
+        switch rendered unchecked on an attached window, the panel stayed
+        collapsed, and `handleDetach`'s guard was unreachable by any click.
+        Ruling 28 fixed the channel and left the only caller of it dead.
+
+        So this case clicks. Nothing here goes through `window.hive` except to
+        *read back* what happened: the attach and the detach are both real
+        pointer events on the real Settings pane, driven over CDP, which is the
+        only way to exercise `setRemoteConfig` — the app's own wrapper, the one
+        that installs the returned snapshot into the store the pane renders
+        from. A bridge call would have skipped exactly the state the defect
+        lived in.
+
+        The `Reload` click at the top is not decoration. Every earlier case in
+        this block drove the bridge directly, so the renderer's store still
+        holds the snapshot it booted with; `Reload` is the one control that
+        re-reads this machine's own file, and it is what puts the real host and
+        port into the address fields for the Attach below.
+      */
+      assert(renderer !== undefined, 'the client app must have a renderer');
+      const ui = renderer;
+
+      /**
+       * Poll a renderer-side predicate — `waitFor`, across the bridge.
+       *
+       * A throw counts as "not yet", and that is not laziness: **while a
+       * switch is dialling, this window has no IPC at all.** `switchIpcMode`
+       * unbinds both surfaces and *then* `await`s `connectRemote`, so for the
+       * length of the dial every `invoke` rejects with Electron's raw
+       * `No handler registered for 'app:info'` — measured here, on a loopback
+       * dial, by a poll that happened to land in that gap. A predicate that
+       * reads the bridge therefore cannot assume the bridge answers.
+       *
+       * The last failure is kept and reported on timeout, so a *persistent*
+       * error still fails loudly and readably rather than as a bare "timed
+       * out" — the difference between absorbing a known transient and
+       * swallowing a real break.
+       */
+      const untilUi = async (expression: string, what: string, timeoutMs = 30_000): Promise<void> => {
+        const start = Date.now();
+        let lastError: unknown;
+        while (Date.now() - start < timeoutMs) {
+          try {
+            if (await ui.evaluate<boolean>(expression)) return;
+            lastError = undefined;
+          } catch (cause) {
+            lastError = cause;
+          }
+          await delay(100);
+        }
+        throw new Error(
+          `timed out after ${String(timeoutMs)}ms waiting for ${what}` +
+            (lastError === undefined
+              ? ''
+              : `; last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`),
+        );
+      };
+
+      /*
+        The switch is found the way its own markup allows: `Switch` renders a
+        `<label htmlFor>` beside a Radix root carrying that id, so the label
+        text leads to the control. Chosen over an index into
+        `querySelectorAll('[role="switch"]')` because this pane has three, and
+        an index would silently follow whichever one moved.
+      */
+      const SWITCH = `(() => {
+        const label = [...document.querySelectorAll('label')]
+          .find((el) => el.textContent.trim() === 'Attach to a server');
+        return label ? document.getElementById(label.htmlFor) : null;
+      })()`;
+      /*
+        `TextField` labels the same way `Switch` does — a sibling `<label
+        htmlFor>`, deliberately not a wrapper, so that its hint text stays out
+        of the accessible name. So the input is reached through the label's
+        `htmlFor`, and `input.closest('label')` (the obvious first guess, and
+        the one this case was written with) is always `null`.
+      */
+      const FIELD = (label: string): string => `(() => {
+        const el = [...document.querySelectorAll('label')]
+          .find((l) => ${JSON.stringify(label)} === l.textContent.trim());
+        return el ? document.getElementById(el.htmlFor) : null;
+      })()`;
+      const addressField = `${FIELD('Server address')} !== null`;
+
+      await ui.evaluate(`document.querySelector('button[aria-label="Settings"]').click()`);
+      await untilUi(
+        `[...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Advanced')`,
+        'the Settings overlay to offer an Advanced section',
+      );
+      await ui.evaluate(
+        `[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Advanced').click()`,
+      );
+      await untilUi(`${SWITCH} !== null`, 'the Attach to a server switch to render');
+
+      await ui.evaluate(
+        `[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Reload').click()`,
+      );
+      await untilUi(
+        `/Reloaded —/.test(document.body.innerText)`,
+        'the Reload to land, so the store holds this machine’s own file',
+      );
+
+      /*
+        Detached to begin with, which 21g left it as — and the panel is
+        *closed*, because this machine's own `remote.mode` is now `'local'`
+        and nothing is attached. The switch reveals; it does not dial
+        (Ruling 27), which is why the address only becomes readable after the
+        click below.
+      */
+      expect(await ui.evaluate<string | null>(`${SWITCH}.getAttribute('aria-checked')`)).toBe('false');
+      expect(await ui.evaluate<boolean>(addressField)).toBe(false);
+
+      await ui.evaluate(`${SWITCH}.click()`);
+      await untilUi(
+        `${FIELD('Server address')}?.value === '127.0.0.1'`,
+        "the address field to show this machine's own stored host",
+      );
+      expect(await ui.evaluate<string>(`${FIELD('Port')}.value`)).toBe(String(serverPort));
+
+      // Attach: the button is what dials.
+      await ui.evaluate(
+        `[...document.querySelectorAll('button')].find((b) => /^Attach$/.test(b.textContent.trim())).click()`,
+      );
+      /*
+        Waited on the **socket**, not on the switch.
+
+        `aria-checked` is the wrong signal here and this case was written with
+        it once: the reveal click above already set it to `'true'`, so the wait
+        resolved instantly, every assertion below ran against a pane
+        mid-dial, and the case failed reading a window that had moved on. A
+        wait that is already satisfied when it is set up is the live-suite
+        version of a test that cannot fail — see the block comment on this
+        file's evidence for why that shape is the one this task hunts.
+        `attachedServerName` is `PROCESS_LOCAL` and answers `null` until a
+        socket is genuinely open, so it can only become non-null here by the
+        attach having landed.
+      */
+      await untilUi(
+        `window.hive.appInfo().then((i) => i.attachedServerName !== null)`,
+        'the Attach button to open a real socket',
+        60_000,
+      );
+      await untilUi(
+        `/Attached to/.test(document.body.innerText)`,
+        'the pane to redraw as attached',
+        30_000,
+      );
+
+      /*
+        **Then Reload, and this is the step that makes the case discriminating.**
+
+        Attaching from this pane does not by itself put the window in the state
+        the defect lives in. `setRemoteConfig` installs whatever
+        `config:set-remote` returned, and since Ruling 28 that verb is answered
+        *locally* — so the snapshot the store holds right after a successful
+        attach is this machine's own, with `mode: 'remote'` freshly written,
+        and a pane keyed on `remote.mode` looks perfectly correct. Written
+        without this step, and run against a deliberately reverted pane, this
+        case passed with the bug present (measured — the whole reason the step
+        is here).
+
+        The broken state is the *next* `config:get`: a Reload, a reopened
+        Settings, or the ordinary case of a client that attached at **boot**,
+        where the store is hydrated from the proxied read and gets the
+        server's block — `mode: 'local'`, because a server is not attached to
+        anything. Clicking Reload reproduces exactly that, in one click.
+
+        "Reloaded — 1 project." is the far end answering: this client has two
+        projects and the server has one, which is what
+        {@link clientProjectId2} exists for.
+      */
+      await ui.evaluate(
+        `[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Reload').click()`,
+      );
+      await untilUi(
+        `/Reloaded — 1 project\\./.test(document.body.innerText)`,
+        "a Reload answered by the server, which is what puts this window in a boot-attached client's state",
+      );
+
+      /*
+        What an attached client now shows, which is the whole of Ruling 29:
+        the panel is open, it names the machine the **socket** is open to
+        (`attachedServerName`, not a config field the far end answered), and
+        the address and pairing controls are gone rather than displaying the
+        server's values under a control that writes locally.
+      */
+      const attachedText = await ui.evaluate<string>('document.body.innerText');
+      expect(attachedText).toContain('Attached to');
+      expect(attachedText).toContain(hostname());
+      expect(attachedText).toMatch(/hidden while attached/i);
+      expect(await ui.evaluate<boolean>(addressField)).toBe(false);
+      expect(
+        await ui.evaluate<boolean>(
+          `[...document.querySelectorAll('button')].some((b) => /^Forget$/.test(b.textContent.trim()))`,
+        ),
+      ).toBe(false);
+      // Confirmed against the runtime, not only the pixels: the pane is
+      // describing a socket that is genuinely open.
+      expect((await ui.evaluate<AppInfo>('window.hive.appInfo()')).attachedServerName).toBe(hostname());
+
+      // And the detach — the click that was unreachable.
+      await ui.evaluate(`${SWITCH}.click()`);
+      // On the socket again, for the reason the attach wait is: the switch's
+      // own state is not evidence that anything happened to it.
+      await untilUi(
+        `window.hive.appInfo().then((i) => i.attachedServerName === null)`,
+        'the switch click to close the socket',
+        60_000,
+      );
+      expect(await ui.evaluate<string | null>(`${SWITCH}.getAttribute('aria-checked')`)).toBe('false');
+
+      const info = await ui.evaluate<AppInfo>('window.hive.appInfo()');
+      expect(info.attachedServerName).toBeNull();
+      const config = await ui.evaluate<ConfigSnapshot>('window.hive.config.get()');
+      expect(config.projects.map((project) => project.id)).toEqual([clientProjectId, clientProjectId2]);
+
+      // The file, because that is what the next launch reads — a detach that
+      // lasted only this session would be the defect in a slower form.
+      const clientOnDisk = JSON.parse(readFileSync(clientConfigPath, 'utf8')) as {
+        remote?: { mode?: string };
+      };
+      expect(clientOnDisk.remote?.mode).toBe('local');
+
+      // And the far machine is untouched by any of it.
+      const serverOnDisk = JSON.parse(readFileSync(serverConfigPath, 'utf8')) as {
+        remote?: unknown;
+      };
+      expect(serverOnDisk.remote).toBeUndefined();
+
+      measurements.push({
+        case: '21h. the Settings switch, clicked',
+        attachedServerNameAfterDetach: info.attachedServerName,
+        clientRemoteBlockAfter: clientOnDisk.remote,
+        serverHasNoRemoteBlock: serverOnDisk.remote === undefined,
+      });
+
+      // Leave the overlay closed, so 21i reads a window in its ordinary state.
+      await ui.evaluate(
+        `(() => { const b = [...document.querySelectorAll('button')].find((x) => /close/i.test(x.getAttribute('aria-label') || '')); if (b) b.click(); return true; })()`,
+      );
+    }, 180_000);
+
+    it('21i. a detached client is answered by its own process again, end to end', async () => {
+      /*
+        21g and 21h prove the detach; this proves the surface it left behind is a
         whole one rather than the one channel that was asked about. The
         rebind-local arm of `switchIpcMode` re-registers *every* channel, and
         a partial rebind — the failure `remote-composition.test.ts` asserts by
@@ -2891,20 +3154,20 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
         'pty:spawn on the detached client',
       );
       expect(spawned).toEqual({ ok: true });
-      measurements.push({ case: '21h. the local surface after a detach', spawned });
+      measurements.push({ case: '21i. the local surface after a detach', spawned });
 
       await renderer.evaluate("window.hive.pty.kill('after-detach')");
     }, 120_000);
 
-    it('21i. the server’s sessions keep running whatever the client does', async () => {
+    it('21j. the server’s sessions keep running whatever the client does', async () => {
       /*
         The last half of the "flips back" criterion: the sessions a client
         watched belong to the other machine, so a detach must not touch them.
         `switchIpcMode`'s doc comment says `remote → local` is never refused
         for exactly this reason — there is nothing to strand, so nothing to
         refuse over. This is that claim against the real thing, driven over the
-        raw socket, which never detached, after the window on the other
-        connection has detached and re-spawned a pty of its own.
+        raw socket, which never detached, after the window on the other connection
+        has detached twice — once through the channel, once through the switch — and re-spawned a pty of its own.
       */
       assert(onServer !== undefined, 'case 21e must have opened a socket on the server');
       onServer.notify(CH.ptyWrite, {

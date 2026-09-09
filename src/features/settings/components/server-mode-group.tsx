@@ -166,17 +166,42 @@ interface ServerModeGroupProps {
    */
   remote: RemoteConfig;
   /**
-   * The machine whose config file this window is editing, while attached
-   * (HIVE-144) — `ConfigSnapshot.attachedServer`, **not**
-   * `AppInfo.attachedServerName`. That field is this control's own readout:
-   * while attached, `config:get` is answered by the far end, which is what
-   * this pane needs to say. The header's chip answers a different question —
-   * whether a socket is actually open right now — from
-   * `AppInfo.attachedServerName` instead; see that field's own doc comment,
-   * and `ConfigSnapshot.attachedServer`'s, for the full config-versus-runtime
-   * split. `null` in `'local'` mode.
+   * The machine the stored config *names* as the attach target (HIVE-144) —
+   * `ConfigSnapshot.attachedServer`.
+   *
+   * **Only meaningful while this window is not attached (Ruling 29.)** It is
+   * config-derived, and while attached `config:get` is answered by the far
+   * end, so it describes the *server's* file rather than this machine's: on a
+   * real attached client it reads `null`, because the server is not itself
+   * attached to anything. That is not a bug in the field, it is the field
+   * answering honestly about the only config it can see. What it is good for
+   * is the not-attached case, where it is genuinely this machine's own file
+   * and can say "configured to attach to X, which may or may not be open
+   * right now" — a sentence {@link ServerModeGroupProps.attachedServerName}
+   * cannot make, because a runtime field knows nothing about intent.
    */
   attachedServer: { name: string; host: string } | null;
+  /**
+   * The machine a socket is **actually open to** right now, or `null`
+   * (HIVE-144, Ruling 29) — `AppInfo.attachedServerName`, the runtime half.
+   *
+   * This is the field the attach half keys its whole attached-state on, and
+   * the reason is a defect two real apps found: everything here used to key on
+   * `remote.mode`, which while attached is read off the **server's** snapshot
+   * and says `'local'`. So the switch rendered unchecked on an attached
+   * window, the panel stayed collapsed, and `handleDetach`'s guard
+   * (`remote.mode === 'remote'`) could not be reached by any click — a client
+   * could attach and had no way back short of hand-editing `config.json`,
+   * which `config:reveal` being `WINDOW_BOUND` also denied it.
+   *
+   * `AppInfo.attachedServerName` has none of that problem: it is
+   * `PROCESS_LOCAL` (Ruling 24), so it is answered by *this* process in both
+   * modes, and it is exactly the question "is a socket open, and to what" —
+   * which is what the header chip has always used it for. The config-derived
+   * source stays right where it is right, which is the not-attached case; see
+   * {@link ServerModeGroupProps.attachedServer}.
+   */
+  attachedServerName: string | null;
 }
 
 export function ServerModeGroup({
@@ -185,7 +210,18 @@ export function ServerModeGroup({
   devices,
   remote,
   attachedServer,
+  attachedServerName,
 }: ServerModeGroupProps) {
+  /**
+   * Whether a socket is open right now — the one question the attach half
+   * branches on (Ruling 29).
+   *
+   * Named once rather than repeated as `attachedServerName !== null` at four
+   * sites, because the four have to agree: a switch that renders checked while
+   * a detach handler thinks there is nothing to detach is the shape of the
+   * defect this ruling closes.
+   */
+  const attached = attachedServerName !== null;
   /*
     Local disclosure state, seeded from `enabled` and kept in step with it —
     the same "follow the snapshot" idiom `ContainerAliasGroup` uses for its
@@ -346,12 +382,32 @@ export function ServerModeGroup({
     component's own copy says so, and `switchIpcMode`'s doc comment states
     why — the far end keeps its sessions regardless), so there is nothing a
     blind click here could strand.
+
+    **The seed is `attached || remote.mode === 'remote'`, and both halves are
+    load-bearing (Ruling 29).** `attached` is the runtime truth and is the half
+    that was missing: while a socket is open, `remote.mode` is read off the
+    *server's* config and says `'local'`, so a config-only seed collapsed the
+    panel on exactly the window that needed the detach inside it.
+    `remote.mode` still earns its place for the opposite state — a boot attach
+    that failed, or a laptop off its tailnet, leaves this machine's own file
+    saying `'remote'` with no socket open, and that user needs the address
+    fields visible to retry. Neither half alone covers both.
   */
-  const [attachOpen, setAttachOpen] = useState(remote.mode === 'remote');
+  const [attachOpen, setAttachOpen] = useState(attached || remote.mode === 'remote');
+  /*
+    Re-seeded on a change to *either* source, for the reason the seed reads
+    both. `attachedServerName` arrives asynchronously (`useAttachedServer`
+    reads `app:info` after the snapshot lands), so on an attached window the
+    first render genuinely has `null` here and the correction arrives a tick
+    later — which is precisely what this re-seed is for, and why it cannot be
+    left as a `remote.mode`-only edge.
+  */
   const [seenMode, setSeenMode] = useState(remote.mode);
-  if (seenMode !== remote.mode) {
+  const [seenAttached, setSeenAttached] = useState(attached);
+  if (seenMode !== remote.mode || seenAttached !== attached) {
     setSeenMode(remote.mode);
-    setAttachOpen(remote.mode === 'remote');
+    setSeenAttached(attached);
+    setAttachOpen(attached || remote.mode === 'remote');
   }
 
   const [remoteHostDraft, setRemoteHostDraft] = useState(remote.host);
@@ -623,7 +679,13 @@ export function ServerModeGroup({
           // alone here; `handleDetach` closes the panel itself, and only once
           // the write actually lands (see its own doc comment for why this
           // is not `setAttachOpen(next)` up front).
-          if (!next && remote.mode === 'remote') {
+          //
+          // `attached`, not `remote.mode === 'remote'` (Ruling 29). This guard
+          // is the whole exit from remote mode, and keyed on the proxied
+          // snapshot it read `'local'` on every attached window — so the one
+          // click that could have detached fell through to `setAttachOpen`
+          // and merely collapsed a panel.
+          if (!next && attached) {
             handleDetach();
             return;
           }
@@ -649,7 +711,21 @@ export function ServerModeGroup({
             `AppInfo.attachedServerName`, the runtime-derived sibling this
             control deliberately does not read (see `ServerModeGroupProps`).
           */}
-          {attachedServer ? (
+          {attached ? (
+            /*
+              Ruling 29. The runtime field, so this sentence names the machine
+              a socket is genuinely open to — `RemoteClient.serverName()`, the
+              hostname the far end gave itself in the handshake, not an address
+              some config happened to mention. The config-derived line below is
+              the not-attached case and says something different on purpose.
+            */
+            <p className="text-[11.5px] text-subtle">
+              Attached to{' '}
+              <span className="font-medium text-ink">{attachedServerName}</span>.
+              Everything this window shows comes from that machine. Turn the
+              switch off to come back to this one.
+            </p>
+          ) : attachedServer ? (
             <p className="text-[11.5px] text-subtle">
               Configured to attach to{' '}
               <span className="font-medium text-ink">{attachedServer.name}</span>.
@@ -658,6 +734,43 @@ export function ServerModeGroup({
             </p>
           ) : null}
 
+          {/*
+            **Hidden while attached, not disabled (Ruling 29.)**
+
+            These fields read `remote.host`/`remote.port`, and while attached
+            that block comes off the *server's* snapshot — on a real attached
+            client, its defaults: an empty address and 7433. Rendering them at
+            all is the pane stating a target that is not this machine's and
+            that is not what a commit here would write, since `config:set-remote`
+            is `PROCESS_LOCAL` and writes locally (Ruling 28). Disabling them
+            would leave those wrong values on screen with an explanation
+            beside them; hiding them says the true thing, which is that
+            re-targeting is not available from here.
+
+            It is a real fidelity gap and it is the smaller one: you cannot
+            re-target without detaching first anyway, so nothing is lost but
+            the ability to *read* the stored address while attached. Restoring
+            that needs a `PROCESS_LOCAL` read verb for this machine's own
+            `remote` block — the follow-up ticket, deliberately not this fix
+            round, because a new channel moves the binding count three tasks
+            pin.
+
+            The pairing fields go with them, for a sharper reason than
+            tidiness: `remote:pair` and `remote:forget` are **not** on
+            `PROCESS_LOCAL`, so while attached they are proxied — a click on
+            Forget here would clear the *server's* stored credential, not this
+            machine's. That is the same family as the defect Ruling 28 closed
+            and it wants the same remedy; until it gets one, the honest thing
+            is not to offer the button. Noted in the follow-up ticket.
+          */}
+          {attached ? (
+            <p className="text-[11.5px] text-subtle">
+              The address and pairing fields are hidden while attached — they
+              would describe the server&rsquo;s config, not this
+              machine&rsquo;s. Detach to change where this window attaches.
+            </p>
+          ) : (
+          <>
           <div className="grid grid-cols-[1fr_96px] gap-2">
             <TextField
               label="Server address"
@@ -749,6 +862,8 @@ export function ServerModeGroup({
           >
             {attaching ? 'Attaching…' : 'Attach'}
           </Button>
+          </>
+          )}
 
           {switchResult && !switchResult.ok && switchResult.reason === 'live-sessions' ? (
             <div className="flex items-start gap-2 rounded-[6px] border border-red bg-red/8 px-3 py-2.5">
@@ -789,16 +904,20 @@ export function ServerModeGroup({
           {/*
             Fix round 1, item 1: "attach" and "detach" share one `SwitchOutcome`
             arm (`connect-failed` — see `outcomeFor` in `router.ts`), so the
-            copy has to tell them apart itself. `remote.mode` still says
-            `'remote'` exactly when the failure came from `handleDetach` — a
-            failed attach never changes it from `'local'`, and a failed detach
-            never changes it from `'remote'`, because a refused switch writes
-            nothing at all (Ruling 19). No new state needed to know which one
-            this was.
+            copy has to tell them apart itself. No new state needed to know
+            which one this was: a refused switch changes nothing (Ruling 19),
+            so a socket is still open exactly when the failure came from
+            `handleDetach`.
+
+            **`attached`, not `remote.mode` (Ruling 29.)** The original read
+            `remote.mode === 'remote'`, which is true of that sentence only
+            while the snapshot is this machine's own — and while attached it
+            is the server's and says `'local'`, so a failed *detach* announced
+            itself as "Could not attach". Same source, same defect, one line.
           */}
           {switchResult && !switchResult.ok && switchResult.reason === 'connect-failed' ? (
             <p className="text-[11.5px] text-red">
-              {remote.mode === 'remote' ? 'Could not detach' : 'Could not attach'}:{' '}
+              {attached ? 'Could not detach' : 'Could not attach'}:{' '}
               {switchResult.message}
             </p>
           ) : null}
