@@ -478,7 +478,7 @@ test('the Server mode group renders between Containers and Reset', async ({}, te
  * `ContainerAliasGroup`, and for the identical reason: `ServerModeGroup`
  * renders its fields conditionally (`open ? <> … </> : null`).
  */
-test('the Server mode switch is off, and its fields are hidden, by default', async ({}, testInfo) => {
+test('the Serve this machine switch is off, and its fields are hidden, by default', async ({}, testInfo) => {
   const { configPath } = seed((name) => testInfo.outputPath(name));
   const app = await launchHive({
     userDataDir: testInfo.outputPath('user-data'),
@@ -489,7 +489,7 @@ test('the Server mode switch is off, and its fields are hidden, by default', asy
 
   await openAdvanced(page);
 
-  const toggle = page.getByRole('switch', { name: 'Server mode' });
+  const toggle = page.getByRole('switch', { name: 'Serve this machine' });
   await expect(toggle).toBeVisible();
   await expect(toggle).not.toBeChecked();
   await expect(page.getByLabel(/bind address/i)).toBeHidden();
@@ -514,7 +514,7 @@ test('turning server mode on reveals the bind fields and writes enabled: true', 
 
   await openAdvanced(page);
 
-  await page.getByRole('switch', { name: 'Server mode' }).click();
+  await page.getByRole('switch', { name: 'Serve this machine' }).click();
 
   await expect(page.getByLabel(/bind address/i)).toBeVisible();
   await expect(page.getByLabel(/^port$/i)).toBeVisible();

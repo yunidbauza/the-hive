@@ -470,41 +470,62 @@ export function ServerModeGroup({
     });
   };
 
+  /**
+   * The write path a "turn the switch off" click takes while attached (Fix
+   * round 1, item 1). `attachOpen` does **not** flip to `false` until the
+   * write actually succeeds — fix-round review, Important: the previous
+   * version set it optimistically in `onCheckedChange` before this promise
+   * settled, which unmounted the very panel a `connect-failed` outcome needed
+   * to render into, and left the switch reading unchecked over a detach that
+   * had not happened. `remote → local` is still never *refused* by
+   * `switchIpcMode` itself, but `setRemoteConfig` can still answer
+   * `connect-failed` for a reason that has nothing to do with that guarantee
+   * — a broken bridge, a rejected `invoke` — and that failure has to be
+   * visible and the switch has to keep telling the truth about it.
+   */
+  const [detaching, setDetaching] = useState(false);
+
   const handleDetach = () => {
     setSwitchResult(null);
-    void setRemoteConfig({ mode: 'local' }).then(setSwitchResult);
+    setDetaching(true);
+    void setRemoteConfig({ mode: 'local' }).then((outcome) => {
+      setDetaching(false);
+      setSwitchResult(outcome);
+      if (outcome.ok) setAttachOpen(false);
+    });
   };
 
-  const [remotePairName, setRemotePairName] = useState('');
   const [remotePairDeviceId, setRemotePairDeviceId] = useState('');
   const [remotePairToken, setRemotePairToken] = useState('');
   const [remotePairing, setRemotePairing] = useState(false);
   const [remotePairError, setRemotePairError] = useState<string | null>(null);
   /**
-   * The name typed alongside the id and token, held only in this component's
-   * own state (HIVE-144). There is nowhere else it could live: `RemotePairRequest`
-   * carries no name — `server:pair` on the far end already minted one when the
-   * device was named there, and this machine's own credential store
+   * Whether *this session* watched a pairing succeed (HIVE-144, fix round 1,
+   * item 3). There is no name here any more — `RemotePairRequest` carries
+   * none, `server:pair` on the far end already minted one when the device was
+   * named there, and this machine's own credential store
    * (`electron/remote-client/token-store.ts`) keeps only `deviceId` and
-   * `token`, deliberately, because that pair is all the socket handshake
-   * needs. So this label does not survive a reload of this pane; it survives
-   * exactly as long as the pairing does within this session, which is enough
-   * to answer "did that just work" and to name the Forget button's target.
+   * `token`. A local-only "Device label" field used to paper over that by
+   * asking the person to retype a name nothing downstream ever read — the
+   * fix-round review's own words: "the only field on this pane that pretended
+   * to store something and did not." Dropped rather than documented.
+   *
+   * This flag is cosmetic acknowledgement only, and **does not gate Forget**
+   * — see `handleForget` below for why that distinction is the actual fix for
+   * the review's Important-3.
    */
-  const [pairedAs, setPairedAs] = useState<string | null>(null);
+  const [paired, setPaired] = useState(false);
 
   const handleRemotePair = () => {
-    const name = remotePairName.trim();
     const deviceId = remotePairDeviceId.trim();
     const token = remotePairToken.trim();
-    if (name === '' || deviceId === '' || token === '') return;
+    if (deviceId === '' || token === '') return;
     setRemotePairError(null);
     setRemotePairing(true);
     void pairRemoteDevice({ deviceId, token }).then((outcome) => {
       setRemotePairing(false);
       if ('paired' in outcome) {
-        setPairedAs(name);
-        setRemotePairName('');
+        setPaired(true);
         setRemotePairDeviceId('');
         setRemotePairToken('');
       } else {
@@ -513,8 +534,22 @@ export function ServerModeGroup({
     });
   };
 
+  /**
+   * Fix round 1, item 3 (IMPORTANT). `Forget` used to render only inside the
+   * `paired`-gated branch — session-local state, gone the instant this pane
+   * is remounted (closing and reopening Settings, a config reload). A
+   * credential paired in an earlier session left the *only* control that
+   * calls `remote:forget` unreachable, with no way back short of hand-editing
+   * `safeStorage`. `remote:forget` is idempotent and takes no argument (there
+   * is exactly one credential on this machine to forget, never a name to
+   * disambiguate by — see `HiveBridge.remote.forget`'s own doc comment), so
+   * there is no reason it needs a known-paired state to call safely. It is
+   * rendered unconditionally below, beside the pairing fields rather than
+   * behind them, which is what makes it reachable regardless of what this
+   * session happens to remember.
+   */
   const handleForget = () => {
-    void forgetRemoteDevice().then(() => setPairedAs(null));
+    void forgetRemoteDevice().then(() => setPaired(false));
   };
 
   return (
@@ -523,7 +558,7 @@ export function ServerModeGroup({
       description="Reach this Hive's sessions from another machine you own."
     >
       <Switch
-        label="Server mode"
+        label="Serve this machine"
         description={SWITCH_DESCRIPTION}
         checked={open}
         onCheckedChange={(next) => {
@@ -581,24 +616,45 @@ export function ServerModeGroup({
         label="Attach to a server"
         description={ATTACH_SWITCH_DESCRIPTION}
         checked={attachOpen}
+        disabled={detaching}
         onCheckedChange={(next) => {
-          setAttachOpen(next);
           // Turning it off while attached detaches immediately — the one
-          // direction `switchIpcMode` never refuses. Turning it on only
-          // reveals the fields below; see `handleAttach`'s own doc comment
-          // for why the switch itself never dials.
-          if (!next && remote.mode === 'remote') handleDetach();
+          // direction `switchIpcMode` never refuses. `attachOpen` is left
+          // alone here; `handleDetach` closes the panel itself, and only once
+          // the write actually lands (see its own doc comment for why this
+          // is not `setAttachOpen(next)` up front).
+          if (!next && remote.mode === 'remote') {
+            handleDetach();
+            return;
+          }
+          // Turning it on only reveals the fields below; see `handleAttach`'s
+          // own doc comment for why the switch itself never dials.
+          setAttachOpen(next);
         }}
       />
 
       {attachOpen ? (
         <div className="flex flex-col gap-3 rounded-[7px] border border-border-soft bg-panel-2 p-3">
+          {/*
+            Fix round 1, item 2 (IMPORTANT). Naming the machine from
+            `attachedServer` is correct and stays — that field genuinely is
+            this control's own config-derived readout, per its own doc
+            comment above. What must not appear beside it is any claim about
+            what is happening *right now* on a live socket: `attachedServer`
+            is computed purely from `remote.mode === 'remote'` on disk, and
+            Ruling 19 explicitly leaves that value saying `'remote'` after a
+            failed re-dial rebinds this window local — so a sentence here
+            asserting `config:get` "is answered by the far end" can be false
+            at the exact moment it renders. That claim belongs to
+            `AppInfo.attachedServerName`, the runtime-derived sibling this
+            control deliberately does not read (see `ServerModeGroupProps`).
+          */}
           {attachedServer ? (
             <p className="text-[11.5px] text-subtle">
-              Attached to{' '}
+              Configured to attach to{' '}
               <span className="font-medium text-ink">{attachedServer.name}</span>.
-              Settings here edit <em>its</em> config file — <code>config:get</code>{' '}
-              is answered by the far end while attached, not by this machine.
+              This is what <code>config.json</code> says right now — not
+              necessarily whether a socket to it is actually open this instant.
             </p>
           ) : null}
 
@@ -612,14 +668,12 @@ export function ServerModeGroup({
                 if (switchResult) setSwitchResult(null);
               }}
               onCommit={commitRemoteHost}
-              hint={
-                remoteHostInvalid ||
-                (switchResult !== null &&
-                  !switchResult.ok &&
-                  switchResult.reason === 'plaintext-refused')
-                  ? ATTACH_HOST_INVALID
-                  : ATTACH_HOST_HINT
-              }
+              // `plaintext-refused` no longer forks this hint (Fix round 1,
+              // item 5) — it gets its own bordered banner below, at the same
+              // weight `live-sessions` renders at, rather than hiding inside
+              // the ordinary field hint every ordinary validation failure
+              // here uses.
+              hint={remoteHostInvalid ? ATTACH_HOST_INVALID : ATTACH_HOST_HINT}
             />
 
             <TextField
@@ -636,52 +690,43 @@ export function ServerModeGroup({
             />
           </div>
 
-          {pairedAs ? (
+          {/*
+            Fix round 1, item 3 (IMPORTANT). The pairing fields and Forget
+            render side by side, unconditionally — never as an either/or
+            swap gated on session-local state. That is both what fixes
+            Forget's reachability (see `handleForget`'s own doc comment) and
+            what the mockup actually shows: "Paired as" and the token field
+            together, not one replacing the other.
+          */}
+          {paired ? (
             <div className="flex items-center gap-2 rounded-[6px] border border-border bg-panel px-2.5 py-2 text-[11.5px]">
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand" />
-              <span>
-                Paired as <span className="font-medium text-ink">{pairedAs}</span>
-              </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="ml-auto"
-                onClick={handleForget}
-              >
-                Forget
-              </Button>
+              <span>Paired</span>
             </div>
-          ) : (
-            <div className="flex flex-col gap-2">
-              <div className="grid grid-cols-2 gap-2">
-                <TextField
-                  label="Device label"
-                  value={remotePairName}
-                  onChange={setRemotePairName}
-                  placeholder="e.g. laptop"
-                />
-                <TextField
-                  label="Device id"
-                  value={remotePairDeviceId}
-                  onChange={setRemotePairDeviceId}
-                />
-              </div>
-              <TextField
-                label="Pairing token"
-                value={remotePairToken}
-                onChange={setRemotePairToken}
-                hint="Printed by `the-hive --pair <name>` on the server. Stored in this machine's keychain, never in config.json."
-              />
-              {remotePairError ? (
-                <p className="text-[11.5px] text-red">{remotePairError}</p>
-              ) : null}
+          ) : null}
+
+          <div className="flex flex-col gap-2">
+            <TextField
+              label="Device id"
+              value={remotePairDeviceId}
+              onChange={setRemotePairDeviceId}
+            />
+            <TextField
+              label="Pairing token"
+              value={remotePairToken}
+              onChange={setRemotePairToken}
+              hint="Printed by `the-hive --pair <name>` on the server. Stored in this machine's keychain, never in config.json."
+            />
+            {remotePairError ? (
+              <p className="text-[11.5px] text-red">{remotePairError}</p>
+            ) : null}
+            <div className="flex items-center gap-2">
               <Button
                 variant="secondary"
                 size="sm"
                 className="w-fit"
                 disabled={
                   remotePairing ||
-                  remotePairName.trim() === '' ||
                   remotePairDeviceId.trim() === '' ||
                   remotePairToken.trim() === ''
                 }
@@ -689,8 +734,11 @@ export function ServerModeGroup({
               >
                 {remotePairing ? 'Pairing…' : 'Pair device'}
               </Button>
+              <Button variant="ghost" size="sm" onClick={handleForget}>
+                Forget
+              </Button>
             </div>
-          )}
+          </div>
 
           <Button
             variant="primary"
@@ -722,9 +770,36 @@ export function ServerModeGroup({
             </div>
           ) : null}
 
+          {/*
+            Fix round 1, item 5 (Minor, M2). `plaintext-refused` used to land
+            only as a hint-text swap beneath the address field, still showing
+            a client-side-valid address — the weakest-rendered of the four
+            arms, on the exact mistake (a public address) this whole fence
+            exists to catch. It now gets the same red bordered treatment
+            `live-sessions` does, not merely the ordinary field hint every
+            other validation failure in this file uses.
+          */}
+          {switchResult && !switchResult.ok && switchResult.reason === 'plaintext-refused' ? (
+            <div className="flex items-start gap-2 rounded-[6px] border border-red bg-red/8 px-3 py-2.5">
+              <WarningCircle size={14} className="mt-px shrink-0 text-red" />
+              <p className="text-[11.5px] text-ink">{ATTACH_HOST_INVALID}</p>
+            </div>
+          ) : null}
+
+          {/*
+            Fix round 1, item 1: "attach" and "detach" share one `SwitchOutcome`
+            arm (`connect-failed` — see `outcomeFor` in `router.ts`), so the
+            copy has to tell them apart itself. `remote.mode` still says
+            `'remote'` exactly when the failure came from `handleDetach` — a
+            failed attach never changes it from `'local'`, and a failed detach
+            never changes it from `'remote'`, because a refused switch writes
+            nothing at all (Ruling 19). No new state needed to know which one
+            this was.
+          */}
           {switchResult && !switchResult.ok && switchResult.reason === 'connect-failed' ? (
             <p className="text-[11.5px] text-red">
-              Could not attach: {switchResult.message}
+              {remote.mode === 'remote' ? 'Could not detach' : 'Could not attach'}:{' '}
+              {switchResult.message}
             </p>
           ) : null}
         </div>

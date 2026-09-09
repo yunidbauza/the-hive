@@ -83,7 +83,7 @@ describe('ServerModeGroup', () => {
       attachedServer={null}
     />);
 
-    expect(screen.getByRole('switch', { name: 'Server mode' })).not.toBeChecked();
+    expect(screen.getByRole('switch', { name: 'Serve this machine' })).not.toBeChecked();
     expect(screen.queryByLabelText(/bind address/i)).not.toBeInTheDocument();
   });
 
@@ -110,7 +110,7 @@ describe('ServerModeGroup', () => {
       attachedServer={null}
     />);
 
-    await userEvent.click(screen.getByRole('switch', { name: 'Server mode' }));
+    await userEvent.click(screen.getByRole('switch', { name: 'Serve this machine' }));
 
     expect(screen.getByLabelText(/bind address/i)).toBeInTheDocument();
     // Flipping the switch itself commits `enabled` — the same direct write
@@ -124,7 +124,7 @@ describe('ServerModeGroup', () => {
       attachedServer={null}
     />);
 
-    await userEvent.click(screen.getByRole('switch', { name: 'Server mode' }));
+    await userEvent.click(screen.getByRole('switch', { name: 'Serve this machine' }));
 
     expect(setServerConfig).toHaveBeenCalledWith({ enabled: false });
   });
@@ -134,7 +134,7 @@ describe('ServerModeGroup', () => {
       attachedServer={null}
     />);
 
-    expect(screen.getByRole('switch', { name: 'Server mode' })).toBeChecked();
+    expect(screen.getByRole('switch', { name: 'Serve this machine' })).toBeChecked();
     expect(screen.getByLabelText(/bind address/i)).toHaveValue('100.64.1.2');
   });
 
@@ -485,13 +485,13 @@ describe('ServerModeGroup', () => {
       attachedServer={null}
     />,
       );
-      expect(screen.getByRole('switch', { name: 'Server mode' })).not.toBeChecked();
+      expect(screen.getByRole('switch', { name: 'Serve this machine' })).not.toBeChecked();
 
       rerender(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
     />);
 
-      expect(screen.getByRole('switch', { name: 'Server mode' })).toBeChecked();
+      expect(screen.getByRole('switch', { name: 'Serve this machine' })).toBeChecked();
     });
 
     it('does not write a stale bind draft back after a reset', () => {
@@ -671,7 +671,90 @@ describe('ServerModeGroup', () => {
       ).toBeInTheDocument();
     });
 
-    it('shows the plaintext-refused reason beside the address field', async () => {
+    /**
+     * Fix round 1, item 1 (IMPORTANT). Pre-fix, the switch's `onCheckedChange`
+     * set `attachOpen` to `false` *before* `handleDetach`'s promise settled —
+     * so the panel carrying the `connect-failed` message was already
+     * unmounted by the time it had something to say, and the switch had
+     * already flipped to unchecked over a detach that had not happened yet.
+     * This test is written and run against the pre-fix code first, confirmed
+     * failing, then the fix applied — see the task report for the verbatim
+     * failure.
+     */
+    it('keeps the failure visible and the switch on when a detach attempt fails', async () => {
+      vi.mocked(setRemoteConfig).mockResolvedValue({
+        ok: false,
+        reason: 'connect-failed',
+        message: 'ECONNREFUSED',
+      });
+
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={ATTACHED_REMOTE}
+          attachedServer={{ name: 'mini', host: 'mini.tail1234.ts.net' }}
+        />,
+      );
+
+      const toggle = screen.getByRole('switch', { name: 'Attach to a server' });
+      expect(toggle).toBeChecked();
+
+      await userEvent.click(toggle);
+
+      expect(await screen.findByText(/could not detach: ECONNREFUSED/i)).toBeInTheDocument();
+      // The switch must not claim a state the app is not in: the write never
+      // landed, so this window is still attached.
+      expect(toggle).toBeChecked();
+    });
+
+    /**
+     * Fix round 1, item 2 (IMPORTANT). Pre-fix, the "Attached to…" sentence
+     * asserted "`config:get` is answered by the far end" unconditionally from
+     * `attachedServer` — a config-derived field. `ConfigSnapshot.attachedServer`'s
+     * own doc comment says that can be false: Ruling 19 leaves `remote.mode`
+     * saying `'remote'` on disk after a failed re-dial rebinds local, so this
+     * field can claim an attachment that is not actually live. Written and run
+     * against the pre-fix code first — see the task report for the verbatim
+     * failure.
+     */
+    it('does not claim a live socket from the config-derived attachedServer field', async () => {
+      vi.mocked(setRemoteConfig).mockResolvedValue({
+        ok: false,
+        reason: 'connect-failed',
+        message: 'ECONNREFUSED',
+      });
+
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={ATTACHED_REMOTE}
+          attachedServer={{ name: 'mini', host: 'mini.tail1234.ts.net' }}
+        />,
+      );
+
+      await userEvent.click(screen.getByRole('button', { name: /^attach$/i }));
+
+      expect(
+        await screen.findByText(/could not (attach|detach): ECONNREFUSED/i),
+      ).toBeInTheDocument();
+      // The config-derived sentence must never claim a socket is actually
+      // open right now — that claim belongs to `AppInfo.attachedServerName`,
+      // deliberately not available here.
+      expect(screen.queryByText(/answered by the far end/i)).not.toBeInTheDocument();
+    });
+
+    /**
+     * Fix round 1, item 5 (Minor, M2). Pre-fix this was only a hint-text
+     * swap beneath the address field — the same weight an ordinary,
+     * client-side validation failure gets. It now gets the same red
+     * bordered box `live-sessions` does, and the field's own hint goes back
+     * to its ordinary copy rather than hiding the refusal inside it.
+     */
+    it('gives plaintext-refused the same visual weight as the other refusals', async () => {
       vi.mocked(setRemoteConfig).mockResolvedValue({ ok: false, reason: 'plaintext-refused' });
 
       render(
@@ -687,9 +770,15 @@ describe('ServerModeGroup', () => {
       await userEvent.click(screen.getByRole('switch', { name: 'Attach to a server' }));
       await userEvent.click(screen.getByRole('button', { name: /^attach$/i }));
 
+      const banner = await screen.findByText(/must be a loopback or tailnet address/i);
+      // Not merely the field's hint: a dedicated, bordered box, the same
+      // shape `live-sessions` renders at.
+      expect(banner.closest('div')).toHaveClass('border-red');
+
+      // And the field's own hint is no longer where the refusal hides.
       expect(
-        await screen.findByText(/must be a loopback or tailnet address/i),
-      ).toBeInTheDocument();
+        screen.getByLabelText(/server address/i),
+      ).toHaveAccessibleDescription(/100\.64\.0\.0\/10/);
     });
 
     /**
@@ -744,9 +833,45 @@ describe('ServerModeGroup', () => {
       await userEvent.click(screen.getByRole('switch', { name: 'Attach to a server' }));
 
       expect(setRemoteConfig).toHaveBeenCalledWith({ mode: 'local' });
+      // A successful detach — the mock's default `{ ok: true }` — actually
+      // closes the panel, unlike a failed one (see the test above item 1
+      // fixes).
+      expect(
+        await screen.findByRole('switch', { name: 'Attach to a server' }),
+      ).not.toBeChecked();
+      expect(screen.queryByLabelText(/server address/i)).not.toBeInTheDocument();
     });
 
-    it('shows the paired device name and offers Forget', async () => {
+    /**
+     * Fix round 1, item 3 (IMPORTANT), the sharper edge: pre-fix, `Forget`
+     * rendered only inside the `pairedAs`-gated branch, which is
+     * session-local state. A pane freshly mounted — a remount of Settings, a
+     * new session against an already-paired machine — had never seen a
+     * pairing succeed in *this* render, so `Forget` was not in the document
+     * at all: the only control that calls `remote:forget` was unreachable.
+     * Written and run against the pre-fix code first — see the task report
+     * for the verbatim failure.
+     */
+    it('offers Forget even when this session never saw a pairing succeed', async () => {
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={DEFAULT_REMOTE}
+          attachedServer={null}
+        />,
+      );
+
+      // Never touched the Pair form at all — this is what remounting the
+      // pane after an earlier, real pairing looks like: no local memory of
+      // it in this render whatsoever.
+      await userEvent.click(screen.getByRole('switch', { name: 'Attach to a server' }));
+
+      expect(screen.getByRole('button', { name: /^forget$/i })).toBeInTheDocument();
+    });
+
+    it('pairs, shows Paired, and Forget remains reachable throughout', async () => {
       vi.mocked(pairRemoteDevice).mockResolvedValue({ paired: true });
 
       render(
@@ -760,7 +885,10 @@ describe('ServerModeGroup', () => {
       );
 
       await userEvent.click(screen.getByRole('switch', { name: 'Attach to a server' }));
-      await userEvent.type(screen.getByLabelText(/device label/i), 'laptop');
+
+      // Forget is already there, before any pairing in this session.
+      const forget = screen.getByRole('button', { name: /^forget$/i });
+
       await userEvent.type(screen.getByLabelText(/device id/i), 'd_ab12');
       await userEvent.type(screen.getByLabelText(/pairing token/i), 'K7QM-3XTV-9WHZ-2BNP');
       await userEvent.click(screen.getByRole('button', { name: /^pair device$/i }));
@@ -769,15 +897,15 @@ describe('ServerModeGroup', () => {
         deviceId: 'd_ab12',
         token: 'K7QM-3XTV-9WHZ-2BNP',
       });
-      expect(await screen.findByText(/paired as/i)).toBeInTheDocument();
-      expect(screen.getByText('laptop')).toBeInTheDocument();
-      const forget = screen.getByRole('button', { name: /^forget$/i });
-      expect(forget).toBeInTheDocument();
+      // No name — `RemotePairRequest` carries none.
+      expect(await screen.findByText(/^paired$/i)).toBeInTheDocument();
 
       await userEvent.click(forget);
 
       expect(forgetRemoteDevice).toHaveBeenCalled();
-      expect(await screen.findByRole('button', { name: /^pair device$/i })).toBeInTheDocument();
+      // Forget is still there afterwards — it was never gated on `paired`.
+      expect(screen.getByRole('button', { name: /^forget$/i })).toBeInTheDocument();
+      expect(screen.queryByText(/^paired$/i)).not.toBeInTheDocument();
     });
 
     it('shows the refusal reason when pairing fails', async () => {
@@ -796,7 +924,6 @@ describe('ServerModeGroup', () => {
       );
 
       await userEvent.click(screen.getByRole('switch', { name: 'Attach to a server' }));
-      await userEvent.type(screen.getByLabelText(/device label/i), 'laptop');
       await userEvent.type(screen.getByLabelText(/device id/i), 'd_ab12');
       await userEvent.type(screen.getByLabelText(/pairing token/i), 'K7QM-3XTV-9WHZ-2BNP');
       await userEvent.click(screen.getByRole('button', { name: /^pair device$/i }));
