@@ -2092,7 +2092,51 @@ export type SwitchOutcome =
 export interface SetRemoteResult {
   switched: SwitchOutcome;
   config: ConfigSnapshot;
+  /**
+   * The mode change this call actually performed, or `null` for none
+   * (HIVE-144 review, I1).
+   *
+   * The one moment the renderer can know its fleet just changed machines, and
+   * the reason it is carried here rather than pushed on an event: `config:set-remote`
+   * is `PROCESS_LOCAL` (Ruling 28), so it is answered by the process holding
+   * the client, and it is the only call that knows a switch happened. An
+   * event would arrive over whichever surface is bound *after* the switch,
+   * which is the wrong one for a detach.
+   *
+   * **Derived from the runtime, never from `mode`.** A payload asking for
+   * `'local'` while this window is already local switches nothing, and Ruling
+   * 19 leaves the *file* saying `'remote'` after a failed boot attach — so a
+   * config-derived answer would report a change on a window whose own local
+   * sessions are on screen, and clearing those is the opposite of the fix.
+   * The handler compares the attached socket before and after.
+   *
+   * `null` also on every refusal: a refused switch changes nothing, so there
+   * is nothing for the renderer to re-seed.
+   */
+  changed: ModeChange | null;
 }
+
+/**
+ * What a completed mode switch leaves the renderer to do (HIVE-144 review, I1).
+ *
+ * Both arms mean "clear what is on screen, it belongs to the machine you just
+ * left" — `nextSpawnId` mints `sess-01` identically on both machines and
+ * `useSessionMetrics(id)` is a bare id lookup, so the departed mode's metrics
+ * would render against the newly attached session wearing the same id. That
+ * is the collision Ruling 22 exists to prevent. The `'remote'` arm carries the
+ * fleet to put back in its place, which is what makes the attach snapshot the
+ * server builds on every accept something other than six reads thrown away.
+ *
+ * `snapshot` is keyed by `SNAPSHOT_CHANNELS` (`electron/shared/remote-contract.ts`)
+ * and typed with a bare `string` key rather than `Channel`: `Channel` lives in
+ * `ipc-contract.ts`, which imports *this* module, so naming it here would
+ * close a cycle. It can arrive with fewer keys than the server tried to send —
+ * `fitSnapshot` drops the heaviest first when a busy fleet would not fit the
+ * frame — which is why the store walks the payload's own keys.
+ */
+export type ModeChange =
+  | { to: 'remote'; snapshot: Readonly<Record<string, unknown>> }
+  | { to: 'local' };
 
 /**
  * Payload of `remote:pair` (HIVE-144).

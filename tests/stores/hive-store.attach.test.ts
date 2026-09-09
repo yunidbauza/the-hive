@@ -302,3 +302,57 @@ describe('clearModeEntities and applyAttachSnapshot as inverses (Ruling 22)', ()
     expect(state().prs.map((pr) => pr.repo)).toEqual(['new-repo']);
   });
 });
+
+/**
+ * `applyModeChange` — the action a real switch calls (HIVE-144 review, I1).
+ *
+ * The two actions above had no production caller at all: the whole attach-
+ * snapshot path was computed by the server on every accept, sent, parsed and
+ * dropped, and nothing cleared entities across a mode switch. This is the
+ * seam that fixed it, and these cases ask the two things the pair alone
+ * cannot be asked — that the **order** is clear-then-seed, and that the
+ * **local** arm clears too.
+ */
+describe('applyModeChange', () => {
+  it('clears the departed fleet and seeds the snapshot, in that order', () => {
+    state().hydrateSessions([sessionRecord({ id: 'sess-01', project: 'departed' })]);
+    state().hydrateAgents([agentSummary({ name: 'old-agent' })]);
+
+    state().applyModeChange({
+      to: 'remote',
+      snapshot: {
+        [CH.sessionHistory]: [sessionRecord({ id: 'sess-01', project: 'attached' })],
+      },
+    });
+
+    const sessions = Object.values(state().entities).filter(isSession);
+    // One row, from the snapshot — not two, and not the departed one that a
+    // seed running before the clear would have wiped. `sess-01` on both sides
+    // is the point: `nextSpawnId` mints it identically on every machine.
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.project).toBe('attached');
+    // The agent the snapshot does not mention is gone, which a seed with no
+    // clear in front of it would have left standing.
+    expect(Object.values(state().entities).filter(isAgent)).toEqual([]);
+  });
+
+  /**
+   * The half the review called worse. Coming back to this machine has to
+   * clear as well, or the server's fleet lingers on a window that is no
+   * longer showing that machine — and `useSessionMetrics(id)` is a bare id
+   * lookup, so the departed mode's numbers render against a local session
+   * wearing the same id.
+   */
+  it('clears on the way back to local, where there is no snapshot to seed', () => {
+    state().hydrateSessions([sessionRecord({ id: 'sess-01' })]);
+    state().hydrateAgents([agentSummary({ name: 'remote-agent' })]);
+    state().hydrateNotifs([notif({ id: 'remote-notif' })]);
+
+    state().applyModeChange({ to: 'local' });
+
+    expect(state().entities).toEqual({});
+    expect(state().order).toEqual([]);
+    expect(state().agentOrder).toEqual([]);
+    expect(state().notifs).toEqual([]);
+  });
+});

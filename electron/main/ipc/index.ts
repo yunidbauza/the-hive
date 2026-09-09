@@ -261,7 +261,7 @@ import { createWindowBroadcaster, type Broadcaster } from './broadcaster';
 import { createIpcRegistry, type CallHandler } from './registry';
 import { createRemoteDispatch } from './remote-dispatch';
 import { assertSender } from './sender';
-import { applySetRemote, type ModeSwitcher } from './set-remote';
+import { applySetRemote, type AttachedSnapshot, type ModeSwitcher } from './set-remote';
 import {
   createFanOutBroadcaster,
   createSocketBroadcaster,
@@ -1226,6 +1226,13 @@ export function remoteListenerBindError(): string | null {
  * wrapping it (every existing test that calls this directly) actually is —
  * never attached to anything.
  *
+ * @param attachedSnapshot What the attached socket's accept frame carried, or
+ * `null` when this process is not attached (HIVE-144 review, I1) —
+ * `router.ts`'s own `attachedSnapshot()`, handed down for the same reason
+ * `attachedServerName` is. `applySetRemote` calls it either side of the
+ * switch, which is how a mode change becomes something the renderer can act
+ * on rather than a snapshot the server built and nobody read.
+ *
  * @returns `buildAppInfo`, the exact closure this call bound to `CH.appInfo` —
  * over *this* call's own `hooks`, `remoteListener`, `sessions` and
  * `attachedServerName` (HIVE-144, Ruling 24). `router.ts`'s `registerIpc('local',
@@ -1240,6 +1247,7 @@ export function registerIpcHandlers(
   broadcaster: Broadcaster = createWindowBroadcaster(),
   switchMode: ModeSwitcher = noModeSwitcher,
   attachedServerName: () => string | null = () => null,
+  attachedSnapshot: AttachedSnapshot = () => null,
 ): () => AppInfo {
   /*
     Both surfaces, always (HIVE-143). In local mode the socket half iterates an
@@ -3508,7 +3516,7 @@ export function registerIpcHandlers(
     differently depending on the mode it asked from.
   */
   handle(CH.configSetRemote, (_event, payload): Promise<SetRemoteResult> =>
-    applySetRemote(payload, switchMode),
+    applySetRemote(payload, switchMode, attachedSnapshot),
   );
   /**
    * Store the device credential a `server:pair` mint on some *other* Hive

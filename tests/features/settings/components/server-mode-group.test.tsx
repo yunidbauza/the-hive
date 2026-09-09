@@ -10,20 +10,23 @@ import {
   revokeDevice,
   setRemoteConfig,
   setServerConfig,
+  type RemoteSwitch,
 } from '@lib/project-config';
+import { useHiveStore } from '@stores/hive-store';
 import {
   DEFAULT_REMOTE,
   type RemoteConfig,
   type ServerBindConfig,
   type ServerDevice,
-  type SwitchOutcome,
 } from '@shared/config-contract';
 
 vi.mock('@lib/project-config', () => ({
   setServerConfig: vi.fn(() => Promise.resolve()),
   pairDevice: vi.fn(),
   revokeDevice: vi.fn(() => Promise.resolve({ ok: true })),
-  setRemoteConfig: vi.fn(() => Promise.resolve({ ok: true }) as Promise<SwitchOutcome>),
+  setRemoteConfig: vi.fn(
+    () => Promise.resolve({ switched: { ok: true }, changed: null }) as Promise<RemoteSwitch>,
+  ),
   pairRemoteDevice: vi.fn(),
   forgetRemoteDevice: vi.fn(() => Promise.resolve()),
 }));
@@ -73,7 +76,7 @@ describe('ServerModeGroup', () => {
     vi.mocked(setServerConfig).mockClear();
     vi.mocked(pairDevice).mockReset();
     vi.mocked(revokeDevice).mockReset().mockResolvedValue({ ok: true });
-    vi.mocked(setRemoteConfig).mockReset().mockResolvedValue({ ok: true });
+    vi.mocked(setRemoteConfig).mockReset().mockResolvedValue({ switched: { ok: true }, changed: null });
     vi.mocked(pairRemoteDevice).mockReset();
     vi.mocked(forgetRemoteDevice).mockReset().mockResolvedValue(undefined);
   });
@@ -654,9 +657,12 @@ describe('ServerModeGroup', () => {
 
     it('names the live sessions when the switch is refused', async () => {
       vi.mocked(setRemoteConfig).mockResolvedValue({
-        ok: false,
-        reason: 'live-sessions',
-        sessions: ['hero-refresh', 'api-migration'],
+        switched: {
+          ok: false,
+          reason: 'live-sessions',
+          sessions: ['hero-refresh', 'api-migration'],
+        },
+        changed: null,
       });
 
       render(
@@ -684,9 +690,12 @@ describe('ServerModeGroup', () => {
 
     it('shows the message from a connect-failed refusal', async () => {
       vi.mocked(setRemoteConfig).mockResolvedValue({
-        ok: false,
-        reason: 'connect-failed',
-        message: 'ECONNREFUSED 100.64.1.2:7433',
+        switched: {
+          ok: false,
+          reason: 'connect-failed',
+          message: 'ECONNREFUSED 100.64.1.2:7433',
+        },
+        changed: null,
       });
 
       render(
@@ -720,9 +729,12 @@ describe('ServerModeGroup', () => {
      */
     it('keeps the failure visible and the switch on when a detach attempt fails', async () => {
       vi.mocked(setRemoteConfig).mockResolvedValue({
-        ok: false,
-        reason: 'connect-failed',
-        message: 'ECONNREFUSED',
+        switched: {
+          ok: false,
+          reason: 'connect-failed',
+          message: 'ECONNREFUSED',
+        },
+        changed: null,
       });
 
       render(
@@ -759,9 +771,12 @@ describe('ServerModeGroup', () => {
      */
     it('does not claim a live socket from the config-derived attachedServer field', async () => {
       vi.mocked(setRemoteConfig).mockResolvedValue({
-        ok: false,
-        reason: 'connect-failed',
-        message: 'ECONNREFUSED',
+        switched: {
+          ok: false,
+          reason: 'connect-failed',
+          message: 'ECONNREFUSED',
+        },
+        changed: null,
       });
 
       render(
@@ -794,7 +809,10 @@ describe('ServerModeGroup', () => {
      * to its ordinary copy rather than hiding the refusal inside it.
      */
     it('gives plaintext-refused the same visual weight as the other refusals', async () => {
-      vi.mocked(setRemoteConfig).mockResolvedValue({ ok: false, reason: 'plaintext-refused' });
+      vi.mocked(setRemoteConfig).mockResolvedValue({
+        switched: { ok: false, reason: 'plaintext-refused' },
+        changed: null,
+      });
 
       render(
         <ServerModeGroup
@@ -829,9 +847,12 @@ describe('ServerModeGroup', () => {
      */
     it('shows the stored address again after a refused switch, not the one just tried', async () => {
       vi.mocked(setRemoteConfig).mockResolvedValue({
-        ok: false,
-        reason: 'connect-failed',
-        message: 'timed out',
+        switched: {
+          ok: false,
+          reason: 'connect-failed',
+          message: 'timed out',
+        },
+        changed: null,
       });
 
       render(
@@ -1175,6 +1196,114 @@ describe('ServerModeGroup', () => {
       );
 
       expect(screen.queryByText(/config:get/i)).not.toBeInTheDocument();
+    });
+  });
+
+  /**
+   * The store side of a switch (HIVE-144 review, I1).
+   *
+   * `applyAttachSnapshot` and `clearModeEntities` had no production caller —
+   * the attach snapshot was built by the server on every accept and dropped by
+   * the client, and nothing cleared entities when the window changed machines.
+   * These drive the real click through the real store, so a `changed` that
+   * stopped being applied fails here rather than only in a live app.
+   */
+  describe('the fleet across a mode switch', () => {
+    const fleetIds = () => Object.keys(useHiveStore.getState().entities);
+
+    beforeEach(() => {
+      useHiveStore.getState().reset();
+    });
+
+    it('clears the departed fleet and seeds the server’s on a successful attach', async () => {
+      useHiveStore.getState().hydrateSessions([
+        { id: 'sess-01', project: 'departed', task: '', status: 'working', createdAt: 1 },
+      ]);
+      vi.mocked(setRemoteConfig).mockResolvedValue({
+        switched: { ok: true },
+        changed: {
+          to: 'remote',
+          snapshot: {
+            'session:history': [
+              { id: 'sess-09', project: 'attached', task: '', status: 'working', createdAt: 2 },
+            ],
+          },
+        },
+      });
+
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={REMOTE_TARGET}
+          attachedServer={null}
+          attachedServerName={null}
+        />,
+      );
+
+      await userEvent.click(screen.getByRole('switch', { name: 'Attach to a server' }));
+      await userEvent.click(screen.getByRole('button', { name: /^attach$/i }));
+
+      // The departed row is gone and the server's is in its place — not both,
+      // which is what a seed with no clear in front of it would leave.
+      expect(fleetIds()).toEqual(['sess-09']);
+    });
+
+    it('clears on a detach, where there is nothing to seed', async () => {
+      useHiveStore.getState().hydrateSessions([
+        { id: 'sess-01', project: 'the-server', task: '', status: 'working', createdAt: 1 },
+      ]);
+      vi.mocked(setRemoteConfig).mockResolvedValue({
+        switched: { ok: true },
+        changed: { to: 'local' },
+      });
+
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={ATTACHED_REMOTE}
+          attachedServer={{ name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' }}
+          attachedServerName="mini.tail1234.ts.net"
+        />,
+      );
+
+      await userEvent.click(screen.getByRole('switch', { name: 'Attach to a server' }));
+
+      expect(fleetIds()).toEqual([]);
+    });
+
+    /**
+     * A refused switch changes nothing, so it must not clear anything either
+     * — `changed` is `null` on every refusal and the fleet on screen is still
+     * the right one.
+     */
+    it('leaves the fleet alone when the switch was refused', async () => {
+      useHiveStore.getState().hydrateSessions([
+        { id: 'sess-01', project: 'nova-web', task: '', status: 'working', createdAt: 1 },
+      ]);
+      vi.mocked(setRemoteConfig).mockResolvedValue({
+        switched: { ok: false, reason: 'connect-failed', message: 'ECONNREFUSED' },
+        changed: null,
+      });
+
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={REMOTE_TARGET}
+          attachedServer={null}
+          attachedServerName={null}
+        />,
+      );
+
+      await userEvent.click(screen.getByRole('switch', { name: 'Attach to a server' }));
+      await userEvent.click(screen.getByRole('button', { name: /^attach$/i }));
+
+      expect(fleetIds()).toEqual(['sess-01']);
     });
   });
 });

@@ -1,4 +1,9 @@
-import type { RemoteMode, SetRemoteResult, SwitchOutcome } from '@shared/config-contract';
+import type {
+  ModeChange,
+  RemoteMode,
+  SetRemoteResult,
+  SwitchOutcome,
+} from '@shared/config-contract';
 import { parseSetRemoteRequest } from '@shared/guards';
 
 import { getConfig, setRemote } from '../config';
@@ -21,6 +26,22 @@ export type ModeSwitcher = (
   mode: RemoteMode,
   options?: { target?: { host: string; port: number } },
 ) => Promise<SwitchOutcome>;
+
+/**
+ * The attached socket's own accept-frame snapshot, or `null` when this
+ * process is not attached (HIVE-144 review, I1).
+ *
+ * Injected for the reason {@link ModeSwitcher} is: `router.ts` owns the
+ * client, this module may not import it back, and the one capability the
+ * handler needs crosses the seam as an argument. It is called **twice** per
+ * switch — once before and once after — so it has to be the live reading and
+ * not a captured value.
+ *
+ * Defaulted to "not attached" so the eight suites that call
+ * {@link applySetRemote} with two arguments still describe a local machine,
+ * which is what they were written about.
+ */
+export type AttachedSnapshot = () => Readonly<Record<string, unknown>> | null;
 
 /**
  * Everything `config:set-remote` does, in the one place both surfaces that
@@ -56,9 +77,19 @@ export type ModeSwitcher = (
 export async function applySetRemote(
   payload: unknown,
   switchMode: ModeSwitcher,
+  attachedSnapshot: AttachedSnapshot = () => null,
 ): Promise<SetRemoteResult> {
   const request = parseSetRemoteRequest(payload);
   const current = getConfig().remote;
+  /*
+    Read before the switch, so `changed` below can be derived from what
+    actually happened to the socket rather than from what the payload asked
+    for (HIVE-144 review, I1). Neither `request.mode` nor `current.mode` can
+    answer that question: the first is absent on a write-only commit, and the
+    second is this machine's file, which Ruling 19 deliberately leaves saying
+    `'remote'` on a window that is bound local.
+  */
+  const before = attachedSnapshot() !== null;
   const switched = await switchMode(request.mode ?? current.mode, {
     target: {
       host: request.host ?? current.host,
@@ -67,7 +98,26 @@ export async function applySetRemote(
   });
   // The old snapshot, unchanged, on every refusal — the file was never
   // opened. `getConfig()` rather than the `current` block above, because a
-  // pane needs the whole snapshot back either way.
-  if (!switched.ok) return { switched, config: getConfig() };
-  return { switched, config: setRemote(request) };
+  // pane needs the whole snapshot back either way. Nothing switched, so there
+  // is nothing for the renderer to re-seed.
+  if (!switched.ok) return { switched, config: getConfig(), changed: null };
+  return { switched, config: setRemote(request), changed: modeChange(before, attachedSnapshot()) };
+}
+
+/**
+ * What the socket did across the switch, in the shape the renderer acts on.
+ *
+ * `null` when it did nothing, which covers three real cases and not one of
+ * them is a failure: a write-only commit that never called the switcher, a
+ * detach on a window that was already local (`switchIpcMode`'s own "already
+ * local" guard), and a re-attach that landed on the same kind of surface it
+ * left. Reporting a change in any of them would clear a fleet that is still
+ * the right one.
+ */
+function modeChange(
+  before: boolean,
+  after: Readonly<Record<string, unknown>> | null,
+): ModeChange | null {
+  if ((after !== null) === before) return null;
+  return after === null ? { to: 'local' } : { to: 'remote', snapshot: after };
 }

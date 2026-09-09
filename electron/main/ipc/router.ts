@@ -95,7 +95,7 @@ export function registerIpc(mode: IpcMode, options: RegisterIpcOptions = {}): vo
         The reflexive call is the point and not an accident: this hands the
         proxy a function whose job is to tear the proxy down.
       */
-      localSetRemote: (payload) => applySetRemote(payload, switchIpcMode),
+      localSetRemote: (payload) => applySetRemote(payload, switchIpcMode, attachedSnapshot),
     });
     return;
   }
@@ -110,7 +110,12 @@ export function registerIpc(mode: IpcMode, options: RegisterIpcOptions = {}): vo
     owns which mode is bound, and the handler asks it rather than reaching into
     it.
   */
-  localAppInfo = registerIpcHandlers(options.broadcaster, switchIpcMode, attachedServerName);
+  localAppInfo = registerIpcHandlers(
+    options.broadcaster,
+    switchIpcMode,
+    attachedServerName,
+    attachedSnapshot,
+  );
 }
 
 /**
@@ -199,6 +204,24 @@ let attached: RemoteClient | null = null;
  */
 export function attachedServerName(): string | null {
   return attached?.serverName() ?? null;
+}
+
+/**
+ * The fleet the server sent with its accept frame, or `null` when this
+ * process is not attached (HIVE-144 review, I1).
+ *
+ * `RemoteClient.snapshot()` had no production caller before this, so the six
+ * `SNAPSHOT_CHANNELS` reads a server performs on every accept were computed,
+ * bounded, sent, parsed and dropped. This is where they are picked up:
+ * `applySetRemote` calls it either side of the switch, reports what moved as
+ * `SetRemoteResult.changed`, and the renderer clears the departed mode's
+ * entities and seeds the new one's from it.
+ *
+ * Reads the module-scope `attached` fresh on every call, exactly as
+ * {@link attachedServerName} does and for the same reason.
+ */
+export function attachedSnapshot(): Readonly<Record<string, unknown>> | null {
+  return attached?.snapshot() ?? null;
 }
 
 /**

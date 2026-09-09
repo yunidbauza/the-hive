@@ -5,6 +5,7 @@ import type {
   DiagnoseCommandRequest,
   DiagnoseEnvRequest,
   EnvDiagnostic,
+  ModeChange,
   ProjectConfig,
   ProjectStatus,
   RemotePairRequest,
@@ -408,25 +409,56 @@ export async function revokeDevice(
  * channel, matching the shape a real dial failure already takes, so the pane
  * has exactly one failure branch to render instead of a second one for "the
  * IPC itself did not work."
+ *
+ * ## `changed` is passed through, not acted on here (HIVE-144 review, I1)
+ *
+ * The fleet on screen belongs to the machine that was just left, and clearing
+ * it is a **store** operation — `clearModeEntities` then `applyAttachSnapshot`.
+ * This module cannot perform it: `hive-store` reaches `@config/runtime`, which
+ * reaches this file, so importing the store from here would close a cycle
+ * `import/no-cycle` fails the build over. So the answer is handed up, and the
+ * caller applies it through `useApplyModeChange` — one named store action, so
+ * the ordering of the two steps lives in one place rather than at each call.
  */
-export async function setRemoteConfig(request: SetRemoteRequest): Promise<SwitchOutcome> {
+export async function setRemoteConfig(
+  request: SetRemoteRequest,
+): Promise<RemoteSwitch> {
   const bridge = window.hive;
   if (!bridge) {
-    return { ok: false, reason: 'connect-failed', message: 'No bridge available.' };
+    return {
+      switched: { ok: false, reason: 'connect-failed', message: 'No bridge available.' },
+      changed: null,
+    };
   }
 
   try {
     const result = await bridge.config.setRemote(request);
     await install(result.config);
-    return result.switched;
+    return { switched: result.switched, changed: result.changed };
   } catch (cause) {
     console.error('[hive] the attach switch did not complete:', cause);
     return {
-      ok: false,
-      reason: 'connect-failed',
-      message: 'The request could not be sent.',
+      switched: {
+        ok: false,
+        reason: 'connect-failed',
+        message: 'The request could not be sent.',
+      },
+      changed: null,
     };
   }
+}
+
+/**
+ * What {@link setRemoteConfig} hands back — {@link SetRemoteResult} minus the
+ * snapshot, which this module installs rather than returning.
+ *
+ * Two fields because they answer different questions and can disagree: a
+ * write-only commit succeeds (`switched.ok`) while changing no mode at all
+ * (`changed === null`), and that is the case finding 6 exists about.
+ */
+export interface RemoteSwitch {
+  switched: SwitchOutcome;
+  changed: ModeChange | null;
 }
 
 /**

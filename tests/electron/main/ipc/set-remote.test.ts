@@ -75,6 +75,9 @@ describe('applySetRemote', () => {
     expect(result).toEqual({
       switched: { ok: true },
       config: expect.objectContaining({ marker: 'NEW_SNAPSHOT' }),
+      // No socket either side of the switch — see the `what changed` suite
+      // below, which is where this field is actually exercised.
+      changed: null,
     });
   });
 
@@ -95,6 +98,7 @@ describe('applySetRemote', () => {
     expect(result).toEqual({
       switched: { ok: false, reason: 'connect-failed', message: 'ECONNREFUSED' },
       config: expect.objectContaining({ marker: 'OLD_SNAPSHOT' }),
+      changed: null,
     });
   });
 
@@ -104,5 +108,104 @@ describe('applySetRemote', () => {
     await expect(applySetRemote({ mode: 'sideways' }, switchMode)).rejects.toThrow();
     expect(switchMode).not.toHaveBeenCalled();
     expect(setRemote).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `SetRemoteResult.changed` (HIVE-144 review, I1).
+ *
+ * The whole attach-snapshot path used to end here. `RemoteClient.snapshot()`
+ * had no production caller, so a server built six `SNAPSHOT_CHANNELS` reads on
+ * every accept, bounded them, sent them — and the client dropped them. And
+ * nothing cleared entities across a switch, so the departed mode's metrics
+ * rendered against the newly attached session wearing the same `sess-01`.
+ *
+ * This is where both are answered, and the property that makes it correct is
+ * that `changed` is derived from **the socket**, before and after, never from
+ * `mode`. The three `null` cases below are each a state a `mode`-derived
+ * answer gets wrong.
+ */
+describe('applySetRemote — what changed', () => {
+  /** A snapshot accessor that answers `before` first and `after` after. */
+  const socket = (
+    before: Record<string, unknown> | null,
+    after: Record<string, unknown> | null,
+  ) => {
+    let asked = 0;
+    return () => {
+      asked += 1;
+      return asked === 1 ? before : after;
+    };
+  };
+
+  it('reports an attach, carrying the fleet the server sent', async () => {
+    const switchMode = vi.fn().mockResolvedValue({ ok: true });
+    const fleet = { 'session:history': [{ id: 'sess-01' }] };
+
+    const result = await applySetRemote(
+      { mode: 'remote', host: '127.0.0.1' },
+      switchMode,
+      socket(null, fleet),
+    );
+
+    expect(result.changed).toEqual({ to: 'remote', snapshot: fleet });
+  });
+
+  it('reports a detach, which carries nothing to seed', async () => {
+    const switchMode = vi.fn().mockResolvedValue({ ok: true });
+
+    const result = await applySetRemote(
+      { mode: 'local' },
+      switchMode,
+      socket({ 'session:history': [] }, null),
+    );
+
+    expect(result.changed).toEqual({ to: 'local' });
+  });
+
+  /**
+   * The address field blurring: a payload naming no mode, on a window that was
+   * not attached and is not attached afterwards. A `mode`-derived answer would
+   * read `request.mode ?? current.mode` and report a switch on every commit.
+   */
+  it('reports nothing when the socket did not move', async () => {
+    const switchMode = vi.fn().mockResolvedValue({ ok: true });
+
+    const result = await applySetRemote({ host: '10.0.0.9' }, switchMode, socket(null, null));
+
+    expect(result.changed).toBeNull();
+  });
+
+  /**
+   * Ruling 19 leaves this machine's `remote.mode` at `'remote'` after a failed
+   * boot attach, precisely so the next launch retries — and that window is
+   * bound **local**, showing its own sessions. Turning the switch off there
+   * must write, and must not clear a fleet that is the right one.
+   */
+  it('reports nothing when the file says remote but no socket was ever open', async () => {
+    getConfig.mockReturnValue({
+      remote: { mode: 'remote', host: 'mini.tail.ts.net', port: 7433 },
+      marker: 'OLD_SNAPSHOT',
+    });
+    const switchMode = vi.fn().mockResolvedValue({ ok: true });
+
+    const result = await applySetRemote({ mode: 'local' }, switchMode, socket(null, null));
+
+    expect(setRemote).toHaveBeenCalledExactlyOnceWith({ mode: 'local' });
+    expect(result.changed).toBeNull();
+  });
+
+  it('reports nothing when the switch was refused', async () => {
+    const switchMode = vi
+      .fn()
+      .mockResolvedValue({ ok: false, reason: 'connect-failed', message: 'ECONNREFUSED' });
+
+    const result = await applySetRemote(
+      { mode: 'remote', host: '127.0.0.1' },
+      switchMode,
+      socket(null, null),
+    );
+
+    expect(result.changed).toBeNull();
   });
 });

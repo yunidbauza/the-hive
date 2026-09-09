@@ -25,6 +25,7 @@ import {
   type ServerDevice,
   type SwitchOutcome,
 } from '@shared/config-contract';
+import { useApplyModeChange } from '@stores/hive-store';
 
 /**
  * Turning server mode on, naming the bind, and pairing/revoking devices
@@ -222,6 +223,12 @@ export function ServerModeGroup({
    * defect this ruling closes.
    */
   const attached = attachedServerName !== null;
+  /*
+    The store side of a mode switch (HIVE-144 review, I1). Held here rather
+    than reached for inside the two handlers because a component may not call
+    `getState()` — the named selector hook beside the store is the only way in.
+  */
+  const applyModeChange = useApplyModeChange();
   /*
     Local disclosure state, seeded from `enabled` and kept in step with it —
     the same "follow the snapshot" idiom `ContainerAliasGroup` uses for its
@@ -516,10 +523,17 @@ export function ServerModeGroup({
     setRemotePortInvalid(false);
     setSwitchResult(null);
     setAttaching(true);
-    void setRemoteConfig({ mode: 'remote', host, port }).then((outcome) => {
+    void setRemoteConfig({ mode: 'remote', host, port }).then(({ switched, changed }) => {
       setAttaching(false);
-      setSwitchResult(outcome);
-      if (!outcome.ok) {
+      setSwitchResult(switched);
+      /*
+        The fleet on screen belongs to the machine this window just left, and
+        the ids collide across machines (HIVE-144 review, I1) — see
+        `applyModeChange`'s own doc comment. `changed` is `null` on every
+        refusal, which is exactly right: a refused switch changed nothing.
+      */
+      if (changed) applyModeChange(changed);
+      if (!switched.ok) {
         setRemoteHostDraft(remote.host);
         setRemotePortDraft(String(remote.port));
       }
@@ -544,10 +558,14 @@ export function ServerModeGroup({
   const handleDetach = () => {
     setSwitchResult(null);
     setDetaching(true);
-    void setRemoteConfig({ mode: 'local' }).then((outcome) => {
+    void setRemoteConfig({ mode: 'local' }).then(({ switched, changed }) => {
       setDetaching(false);
-      setSwitchResult(outcome);
-      if (outcome.ok) setAttachOpen(false);
+      setSwitchResult(switched);
+      // The detach half of the same rule (HIVE-144 review, I1). Coming back to
+      // this machine has to clear too, or the server's fleet lingers on a
+      // window that is no longer showing that machine.
+      if (changed) applyModeChange(changed);
+      if (switched.ok) setAttachOpen(false);
     });
   };
 

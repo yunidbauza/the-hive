@@ -60,6 +60,7 @@ import {
   type LiveRunSummary,
   type RunSummary,
 } from '@shared/agent-contract';
+import type { ModeChange } from '@shared/config-contract';
 import type { GhResult, PrRecord, PrsSnapshot } from '@shared/github-contract';
 import type { IdleDetail } from '@shared/hook-contract';
 import { CH, type Channel, type SessionNameReport } from '@shared/ipc-contract';
@@ -713,6 +714,28 @@ interface HiveState {
    * id) untouched.
    */
   clearModeEntities: () => void;
+  /**
+   * Put the store where the mode switch that just happened left it (HIVE-144
+   * review, I1).
+   *
+   * The production entry point for the two actions above, and the reason they
+   * are one action rather than two calls at the call site: their **order** is
+   * the invariant. Clear first, then seed — the other way round the seed is
+   * wiped by the clear that follows it, and the pane would render an empty
+   * fleet until the first push from the new mode happened to arrive.
+   *
+   * Both arms clear. A detach that only cleared on the way in would leave the
+   * remote fleet standing on a window that is back on its own machine, with
+   * `useSessionMetrics(id)` reading the departed mode's numbers against a
+   * local `sess-01` — see {@link HiveActions.clearModeEntities}.
+   *
+   * `ModeChange` comes from `config-contract`, carried back by
+   * `config:set-remote` (`SetRemoteResult.changed`), which is the one call
+   * that knows a switch happened and is answered by the process holding the
+   * client. `null` is not accepted: "nothing changed" is the caller's branch
+   * to skip, not a state this action should have to have an opinion about.
+   */
+  applyModeChange: (change: ModeChange) => void;
   reset: () => void;
 }
 
@@ -4918,6 +4941,14 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     });
   },
 
+  applyModeChange: (change) => {
+    const store = get();
+    // Order, not taste: seeding first would be undone by the clear. See the
+    // declaration's own doc comment.
+    store.clearModeEntities();
+    if (change.to === 'remote') store.applyAttachSnapshot(change.snapshot);
+  },
+
   reset: () => {
     spawnCounter = 0;
     staleTitles.clear();
@@ -6748,6 +6779,16 @@ export const useHydrateLedger = () => useHiveStore((state) => state.hydrateLedge
 /** Mirror `~/.hive/agents` into the fleet (HIVE-114). */
 export const useHydrateAgents = () => useHiveStore((state) => state.hydrateAgents);
 export const useLedgerAppend = () => useHiveStore((state) => state.ledgerAppend);
+
+/**
+ * This window changed machines — clear the departed fleet and seed the new
+ * one (HIVE-144 review, I1).
+ *
+ * Settings' attach half is the only caller: `config:set-remote` is the one
+ * verb that knows a switch happened, and `SetRemoteResult.changed` is how it
+ * says so. See {@link HiveActions.applyModeChange}.
+ */
+export const useApplyModeChange = () => useHiveStore((state) => state.applyModeChange);
 
 /** A run started, ended, or changed an agent's status (HIVE-115). */
 export const useSetAgentStatus = () => useHiveStore((state) => state.setAgentStatus);

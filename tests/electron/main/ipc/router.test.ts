@@ -58,7 +58,12 @@ describe('registerIpc', () => {
 
     registerIpc('local', { broadcaster });
 
-    expect(registerIpcHandlers).toHaveBeenCalledWith(broadcaster, switchIpcMode, expect.any(Function));
+    expect(registerIpcHandlers).toHaveBeenCalledWith(
+      broadcaster,
+      switchIpcMode,
+      expect.any(Function),
+      expect.any(Function),
+    );
   });
 
   /**
@@ -73,7 +78,12 @@ describe('registerIpc', () => {
   it('hands the handlers the real mode switch', () => {
     registerIpc('local');
 
-    expect(registerIpcHandlers).toHaveBeenCalledWith(undefined, switchIpcMode, expect.any(Function));
+    expect(registerIpcHandlers).toHaveBeenCalledWith(
+      undefined,
+      switchIpcMode,
+      expect.any(Function),
+      expect.any(Function),
+    );
   });
 
   /**
@@ -85,7 +95,12 @@ describe('registerIpc', () => {
   it('leaves the default broadcaster to the handlers when none is given', () => {
     registerIpc('local');
 
-    expect(registerIpcHandlers).toHaveBeenCalledWith(undefined, expect.any(Function), expect.any(Function));
+    expect(registerIpcHandlers).toHaveBeenCalledWith(
+      undefined,
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Function),
+    );
   });
 
   /**
@@ -99,7 +114,31 @@ describe('registerIpc', () => {
     registerIpc('local');
 
     const { attachedServerName } = await import('../../../../electron/main/ipc/router');
-    expect(registerIpcHandlers).toHaveBeenCalledWith(undefined, switchIpcMode, attachedServerName);
+    expect(registerIpcHandlers).toHaveBeenCalledWith(
+      undefined,
+      switchIpcMode,
+      attachedServerName,
+      expect.any(Function),
+    );
+  });
+
+  /**
+   * `router.ts`'s own `attachedSnapshot()` (HIVE-144 review, I1) — the reader
+   * that turns the accept frame's snapshot into something `applySetRemote`
+   * can report. Forgetting it would leave `SetRemoteResult.changed` answering
+   * `null` off the no-op default forever, which is the state the whole
+   * attach-snapshot path was in before this fix: built, sent, and dropped.
+   */
+  it('hands the handlers the real attachedSnapshot reader', async () => {
+    registerIpc('local');
+
+    const { attachedSnapshot } = await import('../../../../electron/main/ipc/router');
+    expect(registerIpcHandlers).toHaveBeenCalledWith(
+      undefined,
+      switchIpcMode,
+      expect.any(Function),
+      attachedSnapshot,
+    );
   });
 
   it('registers the remote proxy in remote mode, and binds nothing locally', () => {
