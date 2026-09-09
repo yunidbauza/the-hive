@@ -1,13 +1,63 @@
 import { ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
 
-import type { Channel } from '@shared/ipc-contract';
-import { FRAME_KIND, windowBoundReason } from '@shared/remote-contract';
+import { CH, type AppInfo, type Channel } from '@shared/ipc-contract';
+import { FRAME_KIND, isProcessLocal, windowBoundReason } from '@shared/remote-contract';
 
 import { RemoteCallError, type RemoteClient } from '../../remote-client/socket';
+import { checkForUpdatesInteractively, updateStatus } from '../updates';
 
 import { createBindings, type Bindings } from './bindings';
 import type { Broadcaster } from './broadcaster';
 import { assertSender } from './sender';
+
+/**
+ * What each `PROCESS_LOCAL` channel is actually answered with (HIVE-144,
+ * Ruling 24).
+ *
+ * `CH.updatesStatus` and `CH.updatesCheck` reach stable, already-a-singleton
+ * module functions (`electron/main/updates/index.ts`'s own doc comment: "one
+ * object, always present") — the same functions `ipc/index.ts`'s local
+ * handlers call, imported directly rather than handed down, because nothing
+ * about them is per-registration state and importing them creates no cycle
+ * (`updates/index.ts` reaches `electron`, `@shared/update-contract` and its
+ * own `capability`/`engine`/`updater` siblings — nothing back into `ipc/`).
+ *
+ * `CH.appInfo` is different: its answer depends on state that *is*
+ * per-registration (`hooks`, `remoteListener`, `sessions`, all closed over
+ * inside one call to `registerIpcHandlers`), so it cannot be imported the
+ * same way — `localAppInfo` is handed down instead, the same seam
+ * `switchMode` already crosses for the identical reason.
+ */
+function localAnswerFor(
+  channel: Channel,
+  localAppInfo: () => AppInfo,
+): (() => unknown | Promise<unknown>) | null {
+  switch (channel) {
+    case CH.appInfo:
+      return localAppInfo;
+    case CH.updatesStatus:
+      return updateStatus;
+    case CH.updatesCheck:
+      return checkForUpdatesInteractively;
+    default:
+      return null;
+  }
+}
+
+/**
+ * The default `localAppInfo`, reached only by a caller that skips
+ * `router.ts` entirely — every production path (`registerIpc('remote', ...)`)
+ * supplies the real one. Throws rather than answering a placeholder `AppInfo`
+ * for the same reason {@link noModeSwitcher} (`ipc/index.ts`) throws: a
+ * silent, wrong answer here would tell a user their own machine's version,
+ * bind state and attachment were something they are not.
+ */
+function noLocalAppInfo(): AppInfo {
+  throw new Error(
+    'registerRemoteProxy reached CH.appInfo with no localAppInfo supplied. ' +
+      'registerRemoteProxy was called directly rather than through registerIpc.',
+  );
+}
 
 /**
  * Module scope, for the same reason `ipc/index.ts`'s own `bindings` is:
@@ -54,8 +104,21 @@ let unsubscribe: (() => void) | null = null;
  * but its `notify` channels do not — `ipcMain.on` happily adds a second
  * listener — so the stale first client would keep answering `pty:write`
  * alongside the new one, unbindable because nothing still references it.
+ *
+ * `localAppInfo` answers `CH.appInfo` (HIVE-144, Ruling 24) — see
+ * `isProcessLocal`'s own doc comment for the three channels this bypasses the
+ * socket for entirely, and why. Optional only so the many call sites in this
+ * module's own test file that never touch those three channels do not all
+ * need one; every production caller (`ipc/router.ts`'s `registerIpc`) passes
+ * the real one, and {@link noLocalAppInfo} throws rather than answering
+ * quietly wrong if a caller that skips `router.ts` ever does exercise
+ * `CH.appInfo` without supplying it.
  */
-export function registerRemoteProxy(deps: { client: RemoteClient; broadcaster: Broadcaster }): void {
+export function registerRemoteProxy(deps: {
+  client: RemoteClient;
+  broadcaster: Broadcaster;
+  localAppInfo?: () => AppInfo;
+}): void {
   if (bindings !== null) {
     throw new Error(
       'registerRemoteProxy is already registered. Call resetRemoteProxy() first — ' +
@@ -64,7 +127,7 @@ export function registerRemoteProxy(deps: { client: RemoteClient; broadcaster: B
     );
   }
 
-  const { client, broadcaster } = deps;
+  const { client, broadcaster, localAppInfo = noLocalAppInfo } = deps;
 
   bindings = createBindings(ipcMain);
 
@@ -77,6 +140,15 @@ export function registerRemoteProxy(deps: { client: RemoteClient; broadcaster: B
         never depending on what a socket happens to answer.
       */
       const reason = windowBoundReason(channel);
+      /*
+        Same resolve-once reasoning as `reason` above, for the sibling table
+        (HIVE-144, Ruling 24): `PROCESS_LOCAL` does not change while this
+        process is running either, so a channel on it answers from `localAnswer`
+        every time, never depending on what the socket would have said.
+      */
+      const localAnswer = isProcessLocal(channel)
+        ? localAnswerFor(channel as Channel, localAppInfo)
+        : null;
 
       ipcMain.handle(channel, (event: IpcMainInvokeEvent, payload: unknown) => {
         assertSender(event);
@@ -92,6 +164,16 @@ export function registerRemoteProxy(deps: { client: RemoteClient; broadcaster: B
           client throws for any other `error` frame.
         */
         if (reason !== null) return Promise.reject(new RemoteCallError('window-bound', reason));
+        /*
+          Answered here, never forwarded (HIVE-144, Ruling 24): every field of
+          this channel's payload describes *this* process — see
+          `isProcessLocal`'s own doc comment — so the far end's answer would be
+          a plausible, wrong one, not merely an unreachable one the way
+          `WINDOW_BOUND`'s channels are. No `client.call` at all, not even a
+          discarded one: the round trip itself would be a socket the client
+          did not need to spend.
+        */
+        if (localAnswer !== null) return Promise.resolve(localAnswer());
         return client.call(channel as Channel, payload);
       });
       bindings.record(channel);

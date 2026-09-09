@@ -9,6 +9,7 @@ import {
   CALL_GIVE_UP_MS,
   CHANNEL_AUTHORIZATION,
   FRAME_KIND,
+  PROCESS_LOCAL,
   REMOTE_PROTOCOL_VERSION,
   REMOTE_REFUSED_CHANNELS,
   SNAPSHOT_CHANNELS,
@@ -17,6 +18,7 @@ import {
   frameKindOf,
   isAuthorized,
   isClientFrameAllowed,
+  isProcessLocal,
   remoteRefusedReason,
   windowBoundReason,
 } from '@shared/remote-contract';
@@ -488,5 +490,42 @@ describe('WINDOW_BOUND', () => {
 
   it('returns the reason for one that is', () => {
     expect(windowBoundReason(CH.themePick)).toMatch(/HIVE-146/);
+  });
+});
+
+/**
+ * `PROCESS_LOCAL` (HIVE-144, Ruling 24) — the opposite remedy from
+ * `WINDOW_BOUND`, for the same underlying problem: a channel whose payload
+ * is entirely about the running process, not the fleet, must not be
+ * forwarded to whatever the far end happens to be. See `PROCESS_LOCAL`'s own
+ * doc comment for the full test ("does every field describe the running
+ * process?") and the sweep across every `'call'` channel that settled on
+ * exactly these three.
+ */
+describe('PROCESS_LOCAL', () => {
+  it('names exactly three channels', () => {
+    expect([...PROCESS_LOCAL].sort()).toEqual(
+      [CH.appInfo, CH.updatesStatus, CH.updatesCheck].sort(),
+    );
+  });
+
+  it('only ever names a call channel', () => {
+    for (const channel of PROCESS_LOCAL) expect(frameKindOf(channel)).toBe('call');
+  });
+
+  /*
+    Disjoint from `WINDOW_BOUND` by construction — the two lists answer a
+    channel two different ways (a local answer vs. a local refusal), and a
+    channel on both would leave `registerRemoteProxy` to pick one arbitrarily.
+  */
+  it('shares no channel with WINDOW_BOUND', () => {
+    const windowBound = new Set(Object.keys(WINDOW_BOUND));
+    for (const channel of PROCESS_LOCAL) expect(windowBound.has(channel)).toBe(false);
+  });
+
+  it('is true for each named channel and false for an ordinary fleet channel', () => {
+    for (const channel of PROCESS_LOCAL) expect(isProcessLocal(channel)).toBe(true);
+    expect(isProcessLocal(CH.configGet)).toBe(false);
+    expect(isProcessLocal('not:a:channel')).toBe(false);
   });
 });

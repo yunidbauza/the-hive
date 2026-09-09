@@ -1,4 +1,5 @@
 import { isRemoteTarget, type SwitchOutcome } from '@shared/config-contract';
+import type { AppInfo } from '@shared/ipc-contract';
 
 import {
   PlaintextRefusedError,
@@ -72,6 +73,11 @@ export function registerIpc(mode: IpcMode, options: RegisterIpcOptions = {}): vo
     registerRemoteProxy({
       client: options.client,
       broadcaster: options.broadcaster ?? createWindowBroadcaster(),
+      // See `localAppInfo`'s own doc comment: this is the closure the most
+      // recent `registerIpc('local', ...)` produced, so `CH.appInfo` keeps
+      // answering from *this* process even once it stops answering anything
+      // else (HIVE-144, Ruling 24).
+      localAppInfo: localAppInfo ?? undefined,
     });
     return;
   }
@@ -86,8 +92,24 @@ export function registerIpc(mode: IpcMode, options: RegisterIpcOptions = {}): vo
     owns which mode is bound, and the handler asks it rather than reaching into
     it.
   */
-  registerIpcHandlers(options.broadcaster, switchIpcMode, attachedServerName);
+  localAppInfo = registerIpcHandlers(options.broadcaster, switchIpcMode, attachedServerName);
 }
+
+/**
+ * The `CH.appInfo` answer the most recent local registration built (HIVE-144,
+ * Ruling 24) — `registerIpcHandlers`'s own return value, over *that* call's
+ * `hooks`, `remoteListener` and `sessions`.
+ *
+ * `null` only before the very first `registerIpc('local', ...)` this process
+ * ever makes, which boot never lets `registerIpc('remote', ...)` outrun:
+ * `electron/main/index.ts` always calls `registerIpc('local')` first and only
+ * conditionally follows it with `switchIpcMode('remote')`. `registerRemoteProxy`'s
+ * own `localAppInfo` parameter is optional and defaults to a throwing
+ * placeholder for the one caller that can still see `null` here — a test that
+ * calls `registerIpc('remote', ...)` directly, skipping the local call that
+ * would have set this.
+ */
+let localAppInfo: (() => AppInfo) | null = null;
 
 /**
  * What a live switch may be told, beyond where the pushes go.

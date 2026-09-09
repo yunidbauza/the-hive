@@ -519,6 +519,49 @@ export function windowBoundReason(channel: string): string | null {
 }
 
 /**
+ * Channels answered by this process itself even while attached, never
+ * forwarded over the socket (HIVE-144, Ruling 24).
+ *
+ * A channel belongs here when **every field of its payload describes the
+ * running process rather than the fleet it may be attached to** — this
+ * window's own Electron/Chrome/Node build, its own log path, its own receiver
+ * and server-mode binds, whether it is itself attached to something, its own
+ * installed version against its own update track. `AppInfo` (`CH.appInfo`)
+ * and `UpdateStatus` (`CH.updatesStatus`, `CH.updatesCheck`) are the three
+ * channels on this branch that pass that test — see the sweep note on
+ * `CH.updatesStatus`'s own history for the other candidates it does *not*
+ * include and why (login environment, command diagnostics, config file
+ * paths: all genuinely about the fleet, because sessions run on whichever
+ * machine answers `pty:spawn`, not on the machine reading its own `AppInfo`).
+ *
+ * This is the same problem `WINDOW_BOUND` solves, and it rests on the same
+ * observation — proxying some channels wholesale is wrong — but it needs the
+ * opposite remedy, which is why it is a second list rather than a second
+ * entry format on that one. `WINDOW_BOUND` channels are **refused** locally,
+ * with a reason, because only the near end holds the `BrowserWindow` a
+ * dialog needs and the far end could never compute a real answer. This list's
+ * channels are **answered** locally, with no error at all, because the near
+ * end's answer is the only *true* one even though the far end could compute
+ * *an* answer that would look plausible and be wrong — a server's own
+ * Electron version standing in for the client's, a server's own exposure
+ * standing in for the client's. `registerRemoteProxy` binds a channel here to
+ * a local handler instead of `client.call`; it does not touch `WINDOW_BOUND`'s
+ * refusal path at all.
+ *
+ * A future channel of this shape is added to this list, not special-cased in
+ * a conditional — the loop in `registerRemoteProxy` reads this table, the
+ * same way it reads `FRAME_KIND` and `WINDOW_BOUND`, so a channel added here
+ * and forgotten in the loop is structurally impossible rather than merely
+ * unlikely.
+ */
+export const PROCESS_LOCAL: readonly Channel[] = [CH.appInfo, CH.updatesStatus, CH.updatesCheck];
+
+/** Whether `channel` must be answered by this process itself, never proxied. */
+export function isProcessLocal(channel: string): boolean {
+  return (PROCESS_LOCAL as readonly string[]).includes(channel);
+}
+
+/**
  * The first frame on every connection, and the only one that may precede a
  * version check.
  *

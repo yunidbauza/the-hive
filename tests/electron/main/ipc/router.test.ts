@@ -142,4 +142,27 @@ describe('registerIpc', () => {
     expect(registerRemoteProxy).not.toHaveBeenCalled();
     expect(registerIpcHandlers).not.toHaveBeenCalled();
   });
+
+  /**
+   * `localAppInfo` (HIVE-144, Ruling 24): the router hands `registerRemoteProxy`
+   * the *exact* closure the most recent local registration's `registerIpcHandlers`
+   * call returned — over that call's own `hooks`, `remoteListener` and
+   * `sessions` — never a substitute. A proxy sourced any other way would
+   * answer `CH.appInfo` from whichever instances happened to be lying
+   * around, which is the bug this ruling exists to close. `mockReturnValueOnce`
+   * rather than a persistent mock, so this fake cannot leak into another
+   * test in this file that also exercises the 'remote' branch.
+   */
+  it("threads the local registration's own AppInfo answer into the remote proxy", () => {
+    const localAppInfo = () => ({ version: 'fake' });
+    registerIpcHandlers.mockReturnValueOnce(localAppInfo);
+
+    registerIpc('local');
+    const client = fakeClient();
+    registerIpc('remote', { client });
+
+    expect(registerRemoteProxy).toHaveBeenCalledWith(
+      expect.objectContaining({ localAppInfo }),
+    );
+  });
 });

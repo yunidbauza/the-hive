@@ -1237,12 +1237,22 @@ export function remoteListenerBindError(): string | null {
  * that always answers `null`, matching what a process with no `router.ts`
  * wrapping it (every existing test that calls this directly) actually is —
  * never attached to anything.
+ *
+ * @returns `buildAppInfo`, the exact closure this call bound to `CH.appInfo` —
+ * over *this* call's own `hooks`, `remoteListener`, `sessions` and
+ * `attachedServerName` (HIVE-144, Ruling 24). `router.ts`'s `registerIpc('local',
+ * ...)` captures it and later hands it to `registerRemoteProxy` as
+ * `localAppInfo`, so `CH.appInfo` answers locally rather than being proxied
+ * once this process attaches — see `isProcessLocal`'s own doc comment
+ * (`@shared/remote-contract`) for why that channel may never cross the
+ * socket. Ignored by every test that calls this function directly for its
+ * side effects alone, which is every test on this branch until this one.
  */
 export function registerIpcHandlers(
   broadcaster: Broadcaster = createWindowBroadcaster(),
   switchMode: ModeSwitcher = noModeSwitcher,
   attachedServerName: () => string | null = () => null,
-): void {
+): () => AppInfo {
   /*
     Both surfaces, always (HIVE-143). In local mode the socket half iterates an
     empty set and costs a function call per push; in server mode it is how an
@@ -2870,7 +2880,17 @@ export function registerIpcHandlers(
     history.record(request.entityId, { pr: request.pr });
   });
 
-  handle(CH.appInfo, (): AppInfo => {
+  /*
+    A named function rather than an inline `handle(CH.appInfo, () => {...})`
+    (HIVE-144, Ruling 24): `registerIpcHandlers` returns it, below, so
+    `router.ts` can hand the *exact same* closure to `registerRemoteProxy` as
+    `localAppInfo` — the answer `CH.appInfo` gets while attached, computed
+    locally rather than proxied to the far end. See `isProcessLocal`'s own doc
+    comment (`@shared/remote-contract`) for why this channel, alone among the
+    ones this file answers, must never be forwarded: every field below
+    describes *this* process, not the fleet it may be attached to.
+  */
+  function buildAppInfo(): AppInfo {
     const { electron, chrome, node } = process.versions;
     const diagnostics = sessions?.diagnostics() ?? [];
     return {
@@ -2911,7 +2931,9 @@ export function registerIpcHandlers(
       // means something.
       ...(diagnostics.length > 0 ? { pty: diagnostics } : {}),
     };
-  });
+  }
+
+  handle(CH.appInfo, buildAppInfo);
 
   /**
    * The workspace config (story 090).
@@ -4522,6 +4544,16 @@ export function registerIpcHandlers(
     const report = parsePromptReport(payload);
     deliver.onPrompt(report.sessionId, report.input);
   });
+
+  /*
+    Returned rather than left as a private closure (HIVE-144, Ruling 24):
+    `router.ts`'s own `registerIpc('local', ...)` captures this and hands it
+    to `registerRemoteProxy` as `localAppInfo` the next time this process
+    attaches, so `CH.appInfo` keeps answering from *this* process's `hooks`,
+    `remoteListener` and `sessions` — the exact instances this call just
+    built — rather than from whatever the far end's own instances say.
+  */
+  return buildAppInfo;
 }
 
 /**

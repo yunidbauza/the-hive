@@ -1,7 +1,23 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { FRAME_KIND, WINDOW_BOUND } from '../../../../electron/shared/remote-contract';
+import type { AppInfo } from '../../../../electron/shared/ipc-contract';
+import { FRAME_KIND, PROCESS_LOCAL, WINDOW_BOUND } from '../../../../electron/shared/remote-contract';
+
+/**
+ * `../updates` (`electron/main/updates/index.ts`) is mocked here for the
+ * reason `client` is faked rather than dialled for real: that module reaches
+ * real `electron` APIs (`app.getVersion()`, `dialog.showMessageBox`) this
+ * file's own `electron` mock does not provide, and what a real update check
+ * actually does is `electron/main/updates/`'s own test's job, not this
+ * proxy's. What this file needs to prove is narrower — that `CH.updatesStatus`
+ * and `CH.updatesCheck` reach *these* functions directly rather than
+ * `client.call` — and a fake return value is what makes that provable without
+ * a real update check running in a unit test.
+ */
+const updateStatus = vi.fn(() => 'FAKE_UPDATE_STATUS');
+const checkForUpdatesInteractively = vi.fn(() => Promise.resolve('FAKE_UPDATE_CHECK'));
+vi.mock('../../../../electron/main/updates', () => ({ updateStatus, checkForUpdatesInteractively }));
 
 /**
  * `registerRemoteProxy`, the other end of `registerIpcHandlers` (HIVE-144).
@@ -69,6 +85,15 @@ function fakeClient() {
 }
 
 const fakeBroadcaster = () => ({ emit: vi.fn() });
+
+/**
+ * A `localAppInfo` fake, distinguishable from `updateStatus`'s fake return.
+ * Cast rather than typed as a real `AppInfo`: a full fixture would repeat
+ * `use-project-config.test.tsx`'s own `AppInfo` factory for no benefit here —
+ * this file only proves *that* `localAppInfo` was called, never inspects the
+ * shape of what it returns.
+ */
+const fakeAppInfo = vi.fn(() => 'FAKE_APP_INFO') as unknown as () => AppInfo;
 
 /**
  * Calls a bound `handle` channel the way real `ipcMain.handle` would: a
@@ -197,6 +222,74 @@ describe('registerRemoteProxy', () => {
     registerRemoteProxy({ client: fakeClient(), broadcaster: fakeBroadcaster() });
 
     expect(remoteProxyBindingsSize()).toBe(105);
+  });
+
+  /**
+   * `PROCESS_LOCAL` (HIVE-144, Ruling 24) — the opposite remedy from
+   * `WINDOW_BOUND`'s: these three channels are still bound (the count above
+   * does not move), but answered by *this* process rather than forwarded,
+   * because every field of their payload describes the running process
+   * rather than the fleet. See `isProcessLocal`'s own doc comment
+   * (`@shared/remote-contract`) for the full argument and the sweep that
+   * settled on exactly these three.
+   */
+  describe('PROCESS_LOCAL channels (HIVE-144, Ruling 24)', () => {
+    it('names exactly three channels', () => {
+      expect(PROCESS_LOCAL.length).toBe(3);
+      expect([...PROCESS_LOCAL].sort()).toEqual(
+        ['app:info', 'updates:check', 'updates:status'].sort(),
+      );
+    });
+
+    it('answers app:info from localAppInfo, never client.call', async () => {
+      const client = fakeClient();
+      registerRemoteProxy({ client, broadcaster: fakeBroadcaster(), localAppInfo: fakeAppInfo });
+
+      await expect(invoke('app:info', trustedEvent, undefined)).resolves.toBe('FAKE_APP_INFO');
+
+      expect(fakeAppInfo).toHaveBeenCalledTimes(1);
+      expect(client.call).not.toHaveBeenCalled();
+    });
+
+    it('answers updates:status from the local updater, never client.call', async () => {
+      const client = fakeClient();
+      registerRemoteProxy({ client, broadcaster: fakeBroadcaster(), localAppInfo: fakeAppInfo });
+
+      await expect(invoke('updates:status', trustedEvent, undefined)).resolves.toBe(
+        'FAKE_UPDATE_STATUS',
+      );
+
+      expect(updateStatus).toHaveBeenCalledTimes(1);
+      expect(client.call).not.toHaveBeenCalled();
+    });
+
+    it('answers updates:check from the local updater, never client.call', async () => {
+      const client = fakeClient();
+      registerRemoteProxy({ client, broadcaster: fakeBroadcaster(), localAppInfo: fakeAppInfo });
+
+      await expect(invoke('updates:check', trustedEvent, undefined)).resolves.toBe(
+        'FAKE_UPDATE_CHECK',
+      );
+
+      expect(checkForUpdatesInteractively).toHaveBeenCalledTimes(1);
+      expect(client.call).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Without a `localAppInfo`, `app:info` must fail loudly rather than
+     * silently forward — a caller that reaches this branch skipped
+     * `router.ts` entirely, and forwarding instead would resurrect exactly
+     * the bug Ruling 24 fixes with no test able to see it.
+     */
+    it('throws rather than forwarding app:info when no localAppInfo is supplied', async () => {
+      const client = fakeClient();
+      registerRemoteProxy({ client, broadcaster: fakeBroadcaster() });
+
+      await expect(invoke('app:info', trustedEvent, undefined)).rejects.toThrow(
+        /no localAppInfo supplied/,
+      );
+      expect(client.call).not.toHaveBeenCalled();
+    });
   });
 
   it('rejects a call from an untrusted sender before it reaches the client', async () => {
