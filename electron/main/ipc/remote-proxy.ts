@@ -8,6 +8,7 @@ import { checkForUpdatesInteractively, updateStatus } from '../updates';
 
 import { createBindings, type Bindings } from './bindings';
 import type { Broadcaster } from './broadcaster';
+import { createForegroundStamp, type ForegroundStamp } from './remote-foreground';
 import { assertSender } from './sender';
 
 /**
@@ -99,6 +100,8 @@ function noLocalSetRemote(): Promise<never> {
  */
 let bindings: Bindings | null = null;
 let unsubscribe: (() => void) | null = null;
+/** This machine's focus, stamped onto `ui:foreground` (HIVE-145). */
+let foregroundStamp: ForegroundStamp | null = null;
 
 /**
  * The other end of `registerIpcHandlers` (HIVE-144).
@@ -170,6 +173,21 @@ export function registerRemoteProxy(deps: {
   } = deps;
 
   bindings = createBindings(ipcMain);
+  foregroundStamp = createForegroundStamp((channel, payload) => {
+    /*
+      Straight to the socket, not through `ipcMain`: this is a send the *main
+      process* originates, on the renderer's behalf, because only main can see
+      a window's focus. Wrapped for the reason the notify binding below is —
+      `client.notify` throws past `POST_ATTACH_FRAME_MAX_BYTES`, and an
+      unhandled throw out of a focus event would be an exception in main with
+      nobody to catch it.
+    */
+    try {
+      client.notify(channel as Channel, payload);
+    } catch (cause) {
+      console.error(`[hive] rejected ${channel}:`, cause);
+    }
+  });
 
   for (const [channel, kind] of Object.entries(FRAME_KIND)) {
     if (kind === 'call') {
@@ -248,7 +266,20 @@ export function registerRemoteProxy(deps: {
           local path drops it — never acted on, never escaping this wrapper.
         */
         try {
-          client.notify(channel as Channel, payload);
+          /*
+            The one payload this proxy enriches on the way past (HIVE-145).
+
+            `ui:foreground` decides notification suppression, and the server
+            answering it cannot see this machine's windows — a served Mac
+            usually has none of its own. So the client stamps its own focus
+            here, live from `BrowserWindow`, and `src/` goes on sending the
+            same one-key `{ terminalId }` it sends in local mode. A malformed
+            payload is passed through unchanged so the server's own guard is
+            still the one that rejects it.
+          */
+          const outgoing =
+            channel === CH.uiForeground ? (foregroundStamp?.stamp(payload) ?? payload) : payload;
+          client.notify(channel as Channel, outgoing);
         } catch (cause) {
           console.error(`[hive] rejected ${channel}:`, cause);
         }
@@ -297,4 +328,6 @@ export function resetRemoteProxy(): void {
   bindings = null;
   unsubscribe?.();
   unsubscribe = null;
+  foregroundStamp?.dispose();
+  foregroundStamp = null;
 }
