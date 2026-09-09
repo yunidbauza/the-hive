@@ -104,6 +104,29 @@ vi.mock('../../../../electron/main/agents/scheduler', () => ({
 }));
 
 /**
+ * An inert agents registry, for the reason `remote-channels.test.ts` states at
+ * length (HIVE-144, fix round 2): `refreshKnownAgents()`'s unawaited
+ * `agents.list()` opens with `mkdir(agentsRoot(), { recursive: true })`, and
+ * `agentsRoot()` is under `dirname(configPath())` — this file's temp root,
+ * which it removes after every case. A pending `mkdir` landing between
+ * `rmSync`'s walk and its `rmdir` is an `ENOTEMPTY` that no retry reliably
+ * outruns. Every fixture that points `HIVE_CONFIG_PATH` at a directory it
+ * deletes needs this; the ones that mock `configPath` to a path they never
+ * remove do not.
+ */
+vi.mock('../../../../electron/main/agents', () => ({
+  createAgentsRuntime: () => ({
+    list: async () => ({ agents: [], agentsRoot: '/tmp/hive-test-mode-switch-durability/agents' }),
+    read: async () => null,
+    write: async () => ({ ok: false, problems: [] }),
+    remove: async () => {},
+    rename: async () => ({ ok: false, problems: [] }),
+    onChange: () => () => {},
+    close: () => {},
+  }),
+}));
+
+/**
  * The run tracker, standing in only for the spawn.
  *
  * `closeAll` does what the real `finalizeRun` does at the one point this test

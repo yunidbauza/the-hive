@@ -101,14 +101,7 @@ vi.mock('../../../../electron/main/shutdown', () => ({
  * The real scheduler is a live `setInterval` plus an immediate
  * `tickSchedules()` at `start()`, and `start()` fires behind the real,
  * unmocked `mcp.start()`'s file write — a promise this fixture does not
- * control the timing of and nothing here awaits. This file points
- * `CONFIG_PATH_ENV` at a directory it removes after every case, and a tick
- * landing after that teardown writes into it while `rmSync` is walking it:
- * `ENOTEMPTY`. Seen once under `test:coverage`, where everything is slower.
- *
- * The first attempt at this was `rmSync(…, { maxRetries: 10, retryDelay: 25 })`
- * — a 250 ms budget against a 400 ms debounce, which cannot win. Removing the
- * writer is the fix; retrying around it was not.
+ * control the timing of and nothing here awaits.
  */
 vi.mock('../../../../electron/main/agents/scheduler', () => ({
   createScheduler: () => ({
@@ -119,6 +112,55 @@ vi.mock('../../../../electron/main/agents/scheduler', () => ({
     manualWake: () => ({ ok: false, status: 'stopped' }),
     start: () => {},
     stop: () => {},
+  }),
+}));
+
+/**
+ * An inert agents registry — **the fix for this file's `ENOTEMPTY`**, and the
+ * writer is now named rather than guessed (HIVE-144, fix round 2).
+ *
+ * ## What was actually happening
+ *
+ * `registerIpcHandlers` calls `refreshKnownAgents()` (`ipc/index.ts:2115`),
+ * which is `void agents?.list()` — dispatched and never awaited, deliberately,
+ * because boot must not wait on a folder scan. `AgentRegistry.list()` opens
+ * with `await mkdir(root, { recursive: true })` (`agents/registry.ts:302`),
+ * where `root` is `agentsRoot()` = `dirname(configPath()) + '/agents'` — it
+ * creates the folder it is about to read, on purpose, so `fs.watch` has
+ * something to attach to on a fresh install.
+ *
+ * This file points `configPath()` at a temp directory and removes that
+ * directory after every case. So the two meet: `rmSync` walks the tree and
+ * deletes it, the pending `mkdir` lands, and the final `rmdir` finds a folder
+ * that was not there a moment ago. Captured on the third of ten instrumented
+ * batch runs, and the capture is unambiguous — at teardown the tree was
+ * `["config.json"]` (the mkdir had **not** landed yet), the removal failed
+ * `ENOTEMPTY`, and immediately afterwards the tree was `["agents"]`, an empty
+ * directory created during the removal. `mkdir(…, { recursive: true })`
+ * recreates the temp root along with it, which is why a retry can lose again.
+ *
+ * ## Why the fix is here and not in `registry.ts`
+ *
+ * Nothing about that behaviour is wrong. Creating the folder it names is what
+ * the registry is supposed to do, nothing in production deletes it, and a boot
+ * that awaited the scan would be a slower boot for no gain. **This is a
+ * test-hygiene problem, not a product defect**: a fixture that deletes a
+ * directory a live runtime is entitled to recreate. Removing the writer is the
+ * fix, exactly as it was for the scheduler above.
+ *
+ * Inert rather than partial: this file's subject is `config:set-remote`, which
+ * touches no agent. `remote-composition.test.ts` needs no such mock because it
+ * mocks `configPath` to a fixed path it never removes.
+ */
+vi.mock('../../../../electron/main/agents', () => ({
+  createAgentsRuntime: () => ({
+    list: async () => ({ agents: [], agentsRoot: '/tmp/hive-test-remote-channels/agents' }),
+    read: async () => null,
+    write: async () => ({ ok: false, problems: [] }),
+    remove: async () => {},
+    rename: async () => ({ ok: false, problems: [] }),
+    onChange: () => () => {},
+    close: () => {},
   }),
 }));
 
@@ -185,23 +227,20 @@ beforeEach(() => {
 afterEach(() => {
   resetIpcHandlers();
   /*
-    The `createScheduler` mock above is the fix; this is the backstop, and it
-    is here on evidence rather than on principle (HIVE-144, fix round 1).
+    No retries, because the writer is gone rather than outrun — see the agents
+    registry mock above for what it was and how it was caught (HIVE-144, fix
+    round 2).
 
-    This directory is not only the config file's — the agents registry, the
-    ledger and the skills runtime all live *beside* `configPath()` — so
-    anything still writing there after teardown lands between this call's
-    `readdir` and its `rmdir` and fails `ENOTEMPTY`. Removing the scheduler
-    removed the writer we could name. With retries removed entirely, this file
-    still failed once in a scoped batch, unattributed and not reproduced in
-    fourteen runs since, so at least one latecomer remains unidentified.
-
-    The budget matters and the first attempt got it wrong: 10 × 25 ms is 250 ms
-    against a 400 ms debounce, which cannot win and is worse than nothing
-    because it looks handled. 30 × 50 ms is 1.5 s, which outlasts the longest
-    debounce this composition arms.
+    Two earlier attempts retried instead, and both were wrong in a way worth
+    recording. `maxRetries` **does not** cost `retryDelay × maxRetries`: Node
+    backs off linearly, so the wall-clock bound goes as `retryDelay × n × (n+1)`
+    — measured on this machine as 1587 ms at n=5, 5693 ms at n=10 and 47050 ms
+    at n=30, against the 1.5 s the comment here used to claim. A retry loop is
+    therefore both far more expensive than it reads and, against a writer that
+    keeps recreating the directory, still able to lose after tens of seconds.
+    Name the writer; do not outwait it.
   */
-  rmSync(dir, { recursive: true, force: true, maxRetries: 30, retryDelay: 50 });
+  rmSync(dir, { recursive: true, force: true });
   if (originalConfigPath === undefined) delete process.env[CONFIG_PATH_ENV];
   else process.env[CONFIG_PATH_ENV] = originalConfigPath;
 });
