@@ -85,6 +85,7 @@ describe('ServerModeGroup', () => {
     render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />);
 
     expect(screen.getByRole('switch', { name: 'Serve this machine' })).not.toBeChecked();
@@ -95,6 +96,7 @@ describe('ServerModeGroup', () => {
     render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />);
 
     expect(
@@ -106,6 +108,7 @@ describe('ServerModeGroup', () => {
     render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />);
 
     expect(screen.getByText(/takes effect at next launch/i)).toBeInTheDocument();
@@ -115,6 +118,7 @@ describe('ServerModeGroup', () => {
     render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />);
 
     await userEvent.click(screen.getByRole('switch', { name: 'Serve this machine' }));
@@ -130,6 +134,7 @@ describe('ServerModeGroup', () => {
     render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />);
 
     await userEvent.click(screen.getByRole('switch', { name: 'Serve this machine' }));
@@ -141,6 +146,7 @@ describe('ServerModeGroup', () => {
     render(<ServerModeGroup enabled bind={WIDE_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />);
 
     expect(screen.getByRole('switch', { name: 'Serve this machine' })).toBeChecked();
@@ -152,6 +158,7 @@ describe('ServerModeGroup', () => {
       render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />);
 
       const field = screen.getByLabelText(/bind address/i);
@@ -166,6 +173,7 @@ describe('ServerModeGroup', () => {
       render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />);
 
       const field = screen.getByLabelText(/bind address/i);
@@ -188,6 +196,7 @@ describe('ServerModeGroup', () => {
       render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />);
 
       const field = screen.getByLabelText(/bind address/i);
@@ -203,6 +212,7 @@ describe('ServerModeGroup', () => {
       render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />);
 
       const field = screen.getByLabelText(/^port$/i);
@@ -217,6 +227,7 @@ describe('ServerModeGroup', () => {
       render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />);
 
       const field = screen.getByLabelText(/^port$/i);
@@ -238,6 +249,7 @@ describe('ServerModeGroup', () => {
       render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />);
 
       const field = screen.getByLabelText(/^port$/i);
@@ -253,6 +265,7 @@ describe('ServerModeGroup', () => {
       render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />);
 
       const field = screen.getByLabelText(/allowed origins/i);
@@ -270,6 +283,7 @@ describe('ServerModeGroup', () => {
       render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />);
 
       expect(screen.getByText(/no devices are paired/i)).toBeInTheDocument();
@@ -280,6 +294,7 @@ describe('ServerModeGroup', () => {
         <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[ACTIVE_DEVICE]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />,
       );
 
@@ -292,6 +307,7 @@ describe('ServerModeGroup', () => {
         <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[REVOKED_DEVICE]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />,
       );
 
@@ -316,6 +332,7 @@ describe('ServerModeGroup', () => {
         remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />,
       );
 
@@ -328,6 +345,7 @@ describe('ServerModeGroup', () => {
         <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[ACTIVE_DEVICE]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />,
       );
 
@@ -342,6 +360,7 @@ describe('ServerModeGroup', () => {
         <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[ACTIVE_DEVICE]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />,
       );
 
@@ -368,6 +387,7 @@ describe('ServerModeGroup', () => {
         <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[ACTIVE_DEVICE]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />,
       );
 
@@ -399,6 +419,7 @@ describe('ServerModeGroup', () => {
         <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />,
       );
 
@@ -417,6 +438,7 @@ describe('ServerModeGroup', () => {
       rerender(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />);
       expect(screen.getByText(/ABCD-EFGH-JKMN-PQRS/)).toBeInTheDocument();
 
@@ -433,6 +455,7 @@ describe('ServerModeGroup', () => {
         <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[paired]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />,
       );
       expect(screen.getByText(/ABCD-EFGH-JKMN-PQRS/)).toBeInTheDocument();
@@ -450,6 +473,7 @@ describe('ServerModeGroup', () => {
       render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />);
 
       await userEvent.type(screen.getByLabelText(/device name/i), 'New laptop');
@@ -473,6 +497,7 @@ describe('ServerModeGroup', () => {
       render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />);
 
       await userEvent.type(screen.getByLabelText(/device name/i), 'First device');
@@ -493,6 +518,7 @@ describe('ServerModeGroup', () => {
       render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />);
 
       await userEvent.click(screen.getByRole('button', { name: /^pair$/i }));
@@ -513,6 +539,7 @@ describe('ServerModeGroup', () => {
         <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />,
       );
       expect(screen.getByRole('switch', { name: 'Serve this machine' })).not.toBeChecked();
@@ -520,6 +547,7 @@ describe('ServerModeGroup', () => {
       rerender(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />);
 
       expect(screen.getByRole('switch', { name: 'Serve this machine' })).toBeChecked();
@@ -530,12 +558,14 @@ describe('ServerModeGroup', () => {
         <ServerModeGroup enabled bind={WIDE_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />,
       );
 
       rerender(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
       attachedServer={null}
       attachedServerName={null}
+      serving={false}
     />);
       fireEvent.blur(screen.getByLabelText(/bind address/i));
 
@@ -561,6 +591,7 @@ describe('ServerModeGroup', () => {
           remote={DEFAULT_REMOTE}
           attachedServer={null}
           attachedServerName={null}
+          serving={false}
         />,
       );
 
@@ -584,6 +615,7 @@ describe('ServerModeGroup', () => {
           remote={DEFAULT_REMOTE}
           attachedServer={null}
           attachedServerName={null}
+          serving={false}
         />,
       );
 
@@ -604,6 +636,7 @@ describe('ServerModeGroup', () => {
           remote={DEFAULT_REMOTE}
           attachedServer={null}
           attachedServerName={null}
+          serving={false}
         />,
       );
 
@@ -619,6 +652,7 @@ describe('ServerModeGroup', () => {
           remote={DEFAULT_REMOTE}
           attachedServer={null}
           attachedServerName={null}
+          serving={false}
         />,
       );
 
@@ -643,6 +677,7 @@ describe('ServerModeGroup', () => {
           remote={DEFAULT_REMOTE}
           attachedServer={null}
           attachedServerName={null}
+          serving={false}
         />,
       );
 
@@ -673,6 +708,7 @@ describe('ServerModeGroup', () => {
           remote={REMOTE_TARGET}
           attachedServer={null}
           attachedServerName={null}
+          serving={false}
         />,
       );
 
@@ -706,6 +742,7 @@ describe('ServerModeGroup', () => {
           remote={REMOTE_TARGET}
           attachedServer={null}
           attachedServerName={null}
+          serving={false}
         />,
       );
 
@@ -745,6 +782,7 @@ describe('ServerModeGroup', () => {
           remote={ATTACHED_REMOTE}
           attachedServer={{ name: 'mini', host: 'mini.tail1234.ts.net' }}
           attachedServerName="mini"
+          serving={false}
         />,
       );
 
@@ -787,6 +825,7 @@ describe('ServerModeGroup', () => {
           remote={ATTACHED_REMOTE}
           attachedServer={{ name: 'mini', host: 'mini.tail1234.ts.net' }}
           attachedServerName={null}
+          serving={false}
         />,
       );
 
@@ -822,6 +861,7 @@ describe('ServerModeGroup', () => {
           remote={REMOTE_TARGET}
           attachedServer={null}
           attachedServerName={null}
+          serving={false}
         />,
       );
 
@@ -863,6 +903,7 @@ describe('ServerModeGroup', () => {
           remote={REMOTE_TARGET}
           attachedServer={null}
           attachedServerName={null}
+          serving={false}
         />,
       );
 
@@ -886,6 +927,7 @@ describe('ServerModeGroup', () => {
           remote={ATTACHED_REMOTE}
           attachedServer={{ name: 'mini', host: 'mini.tail1234.ts.net' }}
           attachedServerName="mini"
+          serving={false}
         />,
       );
 
@@ -934,6 +976,7 @@ describe('ServerModeGroup', () => {
           remote={SERVER_ANSWERED_REMOTE}
           attachedServer={null}
           attachedServerName="mini"
+          serving={false}
         />,
       );
 
@@ -951,6 +994,7 @@ describe('ServerModeGroup', () => {
           remote={SERVER_ANSWERED_REMOTE}
           attachedServer={null}
           attachedServerName="mini"
+          serving={false}
         />,
       );
 
@@ -977,6 +1021,7 @@ describe('ServerModeGroup', () => {
           remote={SERVER_ANSWERED_REMOTE}
           attachedServer={null}
           attachedServerName="mini"
+          serving={false}
         />,
       );
 
@@ -1010,6 +1055,7 @@ describe('ServerModeGroup', () => {
           remote={ATTACHED_REMOTE}
           attachedServer={null}
           attachedServerName={null}
+          serving={false}
         />,
       );
 
@@ -1037,6 +1083,7 @@ describe('ServerModeGroup', () => {
           remote={SERVER_ANSWERED_REMOTE}
           attachedServer={null}
           attachedServerName="mini"
+          serving={false}
         />,
       );
 
@@ -1064,6 +1111,7 @@ describe('ServerModeGroup', () => {
           remote={ATTACHED_REMOTE}
           attachedServer={{ name: 'mini', host: 'mini.tail1234.ts.net' }}
           attachedServerName={null}
+          serving={false}
         />,
       );
 
@@ -1093,6 +1141,7 @@ describe('ServerModeGroup', () => {
           remote={DEFAULT_REMOTE}
           attachedServer={null}
           attachedServerName={null}
+          serving={false}
         />,
       );
 
@@ -1115,6 +1164,7 @@ describe('ServerModeGroup', () => {
           remote={DEFAULT_REMOTE}
           attachedServer={null}
           attachedServerName={null}
+          serving={false}
         />,
       );
 
@@ -1155,6 +1205,7 @@ describe('ServerModeGroup', () => {
           remote={DEFAULT_REMOTE}
           attachedServer={null}
           attachedServerName={null}
+          serving={false}
         />,
       );
 
@@ -1177,6 +1228,7 @@ describe('ServerModeGroup', () => {
           remote={ATTACHED_REMOTE}
           attachedServer={{ name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' }}
           attachedServerName={null}
+          serving={false}
         />,
       );
 
@@ -1192,10 +1244,101 @@ describe('ServerModeGroup', () => {
           remote={DEFAULT_REMOTE}
           attachedServer={null}
           attachedServerName={null}
+          serving={false}
         />,
       );
 
       expect(screen.queryByText(/config:get/i)).not.toBeInTheDocument();
+    });
+  });
+
+  /**
+   * The interlock, from the pane's side (HIVE-144 review, I3).
+   *
+   * `RemoteConfig` says an install is the server or the client and never a
+   * hybrid; `switchIpcMode` refuses the combination, and these are what keep
+   * the user from finding that out by clicking. Both directions, because the
+   * two switches sit side by side and either one can be flipped first.
+   */
+  describe('the serve/attach interlock', () => {
+    it('disables the attach switch on a serving machine, and says why', () => {
+      render(
+        <ServerModeGroup
+          enabled
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={DEFAULT_REMOTE}
+          attachedServer={null}
+          attachedServerName={null}
+          serving
+        />,
+      );
+
+      expect(screen.getByRole('switch', { name: 'Attach to a server' })).toBeDisabled();
+      expect(screen.getByText(/turn serve this machine off and relaunch first/i)).toBeInTheDocument();
+    });
+
+    /**
+     * The panel is seeded open by `remote.mode === 'remote'`, so a machine
+     * that both serves and is configured to attach — the exact config this
+     * interlock exists for — reaches the button underneath the switch.
+     */
+    it('disables the Attach button too, where the panel is already open', () => {
+      render(
+        <ServerModeGroup
+          enabled
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={ATTACHED_REMOTE}
+          attachedServer={{ name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' }}
+          attachedServerName={null}
+          serving
+        />,
+      );
+
+      const attach = screen.getByRole('button', { name: /^attach$/i });
+      expect(attach).toBeDisabled();
+      expect(attach).toHaveAttribute('title', expect.stringContaining('server or the client'));
+    });
+
+    it('disables the serve switch on an attached window, and says why', () => {
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={DEFAULT_REMOTE}
+          attachedServer={null}
+          attachedServerName="mini.tail1234.ts.net"
+          serving={false}
+        />,
+      );
+
+      expect(screen.getByRole('switch', { name: 'Serve this machine' })).toBeDisabled();
+      expect(screen.getByText(/this window is driving another machine/i)).toBeInTheDocument();
+    });
+
+    /**
+     * `attached`, never `enabled`. While attached, `enabled` is read off the
+     * **server's** snapshot and is `true` on every client of a real server —
+     * keyed on it, the serve switch would disable itself on a machine that is
+     * serving nothing, and the reason on screen would be a lie.
+     */
+    it('leaves both switches alone on an ordinary local window', () => {
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={DEFAULT_REMOTE}
+          attachedServer={null}
+          attachedServerName={null}
+          serving={false}
+        />,
+      );
+
+      expect(screen.getByRole('switch', { name: 'Serve this machine' })).not.toBeDisabled();
+      expect(screen.getByRole('switch', { name: 'Attach to a server' })).not.toBeDisabled();
     });
   });
 
@@ -1239,6 +1382,7 @@ describe('ServerModeGroup', () => {
           remote={REMOTE_TARGET}
           attachedServer={null}
           attachedServerName={null}
+          serving={false}
         />,
       );
 
@@ -1267,6 +1411,7 @@ describe('ServerModeGroup', () => {
           remote={ATTACHED_REMOTE}
           attachedServer={{ name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' }}
           attachedServerName="mini.tail1234.ts.net"
+          serving={false}
         />,
       );
 
@@ -1297,6 +1442,7 @@ describe('ServerModeGroup', () => {
           remote={REMOTE_TARGET}
           attachedServer={null}
           attachedServerName={null}
+          serving={false}
         />,
       );
 

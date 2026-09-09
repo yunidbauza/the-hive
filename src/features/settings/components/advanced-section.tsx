@@ -17,6 +17,7 @@ import {
   useAttachedServer,
   useProjectConfig,
   useRemoteCapabilities,
+  useServing,
 } from '@hooks/use-project-config';
 import {
   readAppInfo,
@@ -197,6 +198,13 @@ export function AdvancedSection() {
     value changes the moment a socket opens or closes.
   */
   const attachedServerName = useAttachedServer();
+  /*
+    The third runtime-derived field the attach half needs (HIVE-144 review,
+    I3) — whether *this* process was launched to serve. Not
+    `snapshot.server.enabled` beside it, which while attached describes the
+    server's file: see `ServerModeGroupProps.serving`.
+  */
+  const serving = useServing();
   const downloadingPhrase = useSwarmPhrase('loading.update');
   const readyPhrase = useSwarmPhrase('complete.update');
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -384,6 +392,7 @@ export function AdvancedSection() {
         remote={snapshot.remote}
         attachedServer={snapshot.attachedServer}
         attachedServerName={attachedServerName}
+        serving={serving}
       />
 
       <SettingsGroup

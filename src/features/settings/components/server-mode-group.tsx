@@ -123,6 +123,24 @@ const ATTACH_HOST_INVALID =
 const ATTACH_PORT_HINT = `The port the server is listening on (default ${DEFAULT_REMOTE.port}).`;
 const ATTACH_PORT_INVALID = 'A port from 1 to 65535.';
 
+/**
+ * The interlock's two sentences (HIVE-144 review, I3).
+ *
+ * One rule, stated from whichever side the user is standing on. Both are
+ * rendered as the disabled control's `title`, the same way
+ * `REMOTE_DISABLED_REASON` carries `WINDOW_BOUND`'s refusals — a disabled
+ * control that does not say why is the failure this branch keeps closing.
+ *
+ * "Relaunch" is in the serving one and not the attached one because the
+ * asymmetry is real and already stated on this pane: a listening socket
+ * cannot be moved, so turning server mode off takes effect at next launch,
+ * while detaching is only a client hanging up and applies immediately.
+ */
+const NO_ATTACH_WHILE_SERVING =
+  'This Hive is serving its own sessions. An install is the server or the client, never both — turn Serve this machine off and relaunch first.';
+const NO_SERVE_WHILE_ATTACHED =
+  'This window is driving another machine. An install is the server or the client, never both — detach first.';
+
 /** One `ServerDevice`'s roster row. */
 function DeviceRow({
   device,
@@ -203,6 +221,24 @@ interface ServerModeGroupProps {
    * {@link ServerModeGroupProps.attachedServer}.
    */
   attachedServerName: string | null;
+  /**
+   * Whether **this** process was launched to serve (HIVE-144 review, I3) —
+   * `AppInfo.serving`, the third runtime-derived field on this pane.
+   *
+   * Deliberately not the `enabled` prop above, which is the config's
+   * `server.enabled`, and which while attached is the *server's* file and
+   * therefore reads `true` on a client attached to a real server. The
+   * interlock this gates must never be keyed on that: it would disable the
+   * detach control on precisely the window that needs it.
+   *
+   * What it gates: an install is the server or a client and never both
+   * (`RemoteConfig`'s own doc comment). The two switches sat side by side
+   * with nothing between them, and a serving machine that attached tore its
+   * own listener down permanently — see `electron/main/server-mode.ts`.
+   * `switchIpcMode` refuses the combination; this is what makes the refusal
+   * visible on the control instead of after a click.
+   */
+  serving: boolean;
 }
 
 export function ServerModeGroup({
@@ -212,6 +248,7 @@ export function ServerModeGroup({
   remote,
   attachedServer,
   attachedServerName,
+  serving,
 }: ServerModeGroupProps) {
   /**
    * Whether a socket is open right now — the one question the attach half
@@ -633,8 +670,21 @@ export function ServerModeGroup({
     >
       <Switch
         label="Serve this machine"
-        description={SWITCH_DESCRIPTION}
+        /*
+          The interlock's own sentence replaces the ordinary one while it
+          bites (HIVE-144 review, I3) — a disabled switch with its usual
+          description beside it says nothing about why it will not move. This
+          slot rather than a `title`: it is already on screen, and it is
+          `aria-describedby` on the control itself.
+        */
+        description={attached ? NO_SERVE_WHILE_ATTACHED : SWITCH_DESCRIPTION}
         checked={open}
+        /*
+          `attached`, the runtime field — never `enabled`, which while attached
+          is the server's own `server.enabled` and would disable this on every
+          client of a real server for the wrong reason.
+        */
+        disabled={attached}
         onCheckedChange={(next) => {
           setOpen(next);
           void setServerConfig({ enabled: next });
@@ -688,9 +738,10 @@ export function ServerModeGroup({
 
       <Switch
         label="Attach to a server"
-        description={ATTACH_SWITCH_DESCRIPTION}
+        // The other side of the same rule — see the serve switch above.
+        description={serving ? NO_ATTACH_WHILE_SERVING : ATTACH_SWITCH_DESCRIPTION}
         checked={attachOpen}
-        disabled={detaching}
+        disabled={detaching || serving}
         onCheckedChange={(next) => {
           // Turning it off while attached detaches immediately — the one
           // direction `switchIpcMode` never refuses. `attachOpen` is left
@@ -884,11 +935,19 @@ export function ServerModeGroup({
             </div>
           </div>
 
+          {/*
+            Disabled here too, not only on the switch above (HIVE-144 review,
+            I3). The panel is seeded open by `remote.mode === 'remote'`, and a
+            machine that both serves and is configured to attach is exactly the
+            config this interlock exists for — so the button is reachable in
+            the one state it must refuse.
+          */}
           <Button
             variant="primary"
             size="sm"
             className="w-fit"
-            disabled={attaching}
+            disabled={attaching || serving}
+            title={serving ? NO_ATTACH_WHILE_SERVING : undefined}
             onClick={handleAttach}
           >
             {attaching ? 'Attaching…' : 'Attach'}

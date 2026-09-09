@@ -9,6 +9,7 @@ import {
 } from '../../remote-client/socket';
 import type { StoredDeviceCredential } from '../../remote-client/token-store';
 import { getConfig } from '../config';
+import { isServerMode } from '../server-mode';
 
 import { createWindowBroadcaster, type Broadcaster } from './broadcaster';
 import { registerRemoteProxy, remoteProxyBindingsSize, resetRemoteProxy } from './remote-proxy';
@@ -386,6 +387,37 @@ export async function switchIpcMode(
     asserts by *count* rather than by invoking one channel and finding it alive
     — half an unbound surface answers that one channel too.
   */
+  /*
+    The interlock, and it is first because it is the one refusal that is about
+    this *machine's* role rather than about the moment (HIVE-144 review, I3).
+
+    An install is the server or a client and never a hybrid — `RemoteConfig`'s
+    own doc comment — and until this line nothing enforced it. What that cost
+    is not a muddle: `unbindEverything()` below stops and drops
+    `remoteListener`, which `registerIpcHandlers` builds and which `.start()`
+    is called on from exactly one place, inside `whenReady`. A boot attach on
+    a serving machine therefore tore the listener down *before* it was ever
+    started, and that machine stopped serving permanently — across relaunches,
+    with the tray still claiming server mode. `electron/main/server-mode.ts`
+    carries the reasoning for refusing rather than preserving the listener.
+
+    `connect-failed` rather than an arm of its own: the pane already renders
+    that arm's message verbatim, and the sentence *is* the remedy. Settings
+    also disables the control outright on a serving machine
+    (`AppInfo.serving`), so this is the fence behind the fence rather than the
+    only place a user finds out.
+  */
+  if (isServerMode()) {
+    return {
+      ok: false,
+      reason: 'connect-failed',
+      message:
+        'This Hive is serving its own sessions, so it cannot also drive another ' +
+        "machine's. An install is the server or the client, never both. Turn " +
+        'server mode off and relaunch, then attach.',
+    };
+  }
+
   const live = (options.liveSessions ?? (() => sessionsLayer()?.entities() ?? []))();
   /*
     Copied, and in the order the sessions were opened. `entities()` reads a

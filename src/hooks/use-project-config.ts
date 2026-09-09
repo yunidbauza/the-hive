@@ -343,6 +343,45 @@ export function useServingDeviceCount(): number {
  * The extra reads this costs are one `app:info` per config write, to a channel
  * that is `PROCESS_LOCAL` and answered without touching a socket at all.
  */
+/**
+ * Whether this process was launched to serve (HIVE-144 review, I3).
+ *
+ * `AppInfo.serving` — intent, not a bound socket, and emphatically not
+ * `ConfigSnapshot.server.enabled`, which while attached describes the
+ * **server's** file and reads `true` on a client attached to a real server.
+ * See that field's own doc comment for both halves.
+ *
+ * One-shot, keyed on `hasSnapshot`, and that is the right dependency here
+ * where it is the wrong one two hooks up: this value is fixed for the life of
+ * the process. A serving machine cannot stop serving without a relaunch (the
+ * socket cannot be moved, which is what "takes effect at next launch" means),
+ * and a client cannot start.
+ *
+ * Settings uses it for the interlock: the attach half is disabled on a
+ * serving machine, with the reason on the control, rather than offering a
+ * switch `switchIpcMode` would refuse.
+ */
+export function useServing(): boolean {
+  const snapshot = useProjectConfig();
+  const hasSnapshot = snapshot !== null;
+  const [serving, setServing] = useState(false);
+
+  useEffect(() => {
+    if (!hasSnapshot) return;
+
+    let cancelled = false;
+    void readAppInfo().then((info) => {
+      if (!cancelled) setServing(info?.serving ?? false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hasSnapshot]);
+
+  return serving;
+}
+
 export function useAttachedServer(): string | null {
   const snapshot = useProjectConfig();
   const [serverName, setServerName] = useState<string | null>(null);

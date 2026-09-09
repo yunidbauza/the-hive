@@ -271,7 +271,14 @@ vi.mock('@remote-host/listener', async (importOriginal) => {
       capturedOnAttach = options.onAttach;
       capturedBuildSnapshot = options.buildSnapshot;
       return {
-        start: async () => null,
+        start: async () => {
+          // Counted, not just stubbed (HIVE-144 review, I3). `startRemoteListener`
+          // answers `null` both when the listener is there and when it has
+          // been dropped, so the resolved value cannot tell the two apart —
+          // this counter is what proves the object still exists to be started.
+          listenerStarts += 1;
+          return null;
+        },
         stop: async () => {},
         get boundHost() {
           return null;
@@ -293,6 +300,13 @@ vi.mock('@remote-host/listener', async (importOriginal) => {
  * this fake is a push raised from inside the replay loop.
  */
 let resumeAnswer: (entityId: string, from: ResumePoint) => ResumeResult | null = () => null;
+
+/**
+ * How many times the fake listener's `start()` has been called (HIVE-144
+ * review, I3) — see the fake's own comment for why a counter and not the
+ * resolved value.
+ */
+let listenerStarts = 0;
 
 /**
  * What `sessions.generationFor` answers next, per entity id (HIVE-144).
@@ -336,13 +350,22 @@ vi.mock('../../../../electron/main/sessions', () => ({
 }));
 
 const { CH } = await import('../../../../electron/shared/ipc-contract');
-const { ipcBindingsSize, registerIpcHandlers, remoteRegistrySize, resetIpcHandlers, sessionsLayer } =
-  await import('../../../../electron/main/ipc');
+const {
+  ipcBindingsSize,
+  registerIpcHandlers,
+  remoteRegistrySize,
+  resetIpcHandlers,
+  sessionsLayer,
+  startRemoteListener,
+} = await import('../../../../electron/main/ipc');
 const { remoteProxyBindingsSize, resetRemoteProxy } = await import(
   '../../../../electron/main/ipc/remote-proxy'
 );
 const { PlaintextRefusedError } = await import('../../../../electron/remote-client/socket');
 const { registerIpc, switchIpcMode } = await import('../../../../electron/main/ipc/router');
+const { resetServerModeForTest, setServerMode } = await import(
+  '../../../../electron/main/server-mode'
+);
 
 /**
  * Read at import time, before any test body has run, so the composition-order
@@ -369,6 +392,8 @@ beforeEach(() => {
   generationAnswer = () => 1;
   ledgerReadImpl = () => ({ entries: [], openAsks: [], claims: {} });
   entitiesAnswer = () => [];
+  listenerStarts = 0;
+  resetServerModeForTest();
   vi.clearAllMocks();
   /*
     Both surfaces, both hooks (HIVE-144). `registerRemoteProxy` binds the same
@@ -384,6 +409,7 @@ beforeEach(() => {
 afterEach(() => {
   resetRemoteProxy();
   resetIpcHandlers();
+  resetServerModeForTest();
 });
 
 describe('remote composition (HIVE-143)', () => {
@@ -931,6 +957,72 @@ describe('the mode switch (HIVE-144)', () => {
     expect(ipcBindingsSize()).toBe(local);
     expect(remoteProxyBindingsSize()).toBe(0);
     expect(await invoke(CH.configGet)).toBeDefined();
+  });
+
+  /**
+   * The interlock (HIVE-144 review, I3).
+   *
+   * `RemoteConfig`'s own doc comment says an install is the server or the
+   * client and never a hybrid, and nothing enforced it. What that cost was
+   * not a muddle but a permanent failure: `switchIpcMode`'s remote arm calls
+   * `unbindEverything()` synchronously, before its first `await`, and that
+   * runs `resetIpcHandlers({ flush: true })` → `remoteListener = null`. The
+   * listener is built by `registerIpcHandlers` and started from exactly one
+   * place, inside `whenReady` — so a boot attach on a serving machine dropped
+   * it before it was ever started, and the machine stopped serving for good,
+   * across relaunches, with the tray still claiming server mode.
+   *
+   * The assertion that matters is the last one: the listener is still there
+   * to start. Before the fix, `startRemoteListener()` here answered `null`
+   * off a dropped `remoteListener` and this counter stayed at 0 —
+   * indistinguishable, from the resolved value alone, from a listener that
+   * started and bound nothing.
+   */
+  it('refuses to attach on a machine that is serving, before dialling anything', async () => {
+    const local = boundLocally();
+    const connect = vi.fn(async () => fakeClient());
+    setServerMode(true);
+
+    const outcome = await switchIpcMode('remote', opts({ connect }));
+
+    expect(outcome).toEqual({
+      ok: false,
+      reason: 'connect-failed',
+      message: expect.stringContaining('server or the client, never both'),
+    });
+    // Refused before anything was touched: no dial, and the local surface is
+    // whole rather than merely alive.
+    expect(connect).not.toHaveBeenCalled();
+    expect(ipcBindingsSize()).toBe(local);
+    expect(remoteProxyBindingsSize()).toBe(0);
+  });
+
+  /**
+   * The half the finding is actually about, asserted on its own so it cannot
+   * be short-circuited by the refusal case above failing first.
+   *
+   * A dialler that **would succeed** is the point: a `vi.fn()` that never
+   * answers would pass here for the wrong reason, because without the
+   * interlock the switch fails on the dial, takes its rebind-local arm, and
+   * constructs a fresh listener. Only a dial that would have worked leaves
+   * the listener gone — which is exactly the boot case, where the attach
+   * succeeds and `whenReady`'s `startRemoteListener()` then finds `null`.
+   */
+  it('leaves a serving machine with the listener it would otherwise have destroyed', async () => {
+    boundLocally();
+    setServerMode(true);
+
+    await switchIpcMode('remote', opts({ connect: async () => fakeClient() }));
+    await startRemoteListener();
+
+    expect(listenerStarts).toBe(1);
+  });
+
+  it('still attaches on a machine that is not serving', async () => {
+    boundLocally();
+    setServerMode(false);
+
+    expect(await switchIpcMode('remote', opts())).toEqual({ ok: true });
   });
 
   it('refuses a plaintext target before dialling or unbinding anything', async () => {

@@ -496,6 +496,7 @@ describe('Header', () => {
         serverBoundHost: '100.101.102.103',
         servingDeviceCount: 2,
         attachedServerName: null,
+  serving: false,
       });
 
       render(<Header />);
@@ -609,6 +610,7 @@ describe('Header', () => {
         serverBoundHost: null,
         servingDeviceCount: 0,
         attachedServerName: null,
+  serving: false,
       });
 
       render(<Header />);

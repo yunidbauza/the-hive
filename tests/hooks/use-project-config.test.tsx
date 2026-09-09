@@ -6,6 +6,7 @@ import {
   useAttachedServer,
   useReceiverExposure,
   useServerExposure,
+  useServing,
   useServingDeviceCount,
 } from '@hooks/use-project-config';
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
@@ -60,6 +61,7 @@ const info = (receiverBoundHost: string | null): AppInfo => ({
   serverBoundHost: null,
   servingDeviceCount: 0,
   attachedServerName: null,
+  serving: false,
 });
 
 /** Same shape as {@link info}, but for `useServerExposure`'s field instead. */
@@ -74,6 +76,7 @@ const serverInfo = (serverBoundHost: string | null): AppInfo => ({
   serverBoundHost,
   servingDeviceCount: 0,
   attachedServerName: null,
+  serving: false,
 });
 
 /** Same shape as {@link info}, but for `useServingDeviceCount`'s field. */
@@ -88,6 +91,7 @@ const deviceCountInfo = (servingDeviceCount: number): AppInfo => ({
   serverBoundHost: null,
   servingDeviceCount,
   attachedServerName: null,
+  serving: false,
 });
 
 /** Same shape as {@link info}, but for `useAttachedServer`'s field. */
@@ -102,6 +106,7 @@ const attachedInfo = (attachedServerName: string | null): AppInfo => ({
   serverBoundHost: null,
   servingDeviceCount: 0,
   attachedServerName,
+  serving: false,
 });
 
 /**
@@ -489,5 +494,72 @@ describe('useAttachedServer', () => {
 
     expect(readAppInfo).not.toHaveBeenCalled();
     expect(result.current).toBeNull();
+  });
+});
+
+/**
+ * `useServing` (HIVE-144 review, I3) — the interlock's UI signal.
+ *
+ * `AppInfo.serving` and never `ConfigSnapshot.server.enabled`, which is the
+ * whole point: while attached, `config:get` is answered by the far end, so
+ * that field describes the **server's** file and reads `true` on a client
+ * attached to a real server. Keyed on it, Settings would disable the attach
+ * half on the one window that needs it, with a reason that is false.
+ */
+describe('useServing', () => {
+  /** A server's own snapshot, as an attached client actually holds it. */
+  const serversSnapshot = (): ConfigSnapshot => ({
+    ...emptySnapshot(CONFIG_PATH, '/bin/zsh'),
+    server: { ...emptySnapshot(CONFIG_PATH, '/bin/zsh').server, enabled: true },
+  });
+
+  it('is false on an ordinary local window', async () => {
+    setProjectConfigForTest(snapshot({}));
+    readAppInfo.mockResolvedValue({ ...attachedInfo(null), serving: false });
+
+    const { result } = renderHook(() => useServing());
+
+    await waitFor(() => {
+      expect(result.current).toBe(false);
+    });
+  });
+
+  it('is true on a machine launched to serve', async () => {
+    setProjectConfigForTest(snapshot({}));
+    readAppInfo.mockResolvedValue({ ...attachedInfo(null), serving: true });
+
+    const { result } = renderHook(() => useServing());
+
+    await waitFor(() => {
+      expect(result.current).toBe(true);
+    });
+  });
+
+  /**
+   * The state a config-derived answer gets wrong: an attached client, holding
+   * the server's snapshot with `server.enabled: true`, is itself serving
+   * nothing.
+   */
+  it('is false on a client whose proxied snapshot says the far end serves', async () => {
+    setProjectConfigForTest(serversSnapshot());
+    readAppInfo.mockResolvedValue({ ...attachedInfo('mini'), serving: false });
+
+    const { result } = renderHook(() => useServing());
+
+    await waitFor(() => {
+      expect(readAppInfo).toHaveBeenCalled();
+    });
+    expect(result.current).toBe(false);
+  });
+
+  /* The browser demo has no config and no bridge at all. */
+  it('is false with no snapshot, and never asks the bridge', () => {
+    setProjectConfigForTest(null);
+    readAppInfo.mockResolvedValue({ ...attachedInfo(null), serving: true });
+
+    const { result } = renderHook(() => useServing());
+
+    expect(readAppInfo).not.toHaveBeenCalled();
+    expect(result.current).toBe(false);
   });
 });

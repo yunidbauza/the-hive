@@ -19,6 +19,7 @@ import {
 } from './server/devices';
 import { fileBackedIo, serverDeviceStore } from './server/file-backed-io';
 import { runOneShot } from './server/one-shot';
+import { setServerMode } from './server-mode';
 import { onShutdown } from './shutdown';
 import { createServerTray } from './tray';
 import { startUpdateChecks } from './updates';
@@ -161,8 +162,44 @@ if (!app.requestSingleInstanceLock()) {
     retries. The config file is left saying `remote`, deliberately: that is
     what they asked for, and the next launch should try again.
   */
+  /**
+   * Server mode is `server.enabled` in the config file — set for good on the
+   * unattended Mac mini this ships to run on — **or** the one-off `--server`
+   * flag, which enables it for this run only and never writes the file
+   * (HIVE-142, spec §5.1, §3.4). Computed once, here, rather than inside
+   * `whenReady`'s callback below: `registerLifecycle` needs the same answer
+   * to decide whether its own `whenReady` handler may open a window, and
+   * racing two separate reads of `getConfig()` against two separate
+   * `whenReady` callbacks would risk the file changing under it between them.
+   *
+   * **Above the boot attach, not below it (HIVE-144 review, I3.)** It used to
+   * be computed after, which was fine while nothing read it before — and stopped
+   * being fine the moment attaching had to be refused on a serving machine.
+   * `setServerMode` is what `switchIpcMode` and `AppInfo.serving` read, and
+   * the attach two statements down is the first thing that can ask.
+   */
+  const serverMode = invocation.server || getConfig().server.enabled;
+  setServerMode(serverMode);
+
   registerIpc('local');
-  if (getConfig().remote.mode === 'remote') {
+  /*
+    An install is the server or a client, never both — `RemoteConfig`'s own
+    doc comment, now enforced (HIVE-144 review, I3). Skipped rather than
+    attempted-and-refused so the log line names the real reason: a serving
+    machine that also asked to attach is a config to fix, not a dial that
+    failed.
+
+    `switchIpcMode` refuses this same combination itself, which is what makes
+    the guard here a nicety rather than the enforcement — see
+    `electron/main/server-mode.ts` for what the combination actually costs.
+  */
+  if (getConfig().remote.mode === 'remote' && serverMode) {
+    console.error(
+      '[hive] not attaching at boot: this Hive is serving. An install is the ' +
+        'server or a client, never both — turn one of the two off in Settings, ' +
+        'or in config.json.',
+    );
+  } else if (getConfig().remote.mode === 'remote') {
     void switchIpcMode('remote')
       .then((outcome) => {
         if (!outcome.ok) console.error('[hive] could not attach at boot:', outcome);
@@ -181,18 +218,6 @@ if (!app.requestSingleInstanceLock()) {
         console.error('[hive] the boot attach threw:', cause);
       });
   }
-
-  /**
-   * Server mode is `server.enabled` in the config file — set for good on the
-   * unattended Mac mini this ships to run on — **or** the one-off `--server`
-   * flag, which enables it for this run only and never writes the file
-   * (HIVE-142, spec §5.1, §3.4). Computed once, here, rather than inside
-   * `whenReady`'s callback below: `registerLifecycle` needs the same answer
-   * to decide whether its own `whenReady` handler may open a window, and
-   * racing two separate reads of `getConfig()` against two separate
-   * `whenReady` callbacks would risk the file changing under it between them.
-   */
-  const serverMode = invocation.server || getConfig().server.enabled;
 
   /**
    * The tray's own handle (HIVE-142 review, I2) — see the comment at its

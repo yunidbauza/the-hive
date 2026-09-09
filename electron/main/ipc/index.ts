@@ -239,6 +239,7 @@ import {
   revokeOutcomeMessage,
 } from '../server/devices';
 import { readServerDevicesFromDisk, serverDeviceStore } from '../server/file-backed-io';
+import { isServerMode } from '../server-mode';
 import { createSessions, type Sessions } from '../sessions';
 import {
   createSessionHistory,
@@ -2923,6 +2924,11 @@ export function registerIpcHandlers(
       // `AppInfo.attachedServerName`'s for the config-versus-runtime split
       // this answers the runtime half of.
       attachedServerName: attachedServerName(),
+      // Intent, not a bound socket — see `AppInfo.serving`. Imported rather
+      // than handed down like the two above, because `server-mode.ts` is a
+      // leaf that imports nothing and closes no cycle, and because the fact
+      // it holds is the *process's*, not any one registration's.
+      serving: isServerMode(),
       // Omitted rather than empty when nothing has run, so the field's presence
       // means something.
       ...(diagnostics.length > 0 ? { pty: diagnostics } : {}),

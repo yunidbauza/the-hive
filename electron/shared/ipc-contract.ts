@@ -1510,6 +1510,35 @@ export interface AppInfo {
    */
   attachedServerName: string | null;
   /**
+   * Whether this process was launched to serve (HIVE-144 review, I3).
+   *
+   * **Intent, not a bound socket** — which is exactly what separates it from
+   * {@link serverBoundHost} beside it. That field says a socket is listening
+   * *now*; this one says this run is a server, whether the bind has happened
+   * yet, succeeded, or failed. `--server` **or** `server.enabled`, resolved
+   * once at boot, and it never changes for the life of the process (a
+   * listening socket cannot be moved, which is why Settings says "takes
+   * effect at next launch").
+   *
+   * It exists because `RemoteConfig`'s own doc comment says an install is
+   * either the server or a client and never a hybrid, and nothing enforced
+   * it: `unbindEverything` stops and drops `remoteListener`, which is built
+   * inside `registerIpcHandlers` and started from exactly one place in
+   * `whenReady` — so a boot attach on a serving machine tore the listener
+   * down before it was ever started, and that machine stopped serving
+   * permanently, including across relaunches. The interlock is enforced in
+   * `switchIpcMode` and made visible from this field: Settings disables the
+   * attach half on a serving machine, and the serve switch on an attached
+   * one.
+   *
+   * Not sourced from `ConfigSnapshot.server.enabled`, which is the trap this
+   * whole review round is about: `config:get` is proxied while attached, so
+   * that field describes the **server's** file and reads `true` on a client
+   * attached to a real server. `AppInfo` is `PROCESS_LOCAL`, so this is
+   * answered by this process in either mode.
+   */
+  serving: boolean;
+  /**
    * Per-session flow-control counters (story 093).
    *
    * Flow-control bugs are otherwise diagnosed by staring at a slow terminal
