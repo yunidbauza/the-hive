@@ -525,3 +525,80 @@ test('turning server mode on reveals the bind fields and writes enabled: true', 
 
   await app.close();
 });
+
+/**
+ * HIVE-144's attach half, the same group's second switch. Off by default and
+ * discloses nothing — the same `toBeHidden()` distinction the serving switch's
+ * own test above draws, for the identical reason: `attachOpen` gates a `?
+ * <div>…</div> : null`, not a visually-collapsed one.
+ */
+test('the Attach to a server switch is off, and its fields are hidden, by default', async ({}, testInfo) => {
+  const { configPath } = seed((name) => testInfo.outputPath(name));
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+  const page = await app.firstWindow();
+  await page.waitForSelector('header');
+
+  await openAdvanced(page);
+
+  const toggle = page.getByRole('switch', { name: 'Attach to a server' });
+  await expect(toggle).toBeVisible();
+  await expect(toggle).not.toBeChecked();
+  await expect(page.getByLabel(/server address/i)).toBeHidden();
+  await expect(page.getByRole('button', { name: /^attach$/i })).toBeHidden();
+
+  await page.getByRole('switch', { name: 'Attach to a server' }).click();
+
+  await expect(page.getByLabel(/server address/i)).toBeVisible();
+  await expect(page.getByRole('button', { name: /^attach$/i })).toBeVisible();
+
+  await app.close();
+});
+
+/**
+ * The security boundary itself, driven through the real app rather than only
+ * through the unit suite's mocked bridge: `isRemoteTarget` refuses a public
+ * address client-side, before `config:set-remote` is ever reached, so a typo
+ * or a pasted public IP never lands in the file this app would dial on the
+ * next Attach click. Asserted against the **file** — the unit test already
+ * proves `setRemoteConfig` was not called against a mock; this proves nothing
+ * reached the real bridge and the real disk either.
+ */
+test('the attach address field refuses a public address, and writes nothing', async ({}, testInfo) => {
+  const { configPath } = seed((name) => testInfo.outputPath(name));
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+  const page = await app.firstWindow();
+  await page.waitForSelector('header');
+
+  await openAdvanced(page);
+
+  await page.getByRole('switch', { name: 'Attach to a server' }).click();
+
+  const field = page.getByLabel(/server address/i);
+  await field.fill('8.8.8.8');
+  await field.blur();
+
+  await expect(
+    page.getByText(/must be a loopback or tailnet address/i),
+  ).toBeVisible();
+
+  /*
+    No `remote` block at all — the whole point of a client-side refusal is
+    that `config:set-remote` is never reached. Not a whole-file comparison:
+    opening this app resolves and persists a project key alias regardless of
+    anything this test does (`seed`'s entry has none), so the file legitimately
+    changes underneath every test in this suite. What must not change is the
+    one key this test is actually about, and the unrelated keys `seed` wrote.
+  */
+  const after = read(configPath);
+  expect(after.remote).toBeUndefined();
+  expect(after['//mine']).toBe('a comment reset is allowed to eat');
+  expect(after.futureKey).toBe('something this build does not know');
+
+  await app.close();
+});

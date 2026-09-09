@@ -1,17 +1,29 @@
+import { WarningCircle } from '@phosphor-icons/react';
 import { useState } from 'react';
 
 import { Button } from '@components/ui/button';
 import { Switch } from '@components/ui/switch';
 import { TextField } from '@components/ui/text-field';
 import { SettingsGroup } from '@features/settings/components/settings-group';
-import { pairDevice, revokeDevice, setServerConfig } from '@lib/project-config';
 import {
+  forgetRemoteDevice,
+  pairDevice,
+  pairRemoteDevice,
+  revokeDevice,
+  setRemoteConfig,
+  setServerConfig,
+} from '@lib/project-config';
+import {
+  DEFAULT_REMOTE,
   DEFAULT_SERVER,
   WILDCARD_BIND,
   isOrigin,
+  isRemoteTarget,
   isServerBindHost,
+  type RemoteConfig,
   type ServerBindConfig,
   type ServerDevice,
+  type SwitchOutcome,
 } from '@shared/config-contract';
 
 /**
@@ -82,6 +94,34 @@ const ORIGINS_HINT =
   'Comma separated, as in https://example.test. Empty refuses every request from a browser — most paired devices need none.';
 const ORIGINS_INVALID = 'Each entry is a scheme and a host, as in https://example.test.';
 
+/**
+ * The attach half (HIVE-144) — the opposite direction from everything above.
+ * Serving turns this machine into the one being driven; attaching turns it
+ * into the one doing the driving, from another machine's sessions.
+ *
+ * "Applies immediately" rather than "takes effect at next launch"
+ * (`SWITCH_DESCRIPTION` above): a listening socket cannot be moved without a
+ * relaunch, but attaching is only ever a client dialling out, so there is no
+ * socket here to relocate. Stating both asymmetrically, in the same group, is
+ * deliberate — see this component's own doc comment for why one group and not
+ * two.
+ */
+const ATTACH_GRANT = "Drive another machine's sessions from this one.";
+const ATTACH_SWITCH_DESCRIPTION = `${ATTACH_GRANT} Applies immediately.`;
+const ATTACH_HOST_HINT =
+  'A loopback address, or a Tailscale address on this tailnet — a MagicDNS name or a 100.64.0.0/10 address.';
+/**
+ * Shared by two refusals with the identical remedy (matching
+ * `isRemoteTarget`'s own "one class, two messages" reasoning): a shape this
+ * client can reject on sight, and `plaintext-refused` — the server's own
+ * refusal for a `.ts.net` name that resolved to something that is not, which
+ * this predicate cannot see without a DNS lookup this renderer never makes.
+ */
+const ATTACH_HOST_INVALID =
+  'Must be a loopback or tailnet address. A plaintext socket to anything else is refused.';
+const ATTACH_PORT_HINT = `The port the server is listening on (default ${DEFAULT_REMOTE.port}).`;
+const ATTACH_PORT_INVALID = 'A port from 1 to 65535.';
+
 /** One `ServerDevice`'s roster row. */
 function DeviceRow({
   device,
@@ -119,9 +159,33 @@ interface ServerModeGroupProps {
   bind: ServerBindConfig;
   /** The resolved device roster from the snapshot. */
   devices: readonly ServerDevice[];
+  /**
+   * The resolved client-attach config from the snapshot (HIVE-144). Never
+   * partial — {@link RemoteConfig} is always fully defaulted, exactly as
+   * `bind` above is.
+   */
+  remote: RemoteConfig;
+  /**
+   * The machine whose config file this window is editing, while attached
+   * (HIVE-144) — `ConfigSnapshot.attachedServer`, **not**
+   * `AppInfo.attachedServerName`. That field is this control's own readout:
+   * while attached, `config:get` is answered by the far end, which is what
+   * this pane needs to say. The header's chip answers a different question —
+   * whether a socket is actually open right now — from
+   * `AppInfo.attachedServerName` instead; see that field's own doc comment,
+   * and `ConfigSnapshot.attachedServer`'s, for the full config-versus-runtime
+   * split. `null` in `'local'` mode.
+   */
+  attachedServer: { name: string; host: string } | null;
 }
 
-export function ServerModeGroup({ enabled, bind, devices }: ServerModeGroupProps) {
+export function ServerModeGroup({
+  enabled,
+  bind,
+  devices,
+  remote,
+  attachedServer,
+}: ServerModeGroupProps) {
   /*
     Local disclosure state, seeded from `enabled` and kept in step with it —
     the same "follow the snapshot" idiom `ContainerAliasGroup` uses for its
@@ -264,6 +328,195 @@ export function ServerModeGroup({ enabled, bind, devices }: ServerModeGroupProps
     });
   };
 
+  /*
+    ## The attach half (HIVE-144)
+
+    `attachOpen` is disclosure state seeded from `remote.mode`, the same
+    "seed from a persisted field, then re-seed on an external change" idiom
+    `open`/`seenEnabled` use above — but it is **not** wired back to
+    `setRemoteConfig` the way that switch is. Flipping this one on only
+    reveals the fields: attaching needs an address, and a switch that dialled
+    out on every accidental click, using whatever `remote.host` last happened
+    to be, would be a live connection attempt hiding behind a toggle. Ruling
+    27 puts that responsibility on the Attach button instead, which is the
+    only control that ever asks to switch to `'remote'`.
+
+    Flipping it off, when currently attached, is the one direction that *is*
+    safe to fire immediately: `remote → local` is never refused (this
+    component's own copy says so, and `switchIpcMode`'s doc comment states
+    why — the far end keeps its sessions regardless), so there is nothing a
+    blind click here could strand.
+  */
+  const [attachOpen, setAttachOpen] = useState(remote.mode === 'remote');
+  const [seenMode, setSeenMode] = useState(remote.mode);
+  if (seenMode !== remote.mode) {
+    setSeenMode(remote.mode);
+    setAttachOpen(remote.mode === 'remote');
+  }
+
+  const [remoteHostDraft, setRemoteHostDraft] = useState(remote.host);
+  const [remoteHostInvalid, setRemoteHostInvalid] = useState(false);
+  const [remotePortDraft, setRemotePortDraft] = useState(String(remote.port));
+  const [remotePortInvalid, setRemotePortInvalid] = useState(false);
+  /** The last attach attempt's outcome, or `null` before one has been made. */
+  const [switchResult, setSwitchResult] = useState<SwitchOutcome | null>(null);
+  const [attaching, setAttaching] = useState(false);
+
+  /*
+    Follow-the-snapshot, the same reasoning `seenBind` states above: a Reload
+    or Reset changes `remote` underneath this component, and a stale draft
+    would otherwise show a value that no longer matches the file.
+  */
+  const [seenRemote, setSeenRemote] = useState(remote);
+  const remoteChanged = seenRemote.host !== remote.host || seenRemote.port !== remote.port;
+  if (remoteChanged) {
+    setSeenRemote(remote);
+    setRemoteHostDraft(remote.host);
+    setRemoteHostInvalid(false);
+    setRemotePortDraft(String(remote.port));
+    setRemotePortInvalid(false);
+  }
+
+  /**
+   * Whether `value` is worth sending to `config:set-remote` at all — a shape
+   * check only, the same boundary {@link isRemoteTarget} draws. It cannot see
+   * a `.ts.net` name that resolves off-tailnet (that needs the DNS lookup
+   * `connectRemote` does on the real attach attempt, which is what
+   * `plaintext-refused` from {@link switchResult} reports instead), but it
+   * does stop the address field from ever writing something that is
+   * obviously not loopback or tailnet — a bare hostname, an IPv4 literal
+   * outside both ranges, anything with a scheme or a port baked in.
+   */
+  const commitRemoteHost = () => {
+    const next = remoteHostDraft.trim();
+    if (next === '' || !isRemoteTarget(next)) {
+      setRemoteHostInvalid(true);
+      return;
+    }
+    setRemoteHostInvalid(false);
+    setRemoteHostDraft(next);
+    if (next === remote.host) return;
+    // Same-mode commits are inert on the far side (`switchIpcMode`'s own
+    // "already local" guard) — this only ever writes the address, never
+    // dials, while `remote.mode` stays `'local'`.
+    void setRemoteConfig({ host: next });
+  };
+
+  const commitRemotePort = () => {
+    const raw = remotePortDraft.trim();
+    if (raw !== '' && !/^\d+$/.test(raw)) {
+      setRemotePortInvalid(true);
+      return;
+    }
+    const next = raw === '' ? DEFAULT_REMOTE.port : Number(raw);
+    if (!Number.isInteger(next) || next < 1 || next > 65_535) {
+      setRemotePortInvalid(true);
+      return;
+    }
+    setRemotePortInvalid(false);
+    setRemotePortDraft(String(next));
+    if (next === remote.port) return;
+    void setRemoteConfig({ port: next });
+  };
+
+  /**
+   * The one control that ever asks `config:set-remote` to switch to
+   * `'remote'` (Ruling 27 — there is no separate "Test connection", this
+   * button is the test).
+   *
+   * Re-validates the drafts one more time before sending, rather than
+   * trusting the fields' own `onCommit`: a click straight from the port field
+   * to this button fires this handler with whatever the fields last held,
+   * commit or not, and a bad shape must never reach the wire.
+   *
+   * **Ruling 19, made concrete.** `config:set-remote` writes nothing at all
+   * when the switch is refused — not `mode`, not `host`, not `port` from
+   * this same call (`electron/main/ipc/index.ts`'s handler returns
+   * `getConfig()` untouched on any `!switched.ok`). So a refusal here resets
+   * both drafts back to the *prop* values — which, because nothing was
+   * written, are still exactly what `config.json` holds — rather than
+   * leaving the fields showing the address that was just tried and refused.
+   * Leaving the optimistic draft in place is the defect this guards: a user
+   * would read their own rejected input as the saved one.
+   */
+  const handleAttach = () => {
+    const host = remoteHostDraft.trim();
+    if (host === '' || !isRemoteTarget(host)) {
+      setRemoteHostInvalid(true);
+      return;
+    }
+    const rawPort = remotePortDraft.trim();
+    if (!/^\d+$/.test(rawPort)) {
+      setRemotePortInvalid(true);
+      return;
+    }
+    const port = Number(rawPort);
+    if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+      setRemotePortInvalid(true);
+      return;
+    }
+
+    setRemoteHostInvalid(false);
+    setRemotePortInvalid(false);
+    setSwitchResult(null);
+    setAttaching(true);
+    void setRemoteConfig({ mode: 'remote', host, port }).then((outcome) => {
+      setAttaching(false);
+      setSwitchResult(outcome);
+      if (!outcome.ok) {
+        setRemoteHostDraft(remote.host);
+        setRemotePortDraft(String(remote.port));
+      }
+    });
+  };
+
+  const handleDetach = () => {
+    setSwitchResult(null);
+    void setRemoteConfig({ mode: 'local' }).then(setSwitchResult);
+  };
+
+  const [remotePairName, setRemotePairName] = useState('');
+  const [remotePairDeviceId, setRemotePairDeviceId] = useState('');
+  const [remotePairToken, setRemotePairToken] = useState('');
+  const [remotePairing, setRemotePairing] = useState(false);
+  const [remotePairError, setRemotePairError] = useState<string | null>(null);
+  /**
+   * The name typed alongside the id and token, held only in this component's
+   * own state (HIVE-144). There is nowhere else it could live: `RemotePairRequest`
+   * carries no name — `server:pair` on the far end already minted one when the
+   * device was named there, and this machine's own credential store
+   * (`electron/remote-client/token-store.ts`) keeps only `deviceId` and
+   * `token`, deliberately, because that pair is all the socket handshake
+   * needs. So this label does not survive a reload of this pane; it survives
+   * exactly as long as the pairing does within this session, which is enough
+   * to answer "did that just work" and to name the Forget button's target.
+   */
+  const [pairedAs, setPairedAs] = useState<string | null>(null);
+
+  const handleRemotePair = () => {
+    const name = remotePairName.trim();
+    const deviceId = remotePairDeviceId.trim();
+    const token = remotePairToken.trim();
+    if (name === '' || deviceId === '' || token === '') return;
+    setRemotePairError(null);
+    setRemotePairing(true);
+    void pairRemoteDevice({ deviceId, token }).then((outcome) => {
+      setRemotePairing(false);
+      if ('paired' in outcome) {
+        setPairedAs(name);
+        setRemotePairName('');
+        setRemotePairDeviceId('');
+        setRemotePairToken('');
+      } else {
+        setRemotePairError(outcome.error);
+      }
+    });
+  };
+
+  const handleForget = () => {
+    void forgetRemoteDevice().then(() => setPairedAs(null));
+  };
+
   return (
     <SettingsGroup
       title="Server mode"
@@ -322,6 +575,159 @@ export function ServerModeGroup({ enabled, bind, devices }: ServerModeGroupProps
             hint={originsInvalid ? ORIGINS_INVALID : ORIGINS_HINT}
           />
         </>
+      ) : null}
+
+      <Switch
+        label="Attach to a server"
+        description={ATTACH_SWITCH_DESCRIPTION}
+        checked={attachOpen}
+        onCheckedChange={(next) => {
+          setAttachOpen(next);
+          // Turning it off while attached detaches immediately — the one
+          // direction `switchIpcMode` never refuses. Turning it on only
+          // reveals the fields below; see `handleAttach`'s own doc comment
+          // for why the switch itself never dials.
+          if (!next && remote.mode === 'remote') handleDetach();
+        }}
+      />
+
+      {attachOpen ? (
+        <div className="flex flex-col gap-3 rounded-[7px] border border-border-soft bg-panel-2 p-3">
+          {attachedServer ? (
+            <p className="text-[11.5px] text-subtle">
+              Attached to{' '}
+              <span className="font-medium text-ink">{attachedServer.name}</span>.
+              Settings here edit <em>its</em> config file — <code>config:get</code>{' '}
+              is answered by the far end while attached, not by this machine.
+            </p>
+          ) : null}
+
+          <div className="grid grid-cols-[1fr_96px] gap-2">
+            <TextField
+              label="Server address"
+              value={remoteHostDraft}
+              onChange={(value) => {
+                setRemoteHostDraft(value);
+                if (remoteHostInvalid) setRemoteHostInvalid(false);
+                if (switchResult) setSwitchResult(null);
+              }}
+              onCommit={commitRemoteHost}
+              hint={
+                remoteHostInvalid ||
+                (switchResult !== null &&
+                  !switchResult.ok &&
+                  switchResult.reason === 'plaintext-refused')
+                  ? ATTACH_HOST_INVALID
+                  : ATTACH_HOST_HINT
+              }
+            />
+
+            <TextField
+              label="Port"
+              value={remotePortDraft}
+              onChange={(value) => {
+                setRemotePortDraft(value);
+                if (remotePortInvalid) setRemotePortInvalid(false);
+                if (switchResult) setSwitchResult(null);
+              }}
+              onCommit={commitRemotePort}
+              placeholder={String(DEFAULT_REMOTE.port)}
+              hint={remotePortInvalid ? ATTACH_PORT_INVALID : ATTACH_PORT_HINT}
+            />
+          </div>
+
+          {pairedAs ? (
+            <div className="flex items-center gap-2 rounded-[6px] border border-border bg-panel px-2.5 py-2 text-[11.5px]">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand" />
+              <span>
+                Paired as <span className="font-medium text-ink">{pairedAs}</span>
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="ml-auto"
+                onClick={handleForget}
+              >
+                Forget
+              </Button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <div className="grid grid-cols-2 gap-2">
+                <TextField
+                  label="Device label"
+                  value={remotePairName}
+                  onChange={setRemotePairName}
+                  placeholder="e.g. laptop"
+                />
+                <TextField
+                  label="Device id"
+                  value={remotePairDeviceId}
+                  onChange={setRemotePairDeviceId}
+                />
+              </div>
+              <TextField
+                label="Pairing token"
+                value={remotePairToken}
+                onChange={setRemotePairToken}
+                hint="Printed by `the-hive --pair <name>` on the server. Stored in this machine's keychain, never in config.json."
+              />
+              {remotePairError ? (
+                <p className="text-[11.5px] text-red">{remotePairError}</p>
+              ) : null}
+              <Button
+                variant="secondary"
+                size="sm"
+                className="w-fit"
+                disabled={
+                  remotePairing ||
+                  remotePairName.trim() === '' ||
+                  remotePairDeviceId.trim() === '' ||
+                  remotePairToken.trim() === ''
+                }
+                onClick={handleRemotePair}
+              >
+                {remotePairing ? 'Pairing…' : 'Pair device'}
+              </Button>
+            </div>
+          )}
+
+          <Button
+            variant="primary"
+            size="sm"
+            className="w-fit"
+            disabled={attaching}
+            onClick={handleAttach}
+          >
+            {attaching ? 'Attaching…' : 'Attach'}
+          </Button>
+
+          {switchResult && !switchResult.ok && switchResult.reason === 'live-sessions' ? (
+            <div className="flex items-start gap-2 rounded-[6px] border border-red bg-red/8 px-3 py-2.5">
+              <WarningCircle size={14} className="mt-px shrink-0 text-red" />
+              <div className="flex flex-col gap-1 text-[11.5px]">
+                <p className="text-ink">Can&rsquo;t attach while sessions are running here.</p>
+                <p className="text-subtle">
+                  Attaching would hide terminals still running in this app. Close
+                  them first.
+                </p>
+                <ul className="flex flex-col gap-0.5 pl-4 text-subtle">
+                  {switchResult.sessions.map((name) => (
+                    <li key={name}>
+                      <code className="font-mono text-[11px] text-ink">{name}</code>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          ) : null}
+
+          {switchResult && !switchResult.ok && switchResult.reason === 'connect-failed' ? (
+            <p className="text-[11.5px] text-red">
+              Could not attach: {switchResult.message}
+            </p>
+          ) : null}
+        </div>
       ) : null}
 
       <div className="flex flex-col gap-2 pt-1">

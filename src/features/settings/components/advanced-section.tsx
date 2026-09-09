@@ -362,6 +362,8 @@ export function AdvancedSection() {
         enabled={snapshot.server.enabled}
         bind={snapshot.server.bind}
         devices={snapshot.server.devices}
+        remote={snapshot.remote}
+        attachedServer={snapshot.attachedServer}
       />
 
       <SettingsGroup

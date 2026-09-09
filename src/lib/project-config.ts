@@ -7,6 +7,7 @@ import type {
   EnvDiagnostic,
   ProjectConfig,
   ProjectStatus,
+  RemotePairRequest,
   RemoveProjectRequest,
   RenameProjectRequest,
   ReorderProjectsRequest,
@@ -16,8 +17,10 @@ import type {
   SetProjectKeyRequest,
   SetProjectRuntimeRequest,
   SetReceiverRequest,
+  SetRemoteRequest,
   SetRuntimeRequest,
   SetServerRequest,
+  SwitchOutcome,
 } from '@shared/config-contract';
 import type {
   AppInfo,
@@ -310,6 +313,91 @@ export async function revokeDevice(
   }
   emit();
   return { ok: true };
+}
+
+/**
+ * Turn client mode on or off, and change where it attaches (HIVE-144).
+ *
+ * Not routed through {@link mutate}: `config:set-remote` answers a
+ * {@link SetRemoteResult}, not a bare `ConfigSnapshot`, because the verb also
+ * *performs* the switch and the switch can be refused (Ruling 19). The
+ * snapshot half is installed unconditionally — it is the old one, untouched,
+ * whenever the switch is not `ok`, so installing it always is exactly as safe
+ * as installing it only on success, and simpler than branching to skip a copy
+ * that would be identical anyway.
+ *
+ * The caller renders {@link SwitchOutcome} — the returned half this function
+ * does not swallow — because Ruling 19 is a promise about the *file*, not
+ * about what the pane may claim: a refused switch must not present the
+ * address that was just tried as saved, and the only way the pane can avoid
+ * that is by reading what actually happened rather than assuming success.
+ *
+ * `{ ok: false, reason: 'connect-failed', message }` on no bridge or a broken
+ * channel, matching the shape a real dial failure already takes, so the pane
+ * has exactly one failure branch to render instead of a second one for "the
+ * IPC itself did not work."
+ */
+export async function setRemoteConfig(request: SetRemoteRequest): Promise<SwitchOutcome> {
+  const bridge = window.hive;
+  if (!bridge) {
+    return { ok: false, reason: 'connect-failed', message: 'No bridge available.' };
+  }
+
+  try {
+    const result = await bridge.config.setRemote(request);
+    snapshot = result.config;
+    emit();
+    return result.switched;
+  } catch (cause) {
+    console.error('[hive] the attach switch did not complete:', cause);
+    return {
+      ok: false,
+      reason: 'connect-failed',
+      message: 'The request could not be sent.',
+    };
+  }
+}
+
+/**
+ * Store the device credential a `server:pair` mint on some *other* Hive
+ * handed back (HIVE-144).
+ *
+ * Not routed through {@link mutate}: `remote:pair` writes no config, so there
+ * is no snapshot to install — the credential lives in `safeStorage`, never in
+ * `config.json`. `{ error }` on a refusal (most likely a locked keychain) is
+ * passed straight through so the pane can show it beside the pairing fields,
+ * matching {@link pairDevice}'s own shape for the opposite direction.
+ */
+export async function pairRemoteDevice(
+  request: RemotePairRequest,
+): Promise<{ paired: true } | { error: string }> {
+  const bridge = window.hive;
+  if (!bridge) return { error: 'No bridge available.' };
+
+  try {
+    return await bridge.remote.pair(request);
+  } catch (cause) {
+    console.error('[hive] could not store the device credential:', cause);
+    return { error: 'Pairing failed.' };
+  }
+}
+
+/**
+ * Discard the credential {@link pairRemoteDevice} stored (HIVE-144).
+ *
+ * Idempotent and writes no config, so there is nothing to install — a no-op
+ * with no bridge, matching every other verb in this module that touches
+ * nothing on disk.
+ */
+export async function forgetRemoteDevice(): Promise<void> {
+  const bridge = window.hive;
+  if (!bridge) return;
+
+  try {
+    await bridge.remote.forget();
+  } catch (cause) {
+    console.error('[hive] could not forget the device credential:', cause);
+  }
 }
 
 /**
