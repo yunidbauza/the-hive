@@ -50,16 +50,36 @@ done.** Neither is optional, and no rule may be disabled inline to make a task p
 
 ## Working a ticket
 
-An audit of a week of sessions (Sep 2026) found test runs at about a tenth of
-agent time; the hours went to confirmation prompts and to a serial
-implement-review-re-review chain. These rules follow from it:
+Two audits now. A week of sessions (Sep 2026) found the hours going to
+confirmation prompts and to a serial implement-review-re-review chain. HIVE-144
+then proved the first half fixed and the second half untouched: four human turns
+in 17h34m, the orchestrator idle 29 minutes out of 853, and still 6.8 of the 14.2
+implementation hours inside the review chain. These rules follow from both:
 
 - **Execute plans inline.** Subagent-driven development is for a plan that spans
   two or more subsystems with no shared test harness (main process + renderer +
   a live suite) *and* touches a risk surface (auth, tokens, a wire protocol,
-  concurrency). One subsystem runs inline, however many tasks it has. When
-  subagents are warranted: tasks of twenty implementer-minutes, two fix rounds,
-  and ship's self review is the one whole-branch review.
+  concurrency). One subsystem runs inline, however many tasks it has.
+- **The per-task review is conditional, and lean.** Only a task the plan marks
+  risk-bearing gets a reviewer subagent; the rest the controller adjudicates by
+  reading the diff itself. One reviewer, one pass, scoped to that task's diff and
+  its brief. Never fan reviewers out by category per task. HIVE-144 gave all 15
+  tasks a reviewer plus a scoped re-reviewer, 29 agents, and ship's whole-branch
+  review still found a Critical across the seams none of them could see.
+- **No scoped re-review subagent.** The implementer proves its own fix, with the
+  mutation or the test that fails without it, and the controller adjudicates the
+  proof. Two fix rounds per task stays the cap. Review-driven fix rounds were 5.5
+  hours of HIVE-144 against 7.4 for the implementation itself.
+- **Ship's self review is the one whole-branch review**, and the one place the
+  deep multi-dimension pass belongs.
+- **Re-split when the plan is wrong about size.** Tasks are twenty
+  implementer-minutes. Two consecutive tasks over that means every remaining
+  estimate is wrong: re-split what is left before the next dispatch. HIVE-144's
+  task 2 came back at forty minutes, its mean was fifty-one, its worst a hundred
+  and four, and nothing re-sized.
+- **A thirteen-point ticket is more than one PR.** HIVE-144 shipped 100 files and
+  15,698 insertions on one branch, a diff no whole-branch review can hold. Split
+  it in the plan, not at the merge.
 - **Ask decisions in one batch.** One `AskUserQuestion` call carries up to four
   questions; the recommended option goes first. Never one question per turn.
 - **Never sleep-poll a subagent.** Its task notification is the wake-up; a
