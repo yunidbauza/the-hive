@@ -155,6 +155,12 @@ export const FRAME_KIND = {
   [CH.githubSearchPrs]: 'call',
   [CH.notificationsActivate]: 'event',
   [CH.notificationsNew]: 'event',
+  /*
+    HIVE-145. Carried like the three `notifications:*` pushes beside it, and
+    like them absent from `EVENT_CHANNELS` — the toast is raised by the
+    receiving *main* process, not by a renderer.
+  */
+  [CH.notificationsToast]: 'event',
   [CH.notificationsList]: 'call',
   [CH.notificationsMarkRead]: 'call',
   [CH.notificationsDismiss]: 'call',
@@ -392,6 +398,7 @@ export const CHANNEL_AUTHORIZATION = {
   [CH.githubSearchPrs]: 'execute',
   [CH.notificationsActivate]: 'read',
   [CH.notificationsNew]: 'read',
+  [CH.notificationsToast]: 'read',
   [CH.notificationsList]: 'read',
   [CH.notificationsMarkRead]: 'mutate',
   [CH.notificationsDismiss]: 'mutate',

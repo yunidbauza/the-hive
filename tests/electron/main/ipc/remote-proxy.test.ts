@@ -170,7 +170,7 @@ describe('registerRemoteProxy', () => {
   });
 
   it('binds no handler for an event channel', () => {
-    expect(eventChannels.length).toBe(24);
+    expect(eventChannels.length).toBe(25);
 
     registerRemoteProxy({ client: fakeClient(), broadcaster: fakeBroadcaster() });
 
@@ -276,7 +276,7 @@ describe('registerRemoteProxy', () => {
    * the very first one that isn't `pty:data`.
    */
   it('pumps a client event into the broadcaster on the same channel', () => {
-    expect(eventChannels.length).toBe(24);
+    expect(eventChannels.length).toBe(25);
 
     const client = fakeClient();
     const broadcaster = fakeBroadcaster();

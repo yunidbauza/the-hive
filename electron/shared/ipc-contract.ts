@@ -512,6 +512,33 @@ export const CH = {
    */
   notificationsNew: 'notifications:new', // main → renderer
   /**
+   * Raise an OS notification **on the machine receiving this** (HIVE-145).
+   * main → renderer, and main → attached client.
+   *
+   * Distinct from {@link CH.notificationsNew}, which is the inbox row and goes
+   * to every surface. This is the *interruption*, and it goes only to surfaces
+   * that are not already looking at the session it is about — so two attached
+   * devices can get different answers about the same notification, which one
+   * push could not express.
+   *
+   * It exists because the toast used to be raised by the process that decided
+   * to raise it. In server mode that is the mini, whose desktop nobody is at:
+   * the row reached the laptop and the interruption did not.
+   *
+   * Carries an `id` and an `action` rather than a callback, because no closure
+   * crosses a socket. The receiver raises the notification locally and, on a
+   * click, sends the same two effects the local path has — activate the action,
+   * dismiss the row — back through the channels that already exist for them.
+   *
+   * **Not in {@link EVENT_CHANNELS}**, and for the reason the three
+   * `notifications:*` pushes are not: that array is what main pushes to a
+   * *renderer*, and this is answered by the receiving **main process** — it
+   * raises an Electron `Notification`, which a renderer cannot do. It is graded
+   * `event` in `FRAME_KIND` all the same, which is what carries it over a
+   * socket.
+   */
+  notificationsToast: 'notifications:toast', // main → main, and main → attached client
+  /**
    * The buffer, newest first.
    *
    * Hydration exists because the hub outlives the window. Without it a reload —

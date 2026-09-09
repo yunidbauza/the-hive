@@ -16,6 +16,7 @@ import {
   WINDOW_BOUND,
   authorizationOf,
   frameKindOf,
+  type FrameKind,
   isAuthorized,
   isClientFrameAllowed,
   isProcessLocal,
@@ -55,9 +56,28 @@ const subscribed = bridgeKeys(/subscribe<[^>]*>\(\s*CH\.([A-Za-z0-9]+)/g);
 
 const entries = Object.entries(CH) as ReadonlyArray<[string, Channel]>;
 
+/**
+ * The channels the preload bridge cannot account for, because a **renderer
+ * never sees them** (HIVE-145).
+ *
+ * `notifications:toast` is answered by the receiving *main* process: it raises
+ * an Electron `Notification`, which is not something a renderer can do. So
+ * there is no `invoke`, `send` or `subscribe` for it to be derived from, and
+ * deriving its kind from the bridge would be deriving it from a file that is
+ * correct to be silent about it.
+ *
+ * Listed rather than skipped, so adding a second main-only channel is a
+ * deliberate edit here with a reason beside it, not a quiet hole in the one
+ * test that checks these classifications against something other than
+ * themselves. Each entry still has its kind asserted below.
+ */
+const MAIN_ONLY: ReadonlyMap<string, FrameKind> = new Map([
+  ['notificationsToast', 'event'],
+]);
+
 describe('remote contract: coverage', () => {
   it('classifies every channel exactly once for frame kind', () => {
-    expect(entries).toHaveLength(130);
+    expect(entries).toHaveLength(131);
     expect(Object.keys(FRAME_KIND).sort()).toEqual([...Object.values(CH)].sort());
   });
 
@@ -76,6 +96,14 @@ describe('remote contract: coverage', () => {
 
 describe('remote contract: frame kinds match the preload bridge', () => {
   it.each(entries)('%s is classified as the bridge uses it', (key, channel) => {
+    const mainOnly = MAIN_ONLY.get(key);
+    if (mainOnly !== undefined) {
+      expect(frameKindOf(channel)).toBe(mainOnly);
+      // And it really is absent from the bridge, or this exemption is stale.
+      expect(invoked.has(key) || sent.has(key) || subscribed.has(key)).toBe(false);
+      return;
+    }
+
     const expected = invoked.has(key)
       ? 'call'
       : sent.has(key)
@@ -88,23 +116,24 @@ describe('remote contract: frame kinds match the preload bridge', () => {
     expect(frameKindOf(channel)).toBe(expected);
   });
 
-  it('splits 100 call, 6 notify and 24 event', () => {
+  it('splits 100 call, 6 notify and 25 event', () => {
     const tally = { call: 0, notify: 0, event: 0 };
     for (const kind of Object.values(FRAME_KIND)) tally[kind] += 1;
 
-    expect(tally).toEqual({ call: 100, notify: 6, event: 24 });
+    expect(tally).toEqual({ call: 100, notify: 6, event: 25 });
   });
 
   /**
    * The correction that reading the bridge forced.
    *
-   * `EVENT_CHANNELS` is not the set of pushed channels — it is 20 of the 24.
+   * `EVENT_CHANNELS` is not the set of pushed channels — it is 20 of the 25.
    * `slack:socket-status` and the three `notifications:*` pushes are subscribed
-   * without being listed there. A remote client that forwarded only
+   * without being listed there, and `notifications:toast` is pushed to a main
+   * process rather than a renderer at all. A remote client that forwarded only
    * `EVENT_CHANNELS` would show an empty inbox on a busy server, so the
    * asymmetry is asserted rather than left to be rediscovered.
    */
-  it('covers EVENT_CHANNELS and the four pushes it omits', () => {
+  it('covers EVENT_CHANNELS and the five pushes it omits', () => {
     for (const channel of EVENT_CHANNELS) expect(frameKindOf(channel)).toBe('event');
 
     const listed: ReadonlySet<string> = new Set(EVENT_CHANNELS);
@@ -116,6 +145,7 @@ describe('remote contract: frame kinds match the preload bridge', () => {
       'notifications:dismissed',
       'notifications:new',
       'notifications:read',
+      'notifications:toast',
       'slack:socket-status',
     ]);
   });
@@ -133,11 +163,11 @@ describe('remote contract: authorization', () => {
     expect(authorizationOf(channel)).toBe('execute');
   });
 
-  it('grades the 130 as 54 read, 44 mutate and 32 execute', () => {
+  it('grades the 131 as 55 read, 44 mutate and 32 execute', () => {
     const tally = { read: 0, mutate: 0, execute: 0 };
     for (const authz of Object.values(CHANNEL_AUTHORIZATION)) tally[authz] += 1;
 
-    expect(tally).toEqual({ read: 54, mutate: 44, execute: 32 });
+    expect(tally).toEqual({ read: 55, mutate: 44, execute: 32 });
   });
 
   /**
