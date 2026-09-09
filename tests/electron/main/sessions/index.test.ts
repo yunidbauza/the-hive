@@ -791,7 +791,7 @@ describe('identity: the renderer only ever sees entity ids', () => {
 
       emitData({ sessionId: first, chunk: 'from generation 1' });
       vi.advanceTimersByTime(8);
-      const g1Seq = on(CH.ptyData).at(-1)!.payload.seq as number;
+      const g1Seq = on(CH.ptyData).at(-1)!.payload.seq as number; // 1
 
       const restarted = sessions.restart(OPEN);
       await Promise.resolve();
@@ -800,9 +800,44 @@ describe('identity: the renderer only ever sees entity ids', () => {
       await restarted;
 
       const second = spawned[1]!.sessionId; // g2, the live one
-      emitData({ sessionId: second, chunk: 'from generation 2' });
+      /*
+        Three batches on generation 2, not one (self-review fix round 1).
+        With one batch on each side, both heads land on seq `1`, which hides
+        two things at once. First, it makes the forwarded `gen` on a live
+        batch untestable here: nothing below could tell `gen: 2` apart from
+        a broken `gen: 0` by seq alone. Second, and more importantly, it
+        never builds the shape the ticket describes: `lastSeq === g1Seq`
+        (1) would equal generation 2's head too, so `ptyIpc.resume` — even
+        with the generation check removed — would short-circuit to an
+        *empty* `replay`, not the dangerous non-empty one. The real bug is a
+        **contiguous, non-empty** replay of the new process's actual output
+        stitched onto the old transcript, and that only appears once the
+        client's stale seq sits strictly below the new generation's head:
+        with three batches here, a generation check that had been deleted
+        would hand back generation 2's own seq 2 and seq 3 — real chunks —
+        under the entity id the client still associates with generation 1.
+      */
+      emitData({ sessionId: second, chunk: 'g2 batch one' });
       vi.advanceTimersByTime(8);
-      const g2Seq = on(CH.ptyData).at(-1)!.payload.seq as number;
+      emitData({ sessionId: second, chunk: 'g2 batch two' });
+      vi.advanceTimersByTime(8);
+      emitData({ sessionId: second, chunk: 'g2 batch three' });
+      vi.advanceTimersByTime(8);
+      const g2Batches = on(CH.ptyData).slice(-3).map((entry) => entry.payload);
+      const g2Seq = g2Batches.at(-1)!.seq as number; // 3
+
+      /*
+        The most-travelled `gen` site (`forward`'s `ptyData` case in
+        `sessions/index.ts`) is otherwise untested: every other assertion in
+        this file that checks `.gen` reads it off a *replayed* event, which
+        is stamped by a different line, inside `resume`. A live batch is
+        forwarded and stamped here, on the ordinary path every terminal
+        render goes through — if this ever shipped `gen: 0` (a stale cache,
+        a read before `registry.open`, …), a reconnecting client would see a
+        spurious generation mismatch on the very next live batch after every
+        restart, forever, with nothing here failing unless this asserts it.
+      */
+      for (const payload of g2Batches) expect(payload.gen).toBe(2);
 
       // The client watched generation 1 to g1Seq and reconnects still naming
       // it — exactly the reattach-after-restart scenario.
@@ -811,10 +846,14 @@ describe('identity: the renderer only ever sees entity ids', () => {
       /*
         Never generation 2's batches renumbered onto generation 1's tail —
         the bug this closes. A gap, stamped at the live generation's head,
-        never a contiguous replay: `g2Seq` is what `ptyIpc.headSeq` for the
-        *live* pty session answers, proving generation 2's own ring — not
-        generation 1's — is what the head came from.
+        never a contiguous replay: `g2Seq` (3) is provably not `g1Seq` (1),
+        so this assertion can only pass if the seq actually came from
+        generation 2's own ring — `ptyIpc.headSeq` for the *live* pty
+        session — rather than from generation 1's, or from the client's own
+        stale value. With equal heads (the previous version of this test)
+        the assertion below could not have told the two apart.
       */
+      expect(g2Seq).not.toBe(g1Seq);
       expect(result).toEqual({ kind: 'gap', seq: g2Seq });
     });
 

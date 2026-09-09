@@ -1677,6 +1677,20 @@ export function registerIpcHandlers(
       attachedSockets.add(socket);
       if (resumeFrom === undefined) return;
 
+      /*
+        Captured into a local so it narrows to non-null across the whole loop
+        below (HIVE-144 review). `sessions` is a mutable module-scope `let`;
+        TypeScript will not carry a null check on it across the `.resume` call
+        two lines down, so without this every later read would still be
+        `Sessions | null` and need its own `?.` — which is exactly what
+        produced the `?? point.gen` fallback this review flagged as
+        disagreeing with its own comment. A server with no `sessions` at all
+        has nothing to replay, which is the same outcome the old per-entity
+        `?? null` produced, just decided once instead of on every entity.
+      */
+      const activeSessions = sessions;
+      if (activeSessions === null) return;
+
       for (const [sessionId, point] of Object.entries(resumeFrom)) {
         /*
           Keyed by **entity** id, which is what a client's `pty:data` frames
@@ -1685,7 +1699,7 @@ export function registerIpcHandlers(
           `Sessions.resume` maps back. `point` is `{ gen, seq }` (HIVE-144) —
           see `AttachRequest.resumeFrom` for why a bare seq was insufficient.
         */
-        const result = sessions?.resume(sessionId, point) ?? null;
+        const result = activeSessions.resume(sessionId, point);
         /*
           `null` — no such live session on this server. The client is holding a
           session id from a previous run, or from one that has since exited;
@@ -1739,20 +1753,30 @@ export function registerIpcHandlers(
           no `resumeFrom` at all.
 
           `gen` on this frame is the entity's **live** generation
-          (`sessions.generationFor`), never `point.gen` — the client's own
-          value is exactly the stale one a restart invalidated, whether the
-          gap here came from a generation mismatch or from the ring simply not
-          reaching back far enough within the same generation. Stamping
+          (`activeSessions.generationFor`), never `point.gen` — the client's
+          own value is exactly the stale one a restart invalidated, whether
+          the gap here came from a generation mismatch or from the ring simply
+          not reaching back far enough within the same generation. Stamping
           anything else would hand a discontinuity check keyed on `gen` a
           value it will never see again: the very next live batch already
           carries the true live generation, and a mismatch between *that* and
           a wrong marker would read as a second, spurious gap on top of the
           real one (HIVE-144).
+
+          The `!` is not a shortcut past a real "no generation" case: `result`
+          is non-null here, which `activeSessions.resume` only answers once
+          `registry.sessionFor(sessionId)` has already resolved — the same
+          lookup `generationFor` reads its answer from (`registry.ts` keeps
+          the two in step) — so this entity is provably live one line above.
+          `generationFor`'s return type stays `number | undefined` because
+          most of its callers *do* need to ask about an entity that might not
+          be, and narrowing it to `number` just for this call site would only
+          move the lie into the type instead of removing it.
         */
         socket.send({
           kind: 'event',
           channel: CH.ptyData,
-          payload: { sessionId, chunk: '', seq: result.seq, gen: sessions?.generationFor(sessionId) ?? point.gen },
+          payload: { sessionId, chunk: '', seq: result.seq, gen: activeSessions.generationFor(sessionId)! },
         });
       }
     },

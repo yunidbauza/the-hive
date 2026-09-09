@@ -324,6 +324,55 @@ describe('an unauthenticated socket is untrusted input (HIVE-142 review)', () =>
     expect(reply).toMatchObject({ kind: 'attach-refused', code: 'unauthorized' });
   });
 
+  it('refuses a resumeFrom point with a negative gen (HIVE-144)', async () => {
+    /**
+     * `Number.isInteger` alone would accept `-1`. Both `gen` and `seq` are
+     * counters this file's peers only ever increment, so a negative one is
+     * never an honest client's — refusing it here, before authentication,
+     * is cheaper than discovering downstream that `sessions.resume` was
+     * never meant to see one.
+     */
+    const { device, token } = mintDevice('MacBook');
+    const url = await start([device]);
+    const reply = await attach(url, {
+      kind: 'attach',
+      protocol: REMOTE_PROTOCOL_VERSION,
+      deviceId: device.id,
+      token,
+      resumeFrom: { 'session-1': { gen: -1, seq: 0 } },
+    });
+    expect(reply).toMatchObject({ kind: 'attach-refused', code: 'unauthorized' });
+  });
+
+  it('refuses a resumeFrom point with a fractional gen (HIVE-144)', async () => {
+    // `typeof 1.5 === 'number'` — only `Number.isInteger` catches this.
+    const { device, token } = mintDevice('MacBook');
+    const url = await start([device]);
+    const reply = await attach(url, {
+      kind: 'attach',
+      protocol: REMOTE_PROTOCOL_VERSION,
+      deviceId: device.id,
+      token,
+      resumeFrom: { 'session-1': { gen: 1.5, seq: 0 } },
+    });
+    expect(reply).toMatchObject({ kind: 'attach-refused', code: 'unauthorized' });
+  });
+
+  it('refuses a resumeFrom point with a missing seq (HIVE-144)', async () => {
+    // `{ gen: 1 }` alone is an object, and would pass a check that only
+    // confirmed the value is an object with a numeric `gen`.
+    const { device, token } = mintDevice('MacBook');
+    const url = await start([device]);
+    const reply = await attach(url, {
+      kind: 'attach',
+      protocol: REMOTE_PROTOCOL_VERSION,
+      deviceId: device.id,
+      token,
+      resumeFrom: { 'session-1': { gen: 1 } },
+    });
+    expect(reply).toMatchObject({ kind: 'attach-refused', code: 'unauthorized' });
+  });
+
   it('accepts an attach with a well-formed {gen, seq} resumeFrom', async () => {
     const { device, token } = mintDevice('MacBook');
     const url = await start([device]);

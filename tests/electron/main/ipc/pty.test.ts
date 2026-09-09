@@ -644,3 +644,39 @@ describe('resume', () => {
     expect(ipc.resume('a', 0)).toEqual({ kind: 'gap', seq: 50 });
   });
 });
+
+/**
+ * `headSeq` must answer "gone" the same way `resume` does (HIVE-144 review):
+ * a caller with generation-aware callers of its own — `sessions/index.ts`'s
+ * `resume`, on a mismatch — reads this instead of asking `resume` to do
+ * replay arithmetic, and a disagreement here would only surface once such a
+ * caller actually exercised the exited-channel case, which nothing does
+ * today.
+ */
+describe('headSeq', () => {
+  const beat = (chunk: string): void => {
+    emitData({ sessionId: 'a', chunk });
+    vi.advanceTimersByTime(8);
+  };
+
+  it('is undefined for a session it has never heard of', () => {
+    expect(ipc.headSeq('nope')).toBeUndefined();
+  });
+
+  it('answers the channel\'s current seq, with no ring lookup', () => {
+    beat('one');
+    beat('two');
+
+    expect(ipc.headSeq('a')).toBe(2);
+  });
+
+  it('is undefined once the session has exited, same as resume', () => {
+    beat('one');
+    emitExit({ sessionId: 'a', exitCode: 0 });
+    vi.advanceTimersByTime(8);
+
+    expect(ipc.headSeq('a')).toBeUndefined();
+    // Same "gone" answer both ways — the asymmetry this closed.
+    expect(ipc.resume('a', 0)).toBeNull();
+  });
+});

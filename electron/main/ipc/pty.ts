@@ -560,7 +560,13 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
     },
 
     headSeq(sessionId) {
-      return channels.get(sessionId)?.seq;
+      const channel = channels.get(sessionId);
+      // Same "gone" test as `resume` above, for the same reason: an exited
+      // channel stays in `channels` for `diagnostics()`, but there is no live
+      // head to report for it, and answering one anyway would tell a caller
+      // building a marker frame that a dead session is still producing.
+      if (channel === undefined || channel.exited) return undefined;
+      return channel.seq;
     },
 
     diagnostics() {
