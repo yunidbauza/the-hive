@@ -4,7 +4,7 @@ import { createServer as createNetServer, connect, type Socket } from 'node:net'
 import { WebSocket, WebSocketServer } from 'ws';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createRemoteListener } from '@remote-host/listener';
+import { ATTACH_HANDSHAKE_TIMEOUT_MS, createRemoteListener } from '@remote-host/listener';
 import type { ServerDevice } from '@shared/config-contract';
 import { MAX_FILE_BYTES } from '@shared/fs-contract';
 import { CH, type Channel } from '@shared/ipc-contract';
@@ -15,6 +15,7 @@ import {
   POST_ATTACH_FRAME_MAX_BYTES,
   REMOTE_PROTOCOL_VERSION,
   SNAPSHOT_CHANNELS,
+  SNAPSHOT_READ_BUDGET_MS,
   type AttachRequest,
   type CallFrame,
   type ErrorFrame,
@@ -1526,5 +1527,95 @@ describe('the attach snapshot (HIVE-144)', () => {
     expect(Buffer.byteLength(JSON.stringify(accepted), 'utf8')).toBeLessThanOrEqual(
       POST_ATTACH_FRAME_MAX_BYTES,
     );
+  });
+
+  it('drops nothing at exactly POST_ATTACH_FRAME_MAX_BYTES, and drops at one byte over it (HIVE-144 review)', async () => {
+    /*
+      The boundary itself, pinned rather than merely "somewhere near it"
+      (HIVE-144 review): `fitSnapshot`'s loop uses `<=`, so a frame at exactly
+      the ceiling must survive whole and one byte past it must lose a key. A
+      test that only ever tries values far from the edge — as the two tests
+      above do — cannot tell `<=` from `<`, and `ws` itself is unforgiving in
+      the conservative direction (it refuses only `> maxPayload`), which is
+      exactly the direction a boundary bug here would drift without anyone
+      noticing on the tests already written.
+    */
+    const serverName = 'test-mini';
+    const envelopeBytes = (snapshot: Partial<Record<Channel, unknown>>): number =>
+      Buffer.byteLength(
+        JSON.stringify({ kind: 'attach-accepted', protocol: REMOTE_PROTOCOL_VERSION, serverName, snapshot }),
+        'utf8',
+      );
+
+    // What one key of an empty string costs, so the exact string length that
+    // lands the whole frame on the ceiling can be solved for rather than
+    // guessed at.
+    const withEmptyValue = envelopeBytes({ [CH.configGet]: '' });
+    const exactValueLength = POST_ATTACH_FRAME_MAX_BYTES - withEmptyValue;
+
+    const exact = 'z'.repeat(exactValueLength);
+    expect(envelopeBytes({ [CH.configGet]: exact })).toBe(POST_ATTACH_FRAME_MAX_BYTES);
+    const over = 'z'.repeat(exactValueLength + 1);
+    expect(envelopeBytes({ [CH.configGet]: over })).toBe(POST_ATTACH_FRAME_MAX_BYTES + 1);
+
+    const { sent: sentExact } = await attaching(async () => ({ [CH.configGet]: exact }));
+    const acceptedExact = sentExact().find((f) => f.kind === 'attach-accepted');
+    expect(acceptedExact?.snapshot).toEqual({ [CH.configGet]: exact });
+
+    const { sent: sentOver } = await attaching(async () => ({ [CH.configGet]: over }));
+    const acceptedOver = sentOver().find((f) => f.kind === 'attach-accepted');
+    expect(acceptedOver?.snapshot).toEqual({});
+  });
+
+  it('logs rather than stays silent if the frame is still oversized with an empty snapshot (HIVE-144 review)', async () => {
+    /*
+      Only reachable through a pathological `serverName` — `fitSnapshot` has
+      nothing left to drop once the snapshot itself is empty, so this proves
+      the failure is at least loud, not that it is fixed (there is nothing
+      left in this function's power to fix it with).
+    */
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { device, token } = mintDevice('MacBook');
+    listener = createRemoteListener({
+      bind: { host: '127.0.0.1', port: 0, allowedOrigins: [] },
+      devices: () => [device],
+      serverName: 'x'.repeat(9 * 1024 * 1024),
+      dispatch: noopDispatch,
+      buildSnapshot: async () => ({}),
+      onAttach: noopOnAttach,
+      onDetach: noopOnDetach,
+    });
+    const url = (await listener.start()) as string;
+    const socket = new WebSocket(url);
+    await new Promise<void>((resolve, reject) => {
+      socket.on('open', () => resolve());
+      socket.on('error', reject);
+    });
+    const firstFrame = new Promise<void>((resolve) => {
+      socket.once('message', () => resolve());
+    });
+    socket.send(JSON.stringify({ kind: 'attach', protocol: REMOTE_PROTOCOL_VERSION, deviceId: device.id, token }));
+    await firstFrame;
+
+    expect(logged.mock.calls.some((call) => String(call[0]).includes('still exceeds'))).toBe(true);
+    logged.mockRestore();
+    socket.close();
+  });
+});
+
+describe('the snapshot read budget (HIVE-144)', () => {
+  /**
+   * `SNAPSHOT_READ_BUDGET_MS`'s own doc comment claims 3 000 ms of margin
+   * inside `ATTACH_HANDSHAKE_TIMEOUT_MS` — asserted here directly, against
+   * both real values, rather than trusted to stay true in two files that
+   * could drift independently of each other. A budget raised to or past the
+   * handshake deadline is the same defect the deadline exists to prevent,
+   * with a different constant at fault: `buildAttachSnapshot` would still be
+   * waiting on a slow read when `ATTACH_HANDSHAKE_TIMEOUT_MS` fires and
+   * terminates the socket with no frame sent at all.
+   */
+  it('leaves comfortable margin inside the handshake deadline', () => {
+    expect(SNAPSHOT_READ_BUDGET_MS).toBeLessThan(ATTACH_HANDSHAKE_TIMEOUT_MS);
+    expect(ATTACH_HANDSHAKE_TIMEOUT_MS - SNAPSHOT_READ_BUDGET_MS).toBeGreaterThanOrEqual(1_000);
   });
 });

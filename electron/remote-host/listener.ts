@@ -77,8 +77,15 @@ import { refuseProtocol } from './index';
  * then sends nothing holds the socket — and the fd and memory behind it —
  * open forever, which on a Tailscale-reachable listener is a standing
  * exhaustion path rather than a hypothetical one.
+ *
+ * **Exported for `SNAPSHOT_READ_BUDGET_MS`'s sake (HIVE-144 review).** That
+ * constant (`electron/shared/remote-contract.ts`) has to stay comfortably
+ * under this one — `buildAttachSnapshot` runs entirely inside this window,
+ * between the upgrade and the accept — and `tests/electron/remote-host/listener.test.ts`
+ * asserts the relationship directly against both real values rather than
+ * trusting two comments in two files to stay in agreement.
  */
-const ATTACH_HANDSHAKE_TIMEOUT_MS = 5_000;
+export const ATTACH_HANDSHAKE_TIMEOUT_MS = 5_000;
 
 /**
  * How many sockets may be mid-handshake — upgraded, but not yet attached — at
@@ -404,6 +411,23 @@ export function createRemoteListener(options: {
     if (dropped.length > 0) {
       console.error(
         `[hive] attach snapshot exceeded ${String(POST_ATTACH_FRAME_MAX_BYTES)} bytes; dropped: ${dropped.join(', ')}`,
+      );
+    }
+
+    /*
+      Reachable only through a pathological `serverName` (HIVE-144 review):
+      once `largestFirst` is exhausted, `remaining` is `{}` and everything
+      left in the frame is `kind`, `protocol` and `serverName` — none of which
+      this function has anything left to drop. `serverName` is `hostname()` in
+      production (`electron/main/ipc/index.ts`), nowhere near this ceiling, so
+      this is not expected to fire; it is not silent if it somehow does,
+      because "the accept frame is being sent oversized anyway" is worse
+      unstated than stated. There is no drop left to make it true, so this
+      logs rather than pretends `fitSnapshot` can still fix it.
+    */
+    if (acceptFrameBytes(remaining) > POST_ATTACH_FRAME_MAX_BYTES) {
+      console.error(
+        `[hive] attach accept frame still exceeds ${String(POST_ATTACH_FRAME_MAX_BYTES)} bytes with an empty snapshot — serverName is unexpectedly large`,
       );
     }
 

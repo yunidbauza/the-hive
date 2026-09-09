@@ -607,6 +607,42 @@ export const SNAPSHOT_CHANNELS: readonly Channel[] = [
 ];
 
 /**
+ * How long a single {@link SNAPSHOT_CHANNELS} read may take before its key is
+ * dropped from the attach snapshot — exactly as a throwing read already is
+ * (Ruling 15, extended by HIVE-144 review: a slow read is dropped the same
+ * way a broken one is, because a client waiting on it cannot tell the two
+ * apart).
+ *
+ * **A sibling of `ATTACH_HANDSHAKE_TIMEOUT_MS`** (`electron/remote-host/listener.ts`,
+ * 5 000 ms), in the sense `CALL_DEADLINE_MS` and `CALL_GIVE_UP_MS` above are
+ * siblings: the two numbers have to agree, or the server can time out a
+ * socket while a read it has not yet given up on is still running.
+ * `buildAttachSnapshot` (`electron/main/ipc/index.ts`) races every channel
+ * **concurrently** against this one budget rather than sequentially against
+ * six of them, so the whole snapshot's wall-clock cost is bounded by this
+ * single number regardless of how many of the six are slow at once — a
+ * sequential sum could exceed the handshake window on its own even with a
+ * "safe" per-channel value. 2 000 ms leaves 3 000 ms of margin inside the
+ * 5 000 ms deadline for everything else the handshake still has to do before
+ * and after this read (`verifyDevice`, `fitSnapshot`, the `send` itself) —
+ * comfortable rather than exact, and the margin is asserted directly by
+ * `tests/electron/remote-host/listener.test.ts` rather than left to this
+ * comment staying true.
+ *
+ * **Why a per-channel try/catch alone was not enough (HIVE-144 review).**
+ * `CH.githubPrs`'s handler awaits `loginEnvStatus()` and shells out to `gh`,
+ * whose own runner timeout (`electron/main/integrations/github/run.ts`) is
+ * 20 000 ms — four times the whole handshake window on its own — and it
+ * *resolves* with an error result rather than rejecting, so nothing throws
+ * for a catch to see. Unbounded, that read alone holds the whole snapshot
+ * open past `ATTACH_HANDSHAKE_TIMEOUT_MS`, and the socket is closed with zero
+ * frames sent: no accept, no refusal, just the generic "closed before it
+ * attached" a version mismatch produces — the exact failure Ruling 15 exists
+ * to prevent, reached through latency instead of size.
+ */
+export const SNAPSHOT_READ_BUDGET_MS = 2_000;
+
+/**
  * Why a handshake was refused.
  *
  * `protocol-mismatch` names both versions and which side to update; the others

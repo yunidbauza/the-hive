@@ -129,7 +129,7 @@ import type {
   JiraTransition,
 } from '@shared/jira-contract';
 import { LEDGER_DIR, OVERMIND } from '@shared/ledger-contract';
-import { SNAPSHOT_CHANNELS } from '@shared/remote-contract';
+import { SNAPSHOT_CHANNELS, SNAPSHOT_READ_BUDGET_MS } from '@shared/remote-contract';
 import { SESSION_NAME_DISPLAY_MAX } from '@shared/session-contract';
 import {
   SESSION_HISTORY_FILE,
@@ -254,7 +254,7 @@ import {
 
 import { createBindings } from './bindings';
 import { createWindowBroadcaster, type Broadcaster } from './broadcaster';
-import { createIpcRegistry } from './registry';
+import { createIpcRegistry, type CallHandler } from './registry';
 import { createRemoteDispatch } from './remote-dispatch';
 import { assertSender } from './sender';
 import {
@@ -399,6 +399,65 @@ const SNAPSHOT_PAYLOAD: Partial<Record<Channel, unknown>> = {
 };
 
 /**
+ * Races one {@link SNAPSHOT_CHANNELS} read against
+ * {@link SNAPSHOT_READ_BUDGET_MS}, resolving `[channel, value]` on a timely
+ * answer and `null` on anything else — a throw, a rejection, or simply
+ * running out of time (HIVE-144 review; Ruling 15 extended: a slow read is
+ * dropped exactly like a broken one, because a client waiting on either
+ * cannot tell them apart).
+ *
+ * **Never rejects.** Every path resolves, which is what lets
+ * {@link buildAttachSnapshot} run all six of these concurrently with a plain
+ * `Promise.all` — one slow or broken read cannot take the others down with
+ * it, and cannot make them wait for it either.
+ *
+ * `handler` may be `null` — a channel `handle()` has not registered yet — and
+ * that is deliberately not special-cased with its own branch. Calling `null`
+ * as a function throws a `TypeError` that reaches the same `.catch` below a
+ * broken *registered* handler's error would, and the observable outcome —
+ * the key is omitted, the reason is logged — is identical either way. A
+ * dedicated `if (handler === null)` here would be the same unfalsifiable
+ * shape `electron/remote-host/listener.ts`'s deleted `fitSnapshot` fast path
+ * was (HIVE-144 review): nothing distinguishes its own correctness from the
+ * shared catch path that already covers it.
+ */
+function raceSnapshotRead(
+  channel: Channel,
+  handler: CallHandler | null,
+): Promise<readonly [Channel, unknown] | null> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      console.error(
+        `[hive] attach snapshot read for ${channel} exceeded ${String(SNAPSHOT_READ_BUDGET_MS)}ms; omitted`,
+      );
+      resolve(null);
+    }, SNAPSHOT_READ_BUDGET_MS);
+
+    Promise.resolve()
+      // The cast is the point, not a workaround for one: see the null branch
+      // above. `await` on a non-promise is a no-op, so this one `.then` covers
+      // both `github:prs` (genuinely asynchronous) and the five that are not.
+      .then(() => (handler as CallHandler)(SNAPSHOT_PAYLOAD[channel]))
+      .then((value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve([channel, value]);
+      })
+      .catch((cause: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        console.error(`[hive] attach snapshot could not read ${channel}:`, cause);
+        resolve(null);
+      });
+  });
+}
+
+/**
  * Builds `AttachAccepted.snapshot` — the six {@link SNAPSHOT_CHANNELS} reads a
  * joining client needs to render the fleet without six round trips (HIVE-144).
  *
@@ -410,11 +469,15 @@ const SNAPSHOT_PAYLOAD: Partial<Record<Channel, unknown>> = {
  * boot in the renderer.
  *
  * A snapshot is a convenience, not a precondition (Ruling 15, HIVE-144
- * review): a channel whose handler is not yet registered is skipped, and one
- * whose handler throws — or whose promise rejects — has its key omitted
- * rather than failing the whole snapshot. A client that attaches to a server
- * mid-composition, or catches one channel in a bad moment, still gets the
- * other five instead of none.
+ * review, and extended in review): a channel whose handler is not yet
+ * registered is omitted, one whose handler throws or rejects is omitted, and
+ * one that simply takes longer than {@link SNAPSHOT_READ_BUDGET_MS} is
+ * omitted too — a slow read costs the same key a broken one would, never the
+ * whole snapshot, and never the handshake itself. All six race that budget
+ * **concurrently** (`raceSnapshotRead`, via `Promise.all`), not one after
+ * another: a sequential sum of six "safe" per-channel waits could still blow
+ * past the handshake's own deadline on its own, which a single shared budget
+ * bounding the whole call cannot.
  *
  * Sizing the resulting frame against the wire's ceiling is deliberately not
  * this function's job — it returns whatever it could read, and
@@ -423,18 +486,12 @@ const SNAPSHOT_PAYLOAD: Partial<Record<Channel, unknown>> = {
  * not otherwise fit.
  */
 async function buildAttachSnapshot(): Promise<Partial<Record<Channel, unknown>>> {
+  const results = await Promise.all(
+    SNAPSHOT_CHANNELS.map((channel) => raceSnapshotRead(channel, remoteRegistry.call(channel))),
+  );
   const snapshot: Partial<Record<Channel, unknown>> = {};
-  for (const channel of SNAPSHOT_CHANNELS) {
-    const handler = remoteRegistry.call(channel);
-    if (handler === null) continue;
-    try {
-      // `await` on a non-promise is a no-op — `github:prs` really is
-      // asynchronous, and the rest are not, so this covers both without a
-      // branch, exactly as `remote-dispatch.ts`'s own `call` does.
-      snapshot[channel] = await handler(SNAPSHOT_PAYLOAD[channel]);
-    } catch (cause) {
-      console.error(`[hive] attach snapshot could not read ${channel}:`, cause);
-    }
+  for (const result of results) {
+    if (result !== null) snapshot[result[0]] = result[1];
   }
   return snapshot;
 }

@@ -6,7 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { emptySnapshot } from '../../../../electron/shared/config-contract';
 import type { Channel } from '../../../../electron/shared/ipc-contract';
-import { SNAPSHOT_CHANNELS, WINDOW_BOUND, type ResumePoint } from '../../../../electron/shared/remote-contract';
+import {
+  SNAPSHOT_CHANNELS,
+  SNAPSHOT_READ_BUDGET_MS,
+  WINDOW_BOUND,
+  type ResumePoint,
+} from '../../../../electron/shared/remote-contract';
 import type { ResumeResult } from '../../../../electron/main/ipc/pty';
 import type { AttachedSocket } from '../../../../electron/main/ipc/socket-broadcaster';
 
@@ -171,12 +176,13 @@ let onChangeListener: ((entry: unknown) => void) | undefined;
  * A function rather than a plain value, like `resumeAnswer` below, so a case
  * can make it throw — `ledger:list` is one of {@link SNAPSHOT_CHANNELS}, and
  * this is what stands in for "a real read genuinely fails" in the attach
- * snapshot's own suite. It is also reached by the real agent scheduler this
- * composition builds (`openAsksFor`/`entries`), which is why the attach
- * snapshot's own throw case fences its override rather than swapping this in
- * unconditionally — see that test's comment.
+ * snapshot's own suite. It used to also be reached by the real agent
+ * scheduler this composition builds (`openAsksFor`/`entries`), racing this
+ * override on an unpredictable schedule of its own — the `createScheduler`
+ * mock below removes that reader entirely, which is what lets the attach
+ * snapshot's throw case assign this unconditionally rather than fencing it.
  */
-let ledgerReadImpl: () => { entries: unknown[]; openAsks: unknown[]; claims: Record<string, unknown> } = () => ({
+let ledgerReadImpl: () => unknown = () => ({
   entries: [],
   openAsks: [],
   claims: {},
@@ -569,6 +575,24 @@ describe('the attach replay loop (HIVE-143)', () => {
  * whether one broken read costs only its own key.
  */
 describe('the attach snapshot (HIVE-144)', () => {
+  it('answers an empty snapshot rather than throwing when no channel is registered yet', async () => {
+    // `resetIpcHandlers` without a following `registerIpcHandlers`: every one
+    // of the six is `null` in the registry. `raceSnapshotRead` does not
+    // special-case that — it calls `null` as a function and lets the
+    // resulting `TypeError` land in its own `.catch` — so this proves that
+    // path resolves cleanly to "omitted" rather than rejecting the whole call
+    // (HIVE-144 review, finding 3).
+    registerIpcHandlers();
+    resetIpcHandlers();
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const snapshot = await buildSnapshot()();
+
+    expect(snapshot).toEqual({});
+    expect(logged).toHaveBeenCalledTimes(SNAPSHOT_CHANNELS.length);
+    logged.mockRestore();
+  });
+
   it('carries every snapshot channel a real registry can answer', async () => {
     registerIpcHandlers();
 
@@ -607,6 +631,44 @@ describe('the attach snapshot (HIVE-144)', () => {
     expect(logged).toHaveBeenCalled();
     logged.mockRestore();
   });
+
+  it(
+    'drops a channel whose read is slower than SNAPSHOT_READ_BUDGET_MS, without waiting for it (HIVE-144 review — Ruling 15 extended)',
+    async () => {
+      /*
+        `CH.githubPrs`'s real handler awaits `loginEnvStatus()` and shells out
+        to `gh`, whose own runner timeout is 20 000 ms — four times the whole
+        handshake window — and it resolves rather than rejects on failure, so
+        a per-channel try/catch alone never sees it. `ledger:list` is what
+        this fixture can make hang on demand; the mechanism under test is the
+        same one that protects `github:prs` in production. A promise that
+        genuinely never settles (not a slow-but-finite one) is what proves the
+        *budget*, not the read finishing on its own, is what ends this.
+
+        Real timers, deliberately (HIVE-144 review, second draft): the other
+        five channels are answered by *this file's* real, unmocked
+        `registerIpcHandlers()` composition — `agents:list` in particular does
+        real, if fast, work of its own — and `vi.useFakeTimers()` only
+        controls `setTimeout`/`setInterval`, not when that real work's own I/O
+        actually completes. A first version of this test raced the fake
+        clock against real disk I/O and flaked: `agents:list` timed out
+        alongside the deliberately-hung `ledger:list`, for a reason that had
+        nothing to do with the budget under test. Two real seconds bought
+        instead is the honest price of exercising the real composition.
+      */
+      registerIpcHandlers();
+      ledgerReadImpl = () => new Promise(() => {});
+
+      const snapshot = await buildSnapshot()();
+
+      expect(snapshot).not.toHaveProperty(CH.ledgerList);
+      for (const channel of SNAPSHOT_CHANNELS) {
+        if (channel === CH.ledgerList) continue;
+        expect(snapshot).toHaveProperty(channel);
+      }
+    },
+    SNAPSHOT_READ_BUDGET_MS + 5_000,
+  );
 });
 
 /**

@@ -11,6 +11,7 @@ import {
   FRAME_KIND,
   REMOTE_PROTOCOL_VERSION,
   REMOTE_REFUSED_CHANNELS,
+  SNAPSHOT_CHANNELS,
   WINDOW_BOUND,
   authorizationOf,
   frameKindOf,
@@ -398,6 +399,32 @@ describe('remote contract: the call deadline (HIVE-144)', () => {
    */
   it('gives the client strictly longer than the server\'s own deadline', () => {
     expect(CALL_GIVE_UP_MS).toBeGreaterThan(CALL_DEADLINE_MS);
+  });
+});
+
+/**
+ * `SNAPSHOT_CHANNELS` named literally, not read back off itself (HIVE-144
+ * review). Every assertion in `tests/electron/remote-host/listener.test.ts`
+ * and `tests/electron/main/ipc/remote-composition.test.ts` iterates this
+ * array to build its own expectations, which makes membership self-certifying
+ * there: commenting out `CH.githubPrs` at the source left `pnpm exec vitest
+ * run tests/electron` fully green, because every one of those tests would
+ * simply have iterated five channels instead of six and never noticed a sixth
+ * was missing. This is the one test in the suite that names the six by hand,
+ * so a channel silently dropped from the array — accidentally, or in a merge
+ * conflict — has somewhere to be caught.
+ */
+describe('remote contract: the attach snapshot (HIVE-144)', () => {
+  it('is exactly these six channels, in this order', () => {
+    expect(SNAPSHOT_CHANNELS).toHaveLength(6);
+    expect(SNAPSHOT_CHANNELS).toEqual([
+      CH.sessionHistory,
+      CH.agentsList,
+      CH.ledgerList,
+      CH.notificationsList,
+      CH.githubPrs,
+      CH.configGet,
+    ]);
   });
 });
 
