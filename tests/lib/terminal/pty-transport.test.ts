@@ -93,12 +93,13 @@ function installBridge(): Bridge {
 /**
  * Push a live chunk as main would, with an explicit sequence number.
  *
- * `gen` defaults to `1` rather than being required at every call site: this
- * file is about `PtyTransport`'s own sequencing and reopen behaviour, none of
- * which reads `DataEvent.gen` yet (HIVE-144's renderer-side generation check
- * is a later story). The field still has to be present — `DataEvent` requires
- * it — so a constant default keeps every existing call honest about the wire
- * shape without making each one specify a value it does not care about.
+ * `gen` defaults to `1` rather than being required at every call site: most of
+ * this file is about `PtyTransport`'s own `seq` sequencing and reopen
+ * behaviour, not about a generation change, so a constant default keeps every
+ * such call honest about the wire shape without making it specify a value it
+ * does not care about. The generation tests below pass `gen` explicitly at
+ * every call — leaning on this default there would silently stop exercising a
+ * generation change at all (HIVE-144).
  */
 function pushData(sessionId: string, chunk: string, seq: number, gen = 1): void {
   for (const cb of [...bridge.data]) cb({ sessionId, chunk, seq, gen });
@@ -479,6 +480,25 @@ describe('PtyTransport — lifecycle lines', () => {
     // The surviving output is still shown — a gap notice replaces nothing.
     expect(text).toContain('one');
     expect(text).toContain('three');
+  });
+
+  it('reports a gap when the generation changes, without reopenChannel (HIVE-144)', () => {
+    const text = transcriptAfter(() => {
+      pushData('sess-a', 'one', 1, 1);
+      // A restart the renderer was never told about: seq is contiguous, gen is not.
+      pushData('sess-a', 'two', 2, 2);
+    });
+
+    expect(text).toContain('── output gap detected ──');
+  });
+
+  it('reports no gap when the generation holds and seq is contiguous', () => {
+    const text = transcriptAfter(() => {
+      pushData('sess-a', 'one', 1, 1);
+      pushData('sess-a', 'two', 2, 1);
+    });
+
+    expect(text).not.toContain('output gap');
   });
 
   it('stays silent while sequence numbers are contiguous', () => {

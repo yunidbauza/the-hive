@@ -145,6 +145,18 @@ interface EntityChannel {
   /** Last `seq` seen, for gap detection. `null` until the first chunk. */
   lastSeq: number | null;
   /**
+   * Last `gen` seen, for restart detection. `null` until the first chunk.
+   *
+   * `reopenChannel` clears this on the local restart path, but a client that
+   * was disconnected when the restart happened never calls it — the stream
+   * itself has to carry the news. `seq` alone cannot: main's sequence counter
+   * restarts at 0 for each new process, so a stale `lastSeq` misreads the
+   * restart's first chunk as a gap while a genuine generation change with
+   * contiguous `seq` sails through unnoticed. Checking `gen` catches exactly
+   * that case.
+   */
+  gen: number | null;
+  /**
    * A spawn has been requested. Never reset — not even after an exit or a lost
    * host.
    *
@@ -211,6 +223,7 @@ function openChannel(entityId: string): EntityChannel {
     buffer: [],
     bufferUnits: 0,
     lastSeq: null,
+    gen: null,
     spawnRequested: false,
     spawnResult: null,
     closed: false,
@@ -228,14 +241,22 @@ function openChannel(entityId: string): EntityChannel {
       if (channel.closed) return;
 
       /**
-       * A skipped sequence number means a batch was lost between main and here.
-       * Saying so is the whole point: a terminal that quietly drops a batch
-       * renders output that never existed in that order, and the user debugs
-       * something that never happened.
+       * A skipped sequence number means a batch was lost between main and here;
+       * a changed generation means the process behind this entity restarted
+       * without this transport being told to reopen the channel — a client
+       * that was disconnected at the time never gets that call, so the stream
+       * itself is the only place left to notice. Either way, saying so is the
+       * whole point: a terminal that quietly drops a batch, or quietly starts
+       * showing a different process's output, renders a transcript that never
+       * existed in that order, and the user debugs something that never
+       * happened.
        */
-      if (channel.lastSeq !== null && event.seq !== channel.lastSeq + 1) {
+      const restarted = channel.gen !== null && event.gen !== channel.gen;
+      const skipped = channel.lastSeq !== null && event.seq !== channel.lastSeq + 1;
+      if (restarted || skipped) {
         emit(channel, GAP);
       }
+      channel.gen = event.gen;
       channel.lastSeq = event.seq;
 
       /**
@@ -636,6 +657,15 @@ export function resetCloneChannel(): void {
  * for each new session id, so a retained `lastSeq` reports a spurious gap on
  * the first chunk of every restart.
  *
+ * `gen` is reset alongside it, but this half is now belt and braces rather
+ * than the only defence: every `DataEvent` also carries `gen`, so the data
+ * handler notices a restart from the stream itself even when this function is
+ * never called — the case that matters for a client that was disconnected
+ * while the restart happened and so never had the chance to call it. Clearing
+ * it here still matters for the local, connected case: it keeps this reopen
+ * from reporting a spurious gap on the first chunk of the new generation, the
+ * same reason `lastSeq` is cleared above.
+ *
  * `spawnResult` is dropped so the next `requestSpawn` genuinely asks again.
  */
 export function reopenChannel(entityId: string): void {
@@ -643,6 +673,7 @@ export function reopenChannel(entityId: string): void {
   if (!channel) return;
   channel.closed = false;
   channel.lastSeq = null;
+  channel.gen = null;
   channel.spawnRequested = false;
   channel.spawnResult = null;
 }
