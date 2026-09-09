@@ -614,6 +614,22 @@ describe('reopenChannel', () => {
     expect(seen.join('')).not.toContain('output gap detected');
   });
 
+  it('does not report a gap on the new generation’s first chunk when gen also changes (HIVE-144)', () => {
+    const seen: string[] = [];
+    createPtyTransport('sess-a', 'nova-web').onData((chunk) => seen.push(chunk));
+    pushData('sess-a', 'first', 1, 1);
+    for (const cb of [...bridge.exit]) cb({ sessionId: 'sess-a', exitCode: 0 });
+
+    reopenChannel('sess-a');
+    // The restart that legitimately reopens a channel is exactly the case
+    // that bumps gen as well as resetting seq — main hands the new process a
+    // fresh generation. reopenChannel clears both, so neither one reads the
+    // new process's first chunk as a discontinuity.
+    pushData('sess-a', 'fresh', 1, 2);
+
+    expect(seen.join('')).not.toContain('output gap detected');
+  });
+
   it('is a no-op for an entity that never had a channel', () => {
     expect(() => reopenChannel('never-seen')).not.toThrow();
   });
