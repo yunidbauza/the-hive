@@ -1068,13 +1068,17 @@ describe('post-attach frames', () => {
     await flushMicrotasks();
 
     /*
-      The **same object**, not merely one of the same shape. `watchReporter` in
-      `ipc/index.ts` dedupes by identity through a `WeakSet`, so a fresh
-      reporter per frame would register a new `destroyed` listener on every
-      keystroke report — pushing into this socket's `closeListeners` array
-      without bound, and firing `deliver.onRendererReset()` once per keystroke
-      on close. Nothing else in this file would notice: every other assertion
-      here is about what a reporter *does*, and a fresh one does the same thing.
+      The **same object**, not merely one of the same shape. The surface
+      registry (`ipc/surfaces.ts`) dedupes by identity through a `WeakMap`, so a
+      fresh reporter per frame would register a new `destroyed` listener on
+      every keystroke report — pushing into this socket's `closeListeners`
+      array without bound, and announcing one surface's death per keystroke on
+      close. Since HIVE-145 it would be worse than noisy: each of those frames
+      would be a *distinct surface*, so the input-box record this socket wrote
+      would be keyed to a surface that nothing ever reports for again.
+
+      Nothing else in this file would notice: every other assertion here is
+      about what a reporter *does*, and a fresh one does the same thing.
     */
     expect(dispatch.notify).toHaveBeenCalledTimes(2);
     const first = dispatch.notify.mock.calls[0]![1];

@@ -5,6 +5,7 @@ import {
   type LedgerEntry,
   type LedgerKind,
 } from '../../shared/ledger-contract';
+import type { SurfaceId } from '../ipc/surfaces';
 
 import type { Ledger } from './index';
 
@@ -68,51 +69,41 @@ export interface Deliver {
   /** A session's agent came up, including after a resume. */
   onReady(entityId: string): void;
   /**
-   * The visible terminal surface reported what its input box holds
-   * (HIVE-135). `empty` and `draft` make that session the focused one;
-   * `unfocused` releases it, if it still holds the record.
+   * A terminal surface reported what its input box holds (HIVE-135). `empty`
+   * and `draft` make that session the focused one **for that surface**;
+   * `unfocused` releases it, if that surface still holds it.
    */
-  onPrompt(entityId: string, input: PromptInput): void;
-  /** The renderer reloaded or died: no surface is visible until one reports again. */
-  onRendererReset(): void;
+  onPrompt(surfaceId: SurfaceId, entityId: string, input: PromptInput): void;
+  /**
+   * One surface went away — a renderer reloaded or died, or a socket dropped.
+   * Its record goes with it, and every other surface's stays (HIVE-145).
+   */
+  onSurfaceGone(surfaceId: SurfaceId): void;
 }
 
 export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions): Deliver {
   /**
-   * The one session a user can type into, and what its box holds (HIVE-135).
+   * What each surface's input box holds, and for which session (HIVE-135).
    *
-   * One record, not a map, because the stage shows one terminal at a time and
-   * a user can only type into the terminal they can see. Everything else
-   * delivers on idleness alone, as it did before this existed — the check is
-   * expensive on the renderer side and the race it guards is only possible on
-   * the visible surface.
+   * A map keyed by surface, not one record (HIVE-145). It *was* one record,
+   * justified by "the stage shows one terminal at a time and a user can only
+   * type into the terminal they can see" — a fact about a single renderer.
+   * Server mode makes every attached socket a surface and all of them report
+   * down the same `pty:prompt` notify, so the single record held whatever the
+   * last surface to speak said, about whichever session that one was watching.
    *
-   * `null` until a surface reports. That is the conservative default in
-   * disguise: no surface has reported means no surface is visible, and a
-   * surface reports in the same effect that reveals it.
+   * Two silent failures came out of that, and both are what this map closes:
+   * device B reporting on its own session released a hold device A had asked
+   * for, and a socket dropping wiped a hold a still-live surface was relying
+   * on — landing the nudge in a half-typed box, which is exactly the
+   * regression HIVE-135 exists to prevent.
    *
-   * **Known hazard, deliberately parked: one record, many surfaces
-   * (HIVE-143 review; HIVE-145 "Two attached clients" must close it).** "The
-   * stage shows one terminal at a time" was a fact about a single renderer.
-   * Server mode makes every attached socket a surface, and all of them write
-   * *this* value through the same `pty:prompt` notify — so with two devices
-   * attached the record says whatever the last one to report said, about
-   * whichever session it is watching. Two consequences, both silent:
-   * device B reporting `unfocused` for its own session releases a hold device A
-   * asked for, and `onRendererReset()` — fired when *a* surface goes away — wipes
-   * a hold that a different, still-live surface is relying on. The nudge then
-   * lands in a half-typed input box, which is the exact regression HIVE-135
-   * exists to prevent.
-   *
-   * Unreachable today: no client half exists until HIVE-144, so there is never
-   * more than one surface reporting. The fix is to key this by surface — a map
-   * from the reporter identity `watchReporter` already dedupes on to that
-   * surface's own `{ entityId, input }` — and to answer {@link clear} by asking
-   * whether **any** surface holds a draft for the session, rather than by asking
-   * the one. `onRendererReset` then drops one surface's entry instead of the
-   * whole record.
+   * Everything not focused *anywhere* delivers on idleness alone, as it did
+   * before this existed. Empty means no surface has reported, which is the
+   * conservative default in disguise: a surface reports in the same effect
+   * that reveals it.
    */
-  let focus: { entityId: string; input: 'empty' | 'draft' } | null = null;
+  const focus = new Map<SurfaceId, { entityId: string; input: 'empty' | 'draft' }>();
 
   /**
    * May a line be written into this session's box right now?
@@ -121,7 +112,17 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
    * transition retries it. Writing into a draft never is.
    */
   function clear(entityId: string): boolean {
-    return focus === null || focus.entityId !== entityId || focus.input === 'empty';
+    /*
+      **Any** surface holding a draft refuses the write, not "the" surface
+      (HIVE-145). Refusing is always safe — a held nudge writes no receipt and
+      the next transition retries it — so with two devices on one session the
+      right question is whether anyone is mid-sentence, not whether the last
+      one to report was.
+    */
+    for (const held of focus.values()) {
+      if (held.entityId === entityId && held.input === 'draft') return false;
+    }
+    return true;
   }
 
   /**
@@ -260,16 +261,18 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
       flush(entityId);
     },
 
-    onPrompt(entityId, input) {
+    onPrompt(surfaceId, entityId, input) {
+      const before = focus.get(surfaceId);
+
       if (input === 'unfocused') {
-        // Only the holder releases the record: a late report from a surface
-        // that already lost focus must not clear a newer one.
-        if (focus?.entityId === entityId) focus = null;
+        // Only the holder releases its own record: a late report naming a
+        // session this surface has already left must not clear the entry it
+        // has since made, nor any other surface's.
+        if (before?.entityId === entityId) focus.delete(surfaceId);
         return;
       }
 
-      const before = focus;
-      focus = { entityId, input };
+      focus.set(surfaceId, { entityId, input });
 
       /*
         The third flush trigger, beside idle and ready. Not on a report that
@@ -284,8 +287,14 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
       if (input === 'empty' && !unchanged) flush(entityId);
     },
 
-    onRendererReset() {
-      focus = null;
+    onSurfaceGone(surfaceId) {
+      /*
+        One entry, not the whole map. No flush follows, for the same reason an
+        `unfocused` report does not flush: a surface going away is not a
+        transition to an empty box, and the next idle, ready or empty report
+        from a surface that *is* live takes the backlog.
+      */
+      focus.delete(surfaceId);
     },
   };
 }

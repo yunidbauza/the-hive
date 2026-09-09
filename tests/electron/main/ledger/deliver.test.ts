@@ -245,9 +245,17 @@ describe('createDeliver', () => {
    * their draft. The visible surface reports what it sees; main refuses to
    * write into a draft and picks the nudge up when the box clears.
    */
+  /**
+   * Two surface ids, standing in for two devices attached to one server
+   * (HIVE-145). The registry's real ids are opaque strings; nothing here
+   * depends on their shape.
+   */
+  const A = 'surface-a';
+  const B = 'surface-b';
+
   describe('the focused session', () => {
     it('holds a nudge while the focused session reports a draft', () => {
-      deliver.onPrompt('sess-a', 'draft');
+      deliver.onPrompt(A, 'sess-a', 'draft');
       ask('sess-a');
 
       expect(write).not.toHaveBeenCalled();
@@ -255,9 +263,9 @@ describe('createDeliver', () => {
     });
 
     it('delivers the held nudge the moment the box is reported empty', () => {
-      deliver.onPrompt('sess-a', 'draft');
+      deliver.onPrompt(A, 'sess-a', 'draft');
       ask('sess-a');
-      deliver.onPrompt('sess-a', 'empty');
+      deliver.onPrompt(A, 'sess-a', 'empty');
 
       expect(write).toHaveBeenCalledTimes(1);
       expect(receipts()).toHaveLength(1);
@@ -266,7 +274,7 @@ describe('createDeliver', () => {
     it('holds at idle too — idle is about the agent, not the box', () => {
       idle.delete('sess-a');
       ask('sess-a');
-      deliver.onPrompt('sess-a', 'draft');
+      deliver.onPrompt(A, 'sess-a', 'draft');
       idle.add('sess-a');
       deliver.onIdle('sess-a');
 
@@ -276,7 +284,7 @@ describe('createDeliver', () => {
     it('delivers to a session that is not the focused one, as before', () => {
       live.add('sess-b');
       idle.add('sess-b');
-      deliver.onPrompt('sess-a', 'draft');
+      deliver.onPrompt(A, 'sess-a', 'draft');
       ask('sess-b');
 
       expect(write).toHaveBeenCalledTimes(1);
@@ -284,8 +292,8 @@ describe('createDeliver', () => {
     });
 
     it('treats an unfocused report as "no session is focused"', () => {
-      deliver.onPrompt('sess-a', 'draft');
-      deliver.onPrompt('sess-a', 'unfocused');
+      deliver.onPrompt(A, 'sess-a', 'draft');
+      deliver.onPrompt(A, 'sess-a', 'unfocused');
       ask('sess-a');
 
       expect(write).toHaveBeenCalledTimes(1);
@@ -295,10 +303,10 @@ describe('createDeliver', () => {
       // sess-a was focused with a draft; focus moved to sess-b, also a draft.
       live.add('sess-b');
       idle.add('sess-b');
-      deliver.onPrompt('sess-a', 'draft');
-      deliver.onPrompt('sess-b', 'draft');
+      deliver.onPrompt(A, 'sess-a', 'draft');
+      deliver.onPrompt(A, 'sess-b', 'draft');
       // A late `unfocused` from sess-a must not clear sess-b's record.
-      deliver.onPrompt('sess-a', 'unfocused');
+      deliver.onPrompt(A, 'sess-a', 'unfocused');
       ask('sess-b');
 
       expect(write).not.toHaveBeenCalled();
@@ -312,14 +320,14 @@ describe('createDeliver', () => {
         nudge started. Staged so the session *is* idle when the repeat
         arrives: with the transition guard removed this writes twice.
       */
-      deliver.onPrompt('sess-a', 'empty');
+      deliver.onPrompt(A, 'sess-a', 'empty');
       ask('sess-a', 'first');
       expect(write).toHaveBeenCalledTimes(1);
 
       idle.delete('sess-a');
       ask('sess-a', 'second');
       idle.add('sess-a');
-      deliver.onPrompt('sess-a', 'empty');
+      deliver.onPrompt(A, 'sess-a', 'empty');
 
       expect(write).toHaveBeenCalledTimes(1);
       // The second is not lost: the next idle transition takes it.
@@ -328,33 +336,130 @@ describe('createDeliver', () => {
     });
 
     it('clears the record when the renderer goes away', () => {
-      deliver.onPrompt('sess-a', 'draft');
-      deliver.onRendererReset();
+      deliver.onPrompt(A, 'sess-a', 'draft');
+      deliver.onSurfaceGone(A);
       ask('sess-a');
 
       expect(write).toHaveBeenCalledTimes(1);
     });
 
     it('flushes a held nudge on the first empty report after a renderer reset', () => {
-      deliver.onPrompt('sess-a', 'draft');
+      deliver.onPrompt(A, 'sess-a', 'draft');
       ask('sess-a');
-      deliver.onRendererReset();
+      deliver.onSurfaceGone(A);
       expect(write).not.toHaveBeenCalled();
 
       // The surface remounts and reads an empty box: this is the transition.
-      deliver.onPrompt('sess-a', 'empty');
+      deliver.onPrompt(A, 'sess-a', 'empty');
 
       expect(write).toHaveBeenCalledTimes(1);
     });
 
+    /**
+     * Two surfaces, and the reason this record stopped being one value
+     * (HIVE-145).
+     *
+     * "The stage shows one terminal at a time" was a fact about a single
+     * renderer. Server mode makes every attached socket a surface, and all of
+     * them report down the same `pty:prompt` notify — so the old single record
+     * said whatever the last one to speak said, about whichever session *it*
+     * was watching.
+     */
+    describe('two surfaces', () => {
+      it('holds while any surface reports a draft for that session', () => {
+        deliver.onPrompt(A, 'sess-a', 'draft');
+        deliver.onPrompt(B, 'sess-a', 'empty');
+        ask('sess-a');
+
+        expect(write).not.toHaveBeenCalled();
+      });
+
+      it('does not release one surface\'s hold when another reports elsewhere', () => {
+        live.add('sess-b');
+        idle.add('sess-b');
+        deliver.onPrompt(A, 'sess-a', 'draft');
+        ask('sess-a');
+
+        // B is looking at a different session entirely. Under the old single
+        // record this `empty` overwrote A's draft and the nudge landed
+        // mid-typing.
+        deliver.onPrompt(B, 'sess-b', 'empty');
+
+        expect(write).not.toHaveBeenCalled();
+      });
+
+      it('delivers only once the last surface holding a draft clears it', () => {
+        deliver.onPrompt(A, 'sess-a', 'draft');
+        deliver.onPrompt(B, 'sess-a', 'draft');
+        ask('sess-a');
+
+        deliver.onPrompt(A, 'sess-a', 'empty');
+        expect(write).not.toHaveBeenCalled();
+
+        deliver.onPrompt(B, 'sess-a', 'empty');
+        expect(write).toHaveBeenCalledTimes(1);
+      });
+
+      it('keeps a live surface\'s hold when a different surface goes away', () => {
+        deliver.onPrompt(A, 'sess-a', 'draft');
+        ask('sess-a');
+
+        /*
+          The regression this story exists to stop. `onRendererReset` was wired
+          to every socket's `destroyed`, so *any* attached socket dropping wiped
+          the record — and the held nudge was then written into the half-typed
+          box belonging to a surface that never went anywhere. That is HIVE-135's
+          own failure, arriving through a second client rather than through a
+          change to the nudge logic.
+        */
+        deliver.onSurfaceGone(B);
+
+        expect(write).not.toHaveBeenCalled();
+      });
+
+      it('releases the hold when the surface holding it goes away', () => {
+        deliver.onPrompt(A, 'sess-a', 'draft');
+        deliver.onSurfaceGone(A);
+        ask('sess-a');
+
+        expect(write).toHaveBeenCalledTimes(1);
+      });
+
+      it('tracks the two surfaces separately when they watch different sessions', () => {
+        live.add('sess-b');
+        idle.add('sess-b');
+        deliver.onPrompt(A, 'sess-a', 'draft');
+        deliver.onPrompt(B, 'sess-b', 'draft');
+
+        ask('sess-a');
+        ask('sess-b');
+        expect(write).not.toHaveBeenCalled();
+
+        deliver.onPrompt(A, 'sess-a', 'empty');
+        expect(write).toHaveBeenCalledTimes(1);
+        expect(write.mock.calls[0][0]).toBe('sess-a');
+      });
+
+      it('ignores a late unfocused from one surface against another\'s record', () => {
+        deliver.onPrompt(A, 'sess-a', 'draft');
+        deliver.onPrompt(B, 'sess-a', 'draft');
+        // A late report from B about a session it has already left must not
+        // clear A's hold on the same session.
+        deliver.onPrompt(B, 'sess-a', 'unfocused');
+        ask('sess-a');
+
+        expect(write).not.toHaveBeenCalled();
+      });
+    });
+
     it('flushes a held nudge after a draft, away, and back to an empty box', () => {
-      deliver.onPrompt('sess-a', 'draft');
+      deliver.onPrompt(A, 'sess-a', 'draft');
       ask('sess-a');
-      deliver.onPrompt('sess-a', 'unfocused');
+      deliver.onPrompt(A, 'sess-a', 'unfocused');
       // Delivered as an unfocused session? No entry arrived and no idle fired.
       expect(write).not.toHaveBeenCalled();
 
-      deliver.onPrompt('sess-a', 'empty');
+      deliver.onPrompt(A, 'sess-a', 'empty');
 
       expect(write).toHaveBeenCalledTimes(1);
     });

@@ -1756,7 +1756,7 @@ export function registerIpcHandlers(
     private copies of this loop would be five chances to disagree about who is
     live.
   */
-  surfaces.onGone(() => deliver.onRendererReset());
+  surfaces.onGone((surfaceId) => { deliver.onSurfaceGone(surfaceId); });
 
   /**
    * One entry landed, from any party — pushed the way `notifications:new` is
@@ -4577,14 +4577,18 @@ export function registerIpcHandlers(
    * The input-box report (HIVE-135). Session ids arriving from the renderer are
    * entity ids, as they are for `ack`; `deliver` keys its record by the same.
    *
-   * The reporter is watched for its own reload, crash and close: a record left
-   * behind by a renderer that no longer exists would hold every nudge to that
+   * Keyed by the surface that sent it (HIVE-145), which is also what registers
+   * that surface's lifetime: a record left behind by a renderer that no longer
+   * exists — or by a socket that dropped — would hold every nudge to that
    * session forever, since nothing would ever report it empty.
+   *
+   * `surfaceFor` cannot mislabel an attached socket as a window: the socket is
+   * its own reporter and `onAttach` tracked it before any notify from it could
+   * arrive, so this resolves to the existing surface, kind intact.
    */
   on(CH.ptyPrompt, (event, payload) => {
-    surfaceFor(event.sender);
     const report = parsePromptReport(payload);
-    deliver.onPrompt(report.sessionId, report.input);
+    deliver.onPrompt(surfaceFor(event.sender), report.sessionId, report.input);
   });
 
   /*
