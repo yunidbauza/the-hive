@@ -359,11 +359,14 @@ export function createRemoteListener(options: {
   let bindError: string | null = null;
 
   /**
-   * Every armed handshake-deadline timer that has not yet fired or been
-   * cleared. `stop()` clears whatever is left so a timer belonging to a
-   * listener that no longer exists cannot fire against it later — load-
-   * bearing for a test process, where a leaked `setTimeout` is a handle that
-   * outlives the test it was created in.
+   * Every timer armed on behalf of a socket that has not yet fired or been
+   * cleared — the handshake deadline (`ATTACH_HANDSHAKE_TIMEOUT_MS`) and,
+   * since HIVE-144, the per-call deadline (`CALL_DEADLINE_MS`) below. `stop()`
+   * clears whatever is left so a timer belonging to a listener that no
+   * longer exists cannot fire against it later — load-bearing for a test
+   * process, where a leaked `setTimeout` is a handle that outlives the test
+   * it was created in, and true in production too: a timer armed for a
+   * socket must not survive the listener that armed it.
    */
   const pendingTimers = new Set<NodeJS.Timeout>();
 
@@ -684,10 +687,15 @@ export function createRemoteListener(options: {
                     at all, because some handlers genuinely wait on the world:
                     `agents:run` awaits the memoised `mcp.start()`, and
                     `slack:sign-in` spawns a real `claude` turn and waits for
-                    it. Left unbounded, that would hold `socketHandle` — and
+                    it. Left unbounded, that holds `socketHandle` — and
                     therefore the socket — past a detach that has already
                     happened, with the client's own correlation id outstanding
-                    and nothing on the wire to say so.
+                    and nothing on the wire to say so. This deadline does not
+                    change that retention: the `.then`/`.catch` reaction below
+                    is still a live closure over `socketHandle` for as long as
+                    `dispatch.call` takes to actually settle, however late.
+                    What it fixes is the client's wait, not the handle's
+                    lifetime.
 
                     `CALL_DEADLINE_MS` is the fix: if the call has not settled
                     by then, `deadline` fires, answers `CALL_TIMEOUT_CODE`, and
@@ -710,6 +718,7 @@ export function createRemoteListener(options: {
                   let settled = false;
                   const deadline = setTimeout(() => {
                     settled = true;
+                    pendingTimers.delete(deadline);
                     if (socket.readyState !== socket.OPEN) return;
                     send(socket, {
                       kind: 'error',
@@ -718,6 +727,7 @@ export function createRemoteListener(options: {
                       message: `no answer within ${String(CALL_DEADLINE_MS)}ms`,
                     });
                   }, CALL_DEADLINE_MS);
+                  pendingTimers.add(deadline);
 
                   void dispatch
                     .call(postAttachFrame as CallFrame)
@@ -728,6 +738,17 @@ export function createRemoteListener(options: {
                       // one correlation id.
                       if (settled) return;
                       clearTimeout(deadline);
+                      pendingTimers.delete(deadline);
+                      /*
+                        No `readyState` check here, unlike the two sites above
+                        and below — this is HIVE-143's original answer path,
+                        unchanged by this task. A send to a closed socket
+                        routes through `ws`'s `sendAfterClose`, which emits an
+                        `'error'` rather than throwing, and the `'error'`
+                        listener registered on this socket at connection time
+                        already swallows it. Adding a check here is scope this
+                        task does not own.
+                      */
                       socketHandle.send(answer);
                     })
                     .catch((cause: unknown) => {
@@ -746,6 +767,7 @@ export function createRemoteListener(options: {
                       */
                       if (settled) return;
                       clearTimeout(deadline);
+                      pendingTimers.delete(deadline);
                       console.error('[hive] server mode could not answer a call frame:', cause);
                       if (socket.readyState !== socket.OPEN) return;
                       try {
@@ -930,8 +952,9 @@ export function createRemoteListener(options: {
         boundHost = null;
 
         // Nothing left to wait for once a timer has fired or been cleared,
-        // but one armed against a socket that never sent anything must not
-        // survive the listener it belongs to.
+        // but one still armed on behalf of a socket — mid-handshake, or a
+        // call still short of its deadline — must not survive the listener
+        // it belongs to.
         for (const timer of pendingTimers) clearTimeout(timer);
         pendingTimers.clear();
         // The cap belongs to a running listener. Leaving members here would

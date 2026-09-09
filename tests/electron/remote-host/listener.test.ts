@@ -1133,6 +1133,61 @@ describe('the call deadline (HIVE-144)', () => {
     expect(framesForId).toHaveLength(1);
     expect(framesForId[0]).toMatchObject({ kind: 'result' });
   });
+
+  /**
+   * The `.catch()` branch's own pair, mirroring the two `.then()` cases
+   * above: `dispatch.call` rejects — the *send* failing, per its own comment
+   * — rather than resolving, and the `settled`/`clearTimeout` guard has to
+   * hold on this path too, not only the success one.
+   */
+  it('sends a send-failed error and clears the deadline when dispatch.call rejects before it', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const dispatch: RemoteDispatch = {
+      call: vi.fn(async () => {
+        throw new Error('boom');
+      }),
+      notify: vi.fn(),
+    };
+    const { socket, sent } = await attachedSocket({ dispatch });
+
+    vi.useFakeTimers();
+    socket.emit('message', JSON.stringify({ kind: 'call', id: 'c1', channel: CH.configGet, payload: {} }));
+    await vi.advanceTimersByTimeAsync(0);
+    // Comfortably past the deadline, to prove clearTimeout on the catch path
+    // actually cancelled the timer rather than merely not yet being due.
+    await vi.advanceTimersByTimeAsync(CALL_DEADLINE_MS + 1);
+
+    const framesForId = sent.filter((frame) => (frame as { id?: string }).id === 'c1');
+    expect(framesForId).toHaveLength(1);
+    expect(framesForId[0]).toMatchObject({ kind: 'error', code: 'send-failed' });
+    logged.mockRestore();
+  });
+
+  it('sends no second frame when dispatch.call rejects after the deadline', async () => {
+    let rejectLate: (cause: unknown) => void = () => {
+      throw new Error('rejectLate called before the promise executor ran');
+    };
+    const late = new Promise<ResultFrame | ErrorFrame>((_resolve, reject) => {
+      rejectLate = reject;
+    });
+    const dispatch: RemoteDispatch = { call: vi.fn(() => late), notify: vi.fn() };
+    const { socket, sent } = await attachedSocket({ dispatch });
+
+    vi.useFakeTimers();
+    socket.emit('message', JSON.stringify({ kind: 'call', id: 'c1', channel: CH.agentsRun, payload: {} }));
+    await vi.advanceTimersByTimeAsync(CALL_DEADLINE_MS + 1);
+
+    rejectLate(new Error('late failure'));
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The timeout's own error frame, and nothing the late rejection adds —
+    // the same "two answers is worse than one" property as the `.then()`
+    // side, proven on the branch that answers a rejection instead of a
+    // result.
+    const framesForId = sent.filter((frame) => (frame as { id?: string }).id === 'c1');
+    expect(framesForId).toHaveLength(1);
+    expect(framesForId[0]).toMatchObject({ kind: 'error', code: CALL_TIMEOUT_CODE });
+  });
 });
 
 /**

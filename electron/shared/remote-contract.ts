@@ -633,8 +633,8 @@ export interface ErrorFrame {
 
 /**
  * How long the server lets one `call` run before it answers a
- * {@link CALL_TIMEOUT_CODE} error frame and lets go of the socket handle the
- * call was holding closed over (HIVE-144).
+ * {@link CALL_TIMEOUT_CODE} error frame instead of leaving the client's
+ * correlation id to hang forever (HIVE-144).
  *
  * `dispatch.call` never rejects — every refusal and every thrown handler
  * already comes back as an `error` frame — but it can fail to *settle* at
@@ -642,7 +642,12 @@ export interface ErrorFrame {
  * spawns a real `claude` turn and waits for it, so a handler stuck on either
  * one holds `electron/remote-host/listener.ts`'s `socketHandle` past a
  * detach that has already happened, with the client's own correlation id
- * outstanding and nothing on the wire to say so.
+ * outstanding and nothing on the wire to say so. This deadline does not
+ * release that handle — the `.then`/`.catch` reaction still keeps
+ * `socketHandle` alive for as long as `dispatch.call` takes to actually
+ * settle, however late — it only makes sure the client is not left waiting:
+ * an answer goes out on time, and the eventual real answer is discarded
+ * rather than sent as a confusing second frame for the same `id`.
  *
  * Two minutes: comfortably longer than either of those genuinely slow paths
  * takes to succeed, so a real `agents:run` or `slack:sign-in` never trips it,
