@@ -59,6 +59,8 @@ const removeAllListeners = vi.fn((channel: string) => {
  * watches the app-level focus events and reads `BrowserWindow` live.
  */
 const appListeners = new Map<string, Set<() => void>>();
+/** Toasts this process raised for the attached server (HIVE-145). */
+const toastsRaised: { title: string; body: string }[] = [];
 let windows: { isDestroyed: () => boolean; isFocused: () => boolean }[] = [
   { isDestroyed: () => false, isFocused: () => true },
 ];
@@ -76,6 +78,24 @@ vi.mock('electron', () => ({
     },
   },
   BrowserWindow: { getAllWindows: () => windows },
+  /*
+    The proxy answers `notifications:toast` itself rather than forwarding it
+    (HIVE-145), so driving the pump reaches a real Electron `Notification`.
+  */
+  Notification: class {
+    static isSupported(): boolean {
+      return true;
+    }
+    constructor(options: { title: string; body: string }) {
+      toastsRaised.push(options);
+    }
+    on(): this {
+      return this;
+    }
+    show(): void {
+      /* nothing to observe beyond the construction above */
+    }
+  },
 }));
 
 const { registerRemoteProxy, remoteProxyBindingsSize, resetRemoteProxy } = await import(
@@ -143,6 +163,7 @@ beforeEach(() => {
   handlers.clear();
   listeners.clear();
   appListeners.clear();
+  toastsRaised.length = 0;
   windows = [{ isDestroyed: () => false, isFocused: () => true }];
   vi.clearAllMocks();
 });
@@ -282,12 +303,36 @@ describe('registerRemoteProxy', () => {
     const broadcaster = fakeBroadcaster();
     registerRemoteProxy({ client, broadcaster });
 
-    for (const channel of eventChannels) {
+    /*
+      All but one (HIVE-145). `notifications:toast` is answered by this process
+      rather than forwarded: an Electron `Notification` is a main-process
+      object, which is also why that channel is absent from `EVENT_CHANNELS`.
+    */
+    const forwarded = eventChannels.filter((channel) => channel !== 'notifications:toast');
+
+    for (const channel of forwarded) {
       const payload = { channel };
       client.emit(channel, payload);
       expect(broadcaster.emit).toHaveBeenCalledWith(channel, payload);
     }
-    expect(broadcaster.emit).toHaveBeenCalledTimes(eventChannels.length);
+    expect(broadcaster.emit).toHaveBeenCalledTimes(forwarded.length);
+  });
+
+  it('raises a toast here rather than forwarding it to the window', () => {
+    const client = fakeClient();
+    const broadcaster = fakeBroadcaster();
+    registerRemoteProxy({ client, broadcaster });
+
+    client.emit('notifications:toast', {
+      id: 'n1',
+      kind: 'session.blocked',
+      title: 'hero is blocked',
+      body: 'waiting on you',
+      action: { type: 'session', entityId: 'hero' },
+    });
+
+    expect(toastsRaised).toEqual([{ title: 'hero is blocked', body: 'waiting on you' }]);
+    expect(broadcaster.emit).not.toHaveBeenCalled();
   });
 
   it("refuses each WINDOW_BOUND channel locally with the table's own reason", async () => {
