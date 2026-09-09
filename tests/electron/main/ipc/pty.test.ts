@@ -306,24 +306,32 @@ describe('flow control across surfaces', () => {
   const stats = () => multi.diagnostics().find((entry) => entry.sessionId === 'a')!;
 
   it('releases only up to the slowest surface', () => {
+    /*
+      Both enrol on the first batch, which is what a real client does — the
+      renderer acks each batch as xterm parses it. A surface that enrols later
+      cannot un-release what was already released, so a test that acked one
+      client through three batches before the other had spoken would be
+      measuring an ordering no client produces.
+    */
     flood('a', 10);
-    flood('a', 20);
-    flood('a', 30);
-
-    multi.ack('a', 3, 'fast');
+    multi.ack('a', 1, 'fast');
     multi.ack('a', 1, 'slow');
 
+    flood('a', 20);
+    flood('a', 30);
+    multi.ack('a', 3, 'fast');
+
     // The fast client has consumed everything; the slow one is one batch in.
-    // Only that first batch's bytes may be released.
     expect(stats().bytesAcked).toBe(10);
     expect(stats().unacked).toBe(50);
   });
 
   it('releases the rest once the slowest catches up', () => {
     flood('a', 10);
+    multi.ack('a', 1, 'slow');
     flood('a', 20);
     multi.ack('a', 2, 'fast');
-    expect(stats().unacked).toBe(30);
+    expect(stats().unacked).toBe(20);
 
     multi.ack('a', 2, 'slow');
 
@@ -331,28 +339,34 @@ describe('flow control across surfaces', () => {
   });
 
   it('keeps the producer paused while one surface lags', () => {
+    flood('a', 10);
+    multi.ack('a', 1, 'slow');
     flood('a', 600 * 1024);
     expect(supervisor.pause).toHaveBeenCalledWith('a');
 
-    multi.ack('a', 1, 'fast');
+    multi.ack('a', 2, 'fast');
 
     // A fast client on a fast link must not let the pty outrun a slow one.
     expect(supervisor.resume).not.toHaveBeenCalled();
   });
 
   it('resumes when the slow surface finally acks', () => {
+    flood('a', 10);
+    multi.ack('a', 1, 'slow');
     flood('a', 600 * 1024);
-    multi.ack('a', 1, 'fast');
+    multi.ack('a', 2, 'fast');
     expect(supervisor.resume).not.toHaveBeenCalled();
 
-    multi.ack('a', 1, 'slow');
+    multi.ack('a', 2, 'slow');
 
     expect(supervisor.resume).toHaveBeenCalledWith('a');
   });
 
   it('a departing surface releases what it was holding', () => {
+    flood('a', 10);
+    multi.ack('a', 1, 'slow');
     flood('a', 600 * 1024);
-    multi.ack('a', 1, 'fast');
+    multi.ack('a', 2, 'fast');
     expect(supervisor.resume).not.toHaveBeenCalled();
 
     /*
@@ -384,42 +398,69 @@ describe('flow control across surfaces', () => {
     expect(stats().unacked).toBe(0);
   });
 
-  it('gates the newcomer on everything stamped after it arrived', () => {
+  it('gates the newcomer from its own first ack onwards', () => {
     surfaceIds = ['fast'];
     flood('a', 10);
     surfaceIds = ['fast', 'late'];
     multi.ack('a', 1, 'fast');
     expect(stats().unacked).toBe(0);
 
-    // From here on it is an ordinary consumer, and the window waits for it.
+    // It opens the session and acks: from here it is an ordinary consumer and
+    // the window waits for it.
     flood('a', 20);
-    multi.ack('a', 2, 'fast');
-    expect(stats().unacked).toBe(20);
-
     multi.ack('a', 2, 'late');
+    flood('a', 30);
+    multi.ack('a', 3, 'fast');
+    expect(stats().unacked).toBe(30);
+
+    multi.ack('a', 3, 'late');
     expect(stats().unacked).toBe(0);
   });
 
-  it('gates on a surface that was present when the batch was stamped', () => {
+  it('does not gate on a surface that is merely attached', () => {
     flood('a', 10);
 
     multi.ack('a', 1, 'fast');
 
-    expect(stats().unacked).toBe(10);
+    /*
+      Being attached is not watching. `slow` has never acked this session, so
+      it is not consuming it and must not hold its window — the defect ship's
+      whole-branch review found, where a second device froze every session it
+      had not opened.
+    */
+    expect(stats().unacked).toBe(0);
   });
 
-  it('releases everything while nobody is watching at all', () => {
+  it('releases everything while no surface exists at all', () => {
     surfaceIds = [];
 
     flood('a', 600 * 1024);
 
     /*
-      No consumer means nothing to protect, and holding bytes for nobody would
-      pause the channel for the life of the session. The scrollback in the
-      pty-host is what a surface arriving later reads from.
+      A served mini with no client attached, running the fleet it exists to
+      run. Nothing to protect, and pausing here would stop every agent on an
+      unattended server after half a megabyte — the deployment this whole Epic
+      is for.
     */
     expect(stats().unacked).toBe(0);
     expect(supervisor.pause).not.toHaveBeenCalled();
+  });
+
+  it('holds a session no surface has ever opened, even with surfaces around', () => {
+    surfaceIds = ['fast', 'slow'];
+
+    flood('a', 600 * 1024);
+
+    /*
+      Spawned and never opened. This is the pre-HIVE-145 answer and it is still
+      the right one: an agent nobody has looked at should not run away with the
+      fd. The pause lifts the moment somebody opens it and acks.
+    */
+    expect(supervisor.pause).toHaveBeenCalledWith('a');
+
+    multi.ack('a', 1, 'fast');
+    multi.ack('a', 1, 'slow');
+    expect(supervisor.resume).toHaveBeenCalledWith('a');
   });
 
   it('never moves a surface\'s mark backwards', () => {
@@ -436,6 +477,63 @@ describe('flow control across surfaces', () => {
     multi.ack('a', 3, 'slow');
 
     expect(stats().unacked).toBe(0);
+  });
+
+  /**
+   * The seam defect ship's whole-branch review found (HIVE-145).
+   *
+   * A surface only acks a session whose terminal it has actually mounted —
+   * `terminal-host.tsx` mounts lazily on first visit, and `pty-transport.ts`
+   * fires the ack through subscribers, so a channel nobody is subscribed to
+   * acks nothing. Gating every session on every *attached* surface therefore
+   * froze every session the second device had not opened: its mark was seeded
+   * once at the head, never moved, and the window never released for anyone.
+   *
+   * Being attached is not the same as watching. An ack is what says a surface
+   * is consuming this session, so an ack is what enrols it in this session's
+   * window.
+   */
+  it('does not gate a session on a surface that never acked it', () => {
+    // The laptop attaches and opens something else entirely.
+    surfaceIds = ['fast', 'elsewhere'];
+
+    for (let i = 1; i <= 20; i += 1) {
+      flood('a', 40 * 1024);
+      multi.ack('a', i, 'fast');
+    }
+
+    expect(stats().unacked).toBe(0);
+    expect(supervisor.pause).not.toHaveBeenCalled();
+  });
+
+  it('gates on a surface from its first ack onwards', () => {
+    surfaceIds = ['fast', 'slow'];
+    flood('a', 10);
+
+    // `slow` has now shown it is watching this session.
+    multi.ack('a', 1, 'slow');
+    flood('a', 20);
+    multi.ack('a', 2, 'fast');
+
+    expect(stats().unacked).toBe(20);
+
+    multi.ack('a', 2, 'slow');
+    expect(stats().unacked).toBe(0);
+  });
+
+  it('keeps a session running for the others when one client stops acking it', () => {
+    surfaceIds = ['fast', 'slow'];
+    flood('a', 10);
+    multi.ack('a', 1, 'fast');
+    multi.ack('a', 1, 'slow');
+
+    // `slow` goes quiet mid-stream — the case backpressure genuinely exists
+    // for, and the one that must still hold the window.
+    flood('a', 600 * 1024);
+    multi.ack('a', 2, 'fast');
+
+    expect(supervisor.pause).toHaveBeenCalledWith('a');
+    expect(supervisor.resume).not.toHaveBeenCalled();
   });
 
   it('ignores a release for a surface it never saw', () => {

@@ -1037,16 +1037,18 @@ async function openClient(
      */
     unmanaged?: boolean;
     /**
-     * Stop acking `pty:data`, so this socket is a deliberately stalled consumer
-     * (HIVE-145).
+     * Ack this many `pty:data` frames per session, then go quiet — a
+     * deliberately stalled consumer (HIVE-145).
      *
-     * The flow-control window follows the **slowest** surface watching a
-     * session, which is what stops a fast client letting the pty outrun a slow
-     * one into the slow one's own unbounded `ws` send buffer. A client that
-     * never acks is how a case proves that from outside: the producer pauses at
-     * the fd and stays paused until this socket either catches up or goes away.
+     * The flow-control window follows the **slowest** surface *watching* a
+     * session, and a surface enrols by acking: a client that never acked at all
+     * is one whose user has not opened that session, and gating on it would
+     * freeze the session for the person who has. So a stalled client has to ack
+     * at least once before it can hold anything — which is also what a real one
+     * does, since its renderer acks each batch as xterm parses it and only
+     * stops when the link or the renderer does.
      */
-    silent?: boolean;
+    stallAfter?: number;
   } = {},
 ): Promise<LiveClient> {
   const socket = new WebSocket(url);
@@ -1147,7 +1149,7 @@ async function openClient(
       flood halfway through and the case waiting on the tail would time out
       against a session that is not broken, only paused.
     */
-    if (options.silent === true) return;
+    if (options.stallAfter !== undefined && counted.frames > options.stallAfter) return;
     send({ kind: 'notify', channel: CH.ptyAck, payload: { sessionId: event.sessionId, seq: event.seq } });
   });
 
@@ -1805,11 +1807,11 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
     let otherProjectDir: string;
 
     /** A client that has completed a real handshake, optionally resuming. */
-    const attached = async (options: { resumeFrom?: Record<string, ResumePoint>; silent?: boolean } = {}): Promise<LiveClient> =>
+    const attached = async (options: { resumeFrom?: Record<string, ResumePoint>; stallAfter?: number } = {}): Promise<LiveClient> =>
       openClient(url, { id: device.device.id, token: device.token }, options);
 
     /** The same, on the other device's credential. */
-    const attachedSecond = async (options: { silent?: boolean } = {}): Promise<LiveClient> =>
+    const attachedSecond = async (options: { stallAfter?: number } = {}): Promise<LiveClient> =>
       openClient(url, { id: secondDevice.device.id, token: secondDevice.token }, options);
 
     beforeAll(async () => {
@@ -2487,7 +2489,13 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
 
       it('24. lets a stalled client pause the producer rather than buffer without bound, and releases on its drop', async () => {
         const fast = await attached();
-        const stalled = await attachedSecond({ silent: true });
+        /*
+          Acks the first batch and then goes quiet. That first ack is what
+          enrols it in this session's window — a client that never acked at all
+          is one whose user has not opened the session, and must not hold it for
+          the person who has.
+        */
+        const stalled = await attachedSecond({ stallAfter: 1 });
         const sessionId = `stalled-client-${String(Date.now())}`;
         await fast.spawnSession(seededProjectId, sessionId);
 
