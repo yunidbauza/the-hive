@@ -48,7 +48,8 @@ const fakeWindow = (): FakeWindow => ({
 });
 
 /**
- * Channels the fake `ipcMain.handle` below currently considers bound.
+ * Channels the fake `ipcMain.handle` below currently considers bound, and the
+ * handler each is bound to.
  *
  * A bare `vi.fn()` here would accept a second registration for the same
  * channel silently, which makes `expect(() => registerIpcHandlers()).not
@@ -56,8 +57,16 @@ const fakeWindow = (): FakeWindow => ({
  * that, and that throw is what HIVE-144's whole reversibility guarantee is
  * proven against. So `handle` tracks what it has bound and `removeHandler`
  * un-tracks it, mirroring the one behaviour that matters here.
+ *
+ * A `Map` rather than a `Set` since HIVE-144's mode switch: the function is
+ * kept as well as the name, so a test can actually *call* a channel and find
+ * it answering. Counting bindings proves the surface is whole; calling one
+ * proves the thing counted is a live handler and not a bookkeeping entry.
  */
-const handledChannels = new Set<string>();
+const handledChannels = new Map<
+  string,
+  (event: unknown, payload: unknown) => unknown
+>();
 
 vi.mock('electron', () => ({
   app: {
@@ -78,13 +87,13 @@ vi.mock('electron', () => ({
     decryptString: () => '',
   },
   ipcMain: {
-    handle: (channel: string, _fn: unknown) => {
+    handle: (channel: string, fn: (event: unknown, payload: unknown) => unknown) => {
       // The exact refusal Electron's real `ipcMain.handle` makes — the throw
       // HIVE-144's re-registration test exists to survive.
       if (handledChannels.has(channel)) {
         throw new Error(`Attempted to register a second handler for '${channel}'`);
       }
-      handledChannels.add(channel);
+      handledChannels.set(channel, fn);
     },
     on: vi.fn(),
     removeHandler: (channel: string) => {
@@ -296,6 +305,16 @@ let resumeAnswer: (entityId: string, from: ResumePoint) => ResumeResult | null =
  */
 let generationAnswer: (entityId: string) => number | undefined = () => 1;
 
+/**
+ * The live entity ids this machine's own sessions layer reports (HIVE-144).
+ *
+ * `switchIpcMode`'s `live-sessions` refusal reads exactly this, through
+ * `sessionsLayer()`, and it is the only refusal a user can clear themselves —
+ * so a case that wants one sets this and gets the production path, not an
+ * injected substitute for it.
+ */
+let entitiesAnswer: () => string[] = () => [];
+
 vi.mock('../../../../electron/main/sessions', () => ({
   createSessions: () => ({
     open: vi.fn(),
@@ -307,7 +326,7 @@ vi.mock('../../../../electron/main/sessions', () => ({
     generationFor: (entityId: string) => generationAnswer(entityId),
     kill: vi.fn(),
     restart: vi.fn(async () => {}),
-    entities: () => [],
+    entities: () => entitiesAnswer(),
     isIdle: () => false,
     observedCwd: () => undefined,
     containerRemoval: async () => {},
@@ -317,9 +336,13 @@ vi.mock('../../../../electron/main/sessions', () => ({
 }));
 
 const { CH } = await import('../../../../electron/shared/ipc-contract');
-const { registerIpcHandlers, remoteRegistrySize, resetIpcHandlers } = await import(
-  '../../../../electron/main/ipc'
+const { ipcBindingsSize, registerIpcHandlers, remoteRegistrySize, resetIpcHandlers, sessionsLayer } =
+  await import('../../../../electron/main/ipc');
+const { remoteProxyBindingsSize, resetRemoteProxy } = await import(
+  '../../../../electron/main/ipc/remote-proxy'
 );
+const { PlaintextRefusedError } = await import('../../../../electron/remote-client/socket');
+const { registerIpc, switchIpcMode } = await import('../../../../electron/main/ipc/router');
 
 /**
  * Read at import time, before any test body has run, so the composition-order
@@ -345,11 +368,21 @@ beforeEach(() => {
   resumeAnswer = () => null;
   generationAnswer = () => 1;
   ledgerReadImpl = () => ({ entries: [], openAsks: [], claims: {} });
+  entitiesAnswer = () => [];
   vi.clearAllMocks();
+  /*
+    Both surfaces, both hooks (HIVE-144). `registerRemoteProxy` binds the same
+    channel names `registerIpcHandlers` does, so a case that left the proxy
+    registered would make the *next* case's registration hit the fake
+    `ipcMain.handle`'s duplicate-handler throw — which is a real refusal, from
+    the one behaviour this fixture models faithfully, arriving in the wrong test.
+  */
+  resetRemoteProxy();
   resetIpcHandlers();
 });
 
 afterEach(() => {
+  resetRemoteProxy();
   resetIpcHandlers();
 });
 
@@ -775,5 +808,286 @@ describe('handlers that dereference the Electron event', () => {
       'Either add the channel to WINDOW_BOUND (electron/shared/remote-contract.ts),',
       'or adapt the handler the way pty:prompt was, to accept what a socket can supply.',
     ].join(' ')).toEqual(expected);
+  });
+});
+
+/**
+ * The mode switch (HIVE-144, Task 10).
+ *
+ * Here rather than in `router.test.ts` because the property under test is a
+ * *count*: how many channels each surface actually has on `ipcMain` before,
+ * during and after a switch. `router.test.ts` mocks both registrars, so every
+ * count there would be zero — this file is the one that runs the real
+ * `registerIpcHandlers`, the real `registerRemoteProxy`, and the real bindings
+ * recorder underneath both.
+ *
+ * The brief's own version of "leaves the local surface bound when it refuses"
+ * invoked one channel and checked it answered. That is necessary and nowhere
+ * near sufficient: half an unbound surface answers that one channel too. So
+ * every case below asserts the size of both recorders, and the invocation is
+ * kept alongside as the second half — a count proves the surface is whole, a
+ * call proves what was counted is a live handler.
+ */
+describe('the mode switch (HIVE-144)', () => {
+  /**
+   * Both modes bind the same channels: every `call` and every `notify` in the
+   * contract, and no `event` — 105 of them. Written once here because the two
+   * surfaces agreeing on this number is itself the invariant. `remote-proxy
+   * .test.ts` and the registry case above own the question of whether 105 is
+   * still the right number; this file only asks whether the two agree.
+   */
+  const BOUND_CHANNELS = 105;
+
+  /**
+   * `assertSender` compares `senderFrame` to `sender.mainFrame` by identity,
+   * so a trusted event has to share one object rather than two equal literals.
+   */
+  const mainFrame = { url: 'file:///out/renderer/index.html' };
+  const trustedEvent = { senderFrame: mainFrame, sender: { mainFrame } };
+
+  /** Call a channel the way Electron would, through whatever is bound now. */
+  const invoke = (channel: string, payload?: unknown): Promise<unknown> => {
+    const handler = handledChannels.get(channel);
+    if (handler === undefined) throw new Error(`nothing is bound to ${channel}`);
+    return Promise.resolve(handler(trustedEvent, payload));
+  };
+
+  /** A `RemoteClient` fake — fully implemented, so nothing is cast away. */
+  const fakeClient = () => ({
+    call: vi.fn(async () => undefined),
+    notify: vi.fn(),
+    onEvent: vi.fn(() => () => {}),
+    snapshot: vi.fn(() => ({})),
+    serverName: vi.fn(() => 'mini'),
+    close: vi.fn(),
+  });
+
+  /**
+   * A switch that would succeed: a loopback target, a stored credential, and a
+   * dialler that answers. Each case overrides the one thing it is about.
+   */
+  const opts = (over: Record<string, unknown> = {}) => ({
+    target: { host: '127.0.0.1', port: 7433 },
+    credential: { deviceId: 'device-1', token: 'secret' },
+    connect: async () => fakeClient(),
+    ...over,
+  });
+
+  /** Bind local through the production door, as boot does, and count it. */
+  const boundLocally = (): number => {
+    registerIpc('local');
+    return ipcBindingsSize();
+  };
+
+  it('binds the same number of channels either way', async () => {
+    const local = boundLocally();
+
+    expect(await switchIpcMode('remote', opts())).toEqual({ ok: true });
+
+    expect(local).toBe(BOUND_CHANNELS);
+    expect(remoteProxyBindingsSize()).toBe(BOUND_CHANNELS);
+  });
+
+  it('refuses local → remote while local sessions are live, and names them', async () => {
+    boundLocally();
+    /*
+      In the order they were opened. `Sessions.entities()` spreads a `Map`'s
+      keys, and `Map` iteration is insertion-ordered by the language spec, so
+      this array is deterministic rather than incidental — and it is the order
+      a pane should list them in.
+    */
+    entitiesAnswer = () => ['hero-refresh', 'api-migration'];
+
+    expect(await switchIpcMode('remote', opts())).toEqual({
+      ok: false,
+      reason: 'live-sessions',
+      sessions: ['hero-refresh', 'api-migration'],
+    });
+  });
+
+  it('leaves the local surface entirely bound when it refuses over live sessions', async () => {
+    const local = boundLocally();
+    entitiesAnswer = () => ['hero-refresh'];
+
+    await switchIpcMode('remote', opts());
+
+    // Whole, not merely alive: an unbind that ran before the check would show
+    // up here as a smaller number, never as a missing `config:get`.
+    expect(ipcBindingsSize()).toBe(local);
+    expect(remoteProxyBindingsSize()).toBe(0);
+    expect(await invoke(CH.configGet)).toBeDefined();
+  });
+
+  it('refuses a plaintext target before dialling or unbinding anything', async () => {
+    const local = boundLocally();
+    const connect = vi.fn();
+
+    const outcome = await switchIpcMode(
+      'remote',
+      opts({ target: { host: '203.0.113.7', port: 7433 }, connect }),
+    );
+
+    expect(outcome).toEqual({ ok: false, reason: 'plaintext-refused' });
+    /*
+      Never dialled. A refusal that cost a TCP connection has already told
+      whoever holds that address that this machine is here and looking for a
+      Hive — the same property `connectRemote`'s own fence-(1) test pins.
+    */
+    expect(connect).not.toHaveBeenCalled();
+    expect(ipcBindingsSize()).toBe(local);
+    expect(remoteProxyBindingsSize()).toBe(0);
+    expect(await invoke(CH.configGet)).toBeDefined();
+  });
+
+  it('rebinds the whole local surface when the connection fails', async () => {
+    const local = boundLocally();
+
+    const outcome = await switchIpcMode(
+      'remote',
+      opts({ connect: () => Promise.reject(new Error('connect ECONNREFUSED 127.0.0.1:7433')) }),
+    );
+
+    expect(outcome).toEqual({
+      ok: false,
+      reason: 'connect-failed',
+      message: 'connect ECONNREFUSED 127.0.0.1:7433',
+    });
+    // The count, not one channel: a rebind that dropped half the surface would
+    // still answer `config:get`, and the window would be quietly crippled.
+    expect(ipcBindingsSize()).toBe(local);
+    expect(remoteProxyBindingsSize()).toBe(0);
+    expect(await invoke(CH.configGet)).toBeDefined();
+  });
+
+  /**
+   * `connectRemote`'s second fence: the host is a legitimate `.ts.net` string,
+   * and the resolver answered with an address that is not a tailnet one. It
+   * cannot be caught before the dial — the string is genuinely fine — so it
+   * arrives as a rejection, and it must still read as `plaintext-refused`
+   * rather than as a generic failure, because the remedy is the address field
+   * and the tailnet, not a retry.
+   */
+  it('reports a refusal the resolver made as plaintext-refused, and rebinds local', async () => {
+    const local = boundLocally();
+
+    const outcome = await switchIpcMode(
+      'remote',
+      opts({
+        target: { host: 'mini.tail1234.ts.net', port: 7433 },
+        connect: () => Promise.reject(new PlaintextRefusedError('it resolved to 203.0.113.7')),
+      }),
+    );
+
+    expect(outcome).toEqual({ ok: false, reason: 'plaintext-refused' });
+    expect(ipcBindingsSize()).toBe(local);
+    expect(remoteProxyBindingsSize()).toBe(0);
+  });
+
+  it('switches local → remote when nothing is live', async () => {
+    boundLocally();
+    const client = fakeClient();
+
+    expect(await switchIpcMode('remote', opts({ connect: async () => client }))).toEqual({
+      ok: true,
+    });
+
+    // The local surface is gone and the remote one is whole — not both, which
+    // is what a switch that forgot to unbind would leave.
+    expect(ipcBindingsSize()).toBe(0);
+    expect(remoteProxyBindingsSize()).toBe(BOUND_CHANNELS);
+    // Bound to the socket, not to this process: the proxy forwards.
+    await invoke(CH.configGet);
+    expect(client.call).toHaveBeenCalledWith(CH.configGet, undefined);
+  });
+
+  it('always allows remote → local, whatever is running on the other machine', async () => {
+    const local = boundLocally();
+    await switchIpcMode('remote', opts());
+
+    /*
+      The mini keeps its sessions; this client simply stops showing them, so
+      there is nothing to strand and nothing to refuse over. `liveSessions` is
+      answered non-empty on purpose: a `live-sessions` check that sat above the
+      mode branch rather than inside its `remote` arm would fire here, and this
+      is the case that catches it.
+    */
+    const outcome = await switchIpcMode('local', opts({ liveSessions: () => ['hero-refresh'] }));
+
+    expect(outcome).toEqual({ ok: true });
+    expect(ipcBindingsSize()).toBe(local);
+    expect(remoteProxyBindingsSize()).toBe(0);
+    expect(await invoke(CH.configGet)).toBeDefined();
+  });
+
+  it('closes the socket it opened when it detaches', async () => {
+    boundLocally();
+    const client = fakeClient();
+    await switchIpcMode('remote', opts({ connect: async () => client }));
+
+    await switchIpcMode('local', opts());
+
+    // Whoever opened it closes it — `registerRemoteProxy` is handed a client it
+    // did not open, and a detached socket nobody closes is a leak that outlives
+    // every window this app has.
+    expect(client.close).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * `registerRemoteProxy` refuses a second registration outright (Task 9),
+   * rather than silently orphaning the previous one's `notify` listeners. So
+   * every re-register has to be preceded by `resetRemoteProxy()`, and a switch
+   * that skipped it would throw where its caller expects an outcome.
+   */
+  it('re-attaches to a second server without a relaunch', async () => {
+    boundLocally();
+    await switchIpcMode('remote', opts());
+
+    const second = fakeClient();
+    const outcome = await switchIpcMode(
+      'remote',
+      opts({ target: { host: '100.64.0.9', port: 7433 }, connect: async () => second }),
+    );
+
+    expect(outcome).toEqual({ ok: true });
+    expect(remoteProxyBindingsSize()).toBe(BOUND_CHANNELS);
+    expect(ipcBindingsSize()).toBe(0);
+    // The new socket answers, which is what "re-attached" means.
+    await invoke(CH.configGet);
+    expect(second.call).toHaveBeenCalledWith(CH.configGet, undefined);
+  });
+
+  /**
+   * A settings pane commits the address field on blur while still in local
+   * mode, which reaches the switch as `local` when local is already bound.
+   * Tearing down and rebuilding for that would dispose the sessions layer —
+   * killing this machine's PTYs over a keystroke in a text field.
+   */
+  it('does not touch a local surface that is already bound', async () => {
+    const local = boundLocally();
+    const layer = sessionsLayer();
+
+    expect(await switchIpcMode('local', opts())).toEqual({ ok: true });
+
+    // Identity, not a count: a teardown and rebuild lands on the same number.
+    expect(sessionsLayer()).toBe(layer);
+    expect(ipcBindingsSize()).toBe(local);
+  });
+
+  /**
+   * The credential is read, not assumed. A machine that has never paired has
+   * nothing to attach with, and that has to surface as a refusal the pane can
+   * render rather than as an unhandled rejection in main — with local rebound,
+   * because the unbind has already happened by the time the dial is attempted.
+   */
+  it('fails the switch, and rebinds local, when nothing has been paired', async () => {
+    const local = boundLocally();
+    const connect = vi.fn();
+
+    const outcome = await switchIpcMode('remote', opts({ credential: null, connect }));
+
+    expect(outcome).toMatchObject({ ok: false, reason: 'connect-failed' });
+    expect(connect).not.toHaveBeenCalled();
+    expect(ipcBindingsSize()).toBe(local);
+    expect(remoteProxyBindingsSize()).toBe(0);
   });
 });

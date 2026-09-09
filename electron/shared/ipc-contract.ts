@@ -60,6 +60,7 @@ import type {
   SetProjectRuntimeRequest,
   SetReceiverRequest,
   SetRemoteRequest,
+  SetRemoteResult,
   SetRuntimeRequest,
   SetServerRequest,
   SetSlackRequest,
@@ -1641,8 +1642,17 @@ export interface HiveBridge {
      * {@link ConfigSnapshot.remote} without storing or forgetting a
      * credential — see {@link HiveBridge.remote} for those. No credential
      * field here either, for the same reason `setServer` carries none.
+     *
+     * The one asymmetry with `setServer`, and the reason this answers a
+     * {@link SetRemoteResult} rather than a bare snapshot (HIVE-144): a
+     * listening socket cannot be moved without a relaunch, but *attaching*
+     * applies immediately. So this verb also performs the switch, and the
+     * switch can be refused — while local sessions are live, over a plaintext
+     * target, or because the far machine did not answer. `switched` is what
+     * happened; `config` is the file as it now stands, which is the old one
+     * untouched whenever `switched` is not `ok` (Ruling 19).
      */
-    setRemote(request: SetRemoteRequest): Promise<ConfigSnapshot>;
+    setRemote(request: SetRemoteRequest): Promise<SetRemoteResult>;
     /**
      * Show the config file in the OS file manager (story 107).
      *

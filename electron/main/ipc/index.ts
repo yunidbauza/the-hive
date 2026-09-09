@@ -32,6 +32,9 @@ import type {
   CommandDiagnostic,
   ConfigSnapshot,
   EnvDiagnostic,
+  RemoteMode,
+  SetRemoteResult,
+  SwitchOutcome,
 } from '@shared/config-contract';
 import type {
   DirEntry,
@@ -145,7 +148,12 @@ import {
 } from '@shared/slack-contract';
 import type { UpdateStatus } from '@shared/update-contract';
 
-import { NO_ENCRYPTION_REASON, createTokenStore } from '../../remote-client/token-store';
+import {
+  NO_ENCRYPTION_REASON,
+  createTokenStore,
+  type StoredDeviceCredential,
+  type TokenStore,
+} from '../../remote-client/token-store';
 import { createAgentsRuntime, type AgentRegistry } from '../agents';
 import { resolveClaude } from '../agents/claude-path';
 import { agentsDirectoryFor } from '../agents/directory';
@@ -299,6 +307,93 @@ const attachedSockets = new Set<AttachedSocket>();
  * switch must be able to empty it from outside that function.
  */
 const bindings = createBindings(ipcMain);
+
+/**
+ * How many channels this process has bound locally (HIVE-144).
+ *
+ * Test-only, in the same register as {@link remoteRegistrySize} below and
+ * `remoteProxyBindingsSize` in `remote-proxy.ts` — and it is what makes a
+ * refused mode switch *provably* free. Invoking one channel and finding it
+ * alive is necessary and not sufficient: half an unbound surface answers that
+ * one channel too. A count is what distinguishes "still works" from "still
+ * entirely intact".
+ */
+export function ipcBindingsSize(): number {
+  return bindings.size();
+}
+
+/**
+ * The device credential this machine was handed when it attached to someone
+ * else's Hive (HIVE-144) — composed exactly as Jira's is: `safeStorage` and a
+ * file under `userData`, both injected, so `token-store.ts` can be answered by
+ * a unit test without a keyring.
+ *
+ * A function rather than a module-scope constant because `app.getPath` is only
+ * answerable after the app exists, and this module is imported long before
+ * that. One function rather than two construction sites because
+ * `remote:pair`'s handler writes through it and {@link readRemoteCredential}
+ * reads through it, and a second spelling of that filename is a credential
+ * written to one path and looked for at another.
+ */
+function remoteCredentialStore(): TokenStore {
+  return createTokenStore({
+    safeStorage,
+    filePath: join(app.getPath('userData'), 'remote-credential.bin'),
+  });
+}
+
+/**
+ * The stored device credential, or `null` when there is none this machine can
+ * use (HIVE-144).
+ *
+ * Exported for exactly one caller: `ipc/router.ts`'s `switchIpcMode`, which
+ * needs it to dial and has no business composing the store itself — Ruling 2
+ * put the read on the switch rather than inside `connectRemote`, precisely so
+ * the socket module stays free of Electron's `safeStorage`.
+ *
+ * Still not reachable from the renderer: no IPC verb returns this, and none
+ * may. `remote:pair` writes the credential and `remote:forget` clears it;
+ * neither hands it back.
+ */
+export function readRemoteCredential(): StoredDeviceCredential | null {
+  return remoteCredentialStore().read();
+}
+
+/**
+ * How `config:set-remote` asks this process to change mode (HIVE-144).
+ *
+ * Structural, and declared here rather than imported from `./router`, because
+ * that module already imports this one and `import/no-cycle` is an error.
+ * `registerIpcHandlers` takes the real `switchIpcMode` as an argument — the
+ * router owns which mode is bound, and the handler asks it rather than
+ * reaching into it.
+ *
+ * Only `target` is named of the switch's own options: it is the one the
+ * handler must pass, because Ruling 19 forbids writing the address to disk
+ * until the switch has succeeded, so the stored config is the wrong place for
+ * the switch to read it from here.
+ */
+export type ModeSwitcher = (
+  mode: RemoteMode,
+  options?: { target?: { host: string; port: number } },
+) => Promise<SwitchOutcome>;
+
+/**
+ * The default {@link ModeSwitcher}: a loud failure, never a quiet success.
+ *
+ * Reached only by a suite that calls `registerIpcHandlers` directly —
+ * `registerIpc` always passes the real one, so production cannot land here.
+ * It throws rather than answering `{ ok: true }` because a silent success
+ * would let `config:set-remote` write `mode: "remote"` to disk over a switch
+ * that never happened, which is the exact state Ruling 19 exists to make
+ * impossible.
+ */
+const noModeSwitcher: ModeSwitcher = () => {
+  throw new Error(
+    'config:set-remote reached a registration with no mode switcher. ' +
+      'registerIpcHandlers was called directly rather than through registerIpc.',
+  );
+};
 
 /**
  * The event object handed to a call handler reached over a socket.
@@ -1129,9 +1224,15 @@ export function remoteListenerBindError(): string | null {
  * the windows of this process, which is every caller today; server mode passes
  * one that also writes to attached sockets. Optional rather than required so the
  * boot path and eight existing suites call this exactly as they did.
+ *
+ * @param switchMode How `config:set-remote` changes this process's IPC mode
+ * (HIVE-144). See {@link ModeSwitcher} for why it arrives as an argument
+ * rather than as an import, and {@link noModeSwitcher} for why its default
+ * throws instead of quietly succeeding.
  */
 export function registerIpcHandlers(
   broadcaster: Broadcaster = createWindowBroadcaster(),
+  switchMode: ModeSwitcher = noModeSwitcher,
 ): void {
   /*
     Both surfaces, always (HIVE-143). In local mode the socket half iterates an
@@ -3141,19 +3242,20 @@ export function registerIpcHandlers(
 
   /**
    * The device credential this machine was handed when it attached to
-   * someone else's Hive (HIVE-144) — composed exactly as Jira's is, a few
-   * lines up: `safeStorage` and a file under `userData`, both injected, so
-   * `token-store.ts` can be answered by a unit test without a keyring.
+   * someone else's Hive (HIVE-144).
+   *
+   * {@link remoteCredentialStore} rather than a `createTokenStore` call here,
+   * so the filename exists in one place: the mode switch reads this same
+   * credential through `readRemoteCredential`, and a second spelling of that
+   * path would be a credential written by `remote:pair` and looked for
+   * somewhere else at attach time.
    *
    * `read()` is main-internal — see `electron/remote-client/token-store.ts`'s
    * own doc comment for why this is a distinct module from `jira/auth.ts`
    * rather than a shared helper. No IPC verb returns the token; `remote:pair`
    * below only ever writes it, and `remote:forget` only ever clears it.
    */
-  const remoteTokenStore = createTokenStore({
-    safeStorage,
-    filePath: join(app.getPath('userData'), 'remote-credential.bin'),
-  });
+  const remoteTokenStore = remoteCredentialStore();
 
   /**
    * The PR poller's read — the app's second handler that executes a binary,
@@ -3317,16 +3419,68 @@ export function registerIpcHandlers(
     },
   );
   /**
-   * HIVE-144. Whether this window is a client and where it attaches — an
-   * ordinary settings write, exactly like `config:set-server` above.
+   * HIVE-144. Whether this window is a client and where it attaches — and,
+   * unlike `config:set-server` above, a verb that *acts* as well as writes:
+   * attaching applies immediately, where a listening socket cannot be moved
+   * without a relaunch.
+   *
+   * ## Validate, then switch, then write only on success (Ruling 19)
+   *
+   * `parseSetRemoteRequest` checks the payload's shape. `switchMode` checks
+   * the target — a plaintext socket carries this machine's device credential,
+   * so an unvalidated host is a credential handed to whoever answers — and
+   * only then dials. `setRemote` runs last, and only when the switch
+   * succeeded.
+   *
+   * The order is the whole point. Writing first and being refused would leave
+   * `config.json` saying `remote` while this process is bound local, and the
+   * *next launch* would attach to a server the user was just told it could not
+   * attach to. There is no revert path here because there is nothing to
+   * revert: a refused or failed switch never reaches `setRemote`, so the file
+   * is untouched and disk and runtime never disagree.
+   *
+   * ## The merge, and why the switch is told a target
+   *
+   * All three fields are optional and merged into the stored block, so the
+   * *effective* mode and address are what this handler acts on — not whatever
+   * subset this one call carried. The merged target is passed to the switch
+   * explicitly rather than left to its own default, precisely because the
+   * config file must not yet contain it.
+   *
+   * A request that changes nothing about the effective mode or target still
+   * reaches the switch, and `switchIpcMode` answers it without touching a
+   * binding — see its own local-when-already-local guard. That is what keeps
+   * a user typing in the address field while in local mode from tearing down
+   * and rebuilding every session layer on each committed keystroke.
+   *
+   * ## Answering after tearing down the surface this handler is bound to
+   *
+   * A successful switch unbinds this very channel before this function
+   * returns. That is safe rather than lucky: `ipcMain` has already captured
+   * the reply for the invocation in flight, and everything after the `await`
+   * is a module import rather than a closure over the registration that has
+   * gone — so the renderer gets its answer even though nothing would answer a
+   * *second* call on this channel.
    *
    * `parseSetRemoteRequest` never lets a token through this payload, so this
    * handler never touches `remoteTokenStore` — writing the credential is
    * `remote:pair`'s job below, not this one's.
    */
-  handle(CH.configSetRemote, (_event, payload): ConfigSnapshot =>
-    setRemote(parseSetRemoteRequest(payload)),
-  );
+  handle(CH.configSetRemote, async (_event, payload): Promise<SetRemoteResult> => {
+    const request = parseSetRemoteRequest(payload);
+    const current = getConfig().remote;
+    const switched = await switchMode(request.mode ?? current.mode, {
+      target: {
+        host: request.host ?? current.host,
+        port: request.port ?? current.port,
+      },
+    });
+    // The old snapshot, unchanged, on every refusal — the file was never
+    // opened. `getConfig()` rather than the `current` block above, because a
+    // pane needs the whole snapshot back either way.
+    if (!switched.ok) return { switched, config: getConfig() };
+    return { switched, config: setRemote(request) };
+  });
   /**
    * Store the device credential a `server:pair` mint on some *other* Hive
    * handed back (HIVE-144) — the opposite direction from `server:pair` above,

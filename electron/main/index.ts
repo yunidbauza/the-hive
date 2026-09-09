@@ -9,7 +9,7 @@ import { getConfig } from './config';
 import { startLoginEnvImport } from './config/login-env';
 import { installContentSecurityPolicy } from './csp';
 import { remoteListenerBindError, remoteListenerBoundAddress, startRemoteListener } from './ipc';
-import { registerIpc } from './ipc/router';
+import { registerIpc, switchIpcMode } from './ipc/router';
 import { registerLifecycle } from './lifecycle';
 import {
   pairDevice,
@@ -143,12 +143,30 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   /*
-    Through the router rather than straight to `registerIpcHandlers` (HIVE-141).
-    `'local'` is the only mode that resolves today; the constant is here so the
-    boot path already has the shape server mode needs, and so the day it takes a
-    mode from config is a one-line change rather than a rewrite of this function.
+    Through the router rather than straight to `registerIpcHandlers` (HIVE-141),
+    and local **first**, unconditionally (HIVE-144).
+
+    A window opens from `whenReady` below, and a window whose channels are not
+    bound is an app that looks alive and answers nothing — so the surface a
+    renderer can reach exists before anything is awaited. `remote` mode is
+    reached from here by the same `switchIpcMode` the settings pane calls,
+    rather than by a boot-only attach path: two paths would be two descriptions
+    of what "remote mode is bound to" means, and the difference between them
+    would first show up after a switch, which is the worst possible time to
+    find it.
+
+    Not awaited, and its failure is not fatal. `switchIpcMode` rebinds local
+    when the dial fails — a laptop that has left the tailnet, a mini that is
+    asleep — so the app boots usable either way, and Settings is where the user
+    retries. The config file is left saying `remote`, deliberately: that is
+    what they asked for, and the next launch should try again.
   */
   registerIpc('local');
+  if (getConfig().remote.mode === 'remote') {
+    void switchIpcMode('remote').then((outcome) => {
+      if (!outcome.ok) console.error('[hive] could not attach at boot:', outcome);
+    });
+  }
 
   /**
    * Server mode is `server.enabled` in the config file — set for good on the

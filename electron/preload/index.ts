@@ -43,6 +43,7 @@ import type {
   SetProjectRuntimeRequest,
   SetReceiverRequest,
   SetRemoteRequest,
+  SetRemoteResult,
   SetRuntimeRequest,
   SetServerRequest,
   SetSlackRequest,
@@ -297,7 +298,7 @@ const bridge: HiveBridge = {
     // below, and is a deliberately different verb from `server.pair` above:
     // that one mints a credential this machine hands out; this one stores
     // one this machine was handed.
-    setRemote: (request: SetRemoteRequest): Promise<ConfigSnapshot> =>
+    setRemote: (request: SetRemoteRequest): Promise<SetRemoteResult> =>
       ipcRenderer.invoke(CH.configSetRemote, request),
     /*
       Story 107. Neither takes an argument — see the contract for why that is

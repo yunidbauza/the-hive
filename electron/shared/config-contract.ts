@@ -1988,6 +1988,57 @@ export interface SetRemoteRequest {
 }
 
 /**
+ * What a live mode switch did (HIVE-144).
+ *
+ * Produced by `switchIpcMode` in `electron/main/ipc/router.ts` and declared
+ * here rather than there for the reason Ruling 1 moved `SNAPSHOT_CHANNELS`:
+ * the settings pane renders this outcome, `src/**` may not import
+ * `electron/main/**`, and `electron/shared/**` is the only module both sides
+ * may reach. A discriminated union of four plain fields drags in no runtime,
+ * no Node and no DOM, which is that fence's actual rule.
+ *
+ * Four arms, because a pane has four different things to say:
+ *
+ * - `live-sessions` — the one refusal the *user* can clear, by closing the
+ *   sessions this window is running. {@link sessions} names them so the pane
+ *   can list them rather than saying "some are live"; the order is the order
+ *   they were opened.
+ * - `plaintext-refused` — the address is neither loopback nor a tailnet
+ *   address, or a `.ts.net` name resolved to something that is not. One arm
+ *   for both fences, matching `PlaintextRefusedError`'s own "one class, two
+ *   messages" reasoning: the remedy is the same sentence either way, and it
+ *   belongs in the pane's hint beside the address field rather than in a code
+ *   this union asks a caller to branch on.
+ * - `connect-failed` — a socket was attempted and did not become a session:
+ *   the server refused the handshake, the attach frame was too large to send,
+ *   the machine is not answering. Carries {@link message} because, unlike the
+ *   other three, the remedy differs per failure and only the sentence knows it.
+ * - `ok` — bound, and answering from the other machine.
+ */
+export type SwitchOutcome =
+  | { ok: true }
+  | { ok: false; reason: 'live-sessions'; sessions: readonly string[] }
+  | { ok: false; reason: 'plaintext-refused' }
+  | { ok: false; reason: 'connect-failed'; message: string };
+
+/**
+ * What `config:set-remote` answers with (HIVE-144, Ruling 19).
+ *
+ * Both halves, because the verb does two things that can disagree and the
+ * pane needs to know which happened. `config` is the snapshot as it now
+ * stands — **the old one, untouched, whenever {@link switched} is not `ok`**.
+ * The handler validates, switches, and writes only on success, so there is no
+ * revert path and no window in which the file and the running process
+ * disagree: a refused switch leaves `config.json` exactly as it was, and the
+ * next launch does not attach to a server the user was just told it could not
+ * attach to.
+ */
+export interface SetRemoteResult {
+  switched: SwitchOutcome;
+  config: ConfigSnapshot;
+}
+
+/**
  * Payload of `remote:pair` (HIVE-144).
  *
  * The opposite direction from {@link DeviceNameRequest}: `server:pair` mints a

@@ -26,7 +26,7 @@ vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: vi.fn(() => []) } }
 vi.mock('../../../../electron/main/ipc/index', () => ({ registerIpcHandlers }));
 vi.mock('../../../../electron/main/ipc/remote-proxy', () => ({ registerRemoteProxy }));
 
-const { registerIpc } = await import('../../../../electron/main/ipc/router');
+const { registerIpc, switchIpcMode } = await import('../../../../electron/main/ipc/router');
 
 /** A `RemoteClient` fake, fully implemented rather than cast away — the point
  * of this file is that `registerIpc` hands it through unchanged. */
@@ -58,7 +58,22 @@ describe('registerIpc', () => {
 
     registerIpc('local', { broadcaster });
 
-    expect(registerIpcHandlers).toHaveBeenCalledWith(broadcaster);
+    expect(registerIpcHandlers).toHaveBeenCalledWith(broadcaster, switchIpcMode);
+  });
+
+  /**
+   * The switch itself, by identity (HIVE-144). `config:set-remote`'s handler
+   * can only change this process's mode through what it is handed here — the
+   * reverse import would close a cycle — so a registration that forgot the
+   * second argument would leave that verb writing `mode: "remote"` to disk
+   * over a switch that never happened. `noModeSwitcher` throws rather than
+   * letting that pass quietly, but this is the assertion that keeps the real
+   * one wired.
+   */
+  it('hands the handlers the real mode switch', () => {
+    registerIpc('local');
+
+    expect(registerIpcHandlers).toHaveBeenCalledWith(undefined, switchIpcMode);
   });
 
   /**
@@ -70,7 +85,7 @@ describe('registerIpc', () => {
   it('leaves the default broadcaster to the handlers when none is given', () => {
     registerIpc('local');
 
-    expect(registerIpcHandlers).toHaveBeenCalledWith(undefined);
+    expect(registerIpcHandlers).toHaveBeenCalledWith(undefined, expect.any(Function));
   });
 
   it('registers the remote proxy in remote mode, and binds nothing locally', () => {
