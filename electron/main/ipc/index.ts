@@ -1349,10 +1349,15 @@ export function registerIpcHandlers(
   slackChildren = new AbortController();
 
   /**
-   * One window by design (story 000), so a broadcast reaches exactly the
-   * renderer that owns every session. Delivery is resolved per send rather than
-   * captured: the window is created after this runs, and on macOS it can be
-   * closed and re-created while the app keeps running.
+   * One push, every surface — a local window and every attached client alike.
+   *
+   * This said "one window by design (story 000)" until HIVE-145, and it was
+   * true for long enough to be worth recording why it stopped being: a
+   * broadcast reached exactly the renderer that owned every session, because
+   * there was exactly one. Delivery is still resolved per send rather than
+   * captured, for a reason that never changed — the window is created after
+   * this runs, on macOS it can be closed and re-created while the app keeps
+   * running, and a client attaches whenever it likes.
    *
    * HIVE-141 moved the loop itself into `Broadcaster.emit`. What stayed here is
    * the *tap*, because it is the tap that must not reach every push — see the
@@ -1360,7 +1365,13 @@ export function registerIpcHandlers(
    *
    * HIVE-143 made the delivery `fanOut` rather than the injected `broadcaster`
    * alone, so the same push reaches attached sockets. The tap is untouched by
-   * that: it still runs exactly once, here, before either surface.
+   * that: it still runs exactly once, here, before any surface.
+   *
+   * **Not everything main pushes comes through here.** Two things are targeted
+   * at one surface rather than broadcast (HIVE-145): `fs:changed`, which
+   * belongs to the surface whose explorer asked for the watch, and
+   * `notifications:toast`, which belongs to whoever is not already looking at
+   * the session it is about. Both go through `Surface.send`.
    */
   const send = (channel: string, payload: unknown): void => {
     // Story 106 taps the broadcast here rather than at each source, so an event
@@ -4742,22 +4753,23 @@ export function registerIpcHandlers(
    * which is what releases those bytes from the flow-control window
    * (`ipc/pty.ts`).
    *
-   * **Known hazard, deliberately parked: one window, many consumers (HIVE-143
-   * review; HIVE-145 "Two attached clients" must close it).** The unacked
-   * window is per *session*, and an ack releases it for everyone: with two
-   * surfaces watching one terminal, the first to finish parsing a batch
-   * unpauses the producer for both. A fast client on a fast link therefore lets
-   * the pty outrun a slow one, whose frames queue in `ws`'s own send buffer —
-   * which nothing here bounds — until it is arbitrarily far behind or the
-   * process is holding megabytes for it. `pty-transport.ts` records the same
-   * shape for split panes ("backpressure follows the fastest pane") and reaches
-   * the same conclusion: harmless while there is only ever one.
+   * **Keyed by the surface that acked (HIVE-145).** The window used to be per
+   * *session* and an ack released it for everyone: with two surfaces watching
+   * one terminal, the first to finish parsing a batch unpaused the producer for
+   * both, so a fast client on a fast link let the pty outrun a slow one, whose
+   * frames queued in `ws`'s own send buffer — which nothing here bounds — until
+   * it was arbitrarily far behind or the process was holding megabytes for it.
    *
-   * Unreachable today: no client half exists until HIVE-144. The fix is for the
-   * window to follow the **slowest** consumer — track acks per attached surface
-   * and release a batch only once every surface watching that session has
-   * acknowledged it — with a surface that goes away releasing whatever it was
-   * holding, or a slow client would pause a session forever by disconnecting.
+   * It follows the **slowest** surface now, and a surface that goes away
+   * releases whatever it was holding, or a slow client could pause a session
+   * forever by disconnecting. `ipc/pty.ts` holds the arithmetic and the two
+   * cases that are easy to get wrong: a newcomer seeded at the head rather than
+   * at zero, and an empty set releasing everything.
+   *
+   * `pty-transport.ts` records the same shape for split panes ("backpressure
+   * follows the fastest pane"). That one is still open and still harmless for
+   * the reason this one was until HIVE-144: both panes are the same surface, on
+   * the same link, so there is no slow consumer for the fast one to outrun.
    */
   on(CH.ptyAck, (event, payload) => {
     const request = parseAckRequest(payload);
