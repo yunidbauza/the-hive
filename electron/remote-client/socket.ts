@@ -75,6 +75,42 @@ import { attachRequest } from './index';
  */
 
 /**
+ * How long {@link connectRemote} may spend getting from "no socket" to an
+ * `attach-accepted` frame before it gives up (HIVE-144 review, I5).
+ *
+ * **Nothing bounded this.** `ClientOptions` carried `family`, `lookup` and
+ * `maxPayload` and no timeout, and nothing armed a timer: the promise settled
+ * only on a frame, an error or a close. The PR called the wait "bounded by the
+ * handshake timeout", but that is `ATTACH_HANDSHAKE_TIMEOUT_MS` on the
+ * **server**, which only exists once the far end is a Hive that has answered.
+ * Two real addresses are not:
+ *
+ * - a tailnet host that is simply off costs the OS TCP connect timeout, about
+ *   75 s on macOS;
+ * - a host running some *other* TCP service on 7433 accepts the connection and
+ *   never speaks HTTP, and the dial **hangs indefinitely**.
+ *
+ * `switchIpcMode` awaits this after `unbindEverything()`, so for the whole of
+ * that wait the window has no bound channels at all — an app that looks alive
+ * and answers nothing, which is precisely the state the ordering in that
+ * function exists to make brief.
+ *
+ * Ten seconds: long enough for a sleeping tailnet peer to wake and complete a
+ * WireGuard handshake, short enough that a person watching the pane's
+ * "Attaching…" reads it as a failure rather than a freeze. Comfortably above
+ * the server's own 5 s attach deadline, so a Hive that is going to refuse gets
+ * to say so in its own words rather than being cut off and reported as a
+ * generic timeout.
+ *
+ * Enforced twice, because the two halves fail differently. `handshakeTimeout`
+ * is `ws`'s own and covers TCP connect plus the HTTP upgrade response — the
+ * two cases above. The timer below covers what `ws` stops watching after the
+ * upgrade: a peer that speaks WebSocket, accepts the attach frame, and never
+ * answers it.
+ */
+export const CLIENT_ATTACH_TIMEOUT_MS = 10_000;
+
+/**
  * A plaintext socket this app will not open, from either fence.
  *
  * One class, two messages, deliberately: the caller's remedy is the same —
@@ -281,6 +317,15 @@ export function connectRemote(deps: ConnectRemoteDeps): Promise<RemoteClient> {
         refusal = cause;
       }),
       maxPayload: POST_ATTACH_FRAME_MAX_BYTES,
+      /*
+        `ws`'s own, covering TCP connect and the HTTP upgrade response
+        (HIVE-144 review, I5). This is the half that stops the two hangs:
+        a host that is off, which otherwise costs the OS connect timeout, and
+        one running something else on this port that accepts and never speaks
+        HTTP, which otherwise never returns at all. See
+        {@link CLIENT_ATTACH_TIMEOUT_MS}.
+      */
+      handshakeTimeout: CLIENT_ATTACH_TIMEOUT_MS,
     };
 
     const socket = new WebSocketCtor(`ws://${host}:${String(port)}/`, options);
@@ -295,9 +340,34 @@ export function connectRemote(deps: ConnectRemoteDeps): Promise<RemoteClient> {
     } | null = null;
     let closed = false;
 
+    /**
+     * The whole-handshake deadline (HIVE-144 review, I5).
+     *
+     * Armed before the socket has done anything and cleared by
+     * {@link failHandshake} or by the accept, so it covers every step from
+     * "no connection" to "attached" — including the one `handshakeTimeout`
+     * stops watching, which is a peer that completed the WebSocket upgrade,
+     * took the attach frame, and never answered it.
+     *
+     * `terminate()` rather than `close()`: a graceful close is a frame this
+     * peer has already shown it may not answer, and waiting on it would
+     * reintroduce the hang the deadline exists to end.
+     */
+    const deadline = setTimeout(() => {
+      failHandshake(
+        new Error(
+          `${host}:${String(port)} did not complete the attach handshake within ` +
+            `${String(CLIENT_ATTACH_TIMEOUT_MS)}ms. It may not be a Hive, or it may not be ` +
+            `reachable from here.`,
+        ),
+      );
+      socket.terminate();
+    }, CLIENT_ATTACH_TIMEOUT_MS);
+
     const failHandshake = (cause: Error): void => {
       if (handshakeSettled) return;
       handshakeSettled = true;
+      clearTimeout(deadline);
       rejectConnection(cause);
     };
 
@@ -371,6 +441,9 @@ export function connectRemote(deps: ConnectRemoteDeps): Promise<RemoteClient> {
       if (attached === null) {
         if (server.kind === 'attach-accepted') {
           handshakeSettled = true;
+          // The deadline covers the handshake and nothing past it — a live
+          // socket's own idle time is `CALL_GIVE_UP_MS`'s business, per call.
+          clearTimeout(deadline);
           const pending = new Map<string, Pending>();
           const listeners = new Set<(channel: Channel, payload: unknown) => void>();
           attached = { accepted: server, pending, listeners };

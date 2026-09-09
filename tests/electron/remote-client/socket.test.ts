@@ -24,6 +24,7 @@ import {
 import {
   AttachFrameTooLargeError,
   AttachRefusedError,
+  CLIENT_ATTACH_TIMEOUT_MS,
   PlaintextRefusedError,
   RemoteCallError,
   connectRemote,
@@ -70,6 +71,7 @@ function accepted(overrides: Partial<AttachAccepted> = {}): AttachAccepted {
 class FakeSocket extends EventEmitter {
   readonly sent: string[] = [];
   closeCalls = 0;
+  terminateCalls = 0;
   readonly url: string;
   readonly options: { lookup?: LookupFunction; family?: number; maxPayload?: number };
 
@@ -88,6 +90,16 @@ class FakeSocket extends EventEmitter {
 
   close(): void {
     this.closeCalls += 1;
+    this.emit('close');
+  }
+
+  /**
+   * What the attach deadline calls (HIVE-144 review, I5) — modelled because
+   * the deadline uses it rather than `close()`: a peer that has already shown
+   * it may not answer is not asked to negotiate a graceful close.
+   */
+  terminate(): void {
+    this.terminateCalls += 1;
     this.emit('close');
   }
 
@@ -406,6 +418,90 @@ describe('connectRemote — the handshake', () => {
     } satisfies AttachRefused);
 
     await expect(promise).rejects.toMatchObject({ code: 'revoked' });
+  });
+});
+
+/**
+ * The client's own attach deadline (HIVE-144 review, I5).
+ *
+ * Nothing bounded this dial. `ClientOptions` carried `family`, `lookup` and
+ * `maxPayload` and no timeout, and no timer was armed — the promise settled
+ * only on a frame, an error or a close. The PR called the wait "bounded by the
+ * handshake timeout", but that is the **server's**, and it only exists once
+ * the far end is a Hive that answered: a tailnet host that is off costs the OS
+ * TCP timeout, and one running some other TCP service on 7433 accepts and
+ * never speaks HTTP, so the dial never returns. `switchIpcMode` awaits this
+ * after `unbindEverything()`, so that whole wait is a window with no bound
+ * channels.
+ */
+describe('connectRemote — the attach deadline', () => {
+  /**
+   * `ws`'s own option, covering TCP connect and the HTTP upgrade — the half a
+   * timer on this side cannot see, because before the upgrade completes there
+   * is no socket event to hang a deadline off that `ws` is not already
+   * swallowing.
+   */
+  it('asks ws to bound the connect and upgrade', () => {
+    const { ctor } = dial();
+
+    expect(ctor).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ handshakeTimeout: CLIENT_ATTACH_TIMEOUT_MS }),
+    );
+  });
+
+  /**
+   * The half `handshakeTimeout` does not cover: a peer that completed the
+   * WebSocket upgrade, took the attach frame, and never answered it. `ws` has
+   * stopped watching by then.
+   */
+  it('gives up on a peer that upgrades and then never answers the attach', async () => {
+    vi.useFakeTimers();
+    const { promise, socket } = dial();
+    socket?.emit('open');
+
+    await vi.advanceTimersByTimeAsync(CLIENT_ATTACH_TIMEOUT_MS);
+
+    await expect(promise).rejects.toThrow(/did not complete the attach handshake/);
+    // Terminated, not closed: a graceful close is a frame this peer has
+    // already shown it may not answer.
+    expect(socket?.terminateCalls).toBe(1);
+  });
+
+  /**
+   * The failure has to read as `connect-failed` in the pane, which is what
+   * `outcomeFor` in `router.ts` makes of any non-`PlaintextRefusedError` — so
+   * this must not be a `PlaintextRefusedError`, and it must carry a sentence
+   * worth showing.
+   */
+  it('fails with an ordinary error naming the address and the budget', async () => {
+    vi.useFakeTimers();
+    const { promise, socket } = dial({ host: '100.64.1.2', port: 7433 });
+    socket?.emit('open');
+
+    await vi.advanceTimersByTimeAsync(CLIENT_ATTACH_TIMEOUT_MS);
+
+    await expect(promise).rejects.not.toBeInstanceOf(PlaintextRefusedError);
+    await expect(promise).rejects.toThrow(/100\.64\.1\.2:7433/);
+    await expect(promise).rejects.toThrow(new RegExp(String(CLIENT_ATTACH_TIMEOUT_MS)));
+  });
+
+  /**
+   * And it stops at the handshake. A live socket's idle time is
+   * `CALL_GIVE_UP_MS`'s business, per call — a deadline left armed would
+   * terminate a perfectly good connection ten seconds after it attached.
+   */
+  it('does not fire once the socket has attached', async () => {
+    vi.useFakeTimers();
+    const { promise, socket } = dial();
+    socket?.emit('open');
+    socket?.deliver(accepted());
+    const client = await promise;
+
+    await vi.advanceTimersByTimeAsync(CLIENT_ATTACH_TIMEOUT_MS * 3);
+
+    expect(socket?.terminateCalls).toBe(0);
+    expect(client.serverName()).toBe('mini');
   });
 });
 
