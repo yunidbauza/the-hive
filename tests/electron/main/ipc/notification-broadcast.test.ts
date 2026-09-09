@@ -58,7 +58,7 @@ vi.mock('electron', () => ({
     encryptString: () => Buffer.alloc(0),
     decryptString: () => '',
   },
-  ipcMain: { handle: vi.fn(), on: vi.fn(), removeHandler: vi.fn() },
+  ipcMain: { handle: vi.fn(), on: vi.fn(), removeHandler: vi.fn(), removeAllListeners: vi.fn() },
   session: { defaultSession: { webRequest: { onHeadersReceived: vi.fn() } } },
   shell: { showItemInFolder: vi.fn(), openExternal: vi.fn() },
 }));

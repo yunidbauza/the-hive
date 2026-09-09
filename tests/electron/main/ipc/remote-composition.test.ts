@@ -63,7 +63,7 @@ vi.mock('electron', () => ({
     encryptString: () => Buffer.alloc(0),
     decryptString: () => '',
   },
-  ipcMain: { handle: vi.fn(), on: vi.fn(), removeHandler: vi.fn() },
+  ipcMain: { handle: vi.fn(), on: vi.fn(), removeHandler: vi.fn(), removeAllListeners: vi.fn() },
   session: { defaultSession: { webRequest: { onHeadersReceived: vi.fn() } } },
   shell: { showItemInFolder: vi.fn(), openExternal: vi.fn() },
 }));
@@ -254,6 +254,17 @@ describe('remote composition (HIVE-143)', () => {
       channel — not by this number.
     */
     expect(remoteRegistrySize()).toBe(102);
+  });
+
+  it('re-registers every channel after a reset without throwing (HIVE-144)', () => {
+    registerIpcHandlers();
+    resetIpcHandlers();
+
+    // The throw this guards against is Electron's own
+    // "Attempted to register a second handler for 'x'".
+    expect(() => registerIpcHandlers()).not.toThrow();
+
+    resetIpcHandlers();
   });
 
   it('empties the registry on reset, so a socket sees not-ready rather than a stale handler', () => {

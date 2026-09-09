@@ -69,6 +69,7 @@ vi.mock('electron', () => ({
       onHandlers.set(channel, fn);
     },
     removeHandler: vi.fn(),
+    removeAllListeners: vi.fn(),
   },
   session: { defaultSession: { webRequest: { onHeadersReceived: vi.fn() } } },
 }));

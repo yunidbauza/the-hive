@@ -247,6 +247,7 @@ import {
   updateStatus,
 } from '../updates';
 
+import { createBindings } from './bindings';
 import { createWindowBroadcaster, type Broadcaster } from './broadcaster';
 import { createIpcRegistry } from './registry';
 import { createRemoteDispatch } from './remote-dispatch';
@@ -286,6 +287,13 @@ const remoteRegistry = createIpcRegistry();
  * per emit by the socket half of the fan-out in `registerIpcHandlers`.
  */
 const attachedSockets = new Set<AttachedSocket>();
+
+/**
+ * Every channel this process has bound (HIVE-144). Module scope for the same
+ * reason `remoteRegistry` is: `registerIpcHandlers` fills it, and a live mode
+ * switch must be able to empty it from outside that function.
+ */
+const bindings = createBindings(ipcMain);
 
 /**
  * The event object handed to a call handler reached over a socket.
@@ -343,6 +351,9 @@ function on(
     // through `watchReporter`, which already accepts anything with an `.on`.
     handler({ sender: reporter } as unknown as IpcMainEvent, payload);
   });
+  // HIVE-144: so a later mode switch can unbind this channel from `ipcMain`
+  // and register it again against a different set of layers.
+  bindings.record(channel);
 }
 
 /** Wrap a handler so sender validation cannot be forgotten on a new channel. */
@@ -360,6 +371,9 @@ function handle<T>(
   remoteRegistry.recordCall(channel as Channel, (payload) =>
     handler(REMOTE_INVOKE_EVENT, payload),
   );
+  // HIVE-144: so a later mode switch can unbind this channel from `ipcMain`
+  // and register it again against a different set of layers.
+  bindings.record(channel);
 }
 
 /**
@@ -4098,6 +4112,14 @@ export function resetIpcHandlers(): void {
   */
   remoteRegistry.clear();
   attachedSockets.clear();
+  /*
+    HIVE-144. This makes the test-only reset and the production mode switch
+    the same path: a live switch calls this to leave `ipcMain` clean before
+    `registerIpcHandlers` runs again against a different set of layers, and it
+    can trust that path precisely because every test in this suite already
+    exercises it on every teardown.
+  */
+  bindings.unbindAll();
   sessions?.dispose();
   sessions = null;
   cloneFlow?.dispose();
