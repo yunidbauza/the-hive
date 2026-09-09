@@ -1,4 +1,7 @@
-import { projectAccess } from '@lib/project-config';
+import { projectAccess, projectConfigSnapshot } from '@lib/project-config';
+import { DEFAULT_REMOTE, type RemoteConfig } from '@shared/config-contract';
+import { CH } from '@shared/ipc-contract';
+import { WINDOW_BOUND } from '@shared/remote-contract';
 
 /**
  * Which runtime is this (story 083)?
@@ -65,6 +68,63 @@ export const isDesktop = (): boolean =>
  * by {@link DEMO_PLACEHOLDER} and the `demo` chip, where a user actually
  * encounters it.
  */
+/**
+ * The four capabilities `WINDOW_BOUND` (`electron/shared/remote-contract.ts`)
+ * refuses while this window is attached to someone else's Hive (HIVE-144).
+ *
+ * One field per table entry, on purpose: `configChooseDirectory`,
+ * `skillsFileImport`, `themePick`, `themeSave` each dereference the Electron
+ * event to resolve a parent `BrowserWindow` for a native dialog, and a server
+ * opens no window. Four capabilities collapsing to one boolean is exactly the
+ * shape a careless gate takes — see `tests/config/runtime.test.ts`'s own
+ * guard-rail test, which ties this shape's key count to `WINDOW_BOUND`'s so a
+ * fifth channel there cannot be forgotten here and one cannot be silently
+ * dropped from here either.
+ */
+export interface RemoteCapabilities {
+  chooseDirectory: boolean;
+  pickTheme: boolean;
+  saveTheme: boolean;
+  importSkillFiles: boolean;
+}
+
+/**
+ * The pure predicate, kept separate from {@link can} so it can be proven
+ * against a bare `{ mode }` in a unit test without a bridge, a snapshot or a
+ * subscription in sight.
+ *
+ * `Pick<RemoteConfig, 'mode'>` rather than the whole block: the answer never
+ * depends on `host` or `port`, and a narrower parameter is what lets a test
+ * pass `{ mode: 'remote' }` on its own.
+ */
+export function canFor(remote: Pick<RemoteConfig, 'mode'>): RemoteCapabilities {
+  const attached = remote.mode === 'remote';
+  return {
+    chooseDirectory: !attached,
+    pickTheme: !attached,
+    saveTheme: !attached,
+    importSkillFiles: !attached,
+  };
+}
+
+/**
+ * The one place each of the four refusals is worded for the renderer, so a
+ * disabled control's copy cannot drift from what the server would actually
+ * have said. Indexed straight off {@link WINDOW_BOUND} rather than
+ * paraphrased, which is what makes agreement automatic rather than a thing to
+ * remember on the next edit to either side.
+ */
+export const REMOTE_DISABLED_REASON = {
+  chooseDirectory: WINDOW_BOUND[CH.configChooseDirectory],
+  pickTheme: WINDOW_BOUND[CH.themePick],
+  saveTheme: WINDOW_BOUND[CH.themeSave],
+  importSkillFiles: WINDOW_BOUND[CH.skillsFileImport],
+} as const;
+
+/** `snapshot.remote`, or `DEFAULT_REMOTE` ('local') before one has been read. */
+const currentRemote = (): Pick<RemoteConfig, 'mode'> =>
+  projectConfigSnapshot()?.remote ?? DEFAULT_REMOTE;
+
 export const can = {
   spawnSession: isDesktop,
   killSession: isDesktop,
@@ -84,6 +144,19 @@ export const can = {
    */
   spawnSessionIn: (projectId: string): boolean =>
     projectAccess(projectId).spawnable,
+  /**
+   * The four `WINDOW_BOUND` predicates (HIVE-144). See {@link canFor} for the
+   * pure rule and {@link RemoteCapabilities} for why there are exactly four.
+   *
+   * Permissive with no snapshot, matching {@link spawnSessionIn}'s own
+   * reasoning: `DEFAULT_REMOTE.mode` is `'local'`, so "not read yet" answers
+   * exactly as "never attached" does, rather than flashing every dialog
+   * button disabled for a frame at every launch.
+   */
+  chooseDirectory: (): boolean => canFor(currentRemote()).chooseDirectory,
+  pickTheme: (): boolean => canFor(currentRemote()).pickTheme,
+  saveTheme: (): boolean => canFor(currentRemote()).saveTheme,
+  importSkillFiles: (): boolean => canFor(currentRemote()).importSkillFiles,
 } as const;
 
 /**

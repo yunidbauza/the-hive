@@ -1253,6 +1253,37 @@ export interface ConfigSnapshot {
    */
   remote: RemoteConfig;
   /**
+   * What this window is attached to over a socket, or `null` in `'local'`
+   * mode (HIVE-144).
+   *
+   * **A control's readout, not a status readout — see `AppInfo.attachedServerName`
+   * (Task 13, `ipc-contract.ts`) for the other half of this line, and read
+   * both doc comments together before touching either.** This repo already
+   * draws that line and HIVE-134 wrote down why (`:276-278` above,
+   * `ipc-contract.ts:1382-1405`): a *control* over the file reads from
+   * config, a *status readout* reads from what is actually running. Settings
+   * names the machine whose config file this window is editing — while
+   * attached, `config:get` itself is answered by the far end, exactly as
+   * {@link RemoteConfig}'s own doc comment says — so that question is
+   * config-derived and belongs here. The header chip claims a **live**
+   * attachment, which is a different question this field would answer
+   * wrongly in both directions: Ruling 19 deliberately leaves `remote.mode`
+   * saying `'remote'` in `config.json` after an already-remote re-switch
+   * fails and rebinds local, so a config-derived chip would keep claiming an
+   * attachment that is no longer there — and, symmetrically, would deny one
+   * on the next launch before the boot attach has even been attempted. The
+   * chip reads `AppInfo.attachedServerName` instead, sourced from the running
+   * socket, for exactly that reason.
+   *
+   * `name` is `remote.host` today — the file carries no friendlier label for
+   * the far end, only the address it dials. Optional rather than required:
+   * the value has exactly two producers (`emptySnapshot` and `loadConfig`),
+   * and a required field would force every other fixture across the test
+   * tree that builds a `ConfigSnapshot` by hand to name a fact it does not
+   * exercise.
+   */
+  attachedServer?: { name: string; host: string } | null;
+  /**
    * Real-time Slack events, always fully resolved (HIVE-124).
    *
    * Defaulted here for the reason `jira` and `receiver` are: main reads it on
@@ -1737,6 +1768,10 @@ export function emptySnapshot(
     // No array field to worry about the way `server.devices` is — a plain
     // spread is the whole story.
     remote: { ...DEFAULT_REMOTE },
+    // `DEFAULT_REMOTE.mode` is `'local'` — nothing to name. See
+    // `ConfigSnapshot.attachedServer`'s own doc comment for what this answers
+    // and what it deliberately does not.
+    attachedServer: null,
     slack: { ...DEFAULT_SLACK },
     errors: [],
   };

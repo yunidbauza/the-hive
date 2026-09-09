@@ -1,10 +1,12 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ProjectConfig } from '@shared/config-contract';
+import { REMOTE_DISABLED_REASON } from '@config/runtime';
+import { emptySnapshot, type ProjectConfig } from '@shared/config-contract';
 
 import { ProjectsList } from '@features/settings/components/projects-list';
+import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
 import { useHiveStore } from '@stores/hive-store';
 import { seedDemoFleet } from '@tests/support/demo-fleet';
 
@@ -277,6 +279,46 @@ describe('ProjectsList', () => {
       await choose(/change folder/i);
 
       expect(repointProjectInConfig).not.toHaveBeenCalled();
+    });
+
+    /**
+     * While attached to someone else's Hive (HIVE-144): `config:choose-directory`
+     * opens on the server, which has no window — see `WINDOW_BOUND`
+     * (`electron/shared/remote-contract.ts`). Disabled with that table's own
+     * reason, and the click never reaches the bridge.
+     */
+    describe('attached to a remote server', () => {
+      afterEach(() => {
+        resetProjectConfig();
+      });
+
+      it('disables Change folder… and carries the refusal as its title', async () => {
+        setProjectConfigForTest({
+          ...emptySnapshot('/tmp/hive/config.json'),
+          remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
+        });
+
+        render(<ProjectsList entries={[entry({ id: 'a' })]} />);
+        await openMenu('a');
+
+        const item = screen.getByRole('menuitem', { name: /change folder/i });
+        expect(item).toHaveAttribute('aria-disabled', 'true');
+        expect(item).toHaveAttribute('title', REMOTE_DISABLED_REASON.chooseDirectory);
+      });
+
+      it('never opens the dialog', async () => {
+        setProjectConfigForTest({
+          ...emptySnapshot('/tmp/hive/config.json'),
+          remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
+        });
+
+        render(<ProjectsList entries={[entry({ id: 'a' })]} />);
+        await openMenu('a');
+        await choose(/change folder/i);
+
+        expect(chooseProjectDirectory).not.toHaveBeenCalled();
+        expect(repointProjectInConfig).not.toHaveBeenCalled();
+      });
     });
   });
 

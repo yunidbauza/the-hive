@@ -8,6 +8,7 @@ import {
   DEFAULT_REMOTE,
   RECEIVER_KEYS,
   REMOTE_KEYS,
+  emptySnapshot,
   isLoopbackHost,
   isOrigin,
   isRemoteTarget,
@@ -94,6 +95,16 @@ describe('the remote block', () => {
 
   it('names mode, host and port, for the parser exact-key check', () => {
     expect([...REMOTE_KEYS]).toEqual(['mode', 'host', 'port']);
+  });
+
+  /**
+   * `attachedServer` is `ConfigSnapshot`'s config-derived readout, not the
+   * header chip's runtime one — see that field's own doc comment for the
+   * distinction and why collapsing it into `AppInfo.attachedServerName`
+   * (Task 13) would lie in both directions.
+   */
+  it('names nothing to attach to in the empty snapshot, which is always local mode', () => {
+    expect(emptySnapshot('/home/dev/.hive/config.json').attachedServer).toBeNull();
   });
 });
 

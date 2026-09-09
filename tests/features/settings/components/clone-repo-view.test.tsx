@@ -2,9 +2,11 @@ import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { REMOTE_DISABLED_REASON } from '@config/runtime';
 import { emptySnapshot, type CloneDoneEvent } from '@shared/config-contract';
 
 import { CloneRepoView } from '@features/settings/components/clone-repo-view';
+import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
 import { resetPtyChannels } from '@lib/terminal/pty-transport';
 
 const chooseProjectDirectory = vi.fn();
@@ -79,6 +81,7 @@ afterEach(() => {
    * `beforeEach` reinstalls a fresh stub, so nothing leaks between tests.
    */
   resetPtyChannels();
+  resetProjectConfig();
   vi.clearAllMocks();
 });
 
@@ -255,5 +258,39 @@ describe('CloneRepoView', () => {
     unmount();
 
     expect(unsubscribe).toHaveBeenCalled();
+  });
+
+  /**
+   * While attached to someone else's Hive (HIVE-144): `config:choose-directory`
+   * opens on the server, which has no window — see `WINDOW_BOUND`
+   * (`electron/shared/remote-contract.ts`). Disabled with that table's own
+   * reason, and the click never reaches the bridge.
+   */
+  describe('attached to a remote server', () => {
+    it('disables Choose… and carries the refusal as its title', () => {
+      setProjectConfigForTest({
+        ...emptySnapshot('/tmp/hive/config.json'),
+        remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
+      });
+
+      render(<CloneRepoView onDone={() => {}} />);
+
+      const button = screen.getByRole('button', { name: /choose/i });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute('title', REMOTE_DISABLED_REASON.chooseDirectory);
+    });
+
+    it('never opens the dialog', async () => {
+      setProjectConfigForTest({
+        ...emptySnapshot('/tmp/hive/config.json'),
+        remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
+      });
+      const user = userEvent.setup();
+
+      render(<CloneRepoView onDone={() => {}} />);
+      await user.click(screen.getByRole('button', { name: /choose/i }));
+
+      expect(chooseProjectDirectory).not.toHaveBeenCalled();
+    });
   });
 });

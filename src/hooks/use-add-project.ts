@@ -1,5 +1,7 @@
 import { useCallback, useState } from 'react';
 
+import { REMOTE_DISABLED_REASON } from '@config/runtime';
+import { useRemoteCapabilities } from '@hooks/use-project-config';
 import { addProjectToConfig, chooseProjectDirectory } from '@lib/project-config';
 
 export interface AddProject {
@@ -13,6 +15,16 @@ export interface AddProject {
   addProject: () => void;
   /** Whether a dialog is already open, so the control can refuse a second. */
   choosing: boolean;
+  /**
+   * Why the control is disabled while this window is attached to someone
+   * else's Hive, or `null` when the dialog is available (HIVE-144).
+   *
+   * `config:choose-directory` opens on the server, which has no window — see
+   * `WINDOW_BOUND` (`electron/shared/remote-contract.ts`). Both callers show
+   * this as the button's `disabled` reason rather than letting the call fail
+   * silently.
+   */
+  disabledReason: string | null;
 }
 
 /**
@@ -35,9 +47,10 @@ export interface AddProject {
  */
 export function useAddProject(): AddProject {
   const [choosing, setChoosing] = useState(false);
+  const { chooseDirectory } = useRemoteCapabilities();
 
   const addProject = useCallback(() => {
-    if (choosing) return;
+    if (choosing || !chooseDirectory) return;
     setChoosing(true);
 
     void (async () => {
@@ -61,7 +74,11 @@ export function useAddProject(): AddProject {
         setChoosing(false);
       }
     })();
-  }, [choosing]);
+  }, [choosing, chooseDirectory]);
 
-  return { addProject, choosing };
+  return {
+    addProject,
+    choosing,
+    disabledReason: chooseDirectory ? null : REMOTE_DISABLED_REASON.chooseDirectory,
+  };
 }

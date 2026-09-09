@@ -156,6 +156,29 @@ describe('ProjectsSection', () => {
       // The only path that reaches main is the one the dialog returned.
       expect(addProjectToConfig).toHaveBeenCalledWith({ path: '/tmp/picked' });
     });
+
+    /**
+     * While attached to someone else's Hive (HIVE-144): `config:choose-directory`
+     * opens on the server, which has no window — see `WINDOW_BOUND`
+     * (`electron/shared/remote-contract.ts`). Disabled with that table's own
+     * reason, and the click never reaches the bridge.
+     */
+    it('disables Add project and never opens the dialog while attached', async () => {
+      const user = userEvent.setup();
+      const snapshot: ConfigSnapshot = {
+        ...emptySnapshot('/tmp/hive/config.json'),
+        projects: [entry({ id: 'the-hive' })],
+        remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
+      };
+      setProjectConfigForTest(snapshot);
+
+      render(<ProjectsSection />);
+      const button = screen.getByRole('button', { name: /add project/i });
+      expect(button).toBeDisabled();
+
+      await user.click(button);
+      expect(chooseProjectDirectory).not.toHaveBeenCalled();
+    });
   });
 
   describe('the empty state', () => {

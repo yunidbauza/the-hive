@@ -19,11 +19,13 @@ import {
 } from '@/lib/skills';
 
 import { SwarmCreature } from '@components/ui/swarm-creature';
+import { REMOTE_DISABLED_REASON } from '@config/runtime';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
 import { SkillBundle } from '@features/settings/components/skill-bundle';
 import { SkillDiscardConfirm } from '@features/settings/components/skill-discard-confirm';
 import { SkillEditor } from '@features/settings/components/skill-editor';
 import { SkillPathPrompt } from '@features/settings/components/skill-path-prompt';
+import { useRemoteCapabilities } from '@hooks/use-project-config';
 import { useSkills } from '@hooks/use-skills';
 import type { FsRefusalReason } from '@shared/fs-contract';
 
@@ -90,6 +92,7 @@ Write the instruction here. The session runs it when you type the command.
 export function SkillsSection() {
   const snapshot = useSkills();
   const phrase = useSwarmPhrase('empty.settingsSkills');
+  const { importSkillFiles } = useRemoteCapabilities();
 
   /** Which skill is open, or `null` for a new one that has never been saved. */
   const [open, setOpen] = useState<string | null>(null);
@@ -321,6 +324,10 @@ export function SkillsSection() {
   /** Bring files in from outside, through main's own picker. */
   const importToBundle = (): void => {
     if (drilled === null) return;
+    // Belt over the disabled menu item below (HIVE-144): `skills:file:import`
+    // opens a dialog on the server, which has no window — and would copy the
+    // server's files, not the user's.
+    if (!importSkillFiles) return;
     void importIntoSkill(drilled, '').then(setError);
   };
 
@@ -795,6 +802,10 @@ export function SkillsSection() {
             onNewFile={newFile}
             onNewFolder={newFolder}
             onImport={importToBundle}
+            importDisabled={!importSkillFiles}
+            importDisabledReason={
+              importSkillFiles ? null : REMOTE_DISABLED_REASON.importSkillFiles
+            }
             onDrop={dropIntoBundle}
           />
         ) : (

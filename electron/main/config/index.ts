@@ -118,6 +118,12 @@ export function loadConfig(): ConfigSnapshot {
 
   const parsed = parseConfig(text, LABEL);
   const projects = resolveProjects(parsed.projects, parsed.errors);
+  // Computed once and read twice below — `attachedServer` derives from the
+  // same value `remote` resolves to, and a second `{ ...DEFAULT_REMOTE,
+  // ...parsed.remote }` here would be the "second place for the same fact to
+  // drift from this one" `ConfigSnapshot.remote`'s own doc comment warns
+  // against.
+  const remote = { ...DEFAULT_REMOTE, ...parsed.remote };
 
   const snapshot: ConfigSnapshot = {
     configPath: path,
@@ -180,7 +186,11 @@ export function loadConfig(): ConfigSnapshot {
     // config written before this story has no `remote` key at all, so this is
     // the line that makes `DEFAULT_REMOTE` — `mode: 'local'`, no target — the
     // outcome for every existing install rather than `undefined`.
-    remote: { ...DEFAULT_REMOTE, ...parsed.remote },
+    remote,
+    // `remote.host` is the only handle the file carries for the far end — see
+    // `ConfigSnapshot.attachedServer`'s own doc comment for why this is a
+    // config-derived control's readout, not the header chip's runtime one.
+    attachedServer: remote.mode === 'remote' ? { name: remote.host, host: remote.host } : null,
     // Defaults *under* whatever the file named, exactly as `jira` and
     // `receiver` do above (HIVE-124). A plain spread suffices here too.
     slack: { ...DEFAULT_SLACK, ...parsed.slack },

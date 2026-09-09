@@ -65,6 +65,8 @@ const props = {
   onNewFile: vi.fn(),
   onNewFolder: vi.fn(),
   onImport: vi.fn(),
+  importDisabled: false,
+  importDisabledReason: null,
   onDrop: vi.fn(),
 };
 
@@ -242,5 +244,38 @@ describe('SkillBundle', () => {
     );
 
     expect(onImport).toHaveBeenCalledWith();
+  });
+
+  /**
+   * `skills:file:import` while attached to someone else's Hive (HIVE-144) —
+   * see `WINDOW_BOUND` (`electron/shared/remote-contract.ts`). The caller
+   * (`skills-section.tsx`) computes `importDisabled` from
+   * `can.importSkillFiles()`; this only proves the button disables on the
+   * prop, carries the reason, and never fires `onImport` when it does.
+   */
+  it('disables Add from your computer and carries the reason while attached', () => {
+    const onImport = vi.fn();
+    render(
+      <SkillBundle
+        {...props}
+        skill={skill(manifest)}
+        onImport={onImport}
+        importDisabled
+        importDisabledReason="Adding files to a skill opens a dialog on the server."
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Add' }));
+    const button = screen.getByRole('button', {
+      name: 'Add from your computer',
+    });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute(
+      'title',
+      'Adding files to a skill opens a dialog on the server.',
+    );
+
+    fireEvent.click(button);
+    expect(onImport).not.toHaveBeenCalled();
   });
 });

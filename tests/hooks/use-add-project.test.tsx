@@ -1,7 +1,17 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { REMOTE_DISABLED_REASON } from '@config/runtime';
 import { useAddProject } from '@hooks/use-add-project';
+import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
+import {
+  DEFAULT_JIRA,
+  DEFAULT_NOTIFICATIONS,
+  DEFAULT_RECEIVER,
+  DEFAULT_SERVER,
+  DEFAULT_SLACK,
+  type ConfigSnapshot,
+} from '@shared/config-contract';
 
 const chooseProjectDirectory = vi.fn();
 const addProjectToConfig = vi.fn();
@@ -14,6 +24,28 @@ vi.mock('@lib/project-config', async (importOriginal) => {
     addProjectToConfig: (request: unknown) => addProjectToConfig(request),
   };
 });
+
+/** A snapshot in the given remote mode — every other field is a stand-in. */
+function snapshotIn(mode: 'local' | 'remote'): ConfigSnapshot {
+  return {
+    configPath: '/home/dev/.hive/config.json',
+    templateWritten: false,
+    shell: '/bin/zsh',
+    claudeCommand: 'claude',
+    env: {},
+    projects: [],
+    notifications: { ...DEFAULT_NOTIFICATIONS },
+    jira: { ...DEFAULT_JIRA },
+    receiver: { ...DEFAULT_RECEIVER },
+    server: { ...DEFAULT_SERVER },
+    remote: { mode, host: mode === 'remote' ? 'mini.tail1234.ts.net' : '', port: 7433 },
+    slack: { ...DEFAULT_SLACK },
+    subscriptionAuth: true,
+    sessionMetrics: true,
+    importLoginEnv: true,
+    errors: [],
+  };
+}
 
 /**
  * Mapping a directory, from wherever the app offers it (Settings, the rail).
@@ -29,6 +61,10 @@ describe('useAddProject', () => {
     addProjectToConfig.mockReset();
     chooseProjectDirectory.mockResolvedValue(null);
     addProjectToConfig.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    resetProjectConfig();
   });
 
   it('writes the path the dialog returned, and no other', async () => {
@@ -110,5 +146,55 @@ describe('useAddProject', () => {
     expect(result.current.choosing).toBe(false);
     expect(logged).toHaveBeenCalled();
     logged.mockRestore();
+  });
+});
+
+/**
+ * While attached to someone else's Hive (HIVE-144).
+ *
+ * `config:choose-directory` opens a dialog on the server, which has no
+ * window — `WINDOW_BOUND` (`electron/shared/remote-contract.ts`) refuses it
+ * by name. `disabledReason` is what both buttons (`projects-section.tsx`,
+ * `new-project-link.tsx`) render as the control's `title`; `addProject`
+ * itself must never reach the bridge, since a disabled control that still
+ * fired its handler would be exactly the "button that fails silently" this
+ * task exists to prevent.
+ */
+describe('useAddProject — attached to a remote server', () => {
+  beforeEach(() => {
+    chooseProjectDirectory.mockReset();
+    addProjectToConfig.mockReset();
+  });
+
+  afterEach(() => {
+    resetProjectConfig();
+  });
+
+  it('reports no reason in local mode', () => {
+    setProjectConfigForTest(snapshotIn('local'));
+
+    const { result } = renderHook(() => useAddProject());
+
+    expect(result.current.disabledReason).toBeNull();
+  });
+
+  it("carries WINDOW_BOUND's own reason once attached", () => {
+    setProjectConfigForTest(snapshotIn('remote'));
+
+    const { result } = renderHook(() => useAddProject());
+
+    expect(result.current.disabledReason).toBe(REMOTE_DISABLED_REASON.chooseDirectory);
+  });
+
+  it('never opens the dialog while attached', async () => {
+    setProjectConfigForTest(snapshotIn('remote'));
+
+    const { result } = renderHook(() => useAddProject());
+    await act(async () => {
+      result.current.addProject();
+    });
+
+    expect(chooseProjectDirectory).not.toHaveBeenCalled();
+    expect(addProjectToConfig).not.toHaveBeenCalled();
   });
 });

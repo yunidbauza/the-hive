@@ -18,6 +18,10 @@ interface ThemeCardProps {
   isBuiltIn: boolean;
   onActivate: (id: string) => void;
   onExport: (id: string) => void;
+  /** `theme:save` is unavailable while attached (HIVE-144) — see `WINDOW_BOUND`. */
+  exportDisabled: boolean;
+  /** `WINDOW_BOUND`'s own reason, shown as the disabled item's `title`. */
+  exportDisabledReason: string | null;
   onRemove: (id: string) => void;
 }
 
@@ -78,6 +82,8 @@ export function ThemeCard({
   isBuiltIn,
   onActivate,
   onExport,
+  exportDisabled,
+  exportDisabledReason,
   onRemove,
 }: ThemeCardProps) {
   const item =
@@ -163,6 +169,8 @@ export function ThemeCard({
               Activate
             </DropdownMenuItem>
             <DropdownMenuItem
+              disabled={exportDisabled}
+              title={exportDisabledReason ?? undefined}
               onSelect={() => select(() => onExport(id))}
               className={item}
             >

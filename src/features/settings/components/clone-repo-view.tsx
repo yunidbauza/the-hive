@@ -5,7 +5,9 @@ import { TerminalSurface } from '@/components/terminal/terminal-surface';
 import { cancelClone, onCloneDone, startClone } from '@/lib/clone-repo';
 import { chooseProjectDirectory } from '@/lib/project-config';
 
+import { REMOTE_DISABLED_REASON } from '@config/runtime';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
+import { useRemoteCapabilities } from '@hooks/use-project-config';
 import {
   createCloneTransport,
   resetCloneChannel,
@@ -70,6 +72,7 @@ export function CloneRepoView({ onDone }: { onDone: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [targetPath, setTargetPath] = useState<string | null>(null);
   const [choosing, setChoosing] = useState(false);
+  const { chooseDirectory } = useRemoteCapabilities();
 
   /**
    * Built once. A transport rebuilt on re-render would drop the surface's
@@ -96,7 +99,7 @@ export function CloneRepoView({ onDone }: { onDone: () => void }) {
   const ready = preview !== null && parentPath !== null;
 
   const onChoose = async () => {
-    if (choosing) return;
+    if (choosing || !chooseDirectory) return;
     setChoosing(true);
     try {
       const chosen = await chooseProjectDirectory();
@@ -187,7 +190,8 @@ export function CloneRepoView({ onDone }: { onDone: () => void }) {
               <button
                 type="button"
                 onClick={() => void onChoose()}
-                disabled={choosing}
+                disabled={choosing || !chooseDirectory}
+                title={chooseDirectory ? undefined : REMOTE_DISABLED_REASON.chooseDirectory}
                 className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-[12.5px] text-muted hover:bg-hover hover:text-ink disabled:opacity-60"
               >
                 <FolderOpen size={12} weight="bold" />

@@ -98,6 +98,14 @@ interface SkillBundleProps {
   onNewFolder: () => void;
   /** Open main's own picker. No source path is ever named by the renderer. */
   onImport: () => void;
+  /**
+   * `skills:file:import` is unavailable while attached (HIVE-144) — see
+   * `WINDOW_BOUND`. Picking files for a skill on the server would copy the
+   * server's files, not the user's, so this has no client-side replacement.
+   */
+  importDisabled: boolean;
+  /** `WINDOW_BOUND`'s own reason, shown as the disabled item's `title`. */
+  importDisabledReason: string | null;
   /** Files dropped onto the tree root, or onto one folder row. */
   onDrop: (dir: string, files: readonly File[]) => void;
 }
@@ -111,6 +119,8 @@ export function SkillBundle({
   onNewFile,
   onNewFolder,
   onImport,
+  importDisabled,
+  importDisabledReason,
   onDrop,
 }: SkillBundleProps) {
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
@@ -318,19 +328,26 @@ export function SkillBundle({
         <div className="flex flex-col border-t border-border-soft">
           {(
             [
-              ['New file', onNewFile],
-              ['New folder', onNewFolder],
-              ['Add from your computer', onImport],
+              ['New file', onNewFile, false, null],
+              ['New folder', onNewFolder, false, null],
+              [
+                'Add from your computer',
+                onImport,
+                importDisabled,
+                importDisabledReason,
+              ],
             ] as const
-          ).map(([label, act]) => (
+          ).map(([label, act, disabled, reason]) => (
             <button
               key={label}
               type="button"
+              disabled={disabled}
+              title={reason ?? undefined}
               onClick={() => {
                 setAdding(false);
                 act();
               }}
-              className="px-2.5 py-1.5 text-left text-[12.5px] text-muted hover:bg-hover hover:text-ink"
+              className="px-2.5 py-1.5 text-left text-[12.5px] text-muted hover:bg-hover hover:text-ink disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted"
             >
               {label}
             </button>

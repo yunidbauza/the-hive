@@ -1,7 +1,9 @@
 import { useState } from 'react';
 
+import { REMOTE_DISABLED_REASON } from '@config/runtime';
 import { ThemeCard } from '@features/settings/components/theme-card';
 import { ThemeImportResult } from '@features/settings/components/theme-import-result';
+import { useRemoteCapabilities } from '@hooks/use-project-config';
 import { BUILT_IN_THEMES } from '@lib/theme/built-in-themes';
 import type { HiveTheme } from '@lib/theme/contract';
 import { PickThemeFailure, pickThemeFile, saveThemeFile } from '@lib/theme/files';
@@ -86,6 +88,7 @@ export function ThemeGallery() {
 
   const [result, setResult] = useState<ImportResult | null>(null);
   const [importing, setImporting] = useState(false);
+  const { pickTheme, saveTheme } = useRemoteCapabilities();
 
   /**
    * No re-entrancy guard here: the button this drives sets `disabled` from
@@ -94,6 +97,9 @@ export function ThemeGallery() {
    * could only fake, not exercise.
    */
   const onImport = async () => {
+    // Belt over the disabled button below (HIVE-144): `theme:pick` opens a
+    // dialog on the server, which has no window.
+    if (!pickTheme) return;
     setImporting(true);
     try {
       const picked = await pickThemeFile().catch((error: unknown) => {
@@ -167,10 +173,14 @@ export function ThemeGallery() {
    * carrying a branch nothing can exercise.
    */
   const onExport = (id: string, theme: HiveTheme) => {
+    // Belt over the disabled menu item below (HIVE-144): `theme:save` opens a
+    // dialog on the server, which has no window.
+    if (!saveTheme) return;
     void saveThemeFile(`${id}.json`, themeToJson(theme));
   };
 
   const onDownloadTemplate = () => {
+    if (!saveTheme) return;
     void saveThemeFile(TEMPLATE_FILE_NAME, themeTemplateJson());
   };
 
@@ -197,14 +207,17 @@ export function ThemeGallery() {
           <button
             type="button"
             onClick={onDownloadTemplate}
-            className="flex w-fit items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-[12.5px] text-muted hover:bg-hover hover:text-ink"
+            disabled={!saveTheme}
+            title={saveTheme ? undefined : REMOTE_DISABLED_REASON.saveTheme}
+            className="flex w-fit items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-[12.5px] text-muted hover:bg-hover hover:text-ink disabled:opacity-60"
           >
             Download template
           </button>
           <button
             type="button"
             onClick={() => void onImport()}
-            disabled={importing}
+            disabled={importing || !pickTheme}
+            title={pickTheme ? undefined : REMOTE_DISABLED_REASON.pickTheme}
             className="flex w-fit items-center gap-1.5 rounded-md bg-brand-fill px-3 py-1.5 text-[12.5px] text-on-brand hover:bg-brand-fill-hover disabled:opacity-60"
           >
             Import theme…
@@ -236,6 +249,8 @@ export function ThemeGallery() {
             isBuiltIn
             onActivate={activateTheme}
             onExport={(exportId) => onExport(exportId, theme)}
+            exportDisabled={!saveTheme}
+            exportDisabledReason={saveTheme ? null : REMOTE_DISABLED_REASON.saveTheme}
             onRemove={() => {}}
           />
         ))}
@@ -248,6 +263,8 @@ export function ThemeGallery() {
             isBuiltIn={false}
             onActivate={activateTheme}
             onExport={(exportId) => onExport(exportId, theme)}
+            exportDisabled={!saveTheme}
+            exportDisabledReason={saveTheme ? null : REMOTE_DISABLED_REASON.saveTheme}
             onRemove={removeTheme}
           />
         ))}

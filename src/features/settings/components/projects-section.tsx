@@ -42,7 +42,7 @@ export function ProjectsSection() {
    * guarantees worth stating once rather than twice: one dialog per click, a
    * write of exactly the path it returned, nothing at all when it is closed.
    */
-  const { addProject, choosing } = useAddProject();
+  const { addProject, choosing, disabledReason } = useAddProject();
 
   /**
    * Which pane this section is showing (story 102).
@@ -99,7 +99,8 @@ export function ProjectsSection() {
         <button
           type="button"
           onClick={addProject}
-          disabled={choosing}
+          disabled={choosing || disabledReason !== null}
+          title={disabledReason ?? undefined}
           className="flex w-fit items-center gap-1.5 rounded-md bg-brand-fill px-3 py-1.5 text-[12.5px] text-on-brand hover:bg-brand-fill-hover disabled:opacity-60"
         >
           <Plus size={12} weight="bold" />

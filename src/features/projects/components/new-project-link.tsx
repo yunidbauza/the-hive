@@ -64,19 +64,20 @@ export function NewProjectLink({
 }: {
   variant?: NewProjectVariant;
 }) {
-  const { addProject, choosing } = useAddProject();
+  const { addProject, choosing, disabledReason } = useAddProject();
 
   return (
     <button
       type="button"
       onClick={addProject}
-      disabled={choosing}
+      disabled={choosing || disabledReason !== null}
       /*
-        What the click opens, named as the OS thing it is. There is no refusal
-        state to report here the way `NewSessionLink` has one: mapping a folder
-        is the act that *creates* the access every other control checks.
+        What the click opens, named as the OS thing it is, unless the dialog
+        is unavailable while attached (HIVE-144) — the one refusal state this
+        control does have, borrowed from `WINDOW_BOUND`'s own wording rather
+        than invented here.
       */
-      title="Choose a folder to map as a project"
+      title={disabledReason ?? 'Choose a folder to map as a project'}
       aria-label="Add a new project"
       className={CLASSES[variant]}
     >

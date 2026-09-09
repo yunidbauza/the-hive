@@ -1,8 +1,18 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { REMOTE_DISABLED_REASON } from '@config/runtime';
 import { NewProjectLink } from '@features/projects/components/new-project-link';
+import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
+import {
+  DEFAULT_JIRA,
+  DEFAULT_NOTIFICATIONS,
+  DEFAULT_RECEIVER,
+  DEFAULT_SERVER,
+  DEFAULT_SLACK,
+  type ConfigSnapshot,
+} from '@shared/config-contract';
 
 const chooseProjectDirectory = vi.fn();
 const addProjectToConfig = vi.fn();
@@ -15,6 +25,27 @@ vi.mock('@lib/project-config', async (importOriginal) => {
     addProjectToConfig: (request: unknown) => addProjectToConfig(request),
   };
 });
+
+function remoteSnapshot(): ConfigSnapshot {
+  return {
+    configPath: '/home/dev/.hive/config.json',
+    templateWritten: false,
+    shell: '/bin/zsh',
+    claudeCommand: 'claude',
+    env: {},
+    projects: [],
+    notifications: { ...DEFAULT_NOTIFICATIONS },
+    jira: { ...DEFAULT_JIRA },
+    receiver: { ...DEFAULT_RECEIVER },
+    server: { ...DEFAULT_SERVER },
+    remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
+    slack: { ...DEFAULT_SLACK },
+    subscriptionAuth: true,
+    sessionMetrics: true,
+    importLoginEnv: true,
+    errors: [],
+  };
+}
 
 /**
  * Mapping a project from the rail, without a detour through Settings.
@@ -107,5 +138,36 @@ describe('NewProjectLink', () => {
 
     await waitFor(() => expect(button).toBeDisabled());
     expect(chooseProjectDirectory).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * While attached to someone else's Hive (HIVE-144): `config:choose-directory`
+   * opens on the server, which has no window. Disabled with the same reason
+   * `WINDOW_BOUND` gives, and the click never reaches the bridge.
+   */
+  describe('attached to a remote server', () => {
+    afterEach(() => {
+      resetProjectConfig();
+    });
+
+    it('disables the control and carries the refusal as its title', () => {
+      setProjectConfigForTest(remoteSnapshot());
+
+      render(<NewProjectLink />);
+
+      const button = screen.getByRole('button', { name: /new project/i });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute('title', REMOTE_DISABLED_REASON.chooseDirectory);
+    });
+
+    it('never opens the dialog', async () => {
+      setProjectConfigForTest(remoteSnapshot());
+      const user = userEvent.setup();
+
+      render(<NewProjectLink />);
+      await user.click(screen.getByRole('button', { name: /new project/i }));
+
+      expect(chooseProjectDirectory).not.toHaveBeenCalled();
+    });
   });
 });

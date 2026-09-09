@@ -9,6 +9,8 @@ const base = {
   theme: BUILT_IN_THEME,
   onActivate: vi.fn(),
   onExport: vi.fn(),
+  exportDisabled: false,
+  exportDisabledReason: null,
   onRemove: vi.fn(),
 };
 
@@ -78,5 +80,38 @@ describe('ThemeCard', () => {
     );
     await userEvent.click(screen.getByRole('button', { name: /actions$/ }));
     expect(onActivate).not.toHaveBeenCalled();
+  });
+
+  /**
+   * `theme:save` while attached to someone else's Hive (HIVE-144) — see
+   * `WINDOW_BOUND` (`electron/shared/remote-contract.ts`). The caller
+   * (`theme-gallery.tsx`) computes `exportDisabled` from `can.saveTheme()`;
+   * this only proves the card disables Export… on the prop and never fires
+   * its handler when it does.
+   */
+  it('disables Export… and carries the reason, and never calls onExport', async () => {
+    const onExport = vi.fn();
+    render(
+      <ThemeCard
+        {...base}
+        id="hive"
+        isActive
+        isBuiltIn
+        onExport={onExport}
+        exportDisabled
+        exportDisabledReason="Exporting a theme writes a file on the machine the user is sitting at."
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /actions$/ }));
+
+    const item = screen.getByRole('menuitem', { name: 'Export…' });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+    expect(item).toHaveAttribute(
+      'title',
+      'Exporting a theme writes a file on the machine the user is sitting at.',
+    );
+
+    await userEvent.click(item);
+    expect(onExport).not.toHaveBeenCalled();
   });
 });

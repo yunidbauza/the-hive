@@ -147,6 +147,30 @@ describe('the remote block on a real snapshot', () => {
     expect(snapshot.remote).toEqual(DEFAULT_REMOTE);
     expect(snapshot.errors).toEqual([]);
   });
+
+  /**
+   * `attachedServer` (HIVE-144, Task 12) — the config-derived readout, not
+   * the header chip's runtime one. See `ConfigSnapshot.attachedServer`'s own
+   * doc comment for why the two must not be collapsed into one.
+   */
+  describe('attachedServer', () => {
+    it('is null in local mode, the same as never having attached', () => {
+      seed('{\n  "version": 2\n}\n');
+
+      expect(reloadConfig().attachedServer).toBeNull();
+    });
+
+    it('names the configured host in remote mode, since the file carries no friendlier label', () => {
+      seed(
+        '{\n  "version": 2,\n  "remote": { "mode": "remote", "host": "mini.tail1234.ts.net" }\n}\n',
+      );
+
+      expect(reloadConfig().attachedServer).toEqual({
+        name: 'mini.tail1234.ts.net',
+        host: 'mini.tail1234.ts.net',
+      });
+    });
+  });
 });
 
 const onDisk = (): Record<string, unknown> =>

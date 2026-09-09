@@ -1,5 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
+import { can, type RemoteCapabilities } from '@config/runtime';
 import {
   projectAccess,
   projectConfigSnapshot,
@@ -59,6 +60,33 @@ export function useProjectAccess(projectId: string): ProjectAccess {
     projectConfigSnapshot,
   );
   return projectAccess(projectId);
+}
+
+/**
+ * The four `can.*` remote-attach predicates (HIVE-144), reactive to the
+ * config subscription.
+ *
+ * Same subscribe-then-derive shape as {@link useProjectAccess}: `can.*` are
+ * plain functions so an event handler can call them without a hook (a
+ * `spawnSessionIn` check before a click already does this), but a *rendered*
+ * disabled state has to re-paint the instant a live mode switch lands, which
+ * a bare function call inside a component that reads no other config state
+ * would not do on its own. Subscribing here for the re-render, then reading
+ * `can.*` fresh, is what keeps the two from disagreeing about which snapshot
+ * either was computed from.
+ */
+export function useRemoteCapabilities(): RemoteCapabilities {
+  useSyncExternalStore(
+    subscribeProjectConfig,
+    projectConfigSnapshot,
+    projectConfigSnapshot,
+  );
+  return {
+    chooseDirectory: can.chooseDirectory(),
+    pickTheme: can.pickTheme(),
+    saveTheme: can.saveTheme(),
+    importSkillFiles: can.importSkillFiles(),
+  };
 }
 
 /**

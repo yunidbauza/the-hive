@@ -19,6 +19,10 @@ interface ProjectRowMenuProps {
   onRename: () => void;
   onChangeKey: () => void;
   onRepoint: () => void;
+  /** Whether the folder dialog is available — `false` while attached (HIVE-144). */
+  canRepoint: boolean;
+  /** `WINDOW_BOUND`'s own reason, shown as the disabled item's `title`. */
+  repointDisabledReason: string | null;
   onRemove: () => void;
 }
 
@@ -64,6 +68,8 @@ export function ProjectRowMenu({
   onRename,
   onChangeKey,
   onRepoint,
+  canRepoint,
+  repointDisabledReason,
   onRemove,
 }: ProjectRowMenuProps) {
   const item =
@@ -146,6 +152,8 @@ export function ProjectRowMenu({
           Change key…
         </DropdownMenuItem>
         <DropdownMenuItem
+          disabled={!canRepoint}
+          title={repointDisabledReason ?? undefined}
           onSelect={() => select(onRepoint)}
           className={item}
         >
