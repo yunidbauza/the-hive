@@ -908,8 +908,16 @@ describe('post-attach frames', () => {
     socket.emit('message', JSON.stringify({ kind: 'call', id: 'c1', channel: CH.configGet, payload: null }));
     await flushMicrotasks();
 
+    /*
+      The socket goes with the frame (HIVE-145). `dispatch.call` takes the
+      surface for the reason `dispatch.notify` always has: a handler that keys
+      state by surface — `fs:watch`, `pty:ack`, `ui:foreground` — has to know
+      whose call it is answering, and the same object is both the frame sink
+      and the lifetime.
+    */
     expect(dispatch.call).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'call', id: 'c1', channel: CH.configGet }),
+      expect.objectContaining({ send: expect.any(Function), on: expect.any(Function) }),
     );
     expect(sent).toContainEqual({ kind: 'result', id: 'c1', payload: { ok: true } });
   });
@@ -1320,7 +1328,10 @@ describe('frame size bounds', () => {
     );
 
     await until(() => frames.some((frame) => frame.id === 'big'), 'the result frame');
-    expect(dispatch.call).toHaveBeenCalledWith(expect.objectContaining({ id: 'big' }));
+    expect(dispatch.call).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'big' }),
+      expect.anything(),
+    );
     expect(frames).toContainEqual({ kind: 'result', id: 'big', payload: { ok: true } });
     socket.close();
   }, 20_000);
@@ -1361,7 +1372,10 @@ describe('frame size bounds', () => {
     socket.send(encoded);
 
     await until(() => frames.some((frame) => frame.id === 'escaped'), 'the result frame');
-    expect(dispatch.call).toHaveBeenCalledWith(expect.objectContaining({ id: 'escaped' }));
+    expect(dispatch.call).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'escaped' }),
+      expect.anything(),
+    );
     expect(frames).toContainEqual({ kind: 'result', id: 'escaped', payload: { ok: true } });
     socket.close();
   }, 30_000);

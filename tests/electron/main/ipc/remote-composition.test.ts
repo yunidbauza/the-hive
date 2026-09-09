@@ -911,7 +911,14 @@ describe('handlers that dereference the Electron event', () => {
 
     /**
      * The channels that read the event for a **surface identity**, not for a
-     * window — added rather than refused, because a socket can supply one.
+     * window — added rather than refused, because a socket supplies one.
+     *
+     * It genuinely does, since HIVE-145: a call dispatched from a socket is
+     * handed a synthetic event carrying that socket as its `sender`, the same
+     * shape the notify path has always had. Before that it was handed `{}`, and
+     * the first channel to key anything by surface found the hole — `fs:watch`
+     * over a socket installed a watcher belonging to a surface that did not
+     * exist, and every `fs:changed` it produced was addressed to nobody.
      *
      * `pty:prompt` was the first (HIVE-143): the surface registry accepts
      * anything with an `.on`, which `listener.ts` hands it, and refusing it

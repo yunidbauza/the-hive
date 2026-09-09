@@ -633,6 +633,25 @@ function attach(
  * short enough to be quick fails as a timeout with nothing saying what was
  * being waited for. `what` is what turns that timeout into a readable failure.
  */
+/**
+ * The byte count for a session once it has stopped moving (HIVE-145).
+ *
+ * A paused producer is proved by a plateau, not by a single reading: the pause
+ * happens when the unacked window crosses the high-water mark, which is a few
+ * batches after the flood starts, and asserting before that would measure a
+ * stream that simply had not got there yet.
+ */
+async function settledBytes(client: LiveClient, sessionId: string): Promise<number> {
+  let last = -1;
+  for (let stable = 0; stable < 8; ) {
+    await delay(250);
+    const now = client.ptyBytes(sessionId);
+    stable = now === last ? stable + 1 : 0;
+    last = now;
+  }
+  return last;
+}
+
 async function waitFor(predicate: () => boolean, what: string, timeoutMs = 30_000): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -987,6 +1006,8 @@ interface LiveClient {
   close(): void;
   /** What this socket carried for `sessionId` alone. */
   ptyTraffic(sessionId: string): PtyTraffic;
+  /** Total `chunk` bytes seen for `sessionId` right now (HIVE-145). */
+  ptyBytes(sessionId: string): number;
 }
 
 /** Every client this run opened, so teardown can close one a failing case left behind. */
@@ -1015,6 +1036,17 @@ async function openClient(
      * this closes the socket itself.
      */
     unmanaged?: boolean;
+    /**
+     * Stop acking `pty:data`, so this socket is a deliberately stalled consumer
+     * (HIVE-145).
+     *
+     * The flow-control window follows the **slowest** surface watching a
+     * session, which is what stops a fast client letting the pty outrun a slow
+     * one into the slow one's own unbounded `ws` send buffer. A client that
+     * never acks is how a case proves that from outside: the producer pauses at
+     * the fd and stays paused until this socket either catches up or goes away.
+     */
+    silent?: boolean;
   } = {},
 ): Promise<LiveClient> {
   const socket = new WebSocket(url);
@@ -1115,6 +1147,7 @@ async function openClient(
       flood halfway through and the case waiting on the tail would time out
       against a session that is not broken, only paused.
     */
+    if (options.silent === true) return;
     send({ kind: 'notify', channel: CH.ptyAck, payload: { sessionId: event.sessionId, seq: event.seq } });
   });
 
@@ -1182,6 +1215,8 @@ async function openClient(
       );
       return sessionId;
     },
+
+    ptyBytes: (sessionId) => bytesFor(sessionId),
 
     kill() {
       socket.terminate();
@@ -1739,6 +1774,8 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
   describe('calls, events and PTY resume over an attached socket (HIVE-143)', () => {
     /** The project this suite's `fs:read-file` and `pty:spawn` cases address. */
     const seededProjectId = 'live-remote';
+    /** The second tree, so two surfaces can watch different projects (HIVE-145). */
+    const otherProjectId = 'live-other';
     /**
      * A no-op bootstrap, and the `; false` is not decoration.
      *
@@ -1762,10 +1799,18 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
     let app: ChildProcess | undefined;
     let appRecord: ProcessRecord | undefined;
     let device: MintedDevice;
+    /** A genuinely second device, so "two clients" is two credentials (HIVE-145). */
+    let secondDevice: MintedDevice;
+    /** A second project, so two surfaces can watch different trees (HIVE-145). */
+    let otherProjectDir: string;
 
     /** A client that has completed a real handshake, optionally resuming. */
-    const attached = async (options: { resumeFrom?: Record<string, ResumePoint> } = {}): Promise<LiveClient> =>
+    const attached = async (options: { resumeFrom?: Record<string, ResumePoint>; silent?: boolean } = {}): Promise<LiveClient> =>
       openClient(url, { id: device.device.id, token: device.token }, options);
+
+    /** The same, on the other device's credential. */
+    const attachedSecond = async (options: { silent?: boolean } = {}): Promise<LiveClient> =>
+      openClient(url, { id: secondDevice.device.id, token: secondDevice.token }, options);
 
     beforeAll(async () => {
       dir = mkdtempSync(join(tmpdir(), 'hive-live-server-link-'));
@@ -1789,6 +1834,9 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       symlinkSync(outsideDir, join(projectDir, 'escape'));
 
       device = mintDevice('Link-Device');
+      secondDevice = mintDevice('Link-Device-2');
+      otherProjectDir = mkdtempSync(join(tmpdir(), 'hive-live-server-other-'));
+      writeFileSync(join(otherProjectDir, 'README.md'), 'the other tree\n', 'utf8');
 
       const booted = await bootServerApp(configPath, userDataDir, (bootPort) => ({
         version: CONFIG_VERSION,
@@ -1797,10 +1845,13 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
         // that passes only on the author's machine is worthless.
         shell: '/bin/sh',
         claudeCommand: stubClaudeCommand,
-        projects: [{ id: seededProjectId, name: 'Live Remote', path: projectDir, icon: 'ph-cube' }],
+        projects: [
+          { id: seededProjectId, name: 'Live Remote', path: projectDir, icon: 'ph-cube' },
+          { id: otherProjectId, name: 'Live Other', path: otherProjectDir, icon: 'ph-cube' },
+        ],
         server: {
           bind: { host: '127.0.0.1', port: bootPort, allowedOrigins: [] },
-          devices: [device.device],
+          devices: [device.device, secondDevice.device],
         },
       }));
       app = booted.child;
@@ -2400,6 +2451,139 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       expect(config.projects.map((project) => project.id)).toContain(seededProjectId);
       expect(JSON.stringify(snapshot[CH.ledgerList])).toContain('live proof');
     }, 30_000);
+
+    /**
+     * Two clients attached to one server at the same time (HIVE-145).
+     *
+     * Every case above this point attaches one socket. The N-way fan-out has
+     * been there since HIVE-143 and the machinery to make two of them safe
+     * landed in HIVE-145, but nothing had ever put two on the wire at once
+     * against a real server — which is the only place the per-surface state can
+     * actually be shown to be per surface.
+     *
+     * Two devices, not one credential twice: `RemoteConfig`'s own model is one
+     * socket per device, and two laptops is the deployment this Epic is for.
+     */
+    describe('two attached clients (HIVE-145)', () => {
+      it('23. renders the same session output on both', async () => {
+        const a = await attached();
+        const b = await attachedSecond();
+        const sessionId = `two-clients-${String(Date.now())}`;
+        await a.spawnSession(seededProjectId, sessionId);
+
+        a.notify(CH.ptyWrite, { sessionId, data: 'echo BOTH-SEE-THIS\n' });
+
+        /*
+          Collected on each socket independently. The assertion is not "the
+          server sent it" — the fan-out already had a unit test for that — but
+          that two real sockets, on two real device credentials, each receive
+          the whole of one session's output.
+        */
+        await a.collectPtyUntil(sessionId, /BOTH-SEE-THIS/);
+        await b.collectPtyUntil(sessionId, /BOTH-SEE-THIS/);
+
+        a.notify(CH.ptyWrite, { sessionId, data: 'exit\n' });
+      }, 60_000);
+
+      it('24. lets a stalled client pause the producer rather than buffer without bound, and releases on its drop', async () => {
+        const fast = await attached();
+        const stalled = await attachedSecond({ silent: true });
+        const sessionId = `stalled-client-${String(Date.now())}`;
+        await fast.spawnSession(seededProjectId, sessionId);
+
+        /*
+          More than `HIGH_WATER_BYTES` (512 KiB) of output, so the window
+          genuinely closes rather than the whole flood fitting inside it.
+        */
+        fast.notify(CH.ptyWrite, {
+          sessionId,
+          data: `yes 0123456789012345678901234567890123456789 | head -40000\n`,
+        });
+
+        /*
+          The window follows the **slowest** surface, so the fast client's own
+          stream stops too. That is what backpressure *is*: the pty is paused at
+          the fd and the producing process blocks on write, rather than the
+          server holding megabytes in the stalled socket's `ws` send buffer,
+          which is the failure this replaced.
+
+          Waited for as a plateau rather than asserted once: the pause happens
+          when the unacked window crosses the mark, which is a few batches in.
+        */
+        await fast.collectPtyBytes(sessionId, 256 * 1024);
+        const paused = await settledBytes(fast, sessionId);
+        expect(paused, 'the producer never paused for the stalled client').toBeLessThan(
+          40_000 * 41,
+        );
+
+        /*
+          And the trap the HIVE-143 review named, closed: a surface that goes
+          away releases whatever it was holding. Without that, a slow client
+          could freeze a session for everyone else permanently, simply by
+          disconnecting — its mark would sit at the bottom of the window forever.
+        */
+        stalled.kill();
+
+        await waitFor(
+          () => fast.ptyBytes(sessionId) > paused,
+          'the stream to resume once the stalled client dropped',
+          30_000,
+        );
+
+        fast.notify(CH.ptyWrite, { sessionId, data: 'exit\n' });
+      }, 90_000);
+
+      it('25. watches a different project per client, and sends each only its own changes', async () => {
+        const a = await attached();
+        const b = await attachedSecond();
+
+        const watchedByA = await a.call(CH.fsWatch, { projectId: seededProjectId });
+        const watchedByB = await b.call(CH.fsWatch, { projectId: otherProjectId });
+        expect(watchedByA.kind, JSON.stringify(watchedByA)).toBe('result');
+        expect(watchedByB.kind, JSON.stringify(watchedByB)).toBe('result');
+
+        /*
+          The single watch slot this replaced would have had B's call close A's
+          watcher, leaving A's explorer silently stale — so a change in A's tree
+          would reach nobody, and every change would reach whoever asked last.
+        */
+        writeFileSync(join(otherProjectDir, 'touched.txt'), 'b only\n', 'utf8');
+
+        const changesFor = (client: LiveClient): EventFrame[] =>
+          client.collectEvents()().filter((event) => event.channel === CH.fsChanged);
+
+        await waitFor(
+          () => changesFor(b).length > 0,
+          'fs:changed on the client that asked for that project',
+          30_000,
+        );
+
+        /*
+          Targeted, not broadcast. Through the fan-out both sockets received
+          every surface's tree churn, and an explorer re-read its expanded
+          directories on a flush about a repository it was not showing.
+        */
+        expect(changesFor(a)).toEqual([]);
+        expect(
+          (changesFor(b)[0]?.payload as { projectId: string }).projectId,
+        ).toBe(otherProjectId);
+
+        /*
+          A file in A's own tree still reaches A, which is what says its watcher
+          survived B's — the theft, stated as the property rather than as the
+          absence of one.
+        */
+        writeFileSync(join(projectDir, 'touched.txt'), 'a only\n', 'utf8');
+        await waitFor(
+          () => changesFor(a).length > 0,
+          'fs:changed on the surviving watcher',
+          30_000,
+        );
+        expect(
+          (changesFor(a)[0]?.payload as { projectId: string }).projectId,
+        ).toBe(seededProjectId);
+      }, 60_000);
+    });
   });
 
   describe('two real built apps, one serving and one attaching (HIVE-144)', () => {

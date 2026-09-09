@@ -305,7 +305,7 @@ export function createRemoteListener(options: {
    * listener never refuses an attach over a broken read — it sends whatever
    * calling this produced, bounded by {@link fitSnapshot} below.
    */
-  buildSnapshot: () => Promise<Partial<Record<Channel, unknown>>>;
+  buildSnapshot: (reporter: AttachedSurface) => Promise<Partial<Record<Channel, unknown>>>;
   /**
    * Told about a socket the instant its handshake completes, with whatever
    * `resumeFrom` it sent — `undefined` when it sent none, never `{}` (see
@@ -733,7 +733,7 @@ export function createRemoteListener(options: {
                 is this same process answering itself, not a network call —
                 and it is still well inside `ATTACH_HANDSHAKE_TIMEOUT_MS`.
               */
-              const snapshot = fitSnapshot(await buildSnapshot());
+              const snapshot = fitSnapshot(await buildSnapshot(socketHandle));
 
               /*
                 The peer hung up while the snapshot was being built. There is
@@ -842,7 +842,7 @@ export function createRemoteListener(options: {
                   pendingTimers.add(deadline);
 
                   void dispatch
-                    .call(postAttachFrame as CallFrame)
+                    .call(postAttachFrame as CallFrame, socketHandle)
                     .then((answer) => {
                       // A late answer, after the deadline above already sent
                       // its own error frame for this `id` — nothing left to

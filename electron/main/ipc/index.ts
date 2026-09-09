@@ -263,7 +263,7 @@ import {
 
 import { createBindings } from './bindings';
 import { createWindowBroadcaster, type Broadcaster } from './broadcaster';
-import { createIpcRegistry, type CallHandler } from './registry';
+import { createIpcRegistry, type CallHandler, type RemoteReporter } from './registry';
 import { createRemoteDispatch } from './remote-dispatch';
 import { assertSender } from './sender';
 import { applySetRemote, type AttachedSnapshot, type ModeSwitcher } from './set-remote';
@@ -430,25 +430,32 @@ const noModeSwitcher: ModeSwitcher = () => {
 /**
  * The event object handed to a call handler reached over a socket.
  *
- * There is no `IpcMainInvokeEvent` to give it, because there is no renderer and
- * no window. That is safe rather than lucky: exactly four call channels
- * dereference this, all four for a parent `BrowserWindow`, and all four are
- * in `WINDOW_BOUND` and refused before `remote-dispatch` ever reaches a
- * handler. `skills:file:import` (HIVE-148) is the fourth — choosing files for
- * a skill opens the same native dialog the other three needed a window for.
- * If a fifth ever grows the dependency, it must be added to that table in the
- * same commit — this cast is the reason that is a rule and not a preference.
+ * There is no `IpcMainInvokeEvent` to give it — no renderer, no window — so
+ * this is a synthetic one carrying the **socket** as its `sender`, exactly as
+ * the notify path below has always done. That is what makes a call able to ask
+ * *which surface* it came from, and it is a correction rather than an addition:
+ * this was `{}` until HIVE-145, and the first channel to key anything by
+ * surface found the hole. `fs:watch` arriving over a socket installed a
+ * watcher belonging to a surface that did not exist, so every `fs:changed` it
+ * produced was addressed to nobody and the remote explorer never refreshed.
+ *
+ * What is still absent is a **window**, and that is the fence that matters:
+ * five call channels dereference the event to resolve a parent `BrowserWindow`
+ * for a native dialog or to reach the server's own desktop, and all five are in
+ * `WINDOW_BOUND`, refused before `remote-dispatch` ever reaches a handler. A
+ * sixth growing that dependency must be added to that table in the same commit.
  *
  * **And the rule is checked, not merely stated (HIVE-143 review).**
  * `remote-composition.test.ts` reads this file as source text, finds every
  * `handle`/`on` site that binds an `event` parameter it actually uses, and
- * fails if that set is anything other than `WINDOW_BOUND`'s four channels plus
- * `pty:prompt` — the one that dereferences the event deliberately, for a
- * *surface lifetime* rather than a window, which a socket satisfies. That test
- * is what makes the paragraph above enforceable; the `_event` naming
- * convention every other handler follows is what makes it readable.
+ * fails if that set is anything other than `WINDOW_BOUND`'s channels plus the
+ * handful adapted to a surface — the ones that want an identity rather than a
+ * window, which a socket now genuinely supplies. That test is what makes the
+ * paragraph above enforceable; the `_event` naming convention every other
+ * handler follows is what makes it readable.
  */
-const REMOTE_INVOKE_EVENT = {} as IpcMainInvokeEvent;
+const remoteInvokeEvent = (reporter: RemoteReporter): IpcMainInvokeEvent =>
+  ({ sender: reporter }) as unknown as IpcMainInvokeEvent;
 
 /**
  * Fire-and-forget channels (story 093).
@@ -500,8 +507,8 @@ function handle<T>(
   // Registration-time, as in `on` above. `assertSender` is deliberately absent:
   // there is no sender to assert, and the socket's own gate is the handshake
   // plus `remote-dispatch.ts` — the one remote gate, kept out of the local path.
-  remoteRegistry.recordCall(channel as Channel, (payload) =>
-    handler(REMOTE_INVOKE_EVENT, payload),
+  remoteRegistry.recordCall(channel as Channel, (payload, reporter) =>
+    handler(remoteInvokeEvent(reporter), payload),
   );
   // HIVE-144: so a later mode switch can unbind this channel from `ipcMain`
   // and register it again against a different set of layers.
@@ -551,6 +558,7 @@ const SNAPSHOT_PAYLOAD: Partial<Record<Channel, unknown>> = {
 function raceSnapshotRead(
   channel: Channel,
   handler: CallHandler | null,
+  reporter: RemoteReporter,
 ): Promise<readonly [Channel, unknown] | null> {
   return new Promise((resolve) => {
     let settled = false;
@@ -585,7 +593,7 @@ function raceSnapshotRead(
       // The cast is the point, not a workaround for one: see the null branch
       // above. `await` on a non-promise is a no-op, so this one `.then` covers
       // both `github:prs` (genuinely asynchronous) and the five that are not.
-      .then(() => (handler as CallHandler)(SNAPSHOT_PAYLOAD[channel]))
+      .then(() => (handler as CallHandler)(SNAPSHOT_PAYLOAD[channel], reporter))
       .then((value) => {
         /*
           Reachable — the timeout can fire first on a genuinely slow read —
@@ -649,9 +657,13 @@ function raceSnapshotRead(
  * accept frame this becomes and drops keys if a busy server's answer would
  * not otherwise fit.
  */
-async function buildAttachSnapshot(): Promise<Partial<Record<Channel, unknown>>> {
+async function buildAttachSnapshot(
+  reporter: RemoteReporter,
+): Promise<Partial<Record<Channel, unknown>>> {
   const results = await Promise.all(
-    SNAPSHOT_CHANNELS.map((channel) => raceSnapshotRead(channel, remoteRegistry.call(channel))),
+    SNAPSHOT_CHANNELS.map((channel) =>
+      raceSnapshotRead(channel, remoteRegistry.call(channel), reporter),
+    ),
   );
   const snapshot: Partial<Record<Channel, unknown>> = {};
   for (const result of results) {
