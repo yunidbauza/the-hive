@@ -802,6 +802,54 @@ export const SERVER_DEVICE_KEYS: readonly (keyof ServerDevice)[] = [
 ];
 
 /**
+ * `'local'` is every existing install: PTYs spawn in this process and no
+ * socket exists. `'remote'` means this window is a client attaching to a
+ * Hive running as a server elsewhere on the tailnet — see {@link ServerConfig}
+ * for the side that listens. There is no third mode: a PTY's owner has to be
+ * a single process for its lifecycle to be well-defined, so an install is
+ * either the server or a client, never a hybrid.
+ */
+export type RemoteMode = 'local' | 'remote';
+
+/**
+ * Where a client attaches when {@link RemoteMode} is `'remote'` (HIVE-144).
+ *
+ * **The token is not in this block, and never will be.** `host` and `port`
+ * name a socket; the credential that authenticates against it lives in
+ * `safeStorage`, mirroring why {@link ServerDevice.credential} holds a digest
+ * and not the token it was derived from — what authenticates a session must
+ * not sit inside a file this product invites the user to hand-edit.
+ *
+ * A new key in an existing file is advisory to a reader built before it
+ * existed, so `CONFIG_VERSION` stays 2 for this block exactly as it did for
+ * `server` (HIVE-134's precedent): a build that predates this key simply does
+ * not recognise `remote` and ignores it, rather than refusing to launch.
+ */
+export interface RemoteConfig {
+  mode: RemoteMode;
+  /**
+   * A hostname or an IPv4 literal.
+   *
+   * Validated by {@link isRemoteTarget} **only when {@link mode} is
+   * `'remote'`** — see that function's doc comment for the reasoning, and
+   * {@link DEFAULT_REMOTE} for why an empty value in `'local'` mode is the
+   * normal state, not a mistake.
+   */
+  host: string;
+  port: number;
+}
+
+/**
+ * Every install that has never attached carries exactly this. `host` is
+ * empty because there is nothing to validate in `'local'` mode — see
+ * {@link isRemoteTarget}.
+ */
+export const DEFAULT_REMOTE: RemoteConfig = { mode: 'local', host: '', port: 7433 };
+
+/** The block's keys, for the parser's exact-key check. */
+export const REMOTE_KEYS: readonly (keyof RemoteConfig)[] = ['mode', 'host', 'port'];
+
+/**
  * How a containerised session's `${VAR}` references get their values (HIVE-132).
  *
  * `exec-env` — `docker exec -e …` and friends. Env is per-exec, so every launch
@@ -993,6 +1041,56 @@ export function isLoopbackHost(host: string): boolean {
   const bare = host.trim().toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
   if (bare === 'localhost' || bare === '::1' || bare === '::ffff:127.0.0.1') return true;
   return LOOPBACK_V4.test(bare);
+}
+
+/**
+ * `100.64.0.0/10`, the CGNAT range Tailscale hands every node in a tailnet, in
+ * the dotted-quad spelling {@link isHostAlias} admits.
+ *
+ * Get the arithmetic exactly right: a `/10` is the top two bits of the second
+ * octet fixed at `01`, i.e. `100.64.0.0` through `100.127.255.255` — **not**
+ * "every `100.x`". `100.63.255.255` and `100.128.0.0` are one address either
+ * side of the range and were never Tailscale's to hand out; a predicate that
+ * loosens this to the whole second octet admits half the internet's `100.x`
+ * space as if it were the tailnet.
+ */
+const TAILNET_V4 = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}$/;
+
+/**
+ * Whether a value is a Tailscale address for this node's tailnet (HIVE-144).
+ *
+ * `isHostAlias` for shape first, exactly as {@link isServerBindHost} does —
+ * one shape predicate, not two, per that function's own doc comment. What
+ * remains is the two spellings Tailscale actually assigns: a MagicDNS name
+ * (`mini.tail1234.ts.net`) and a CGNAT literal ({@link TAILNET_V4}). A bare
+ * hostname like `mini.local` is neither — mDNS resolves it to whatever
+ * answers on the local LAN right now, off the tailnet entirely — and must be
+ * refused.
+ */
+export function isTailnetHost(value: string): boolean {
+  if (!isHostAlias(value)) return false;
+  if (value.toLowerCase().endsWith('.ts.net')) return true;
+  return TAILNET_V4.test(value);
+}
+
+/**
+ * Whether a plaintext socket may be opened to `value` (HIVE-144).
+ *
+ * **This is a security boundary, not a convenience check.** The socket
+ * {@link RemoteConfig} describes carries a device credential in the clear —
+ * there is no TLS in this story, so the socket's confidentiality is entirely
+ * whatever network it crosses. Loopback never leaves this machine. A tailnet
+ * address never leaves Tailscale's own WireGuard mesh, which is encrypted and
+ * authenticated below this layer. Anything else is a route across the open
+ * internet, and a host that wrongly satisfies this predicate is that
+ * credential handed to whoever controls the address it names.
+ *
+ * `isLoopbackHost(value) || isTailnetHost(value)` — deliberately an "or" of
+ * two independently-reasoned predicates rather than one merged rule, so each
+ * keeps its own doc comment and its own tests.
+ */
+export function isRemoteTarget(value: string): boolean {
+  return isLoopbackHost(value) || isTailnetHost(value);
 }
 
 /**

@@ -3,6 +3,7 @@ import {
   JIRA_KEYS,
   NOTIFICATION_KEYS,
   RECEIVER_KEYS,
+  REMOTE_KEYS,
   SERVER_BIND_KEYS,
   SERVER_DEVICE_KEYS,
   SERVER_KEYS,
@@ -14,6 +15,7 @@ import {
   isEnvArgTemplate,
   isHostAlias,
   isOrigin,
+  isRemoteTarget,
   isServerBindHost,
   unsafeEnvReason,
   type ContainerConfig,
@@ -22,6 +24,8 @@ import {
   type ProjectOrigin,
   type ReceiverBindConfig,
   type ReceiverConfig,
+  type RemoteConfig,
+  type RemoteMode,
   type ServerBindConfig,
   type ServerConfig,
   type ServerDevice,
@@ -168,6 +172,22 @@ export interface ParsedConfig {
    */
   server?: Partial<Omit<ServerConfig, 'bind'>> & { bind?: Partial<ServerBindConfig> };
   /**
+   * HIVE-144's remote block, exactly as the file declared it.
+   *
+   * `undefined` when the file has none — which every config written before
+   * this story does. Kept partial here rather than defaulted for the same
+   * reason `server` is: the write path must be able to tell "the user chose
+   * this" from "the file said nothing", which is what keeps an untouched file
+   * from growing a block it never asked for.
+   *
+   * `host` is validated by {@link isRemoteTarget} only when this block's own
+   * `mode` names `'remote'` — an absent or `'local'` mode leaves `host`
+   * unvalidated, which is what keeps a never-attached install's empty default
+   * from reporting an error it never earned. See `RemoteConfig.host`'s doc
+   * comment.
+   */
+  remote?: Partial<RemoteConfig>;
+  /**
    * HIVE-124's slack block, exactly as the file declared it.
    *
    * `undefined` when the file has none — which every config written before
@@ -233,6 +253,10 @@ const TOP_LEVEL_KEYS = [
   // is why this block may hold it in a file the product invites the user to
   // hand-edit.
   'server',
+  // HIVE-144, for the same reason. The attach mode and where to reach a
+  // server elsewhere on the tailnet; the device credential is a secret and is
+  // deliberately not in this file — see `RemoteConfig`'s doc comment.
+  'remote',
   // HIVE-124, for the same reason. The socket-mode switch and the commander
   // allow-list; the two Slack tokens are secrets and are deliberately not in
   // this file.
@@ -1086,6 +1110,81 @@ function optionalServer(
   return server;
 }
 
+const REMOTE_MODES: readonly RemoteMode[] = ['local', 'remote'];
+
+/**
+ * HIVE-144's remote block.
+ *
+ * Structurally {@link optionalServer}'s twin, per-field salvage rather than
+ * whole-block: a file naming a bad `port` alongside a good `mode` and `host`
+ * should not lose the two fields it got right.
+ *
+ * `host`'s validation is the one field-order dependency in this function —
+ * `mode` is read first because Ruling 3 (HIVE-144) says `host` is checked by
+ * {@link isRemoteTarget} only when *this block's own* `mode` is `'remote'`.
+ * An absent `mode` falls back to {@link DEFAULT_REMOTE}'s `'local'` for this
+ * purpose, which is what keeps a file naming only `host` (or naming neither)
+ * from reporting an error on the empty default every never-attached install
+ * carries.
+ */
+function optionalRemote(
+  record: Record<string, unknown>,
+  label: string,
+  errors: string[],
+): Partial<RemoteConfig> | undefined {
+  const value = record.remote;
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    errors.push(`${label}.remote: expected an object — ignored`);
+    return undefined;
+  }
+
+  const at = `${label}.remote`;
+
+  for (const key of Object.keys(value)) {
+    if (FORBIDDEN_KEYS.has(key)) {
+      errors.push(`${at}: forbidden key "${key}" — remote ignored`);
+      return undefined;
+    }
+  }
+
+  if (!checkKeys(value, REMOTE_KEYS, at, errors)) return undefined;
+
+  const remote: Partial<RemoteConfig> = {};
+
+  let mode: RemoteMode | undefined;
+  if (value.mode !== undefined) {
+    if (REMOTE_MODES.includes(value.mode as RemoteMode)) {
+      mode = value.mode as RemoteMode;
+      remote.mode = mode;
+    } else {
+      errors.push(`${at}.mode: expected "local" or "remote" — using the default`);
+    }
+  }
+
+  const host = value.host;
+  if (host !== undefined) {
+    if (typeof host !== 'string') {
+      errors.push(`${at}.host: expected a string — using the default`);
+    } else if (mode !== 'remote') {
+      // Ruling 3 (HIVE-144): unvalidated outside remote mode, so the empty
+      // default every never-attached install carries is not an error.
+      remote.host = host;
+    } else if (isRemoteTarget(host)) {
+      remote.host = host;
+    } else {
+      errors.push(
+        `${at}.host: must be loopback or a tailnet address — this socket is plaintext, so anything else would send a credential to the open internet — using the default`,
+      );
+    }
+  }
+
+  const port = optionalPort(value, 'port', at, errors);
+  if (port !== null) remote.port = port;
+
+  return remote;
+}
+
 /**
  * The `slack` block (HIVE-124).
  *
@@ -1202,6 +1301,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
   const jira = optionalJira(document, label, errors);
   const receiver = optionalReceiver(document, label, errors);
   const server = optionalServer(document, label, errors);
+  const remote = optionalRemote(document, label, errors);
   const slack = optionalSlack(document, label, errors);
   const subscriptionAuth = optionalBoolean(
     document,
@@ -1240,6 +1340,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       jira,
       receiver,
       server,
+      remote,
       slack,
       projects: [],
       errors,
@@ -1260,6 +1361,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       jira,
       receiver,
       server,
+      remote,
       slack,
       projects: [],
       errors,
@@ -1374,6 +1476,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
     jira,
     receiver,
     server,
+    remote,
     slack,
     projects,
     errors,

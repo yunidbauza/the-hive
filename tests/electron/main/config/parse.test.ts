@@ -808,3 +808,138 @@ describe('the server block (HIVE-142)', () => {
     expect(parsed.errors).toEqual([]);
   });
 });
+
+describe('the remote block (HIVE-144)', () => {
+  it('leaves remote undefined when the file has no block', () => {
+    const parsed = parseConfig(doc({}), 'config');
+
+    expect(parsed.remote).toBeUndefined();
+    expect(parsed.errors).toEqual([]);
+  });
+
+  it('reads a well-formed remote block', () => {
+    const parsed = parseConfig(
+      doc({ remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 } }),
+      'config',
+    );
+
+    expect(parsed.remote).toEqual({
+      mode: 'remote',
+      host: 'mini.tail1234.ts.net',
+      port: 7433,
+    });
+    expect(parsed.fatal).toBe(false);
+    expect(parsed.errors).toEqual([]);
+  });
+
+  it('reports a non-object block and ignores it, without rejecting the file', () => {
+    const parsed = parseConfig(doc({ remote: 'nope' }), 'config');
+
+    expect(parsed.remote).toBeUndefined();
+    expect(parsed.fatal).toBe(false);
+    expect(parsed.errors).toEqual(['config.remote: expected an object — ignored']);
+  });
+
+  it('rejects a forbidden key by dropping the whole block', () => {
+    const parsed = parseConfig(
+      '{"version":2,"projects":[],"remote":{"__proto__":"x"}}',
+      'config',
+    );
+
+    expect(parsed.remote).toBeUndefined();
+    expect(parsed.fatal).toBe(false);
+    expect(parsed.errors).toEqual([
+      'config.remote: forbidden key "__proto__" — remote ignored',
+    ]);
+  });
+
+  it('rejects an unrecognised mode and keeps the rest', () => {
+    const parsed = parseConfig(
+      doc({ remote: { mode: 'nope', host: '127.0.0.1', port: 7433 } }),
+      'config',
+    );
+
+    expect(parsed.remote?.mode).toBeUndefined();
+    expect(parsed.remote?.host).toBe('127.0.0.1');
+    expect(parsed.errors.join(' ')).toContain('remote.mode');
+    expect(parsed.fatal).toBe(false);
+  });
+
+  /**
+   * Ruling 3 (HIVE-144): `host` is validated only when this block's own
+   * `mode` is `'remote'`. `DEFAULT_REMOTE.host` is `''`, and every install
+   * that has never attached carries exactly that — validating it
+   * unconditionally would put a permanent false alarm in
+   * `ConfigSnapshot.errors` on every machine that has never used this
+   * feature.
+   */
+  it('does not validate host when mode is local, even when host is empty', () => {
+    const parsed = parseConfig(doc({ remote: { mode: 'local', host: '' } }), 'config');
+
+    expect(parsed.remote?.host).toBe('');
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.fatal).toBe(false);
+  });
+
+  it('does not validate host when mode is absent from the block', () => {
+    const parsed = parseConfig(doc({ remote: { host: '203.0.113.7' } }), 'config');
+
+    expect(parsed.remote?.host).toBe('203.0.113.7');
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.fatal).toBe(false);
+  });
+
+  it('refuses a host that is neither loopback nor tailnet, in remote mode', () => {
+    const parsed = parseConfig(
+      doc({ remote: { mode: 'remote', host: '203.0.113.7', port: 7433 } }),
+      'config',
+    );
+
+    expect(parsed.remote?.host).toBeUndefined();
+    expect(parsed.errors.some((e) => e.includes('remote.host'))).toBe(true);
+    expect(parsed.fatal).toBe(false);
+  });
+
+  it('accepts a loopback host in remote mode', () => {
+    const parsed = parseConfig(
+      doc({ remote: { mode: 'remote', host: '127.0.0.1', port: 7433 } }),
+      'config',
+    );
+
+    expect(parsed.remote?.host).toBe('127.0.0.1');
+    expect(parsed.errors).toEqual([]);
+  });
+
+  it('accepts a tailnet host in remote mode', () => {
+    const parsed = parseConfig(
+      doc({ remote: { mode: 'remote', host: '100.64.1.2', port: 7433 } }),
+      'config',
+    );
+
+    expect(parsed.remote?.host).toBe('100.64.1.2');
+    expect(parsed.errors).toEqual([]);
+  });
+
+  it('is advisory about a bad port and falls back to the default', () => {
+    const parsed = parseConfig(doc({ remote: { port: 70000 } }), 'config');
+
+    expect(parsed.remote?.port).toBeUndefined();
+    expect(parsed.fatal).toBe(false);
+  });
+
+  /**
+   * The token is never read out of the config file — see `RemoteConfig`'s
+   * doc comment. `token` is not in `REMOTE_KEYS`, so it is reported as an
+   * unknown key and never copied onto the parsed block, exactly as an
+   * unrecognised key anywhere else in this file is.
+   */
+  it('never reads a token out of the config file', () => {
+    const parsed = parseConfig(
+      doc({ remote: { mode: 'remote', host: '127.0.0.1', port: 7433, token: 'nope' } }),
+      'config',
+    );
+
+    expect(JSON.stringify(parsed.remote)).not.toContain('nope');
+    expect(parsed.errors.join(' ')).toContain('unknown key "token"');
+  });
+});
