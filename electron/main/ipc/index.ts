@@ -129,6 +129,7 @@ import type {
   JiraTransition,
 } from '@shared/jira-contract';
 import { LEDGER_DIR, OVERMIND } from '@shared/ledger-contract';
+import { SNAPSHOT_CHANNELS } from '@shared/remote-contract';
 import { SESSION_NAME_DISPLAY_MAX } from '@shared/session-contract';
 import {
   SESSION_HISTORY_FILE,
@@ -378,6 +379,64 @@ function handle<T>(
   // HIVE-144: so a later mode switch can unbind this channel from `ipcMain`
   // and register it again against a different set of layers.
   bindings.record(channel);
+}
+
+/**
+ * The payload each {@link SNAPSHOT_CHANNELS} entry is read with — the same one
+ * `electron/preload/index.ts` sends for it, defaulting to `undefined` (HIVE-144).
+ *
+ * Every one of the six is called with no argument from the renderer at boot
+ * *except* `ledger:list`: its bridge method is `(query?) =>
+ * ipcRenderer.invoke(CH.ledgerList, query ?? {})`, so `undefined` never
+ * actually crosses that wire, and `parseLedgerReadQuery` — correctly — refuses
+ * it with `TypeError: ledger query must be an object` when it does. Read that
+ * refusal here (`{}`, not the whole map's default) rather than silently
+ * matching what `guards.ts` will accept: this is one bridge's own choice of
+ * default, not a rule every channel happens to share.
+ */
+const SNAPSHOT_PAYLOAD: Partial<Record<Channel, unknown>> = {
+  [CH.ledgerList]: {},
+};
+
+/**
+ * Builds `AttachAccepted.snapshot` — the six {@link SNAPSHOT_CHANNELS} reads a
+ * joining client needs to render the fleet without six round trips (HIVE-144).
+ *
+ * Calls each channel's handler through `remoteRegistry.call`, the exact
+ * function a socket's own `call` frame would reach — the same one `handle`
+ * above records — so there is no second source of truth for what a channel
+ * answers. Read with {@link SNAPSHOT_PAYLOAD}'s entry for the channel, or
+ * `undefined` when it has none — the payload every one of these six takes at
+ * boot in the renderer.
+ *
+ * A snapshot is a convenience, not a precondition (Ruling 15, HIVE-144
+ * review): a channel whose handler is not yet registered is skipped, and one
+ * whose handler throws — or whose promise rejects — has its key omitted
+ * rather than failing the whole snapshot. A client that attaches to a server
+ * mid-composition, or catches one channel in a bad moment, still gets the
+ * other five instead of none.
+ *
+ * Sizing the resulting frame against the wire's ceiling is deliberately not
+ * this function's job — it returns whatever it could read, and
+ * `electron/remote-host/listener.ts`'s `fitSnapshot` is what weighs the
+ * accept frame this becomes and drops keys if a busy server's answer would
+ * not otherwise fit.
+ */
+async function buildAttachSnapshot(): Promise<Partial<Record<Channel, unknown>>> {
+  const snapshot: Partial<Record<Channel, unknown>> = {};
+  for (const channel of SNAPSHOT_CHANNELS) {
+    const handler = remoteRegistry.call(channel);
+    if (handler === null) continue;
+    try {
+      // `await` on a non-promise is a no-op — `github:prs` really is
+      // asynchronous, and the rest are not, so this covers both without a
+      // branch, exactly as `remote-dispatch.ts`'s own `call` does.
+      snapshot[channel] = await handler(SNAPSHOT_PAYLOAD[channel]);
+    } catch (cause) {
+      console.error(`[hive] attach snapshot could not read ${channel}:`, cause);
+    }
+  }
+  return snapshot;
 }
 
 /**
@@ -1671,6 +1730,9 @@ export function registerIpcHandlers(
       forever and every call would answer `not-ready`.
     */
     dispatch: createRemoteDispatch(remoteRegistry),
+    // What `AttachAccepted.snapshot` carries (HIVE-144) — built fresh per
+    // attach, over the same `remoteRegistry` `dispatch` reads.
+    buildSnapshot: buildAttachSnapshot,
     onAttach: (socket, resumeFrom) => {
       /*
         Added to the set **before** anything is replayed. A `pty:data` landing

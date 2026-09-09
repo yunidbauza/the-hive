@@ -7,11 +7,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRemoteListener } from '@remote-host/listener';
 import type { ServerDevice } from '@shared/config-contract';
 import { MAX_FILE_BYTES } from '@shared/fs-contract';
-import { CH } from '@shared/ipc-contract';
+import { CH, type Channel } from '@shared/ipc-contract';
 import {
+  ATTACH_FRAME_MAX_BYTES,
   CALL_DEADLINE_MS,
   CALL_TIMEOUT_CODE,
+  POST_ATTACH_FRAME_MAX_BYTES,
   REMOTE_PROTOCOL_VERSION,
+  SNAPSHOT_CHANNELS,
   type AttachRequest,
   type CallFrame,
   type ErrorFrame,
@@ -38,6 +41,9 @@ afterEach(async () => {
 const noopDispatch: RemoteDispatch = { call: vi.fn(), notify: vi.fn() };
 const noopOnAttach = vi.fn();
 const noopOnDetach = vi.fn();
+/** An empty snapshot — every pre-existing case in this file is silent on HIVE-144. */
+const noopBuildSnapshot = (): Promise<Partial<Record<Channel, unknown>>> =>
+  Promise.resolve({});
 
 const start = async (devices: readonly ServerDevice[], allowedOrigins: string[] = []) => {
   listener = createRemoteListener({
@@ -45,6 +51,7 @@ const start = async (devices: readonly ServerDevice[], allowedOrigins: string[] 
     devices: () => devices,
     serverName: 'test-mini',
     dispatch: noopDispatch,
+    buildSnapshot: noopBuildSnapshot,
     onAttach: noopOnAttach,
     onDetach: noopOnDetach,
   });
@@ -186,6 +193,7 @@ describe('the attach handshake', () => {
       devices: () => devices,
       serverName: 'test-mini',
       dispatch: noopDispatch,
+      buildSnapshot: noopBuildSnapshot,
       onAttach: noopOnAttach,
       onDetach: noopOnDetach,
     });
@@ -626,6 +634,7 @@ describe('start()/stop() lifecycle', () => {
       devices: () => [],
       serverName: 'test-mini',
       dispatch: noopDispatch,
+      buildSnapshot: noopBuildSnapshot,
       onAttach: noopOnAttach,
       onDetach: noopOnDetach,
     });
@@ -654,6 +663,7 @@ describe('start()/stop() lifecycle', () => {
       devices: () => [],
       serverName: 'test-mini',
       dispatch: noopDispatch,
+      buildSnapshot: noopBuildSnapshot,
       onAttach: noopOnAttach,
       onDetach: noopOnDetach,
     });
@@ -685,6 +695,7 @@ describe('start()/stop() lifecycle', () => {
       devices: () => [],
       serverName: 'test-mini',
       dispatch: noopDispatch,
+      buildSnapshot: noopBuildSnapshot,
       onAttach: noopOnAttach,
       onDetach: noopOnDetach,
     });
@@ -708,6 +719,7 @@ describe('start()/stop() lifecycle', () => {
       devices: () => [],
       serverName: 'test-mini',
       dispatch: noopDispatch,
+      buildSnapshot: noopBuildSnapshot,
       onAttach: noopOnAttach,
       onDetach: noopOnDetach,
     });
@@ -722,6 +734,7 @@ describe('start()/stop() lifecycle', () => {
       devices: () => [],
       serverName: 'test-mini',
       dispatch: noopDispatch,
+      buildSnapshot: noopBuildSnapshot,
       onAttach: noopOnAttach,
       onDetach: noopOnDetach,
     });
@@ -735,6 +748,7 @@ describe('start()/stop() lifecycle', () => {
       devices: () => [],
       serverName: 'test-mini',
       dispatch: noopDispatch,
+      buildSnapshot: noopBuildSnapshot,
       onAttach: noopOnAttach,
       onDetach: noopOnDetach,
     });
@@ -829,6 +843,7 @@ const attachedSocket = async (
     devices: () => [device],
     serverName: 'test-mini',
     dispatch,
+    buildSnapshot: noopBuildSnapshot,
     onAttach,
     onDetach,
   });
@@ -997,6 +1012,7 @@ describe('post-attach frames', () => {
       devices: () => [device],
       serverName: 'test-mini',
       dispatch: noopDispatch,
+      buildSnapshot: noopBuildSnapshot,
       onAttach: () => {
         throw new Error('the replay loop blew up');
       },
@@ -1216,6 +1232,7 @@ const realClient = async (
     devices: () => [device],
     serverName: 'test-mini',
     dispatch,
+    buildSnapshot: noopBuildSnapshot,
     onAttach: vi.fn(),
     onDetach: vi.fn(),
   });
@@ -1388,4 +1405,126 @@ describe('frame size bounds', () => {
     expect(reply.kind).toBe('attach-accepted');
     second.close();
   }, 30_000);
+});
+
+describe('the attach snapshot (HIVE-144)', () => {
+  /**
+   * Attaches a real socket with a given `buildSnapshot`, and resolves with
+   * `sent()` — every frame the server sent this socket, so a test can find
+   * `attach-accepted` and read its `snapshot`.
+   */
+  const attaching = async (
+    buildSnapshot: () => Promise<Partial<Record<Channel, unknown>>>,
+  ): Promise<{ sent: () => Record<string, unknown>[] }> => {
+    const { device, token } = mintDevice('MacBook');
+    listener = createRemoteListener({
+      bind: { host: '127.0.0.1', port: 0, allowedOrigins: [] },
+      devices: () => [device],
+      serverName: 'test-mini',
+      dispatch: noopDispatch,
+      buildSnapshot,
+      onAttach: noopOnAttach,
+      onDetach: noopOnDetach,
+    });
+    const url = (await listener.start()) as string;
+
+    const socket = new WebSocket(url);
+    await new Promise<void>((resolve, reject) => {
+      socket.on('open', () => resolve());
+      socket.on('error', reject);
+    });
+
+    const sent: Record<string, unknown>[] = [];
+    const firstFrame = new Promise<void>((resolve) => {
+      socket.once('message', (data) => {
+        sent.push(JSON.parse(String(data)) as Record<string, unknown>);
+        resolve();
+      });
+    });
+    socket.send(JSON.stringify({ kind: 'attach', protocol: REMOTE_PROTOCOL_VERSION, deviceId: device.id, token }));
+    await firstFrame;
+    socket.close();
+
+    return { sent: () => sent };
+  };
+
+  /** A snapshot with a small, distinct value for every {@link SNAPSHOT_CHANNELS} entry. */
+  const smallSnapshot = async (): Promise<Partial<Record<Channel, unknown>>> => {
+    const snapshot: Partial<Record<Channel, unknown>> = {};
+    for (const channel of SNAPSHOT_CHANNELS) snapshot[channel] = { from: channel };
+    return snapshot;
+  };
+
+  it('accepts with a snapshot carrying every snapshot channel (HIVE-144)', async () => {
+    const { sent } = await attaching(smallSnapshot);
+    const accepted = sent().find((f) => f.kind === 'attach-accepted');
+    const carried = accepted?.snapshot as Record<string, unknown>;
+
+    for (const channel of SNAPSHOT_CHANNELS) {
+      expect(carried).toHaveProperty(channel);
+    }
+  });
+
+  it('sends the accept whole even when the snapshot is large', async () => {
+    /*
+      ATTACH_FRAME_MAX_BYTES (8 KiB) bounds the CLIENT's first frame, not this
+      one. Asserted so nobody later "optimises" the snapshot under the wrong
+      cap: 100 KiB is more than twelve times over that ceiling and still two
+      orders of magnitude under POST_ATTACH_FRAME_MAX_BYTES (8 MiB) — the one
+      that actually governs what a client's own socket will accept, because
+      `electron/remote-client/socket.ts` sets its receive-side `maxPayload` to
+      that same constant for the whole connection, this frame included.
+
+      A mutation swapping `fitSnapshot`'s ceiling for `ATTACH_FRAME_MAX_BYTES`
+      fails exactly this test: every key below would be dropped instead of
+      none of them.
+    */
+    const oneHundredKiB = 'x'.repeat(100 * 1024);
+    // The payload this test actually depends on: past the wrong ceiling,
+    // nowhere near the right one.
+    expect(Buffer.byteLength(oneHundredKiB, 'utf8')).toBeGreaterThan(ATTACH_FRAME_MAX_BYTES * 10);
+    expect(Buffer.byteLength(oneHundredKiB, 'utf8')).toBeLessThan(POST_ATTACH_FRAME_MAX_BYTES / 10);
+
+    const { sent } = await attaching(async () => ({ [CH.configGet]: oneHundredKiB }));
+
+    const accepted = sent().find((f) => f.kind === 'attach-accepted');
+    expect(accepted?.snapshot).toEqual({ [CH.configGet]: oneHundredKiB });
+  });
+
+  it('drops the heaviest keys first when the snapshot genuinely exceeds POST_ATTACH_FRAME_MAX_BYTES', async () => {
+    // Genuinely too big — 9 MiB of one channel's own value, past the 8 MiB
+    // ceiling on its own, before the envelope around it is even counted.
+    const huge = 'x'.repeat(9 * 1024 * 1024);
+    /*
+      Sized between the two ceilings on purpose (100 KiB: over
+      ATTACH_FRAME_MAX_BYTES's 8 KiB, comfortably under
+      POST_ATTACH_FRAME_MAX_BYTES's 8 MiB once `huge` above is dropped) —
+      not a `{ small: true }` a handful of bytes, which would survive under
+      *either* constant and prove nothing about which one `fitSnapshot`'s
+      loop actually compares against. A mutation swapping that comparison for
+      `ATTACH_FRAME_MAX_BYTES` fails exactly here: it would keep dropping
+      past `huge` and take this key too, because 100 KiB does not fit under
+      8 KiB either.
+    */
+    const survivor = 'y'.repeat(100 * 1024);
+    const { sent } = await attaching(async () => ({
+      [CH.configGet]: huge,
+      [CH.sessionHistory]: survivor,
+    }));
+
+    const accepted = sent().find((f) => f.kind === 'attach-accepted');
+    expect(accepted).toBeDefined();
+    const carried = accepted?.snapshot as Record<string, unknown>;
+
+    // The huge key is gone; the 100 KiB one survives it.
+    expect(carried).not.toHaveProperty(CH.configGet);
+    expect(carried).toHaveProperty(CH.sessionHistory);
+    expect(carried[CH.sessionHistory]).toBe(survivor);
+
+    // And the frame that actually crossed the wire really does fit — the
+    // property `fitSnapshot` exists to guarantee, not merely "fewer keys".
+    expect(Buffer.byteLength(JSON.stringify(accepted), 'utf8')).toBeLessThanOrEqual(
+      POST_ATTACH_FRAME_MAX_BYTES,
+    );
+  });
 });

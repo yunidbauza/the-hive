@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { emptySnapshot } from '../../../../electron/shared/config-contract';
-import { WINDOW_BOUND, type ResumePoint } from '../../../../electron/shared/remote-contract';
+import type { Channel } from '../../../../electron/shared/ipc-contract';
+import { SNAPSHOT_CHANNELS, WINDOW_BOUND, type ResumePoint } from '../../../../electron/shared/remote-contract';
 import type { ResumeResult } from '../../../../electron/main/ipc/pty';
 import type { AttachedSocket } from '../../../../electron/main/ipc/socket-broadcaster';
 
@@ -116,6 +117,31 @@ vi.mock('../../../../electron/main/pty-host', () => ({
 
 vi.mock('../../../../electron/main/shutdown', () => ({ onShutdown: vi.fn() }));
 
+/**
+ * A fully inert scheduler (HIVE-144).
+ *
+ * The real one is a live `setInterval` plus an immediate `tickSchedules()` at
+ * `start()`, and `start()` fires behind the real, unmocked `mcp.start()`'s
+ * file write — a promise this fixture does not control the timing of. Before
+ * this mock, that write resolving mid-test (or mid the *next* test, since
+ * nothing here awaits it) let a real tick read the real ledger mock, landing
+ * unpredictably inside whichever test happened to be running and throwing
+ * through code with no `.catch()` of its own. Nothing in this file asserts on
+ * scheduler behaviour — `tests/electron/main/agents/scheduler.test.ts` owns
+ * that — so removing it here removes the race without losing coverage.
+ */
+vi.mock('../../../../electron/main/agents/scheduler', () => ({
+  createScheduler: () => ({
+    onEntry: () => {},
+    onRunClosed: () => {},
+    onResume: () => {},
+    onEvent: () => {},
+    manualWake: () => ({ ok: false, status: 'stopped' }),
+    start: () => {},
+    stop: () => {},
+  }),
+}));
+
 // The whole snapshot, so no getter reading a field this fixture forgot can
 // throw into a swallowing catch (HIVE-139).
 const snapshot = emptySnapshot('/tmp/config.json', '/bin/zsh');
@@ -139,9 +165,26 @@ vi.mock('../../../../electron/main/config/index', () => ({
  */
 let onChangeListener: ((entry: unknown) => void) | undefined;
 
+/**
+ * What `ledger.read` answers next (HIVE-144).
+ *
+ * A function rather than a plain value, like `resumeAnswer` below, so a case
+ * can make it throw — `ledger:list` is one of {@link SNAPSHOT_CHANNELS}, and
+ * this is what stands in for "a real read genuinely fails" in the attach
+ * snapshot's own suite. It is also reached by the real agent scheduler this
+ * composition builds (`openAsksFor`/`entries`), which is why the attach
+ * snapshot's own throw case fences its override rather than swapping this in
+ * unconditionally — see that test's comment.
+ */
+let ledgerReadImpl: () => { entries: unknown[]; openAsks: unknown[]; claims: Record<string, unknown> } = () => ({
+  entries: [],
+  openAsks: [],
+  claims: {},
+});
+
 vi.mock('../../../../electron/main/ledger', () => ({
   createLedger: () => ({
-    read: () => ({ entries: [], openAsks: [], claims: {} }),
+    read: () => ledgerReadImpl(),
     append: () => ({ ok: true, id: 'entry-1' }),
     answer: () => ({ ok: true, id: 'entry-2' }),
     onChange: (listener: (entry: unknown) => void) => {
@@ -181,9 +224,31 @@ const onAttach = (): OnAttach => {
   return capturedOnAttach;
 };
 
+/**
+ * `buildAttachSnapshot`, captured the same door `onAttach` is (HIVE-144).
+ *
+ * The real function — this file fakes only the listener it is handed to, not
+ * the builder itself, so calling this reaches `remoteRegistry`'s real
+ * recorded handlers, wired to this file's own fakes for `config`, `ledger`,
+ * `sessions` and the rest. That is the property these tests are for: whether
+ * a joining client's snapshot is genuinely built from what `registerIpcHandlers`
+ * wired up, not from a second, parallel description of it.
+ */
+type BuildSnapshot = () => Promise<Partial<Record<Channel, unknown>>>;
+let capturedBuildSnapshot: BuildSnapshot | null = null;
+
+/** The captured builder, or a failure naming why it is missing. */
+const buildSnapshot = (): BuildSnapshot => {
+  if (capturedBuildSnapshot === null) {
+    throw new Error('createRemoteListener was never handed a buildSnapshot');
+  }
+  return capturedBuildSnapshot;
+};
+
 vi.mock('@remote-host/listener', () => ({
-  createRemoteListener: (options: { onAttach: OnAttach }) => {
+  createRemoteListener: (options: { onAttach: OnAttach; buildSnapshot: BuildSnapshot }) => {
     capturedOnAttach = options.onAttach;
+    capturedBuildSnapshot = options.buildSnapshot;
     return {
       start: async () => null,
       stop: async () => {},
@@ -263,8 +328,10 @@ beforeEach(() => {
   windows.length = 0;
   onChangeListener = undefined;
   capturedOnAttach = null;
+  capturedBuildSnapshot = null;
   resumeAnswer = () => null;
   generationAnswer = () => 1;
+  ledgerReadImpl = () => ({ entries: [], openAsks: [], claims: {} });
   vi.clearAllMocks();
   resetIpcHandlers();
 });
@@ -488,6 +555,57 @@ describe('the attach replay loop (HIVE-143)', () => {
       { kind: 'event', channel: CH.ledgerChanged, payload: { id: 'mid-replay' } },
       { kind: 'event', channel: CH.ptyData, payload: { sessionId: 'hero-refresh', chunk: 'x', seq: 9, gen: 1 } },
     ]);
+  });
+});
+
+/**
+ * The attach snapshot (HIVE-144).
+ *
+ * `buildAttachSnapshot` is not re-implemented here: `buildSnapshot()` above
+ * reaches the exact function `registerIpcHandlers` handed `createRemoteListener`,
+ * closing over the real `remoteRegistry` and this file's own fakes for
+ * `config`, `ledger`, `sessions` and the rest. What is under test is whether a
+ * real registration actually answers every one of `SNAPSHOT_CHANNELS`, and
+ * whether one broken read costs only its own key.
+ */
+describe('the attach snapshot (HIVE-144)', () => {
+  it('carries every snapshot channel a real registry can answer', async () => {
+    registerIpcHandlers();
+
+    const snapshot = await buildSnapshot()();
+
+    for (const channel of SNAPSHOT_CHANNELS) {
+      expect(snapshot).toHaveProperty(channel);
+    }
+  });
+
+  it('omits a channel whose read throws, without losing the others', async () => {
+    registerIpcHandlers();
+
+    const boom = new Error('the ledger file is corrupt');
+    const read = vi.fn(() => {
+      throw boom;
+    });
+    ledgerReadImpl = read;
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const snapshot = await buildSnapshot()();
+
+    /*
+      Proves the read actually ran and failed, not that `ledger:list` was
+      never asked for in the first place — a bare key count cannot tell those
+      apart, and a fixture that only ever removed the key up front would pass
+      this test for the wrong reason (HIVE-144 review).
+    */
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(snapshot).not.toHaveProperty(CH.ledgerList);
+    expect(Object.keys(snapshot)).toHaveLength(SNAPSHOT_CHANNELS.length - 1);
+    for (const channel of SNAPSHOT_CHANNELS) {
+      if (channel === CH.ledgerList) continue;
+      expect(snapshot).toHaveProperty(channel);
+    }
+    expect(logged).toHaveBeenCalled();
+    logged.mockRestore();
   });
 });
 

@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 
 import type { ServerBindConfig, ServerDevice } from '@shared/config-contract';
+import type { Channel } from '@shared/ipc-contract';
 import {
   ATTACH_FRAME_MAX_BYTES,
   CALL_DEADLINE_MS,
@@ -242,6 +243,19 @@ export function createRemoteListener(options: {
    */
   dispatch: RemoteDispatch;
   /**
+   * What `AttachAccepted.snapshot` carries (HIVE-144) — built by calling
+   * `remoteRegistry`'s own recorded call handlers for `SNAPSHOT_CHANNELS`, and
+   * injected rather than imported for the same reason `dispatch` is:
+   * `electron/main/ipc/index.ts` is what constructs it, and this file does not
+   * import that one.
+   *
+   * A snapshot is a convenience, not a precondition. This function already
+   * omits any channel whose read threw rather than rejecting, so this
+   * listener never refuses an attach over a broken read — it sends whatever
+   * calling this produced, bounded by {@link fitSnapshot} below.
+   */
+  buildSnapshot: () => Promise<Partial<Record<Channel, unknown>>>;
+  /**
    * Told about a socket the instant its handshake completes, with whatever
    * `resumeFrom` it sent — `undefined` when it sent none, never `{}` (see
    * {@link AttachRequest.resumeFrom}). This is how `electron/main/ipc/index.ts`
@@ -252,7 +266,7 @@ export function createRemoteListener(options: {
   /** Told when an attached socket is gone — closed, errored, or terminated. */
   onDetach: (socket: AttachedSocket) => void;
 }): RemoteListener {
-  const { bind, devices, serverName, dispatch, onAttach, onDetach } = options;
+  const { bind, devices, serverName, dispatch, buildSnapshot, onAttach, onDetach } = options;
 
   /*
     No host-alias concept here, unlike the hook receiver. `ServerBindConfig`
@@ -327,6 +341,73 @@ export function createRemoteListener(options: {
 
   function unauthorized(message: string): AttachRefused {
     return { kind: 'attach-refused', code: 'unauthorized', protocol: REMOTE_PROTOCOL_VERSION, message };
+  }
+
+  /** How many bytes the accept frame carrying `snapshot` would weigh on the wire. */
+  function acceptFrameBytes(snapshot: Partial<Record<Channel, unknown>>): number {
+    return Buffer.byteLength(
+      JSON.stringify({ kind: 'attach-accepted', protocol: REMOTE_PROTOCOL_VERSION, serverName, snapshot }),
+      'utf8',
+    );
+  }
+
+  /**
+   * Drops keys from `snapshot`, largest first, until the accept frame carrying
+   * it fits under {@link POST_ATTACH_FRAME_MAX_BYTES} (Ruling 15, HIVE-144).
+   *
+   * **That ceiling, deliberately, not {@link ATTACH_FRAME_MAX_BYTES}.** The
+   * two bound opposite directions — the client's own `ws` instance sets its
+   * receive-side `maxPayload` to `POST_ATTACH_FRAME_MAX_BYTES` for the whole
+   * connection at connect time (`electron/remote-client/socket.ts`), and that
+   * governs from the very first frame it receives, this accept included.
+   * `ATTACH_FRAME_MAX_BYTES` bounds the *client's* attach frame, on its way
+   * in — reusing it here would refuse a snapshot at 8 KiB instead of the 8 MiB
+   * a client's socket can actually take.
+   *
+   * A snapshot is a convenience, not a precondition: an oversized accept frame
+   * is not refused with a wire code — there is none for "too big to send" —
+   * it is silently dropped by the client's own `ws` at 1009, which at the
+   * handshake reads as the same "closed before it attached" a version
+   * mismatch produces. So this never lets that frame leave: it drops the
+   * heaviest keys first, which gets back under budget in the fewest drops,
+   * and logs which ones so a busy server's fleet is at least diagnosable
+   * rather than merely smaller.
+   *
+   * No separate "does it already fit" fast path in front of the loop below,
+   * deliberately: a snapshot that already fits just costs one `break` on the
+   * loop's first iteration, and a second copy of the same comparison ahead of
+   * it would be a check nothing distinguishes from the one inside the loop —
+   * exactly the shape of redundant, unfalsifiable line this branch keeps
+   * producing (HIVE-144 review). The loop's own check is the only place this
+   * ceiling is compared against, so a test that swaps it for
+   * {@link ATTACH_FRAME_MAX_BYTES} has nowhere else to hide.
+   */
+  function fitSnapshot(
+    snapshot: Partial<Record<Channel, unknown>>,
+  ): Partial<Record<Channel, unknown>> {
+    const remaining: Partial<Record<Channel, unknown>> = { ...snapshot };
+    const byteLengthOfValue = (value: unknown): number =>
+      Buffer.byteLength(JSON.stringify(value) ?? '', 'utf8');
+    // Computed once, over the original snapshot, before anything is deleted —
+    // an order recomputed mid-drop would keep re-measuring keys already gone.
+    const largestFirst = (Object.keys(remaining) as Channel[]).sort(
+      (a, b) => byteLengthOfValue(remaining[b]) - byteLengthOfValue(remaining[a]),
+    );
+
+    const dropped: Channel[] = [];
+    for (const channel of largestFirst) {
+      if (acceptFrameBytes(remaining) <= POST_ATTACH_FRAME_MAX_BYTES) break;
+      delete remaining[channel];
+      dropped.push(channel);
+    }
+
+    if (dropped.length > 0) {
+      console.error(
+        `[hive] attach snapshot exceeded ${String(POST_ATTACH_FRAME_MAX_BYTES)} bytes; dropped: ${dropped.join(', ')}`,
+      );
+    }
+
+    return remaining;
   }
 
   return {
@@ -422,7 +503,7 @@ export function createRemoteListener(options: {
             story does not own, and the connection is closed either way once
             this handler decides.
           */
-          socket.once('message', (data: Buffer | ArrayBuffer | Buffer[]) => {
+          socket.once('message', async (data: Buffer | ArrayBuffer | Buffer[]) => {
             /**
              * Whether `attach-accepted` has already gone out on this socket
              * (HIVE-143 review).
@@ -503,24 +584,25 @@ export function createRemoteListener(options: {
                 return;
               }
 
+              /*
+                Built and bounded before the accept frame goes out — never
+                after (HIVE-144). `buildSnapshot` already omits any channel
+                whose read threw, so this can only ever come back with as
+                many of `SNAPSHOT_CHANNELS` as could actually be answered;
+                `fitSnapshot` then weighs the frame this produces and drops
+                the heaviest keys first if a busy server's fleet would not
+                otherwise fit. Awaiting this holds the handshake open a beat
+                longer than a synchronous send would — every read behind it
+                is this same process answering itself, not a network call —
+                and it is still well inside `ATTACH_HANDSHAKE_TIMEOUT_MS`.
+              */
+              const snapshot = fitSnapshot(await buildSnapshot());
+
               send(socket, {
                 kind: 'attach-accepted',
                 protocol: REMOTE_PROTOCOL_VERSION,
                 serverName,
-                /*
-                  Empty, and that is this story's answer rather than a
-                  placeholder for a missing one. The IPC surface does exist now
-                  — everything below this line routes a client's `call` frames
-                  into the same handlers a renderer reaches — so a client that
-                  attaches can simply ask for what it needs, one channel at a
-                  time, and nothing it wants is unreachable for the want of a
-                  snapshot. What the field is *for* is saving that first flurry
-                  of round trips: HIVE-144 builds the client half, and fills
-                  this so a busy server renders in one round trip instead of a
-                  dozen. Populating it here, with no client to consume it,
-                  would be choosing the payload's shape a story early.
-                */
-                snapshot: {},
+                snapshot,
               });
               accepted = true;
               /*

@@ -578,6 +578,35 @@ export interface AttachAccepted {
 }
 
 /**
+ * The six read channels a joining client needs to render the fleet at once
+ * (HIVE-144) — what `buildAttachSnapshot` in `electron/main/ipc/index.ts`
+ * fills {@link AttachAccepted.snapshot} with, keyed exactly as `CH` names
+ * them so a client reads a key back with the same channel it would have
+ * `call`ed for it.
+ *
+ * Shared rather than declared beside the builder, because both halves of the
+ * link need to agree on what a snapshot contains and
+ * `electron/remote-client/**` may not import `electron/remote-host/**` — the
+ * builder itself stays in `ipc/index.ts`, which is the only place
+ * `remoteRegistry` lives, but the *shape* of what it promises to fill has to
+ * be somewhere both sides can read.
+ */
+export const SNAPSHOT_CHANNELS: readonly Channel[] = [
+  // Last run's fleet, merged into the store by `hydrateSessions` (`src/main.tsx`).
+  CH.sessionHistory,
+  // The agent definitions pane's own snapshot, set by `loadAgents` (`src/lib/agents.ts`).
+  CH.agentsList,
+  // The ledger tail, merged by `hydrateLedger` (`use-ledger-sync.ts`).
+  CH.ledgerList,
+  // The inbox, merged by `hydrateNotifs` (`use-notification-stream.ts`).
+  CH.notificationsList,
+  // The PRs panel, merged by `hydratePrs` (`src/stores/hive-store.ts`).
+  CH.githubPrs,
+  // The workspace config, set by `loadProjectConfig` (`src/lib/project-config.ts`).
+  CH.configGet,
+];
+
+/**
  * Why a handshake was refused.
  *
  * `protocol-mismatch` names both versions and which side to update; the others
