@@ -1677,14 +1677,15 @@ export function registerIpcHandlers(
       attachedSockets.add(socket);
       if (resumeFrom === undefined) return;
 
-      for (const [sessionId, lastSeq] of Object.entries(resumeFrom)) {
+      for (const [sessionId, point] of Object.entries(resumeFrom)) {
         /*
           Keyed by **entity** id, which is what a client's `pty:data` frames
           carry: `sessions/index.ts`'s `forward` rewrites the pty session id to
           the entity id on the way out, so the ids a client holds are the ones
-          `Sessions.resume` maps back.
+          `Sessions.resume` maps back. `point` is `{ gen, seq }` (HIVE-144) —
+          see `AttachRequest.resumeFrom` for why a bare seq was insufficient.
         */
-        const result = sessions?.resume(sessionId, lastSeq) ?? null;
+        const result = sessions?.resume(sessionId, point) ?? null;
         /*
           `null` — no such live session on this server. The client is holding a
           session id from a previous run, or from one that has since exited;
@@ -1736,11 +1737,22 @@ export function registerIpcHandlers(
           into its own terminal, so a whole transcript would duplicate hundreds
           of lines rather than fill a hole. A client with nothing on screen sends
           no `resumeFrom` at all.
+
+          `gen` on this frame is the entity's **live** generation
+          (`sessions.generationFor`), never `point.gen` — the client's own
+          value is exactly the stale one a restart invalidated, whether the
+          gap here came from a generation mismatch or from the ring simply not
+          reaching back far enough within the same generation. Stamping
+          anything else would hand a discontinuity check keyed on `gen` a
+          value it will never see again: the very next live batch already
+          carries the true live generation, and a mismatch between *that* and
+          a wrong marker would read as a second, spurious gap on top of the
+          real one (HIVE-144).
         */
         socket.send({
           kind: 'event',
           channel: CH.ptyData,
-          payload: { sessionId, chunk: '', seq: result.seq },
+          payload: { sessionId, chunk: '', seq: result.seq, gen: sessions?.generationFor(sessionId) ?? point.gen },
         });
       }
     },

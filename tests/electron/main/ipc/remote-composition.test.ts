@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { emptySnapshot } from '../../../../electron/shared/config-contract';
-import { WINDOW_BOUND } from '../../../../electron/shared/remote-contract';
+import { WINDOW_BOUND, type ResumePoint } from '../../../../electron/shared/remote-contract';
 import type { ResumeResult } from '../../../../electron/main/ipc/pty';
 import type { AttachedSocket } from '../../../../electron/main/ipc/socket-broadcaster';
 
@@ -170,7 +170,7 @@ vi.mock('../../../../electron/main/ledger', () => ({
  * process imports. Every case below that needs an attached socket goes through
  * this door, which is the one production code uses too.
  */
-type OnAttach = (socket: AttachedSocket, resumeFrom: Readonly<Record<string, number>> | undefined) => void;
+type OnAttach = (socket: AttachedSocket, resumeFrom: Readonly<Record<string, ResumePoint>> | undefined) => void;
 let capturedOnAttach: OnAttach | null = null;
 
 /** The captured callback, or a failure naming why it is missing. */
@@ -205,7 +205,18 @@ vi.mock('@remote-host/listener', () => ({
  * which is how the ordering assertion below is made: a push raised from inside
  * this fake is a push raised from inside the replay loop.
  */
-let resumeAnswer: (entityId: string, lastSeq: number) => ResumeResult | null = () => null;
+let resumeAnswer: (entityId: string, from: ResumePoint) => ResumeResult | null = () => null;
+
+/**
+ * What `sessions.generationFor` answers next, per entity id (HIVE-144).
+ *
+ * `onAttach`'s gap branch reads this to stamp its synthetic frame with the
+ * entity's *live* generation, never the client's stale one — see
+ * `ipc/index.ts`'s comment on that line. Defaulting to `1` rather than
+ * `undefined` keeps the ordinary cases realistic (a session that has never
+ * restarted); a case that cares about the distinction sets this explicitly.
+ */
+let generationAnswer: (entityId: string) => number | undefined = () => 1;
 
 vi.mock('../../../../electron/main/sessions', () => ({
   createSessions: () => ({
@@ -214,7 +225,8 @@ vi.mock('../../../../electron/main/sessions', () => ({
     write: vi.fn(() => false),
     resize: vi.fn(),
     ack: vi.fn(),
-    resume: (entityId: string, lastSeq: number) => resumeAnswer(entityId, lastSeq),
+    resume: (entityId: string, from: ResumePoint) => resumeAnswer(entityId, from),
+    generationFor: (entityId: string) => generationAnswer(entityId),
     kill: vi.fn(),
     restart: vi.fn(async () => {}),
     entities: () => [],
@@ -252,6 +264,7 @@ beforeEach(() => {
   onChangeListener = undefined;
   capturedOnAttach = null;
   resumeAnswer = () => null;
+  generationAnswer = () => 1;
   vi.clearAllMocks();
   resetIpcHandlers();
 });
@@ -375,7 +388,7 @@ describe('the attach replay loop (HIVE-143)', () => {
     const { socket, sent } = recordingSocket();
     resumeAnswer = () => null;
 
-    onAttach()(socket, { ghost: 12 });
+    onAttach()(socket, { ghost: { gen: 1, seq: 12 } });
 
     // A client holding an id from a previous run, or from a session that has
     // since exited. Nothing to send; its own exit handling covers the rest.
@@ -388,25 +401,28 @@ describe('the attach replay loop (HIVE-143)', () => {
     resumeAnswer = (entityId) => ({
       kind: 'replay',
       events: [
-        { sessionId: entityId, chunk: 'one', seq: 4 },
-        { sessionId: entityId, chunk: 'two', seq: 5 },
+        { sessionId: entityId, chunk: 'one', seq: 4, gen: 1 },
+        { sessionId: entityId, chunk: 'two', seq: 5, gen: 1 },
       ],
     });
 
-    onAttach()(socket, { 'hero-refresh': 3 });
+    onAttach()(socket, { 'hero-refresh': { gen: 1, seq: 3 } });
 
     expect(sent).toEqual([
-      { kind: 'event', channel: CH.ptyData, payload: { sessionId: 'hero-refresh', chunk: 'one', seq: 4 } },
-      { kind: 'event', channel: CH.ptyData, payload: { sessionId: 'hero-refresh', chunk: 'two', seq: 5 } },
+      { kind: 'event', channel: CH.ptyData, payload: { sessionId: 'hero-refresh', chunk: 'one', seq: 4, gen: 1 } },
+      { kind: 'event', channel: CH.ptyData, payload: { sessionId: 'hero-refresh', chunk: 'two', seq: 5, gen: 1 } },
     ]);
   });
 
-  it('marks a gap with exactly one empty chunk at the head seq', () => {
+  it('marks a gap with exactly one empty chunk at the head seq, stamped with the live generation (HIVE-144)', () => {
     registerIpcHandlers();
     const { socket, sent } = recordingSocket();
     resumeAnswer = () => ({ kind: 'gap', seq: 97 });
+    // The client's own point names generation 1; the live one has moved to 2.
+    // The frame below must carry the live one, never the client's.
+    generationAnswer = () => 2;
 
-    onAttach()(socket, { 'hero-refresh': 12 });
+    onAttach()(socket, { 'hero-refresh': { gen: 1, seq: 12 } });
 
     /*
       One frame, empty, stamped at where the stream actually is. The seq is not
@@ -417,31 +433,35 @@ describe('the attach replay loop (HIVE-143)', () => {
       non-empty chunk fails here.
     */
     expect(sent).toEqual([
-      { kind: 'event', channel: CH.ptyData, payload: { sessionId: 'hero-refresh', chunk: '', seq: 97 } },
+      { kind: 'event', channel: CH.ptyData, payload: { sessionId: 'hero-refresh', chunk: '', seq: 97, gen: 2 } },
     ]);
   });
 
   it('asks about every session in the map, and branches per session', () => {
     registerIpcHandlers();
     const { socket, sent } = recordingSocket();
-    const asked: [string, number][] = [];
-    resumeAnswer = (entityId, lastSeq) => {
-      asked.push([entityId, lastSeq]);
+    const asked: [string, ResumePoint][] = [];
+    resumeAnswer = (entityId, from) => {
+      asked.push([entityId, from]);
       if (entityId === 'gone') return null;
       if (entityId === 'stale') return { kind: 'gap', seq: 30 };
-      return { kind: 'replay', events: [{ sessionId: entityId, chunk: 'x', seq: 2 }] };
+      return { kind: 'replay', events: [{ sessionId: entityId, chunk: 'x', seq: 2, gen: 1 }] };
     };
 
-    onAttach()(socket, { gone: 1, stale: 2, live: 1 });
+    onAttach()(socket, {
+      gone: { gen: 1, seq: 1 },
+      stale: { gen: 1, seq: 2 },
+      live: { gen: 1, seq: 1 },
+    });
 
     expect(asked).toEqual([
-      ['gone', 1],
-      ['stale', 2],
-      ['live', 1],
+      ['gone', { gen: 1, seq: 1 }],
+      ['stale', { gen: 1, seq: 2 }],
+      ['live', { gen: 1, seq: 1 }],
     ]);
     expect(sent).toEqual([
-      { kind: 'event', channel: CH.ptyData, payload: { sessionId: 'stale', chunk: '', seq: 30 } },
-      { kind: 'event', channel: CH.ptyData, payload: { sessionId: 'live', chunk: 'x', seq: 2 } },
+      { kind: 'event', channel: CH.ptyData, payload: { sessionId: 'stale', chunk: '', seq: 30, gen: 1 } },
+      { kind: 'event', channel: CH.ptyData, payload: { sessionId: 'live', chunk: 'x', seq: 2, gen: 1 } },
     ]);
   });
 
@@ -458,14 +478,14 @@ describe('the attach replay loop (HIVE-143)', () => {
     */
     resumeAnswer = (entityId) => {
       emitLedgerChanged({ id: 'mid-replay' });
-      return { kind: 'replay', events: [{ sessionId: entityId, chunk: 'x', seq: 9 }] };
+      return { kind: 'replay', events: [{ sessionId: entityId, chunk: 'x', seq: 9, gen: 1 }] };
     };
 
-    onAttach()(socket, { 'hero-refresh': 8 });
+    onAttach()(socket, { 'hero-refresh': { gen: 1, seq: 8 } });
 
     expect(sent).toEqual([
       { kind: 'event', channel: CH.ledgerChanged, payload: { id: 'mid-replay' } },
-      { kind: 'event', channel: CH.ptyData, payload: { sessionId: 'hero-refresh', chunk: 'x', seq: 9 } },
+      { kind: 'event', channel: CH.ptyData, payload: { sessionId: 'hero-refresh', chunk: 'x', seq: 9, gen: 1 } },
     ]);
   });
 });

@@ -8,7 +8,12 @@ import { createRemoteListener } from '@remote-host/listener';
 import type { ServerDevice } from '@shared/config-contract';
 import { MAX_FILE_BYTES } from '@shared/fs-contract';
 import { CH } from '@shared/ipc-contract';
-import { REMOTE_PROTOCOL_VERSION, type AttachRequest, type CallFrame } from '@shared/remote-contract';
+import {
+  REMOTE_PROTOCOL_VERSION,
+  type AttachRequest,
+  type CallFrame,
+  type ResumePoint,
+} from '@shared/remote-contract';
 
 import { mintDevice } from '../../../electron/main/server/devices';
 import type { RemoteDispatch } from '../../../electron/main/ipc/remote-dispatch';
@@ -286,7 +291,7 @@ describe('an unauthenticated socket is untrusted input (HIVE-142 review)', () =>
     expect(reply).toMatchObject({ kind: 'attach-refused', code: 'unauthorized' });
   });
 
-  it('refuses an attach whose resumeFrom is not a map of numbers, rather than throwing', async () => {
+  it('refuses an attach whose resumeFrom is not a map of {gen, seq} points, rather than throwing', async () => {
     const { device, token } = mintDevice('MacBook');
     const url = await start([device]);
     const reply = await attach(url, {
@@ -294,12 +299,19 @@ describe('an unauthenticated socket is untrusted input (HIVE-142 review)', () =>
       protocol: REMOTE_PROTOCOL_VERSION,
       deviceId: device.id,
       token,
-      resumeFrom: { 'session-1': 'not-a-number' },
+      resumeFrom: { 'session-1': 'not-a-point' },
     });
     expect(reply).toMatchObject({ kind: 'attach-refused', code: 'unauthorized' });
   });
 
-  it('accepts an attach with a well-formed resumeFrom', async () => {
+  it("refuses a v1 client's bare-number resumeFrom rather than reinterpreting it (HIVE-144)", async () => {
+    /**
+     * `{ 'session-1': 42 }` was the whole shape of a well-formed `resumeFrom`
+     * under protocol 1. A server that coerced it into `{ gen: 42, seq: 0 }` or
+     * similar would silently misread an old client instead of refusing the
+     * handshake — exactly what `REMOTE_PROTOCOL_VERSION` moving to 2 exists to
+     * prevent.
+     */
     const { device, token } = mintDevice('MacBook');
     const url = await start([device]);
     const reply = await attach(url, {
@@ -308,6 +320,19 @@ describe('an unauthenticated socket is untrusted input (HIVE-142 review)', () =>
       deviceId: device.id,
       token,
       resumeFrom: { 'session-1': 42 },
+    });
+    expect(reply).toMatchObject({ kind: 'attach-refused', code: 'unauthorized' });
+  });
+
+  it('accepts an attach with a well-formed {gen, seq} resumeFrom', async () => {
+    const { device, token } = mintDevice('MacBook');
+    const url = await start([device]);
+    const reply = await attach(url, {
+      kind: 'attach',
+      protocol: REMOTE_PROTOCOL_VERSION,
+      deviceId: device.id,
+      token,
+      resumeFrom: { 'session-1': { gen: 1, seq: 42 } },
     });
     expect(reply.kind).toBe('attach-accepted');
   });
@@ -734,7 +759,7 @@ const flushMicrotasks = () => new Promise<void>((resolve) => setImmediate(resolv
 const attachedSocket = async (
   overrides: {
     dispatch?: RemoteDispatch;
-    onAttach?: (socket: AttachedSocket, resumeFrom: Readonly<Record<string, number>> | undefined) => void;
+    onAttach?: (socket: AttachedSocket, resumeFrom: Readonly<Record<string, ResumePoint>> | undefined) => void;
     onDetach?: (socket: AttachedSocket) => void;
     attach?: Partial<AttachRequest>;
   } = {},
@@ -849,10 +874,10 @@ describe('post-attach frames', () => {
     const { socket } = await attachedSocket({
       onAttach,
       onDetach,
-      attach: { resumeFrom: { s1: 7 } },
+      attach: { resumeFrom: { s1: { gen: 1, seq: 7 } } },
     });
 
-    expect(onAttach).toHaveBeenCalledWith(expect.anything(), { s1: 7 });
+    expect(onAttach).toHaveBeenCalledWith(expect.anything(), { s1: { gen: 1, seq: 7 } });
 
     socket.emit('close');
     expect(onDetach).toHaveBeenCalledTimes(1);

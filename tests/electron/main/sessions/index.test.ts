@@ -729,11 +729,11 @@ describe('identity: the renderer only ever sees entity ids', () => {
       vi.advanceTimersByTime(8);
       const live = on(CH.ptyData).at(-1)!.payload;
 
-      const result = sessions.resume('hero-refresh', 0);
+      const result = sessions.resume('hero-refresh', { gen: 1, seq: 0 });
 
       expect(result).toEqual({
         kind: 'replay',
-        events: [{ sessionId: 'hero-refresh', chunk: 'first', seq: live.seq }],
+        events: [{ sessionId: 'hero-refresh', chunk: 'first', seq: live.seq, gen: 1 }],
       });
       // Never the pty session id, which no client has ever seen.
       expect(sessionId).not.toBe('hero-refresh');
@@ -747,7 +747,7 @@ describe('identity: the renderer only ever sees entity ids', () => {
       vi.advanceTimersByTime(8);
       const seq = on(CH.ptyData).at(-1)!.payload.seq as number;
 
-      expect(sessions.resume('hero-refresh', seq)).toEqual({ kind: 'replay', events: [] });
+      expect(sessions.resume('hero-refresh', { gen: 1, seq })).toEqual({ kind: 'replay', events: [] });
     });
 
     it('hands a gap back untouched', () => {
@@ -758,20 +758,84 @@ describe('identity: the renderer only ever sees entity ids', () => {
       vi.advanceTimersByTime(8);
 
       /*
-        A seq beyond anything this process issued — what a client honestly holds
-        after a server restart resets `seq` to 0. The ring answers `gap`, and
-        this asserts the value arrives unchanged: a gap carries no events, so
-        the id rewrite above must not run on this branch and must not invent an
-        `events: []` that would tell the client it had missed nothing. Its
-        `seq` — the head, one batch in — must survive the passthrough too: it is
-        what the caller stamps the marker frame with, and dropping it here would
-        leave that frame with no number.
+        A seq beyond anything this process issued, within the **same**
+        generation — the ring simply does not reach back that far. The ring
+        answers `gap`, and this asserts the value arrives unchanged: a gap
+        carries no events, so the id rewrite above must not run on this branch
+        and must not invent an `events: []` that would tell the client it had
+        missed nothing. Its `seq` — the head, one batch in — must survive the
+        passthrough too: it is what the caller stamps the marker frame with,
+        and dropping it here would leave that frame with no number. A gap
+        caused by a **restart** — a mismatched `gen` — is
+        `describe('resume across a restart (HIVE-144)')`'s job, below: that
+        one never reaches the ring at all.
       */
-      expect(sessions.resume('hero-refresh', 99)).toEqual({ kind: 'gap', seq: 1 });
+      expect(sessions.resume('hero-refresh', { gen: 1, seq: 99 })).toEqual({ kind: 'gap', seq: 1 });
     });
 
     it('answers null for an entity with no live session', () => {
-      expect(sessions.resume('ghost', 0)).toBeNull();
+      expect(sessions.resume('ghost', { gen: 1, seq: 0 })).toBeNull();
+    });
+  });
+
+  /**
+   * The bug HIVE-144 closes: a client that watched one generation across a
+   * restart must never be handed the next generation's batches renumbered
+   * onto its old transcript as a contiguous `replay` (see the hazard this
+   * replaced, in `sessions/index.ts`'s `resume`).
+   */
+  describe('resume across a restart (HIVE-144)', () => {
+    it('answers gap, stamped at the live generation\'s head, when the client watched a generation that is no longer running', async () => {
+      sessions.open(OPEN);
+      const first = mintedFor('hero-refresh'); // g1
+
+      emitData({ sessionId: first, chunk: 'from generation 1' });
+      vi.advanceTimersByTime(8);
+      const g1Seq = on(CH.ptyData).at(-1)!.payload.seq as number;
+
+      const restarted = sessions.restart(OPEN);
+      await Promise.resolve();
+      emitExit({ sessionId: first, exitCode: 0 });
+      vi.advanceTimersByTime(8);
+      await restarted;
+
+      const second = spawned[1]!.sessionId; // g2, the live one
+      emitData({ sessionId: second, chunk: 'from generation 2' });
+      vi.advanceTimersByTime(8);
+      const g2Seq = on(CH.ptyData).at(-1)!.payload.seq as number;
+
+      // The client watched generation 1 to g1Seq and reconnects still naming
+      // it — exactly the reattach-after-restart scenario.
+      const result = sessions.resume('hero-refresh', { gen: 1, seq: g1Seq });
+
+      /*
+        Never generation 2's batches renumbered onto generation 1's tail —
+        the bug this closes. A gap, stamped at the live generation's head,
+        never a contiguous replay: `g2Seq` is what `ptyIpc.headSeq` for the
+        *live* pty session answers, proving generation 2's own ring — not
+        generation 1's — is what the head came from.
+      */
+      expect(result).toEqual({ kind: 'gap', seq: g2Seq });
+    });
+
+    it('replays when the generation still matches, and stamps events with it', () => {
+      sessions.open(OPEN);
+      const sessionId = mintedFor('hero-refresh'); // g1
+
+      emitData({ sessionId, chunk: 'first' });
+      vi.advanceTimersByTime(8);
+      const live = on(CH.ptyData).at(-1)!.payload;
+
+      const result = sessions.resume('hero-refresh', { gen: 1, seq: 0 });
+
+      expect(result).toEqual({
+        kind: 'replay',
+        events: [{ sessionId: 'hero-refresh', chunk: 'first', seq: live.seq, gen: 1 }],
+      });
+    });
+
+    it('answers null for an entity with no live session, generation mismatch or not', () => {
+      expect(sessions.resume('never-opened', { gen: 1, seq: 0 })).toBeNull();
     });
   });
 });

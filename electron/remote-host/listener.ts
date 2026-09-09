@@ -9,6 +9,7 @@ import {
   type AttachRequest,
   type CallFrame,
   type NotifyFrame,
+  type ResumePoint,
   type ServerFrame,
 } from '@shared/remote-contract';
 
@@ -220,17 +221,44 @@ function wsUrl(host: string, port: number): string {
 }
 
 /**
- * Whether every value in `value` is a `number` — {@link AttachRequest.resumeFrom}'s
- * shape, checked so {@link isAttachShaped} does not claim a field it never
- * inspected. `resumeFrom` is handed to `onAttach` unread by this file (HIVE-143)
- * — replay is `electron/main/ipc/index.ts`'s decision to make, not this
- * listener's — but the predicate's return type says the whole `AttachRequest`
- * is safe to use, and a predicate that skipped this field would be handing
- * that caller a lie it has no reason to suspect.
+ * Whether `value` is a {@link ResumePoint} — `{ gen, seq }`, both finite
+ * non-negative integers.
+ *
+ * Neither may be negative or fractional: both are counters this file's peers
+ * only ever increment, and a negative or fractional one could only mean a
+ * malformed or hostile client, not an honest one that ran out of range.
+ *
+ * A bare number — the whole shape of a v1 client's `resumeFrom` value — is
+ * rejected here rather than coerced into `{ gen: <that number>, seq: 0 }` or
+ * similar: `REMOTE_PROTOCOL_VERSION` moved to 2 precisely so a version
+ * mismatch is caught at the handshake, as a readable refusal, instead of a v1
+ * peer's request being silently reinterpreted into whatever this function
+ * guessed it meant.
  */
-function isResumeFromShaped(value: unknown): value is Readonly<Record<string, number>> {
+function isResumePointShaped(value: unknown): value is ResumePoint {
+  if (value === null || typeof value !== 'object') return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    Number.isInteger(candidate.gen) &&
+    (candidate.gen as number) >= 0 &&
+    Number.isInteger(candidate.seq) &&
+    (candidate.seq as number) >= 0
+  );
+}
+
+/**
+ * Whether every value in `value` is a {@link ResumePoint} —
+ * {@link AttachRequest.resumeFrom}'s shape, checked so {@link isAttachShaped}
+ * does not claim a field it never inspected. `resumeFrom` is handed to
+ * `onAttach` unread by this file (HIVE-143) — replay is
+ * `electron/main/ipc/index.ts`'s decision to make, not this listener's — but
+ * the predicate's return type says the whole `AttachRequest` is safe to use,
+ * and a predicate that skipped this field would be handing that caller a lie
+ * it has no reason to suspect.
+ */
+function isResumeFromShaped(value: unknown): value is Readonly<Record<string, ResumePoint>> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
-  return Object.values(value).every((entry) => typeof entry === 'number');
+  return Object.values(value).every(isResumePointShaped);
 }
 
 /** Whether `value` has the shape `verifyDevice` and the protocol check can safely use. */
@@ -284,7 +312,7 @@ export function createRemoteListener(options: {
    * learns a socket exists at all: nothing above this option tracks attached
    * sockets for it.
    */
-  onAttach: (socket: AttachedSocket, resumeFrom: Readonly<Record<string, number>> | undefined) => void;
+  onAttach: (socket: AttachedSocket, resumeFrom: Readonly<Record<string, ResumePoint>> | undefined) => void;
   /** Told when an attached socket is gone — closed, errored, or terminated. */
   onDetach: (socket: AttachedSocket) => void;
 }): RemoteListener {

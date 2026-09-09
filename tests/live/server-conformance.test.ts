@@ -23,6 +23,7 @@ import {
   type ErrorFrame,
   type EventFrame,
   type ResultFrame,
+  type ResumePoint,
   type ServerFrame,
 } from '../../electron/shared/remote-contract';
 
@@ -686,7 +687,7 @@ const liveClients: LiveClient[] = [];
 async function openClient(
   url: string,
   device: { id: string; token: string },
-  options: { resumeFrom?: Record<string, number> } = {},
+  options: { resumeFrom?: Record<string, ResumePoint> } = {},
 ): Promise<LiveClient> {
   const socket = new WebSocket(url);
   const events: EventFrame[] = [];
@@ -1306,7 +1307,7 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
     let device: MintedDevice;
 
     /** A client that has completed a real handshake, optionally resuming. */
-    const attached = async (options: { resumeFrom?: Record<string, number> } = {}): Promise<LiveClient> =>
+    const attached = async (options: { resumeFrom?: Record<string, ResumePoint> } = {}): Promise<LiveClient> =>
       openClient(url, { id: device.device.id, token: device.token }, options);
 
     beforeAll(async () => {
@@ -1612,7 +1613,9 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       witness.kill();
       expect(witnessLastSeq).toBeGreaterThan(lastSeq + 1);
 
-      const resumed = await attached({ resumeFrom: { [sessionId]: lastSeq } });
+      // Generation 1 throughout: nothing here restarts the session, only the
+      // socket watching it.
+      const resumed = await attached({ resumeFrom: { [sessionId]: { gen: 1, seq: lastSeq } } });
       const after = await resumed.collectPtyUntil(sessionId, /line-400\b/);
       measurements.push({
         case: '16. resume across a killed socket',
@@ -1676,7 +1679,9 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       });
       flood.kill();
 
-      const resumed = await attached({ resumeFrom: { [sessionId]: lastSeq } });
+      // Generation 1 throughout — the flood is on the same generation, the
+      // gap is the ring, not a restart.
+      const resumed = await attached({ resumeFrom: { [sessionId]: { gen: 1, seq: lastSeq } } });
       /*
         The resuming client is sent no *transcript* for a gap — that is still by
         design (`ipc/pty.ts`'s `ResumeResult`) — but it is sent one **empty**

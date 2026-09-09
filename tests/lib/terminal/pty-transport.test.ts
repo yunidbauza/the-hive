@@ -90,9 +90,18 @@ function installBridge(): Bridge {
   return stub;
 }
 
-/** Push a live chunk as main would, with an explicit sequence number. */
-function pushData(sessionId: string, chunk: string, seq: number): void {
-  for (const cb of [...bridge.data]) cb({ sessionId, chunk, seq });
+/**
+ * Push a live chunk as main would, with an explicit sequence number.
+ *
+ * `gen` defaults to `1` rather than being required at every call site: this
+ * file is about `PtyTransport`'s own sequencing and reopen behaviour, none of
+ * which reads `DataEvent.gen` yet (HIVE-144's renderer-side generation check
+ * is a later story). The field still has to be present — `DataEvent` requires
+ * it — so a constant default keeps every existing call honest about the wire
+ * shape without making each one specify a value it does not care about.
+ */
+function pushData(sessionId: string, chunk: string, seq: number, gen = 1): void {
+  for (const cb of [...bridge.data]) cb({ sessionId, chunk, seq, gen });
 }
 
 const dim = toSgrIndexed('dim');

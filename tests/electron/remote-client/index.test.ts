@@ -34,10 +34,16 @@ describe('attachRequest', () => {
     expect(JSON.parse(JSON.stringify(frame))).not.toHaveProperty('resumeFrom');
   });
 
-  it('carries the last-seen sequence per session on a resume', () => {
-    const frame = attachRequest('d_9f2c', 'secret', { 's1': 42, 's2': 7 });
+  it('carries the last-seen generation and sequence per session on a resume', () => {
+    const frame = attachRequest('d_9f2c', 'secret', {
+      s1: { gen: 1, seq: 42 },
+      s2: { gen: 2, seq: 7 },
+    });
 
-    expect(frame.resumeFrom).toEqual({ 's1': 42, 's2': 7 });
+    expect(frame.resumeFrom).toEqual({
+      s1: { gen: 1, seq: 42 },
+      s2: { gen: 2, seq: 7 },
+    });
   });
 
   /**

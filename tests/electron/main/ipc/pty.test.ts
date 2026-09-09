@@ -510,6 +510,13 @@ describe('resume', () => {
     vi.advanceTimersByTime(8);
   };
 
+  // `gen: 0` on every replayed event below is `PLACEHOLDER_GEN` (HIVE-144):
+  // this module is keyed by pty session id and has no entity or generation
+  // concept, so it cannot supply a real one. `sessions/index.ts`'s `resume`
+  // always overwrites it with the entity's live generation before anything
+  // reaches a client — asserted in `tests/electron/main/sessions/index.test.ts`,
+  // not here, since that translation happens one layer up.
+
   it('replays only what the client has not seen, in order', () => {
     beat('one');
     beat('two');
@@ -518,8 +525,8 @@ describe('resume', () => {
     expect(ipc.resume('a', 1)).toEqual({
       kind: 'replay',
       events: [
-        { sessionId: 'a', chunk: 'two', seq: 2 },
-        { sessionId: 'a', chunk: 'three', seq: 3 },
+        { sessionId: 'a', chunk: 'two', seq: 2, gen: 0 },
+        { sessionId: 'a', chunk: 'three', seq: 3, gen: 0 },
       ],
     });
   });
@@ -554,7 +561,7 @@ describe('resume', () => {
 
     expect(ipc.resume('a', 2)).toEqual({
       kind: 'replay',
-      events: [{ sessionId: 'a', chunk: 'cccc', seq: 3 }],
+      events: [{ sessionId: 'a', chunk: 'cccc', seq: 3, gen: 0 }],
     });
   });
 
@@ -617,7 +624,7 @@ describe('resume', () => {
 
     expect(ipc.resume('a', 1)).toEqual({
       kind: 'replay',
-      events: [{ sessionId: 'a', chunk: 'cccccccc', seq: 2 }],
+      events: [{ sessionId: 'a', chunk: 'cccccccc', seq: 2, gen: 0 }],
     });
   });
 

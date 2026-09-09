@@ -85,4 +85,26 @@ describe('session registry', () => {
     const registry = createSessionRegistry();
     expect(() => registry.close('ghost')).not.toThrow();
   });
+
+  describe('generationFor', () => {
+    it('answers the generation encoded in the live session id', () => {
+      const registry = createSessionRegistry();
+
+      const first = registry.open('hero-refresh');
+      expect(first).toBe('hero-refresh.g1');
+      expect(registry.generationFor('hero-refresh')).toBe(1);
+
+      registry.open('hero-refresh');
+      expect(registry.generationFor('hero-refresh')).toBe(2);
+    });
+
+    it('is undefined for an entity with no live session', () => {
+      const registry = createSessionRegistry();
+      expect(registry.generationFor('never-opened')).toBeUndefined();
+
+      registry.open('hero-refresh');
+      registry.close('hero-refresh');
+      expect(registry.generationFor('hero-refresh')).toBeUndefined();
+    });
+  });
 });

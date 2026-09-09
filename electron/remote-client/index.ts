@@ -1,4 +1,4 @@
-import { REMOTE_PROTOCOL_VERSION, type AttachRequest } from '@shared/remote-contract';
+import { REMOTE_PROTOCOL_VERSION, type AttachRequest, type ResumePoint } from '@shared/remote-contract';
 
 /**
  * The client half of server mode (HIVE-144).
@@ -21,7 +21,7 @@ import { REMOTE_PROTOCOL_VERSION, type AttachRequest } from '@shared/remote-cont
 export function attachRequest(
   deviceId: string,
   token: string,
-  resumeFrom?: Readonly<Record<string, number>>,
+  resumeFrom?: Readonly<Record<string, ResumePoint>>,
 ): AttachRequest {
   return {
     kind: 'attach',

@@ -19,6 +19,7 @@ import {
 } from '@shared/ipc-contract';
 import type { SessionMetricsEvent } from '@shared/metrics-contract';
 import { MAX_SESSIONS } from '@shared/pty-host-protocol';
+import type { ResumePoint } from '@shared/remote-contract';
 import {
   spawnRefusal,
   type SessionEffort,
@@ -324,7 +325,7 @@ export interface Sessions {
   resize(entityId: string, cols: number, rows: number): void;
   ack(entityId: string, seq: number): void;
   /**
-   * What a reconnecting remote client missed since `lastSeq` (HIVE-143).
+   * What a reconnecting remote client missed since `from` (HIVE-143, HIVE-144).
    *
    * Exposed here rather than by handing `PtyIpc` out, because the id is the
    * whole reason this method exists. `PtyIpc` is keyed by the **pty session**
@@ -334,10 +335,30 @@ export interface Sessions {
    * events it gets back must carry them too — so the translation happens in the
    * one place that already owns it.
    *
+   * `from.gen` is checked against the entity's **live** generation before
+   * anything else, and a mismatch answers `gap` without ever consulting
+   * `PtyIpc`'s ring — see the comment on the implementation for why a
+   * contiguous replay across a restart is the bug this exists to close.
+   *
    * `null` for an id with no live session, which the caller reads as "skip this
    * one" rather than as an error. See {@link ResumeResult} for the rest.
    */
-  resume(entityId: string, lastSeq: number): ResumeResult | null;
+  resume(entityId: string, from: ResumePoint): ResumeResult | null;
+  /**
+   * The generation number of this entity's **live** session, or `undefined` if
+   * it has none (HIVE-144).
+   *
+   * A thin passthrough to the registry, exposed because `ipc/index.ts`'s
+   * resume-miss handler needs it and has no reference to the registry itself
+   * — only to this `Sessions` instance. It stamps the synthetic, empty
+   * `pty:data` frame it sends on a `gap` with the entity's *current* live
+   * generation, never the stale one the reconnecting client sent: that frame
+   * is what the renderer's own generation check (see `DataEvent.gen`) first
+   * sees after the discontinuity, and it must already read as the new
+   * generation, or the very next live batch — which does carry the new
+   * generation — would look like a second, spurious break.
+   */
+  generationFor(entityId: string): number | undefined;
   kill(entityId: string): void;
   /** Kill, wait for the exit, then spawn a fresh process and bootstrap it. */
   restart(request: OpenRequest): Promise<void>;
@@ -570,7 +591,19 @@ export function createSessions(options: SessionsOptions): Sessions {
           // A command has no agent, so it has no name to report either.
           readTitle(entityId, data.chunk);
         }
-        send(channel, { ...data, sessionId: entityId } satisfies DataEvent);
+        /**
+         * `gen` is stamped here, beside the id rewrite this function already
+         * does, and it **replaces** whatever `ipc/pty.ts` put in `data.gen`
+         * rather than trusting it (HIVE-144). `PtyIpc` is keyed by pty session
+         * id and has no concept of "entity" or "generation" — it cannot supply
+         * this value honestly, and does not try to (see `PLACEHOLDER_GEN` in
+         * `ipc/pty.ts`). `registry.entityFor(sessionId)` having resolved above
+         * means `sessionId` is this entity's *current* live session, so
+         * `registry.generationFor(entityId)` — set in the same `open()` call
+         * that minted `sessionId` — is guaranteed defined here.
+         */
+        const gen = registry.generationFor(entityId)!;
+        send(channel, { ...data, sessionId: entityId, gen } satisfies DataEvent);
         return;
       }
       case CH.ptyExit: {
@@ -2460,49 +2493,57 @@ export function createSessions(options: SessionsOptions): Sessions {
     },
 
     /**
-     * **Known hazard, deliberately parked: a restart across a disconnect
-     * (HIVE-143 review, ruled out of scope; HIVE-144 must close it).**
+     * **A restart across a disconnect (HIVE-143 review; closed by HIVE-144).**
      *
-     * `lastSeq` is a number and nothing else. `sessionFor` always answers the
-     * **current** generation's pty session id, and `emptyChannel()` starts that
-     * generation's `seq` at 0 — so the two halves of the lookup can be talking
-     * about different processes without either of them being able to tell.
-     *
+     * The hazard this replaces: `sessionFor` always answers the **current**
+     * generation's pty session id, and `emptyChannel()` starts that
+     * generation's `seq` at 0 — so a bare `lastSeq` could be talking about a
+     * process that no longer exists without anything here being able to tell.
      * Concretely: a client watches `hero-refresh` to seq 40 and its socket
-     * drops. While it is away the session restarts. It reconnects with
-     * `resumeFrom: { 'hero-refresh': 40 }`, generation 2 has produced 60
-     * batches, and the ring still reaches back past 40 — so this answers
+     * drops. While it is away the session restarts. It reconnects holding
+     * `{ seq: 40 }`, generation 2 has produced 60 batches, and the ring still
+     * reaches back past 40 — so a lookup keyed on `seq` alone would answer
      * `replay` with generation 2's seq 41…60, **contiguous**. The client's
      * sequence assertion is satisfied, no gap notice fires, and the restart is
      * swallowed: the terminal shows a new process's output stitched onto the
      * old one's transcript as though nothing happened.
      *
-     * It cannot bite today. No client sends a real `resumeFrom` until HIVE-144
-     * builds the client half; `listener.ts` merely shape-checks the map and
-     * `ipc/index.ts` is its only consumer. That is the whole reason this ships
-     * unfixed.
-     *
-     * The honest fix needs the **generation** to cross the wire, which is a
-     * change to `AttachRequest.resumeFrom` and a `REMOTE_PROTOCOL_VERSION` bump
-     * that HIVE-143's spec rules out. So HIVE-144 owns it, and must close it
-     * before its client sends its first real `resumeFrom`, by one of:
-     *
-     * - keying `resumeFrom` with something that carries the generation — the
-     *   pty session id alongside the seq, or an `{ sessionId, seq }` pair — and
-     *   answering `gap` here when it does not match `sessionFor(entityId)`; or
-     * - having this function answer `gap` whenever the entity's pty session id
-     *   has changed since the client last saw output, which needs main to
-     *   remember what it last told each socket and is the weaker of the two.
-     *
-     * Either way the correct answer for a restarted session is `gap`, never
-     * `replay`: the client must see the discontinuity, because the process
-     * behind the id is genuinely not the one it was reading.
+     * The fix is `from.gen`, checked below *before* `sessionId` is even handed
+     * to `ptyIpc`. `registry.generationFor` answers the live generation from
+     * state that changes atomically with every `open()`/`close()` — the same
+     * guarantee `sessionFor` already relies on — so a mismatch is detected
+     * without ever asking the ring whether it can still reach `from.seq`,
+     * which is what makes "the ring is never consulted on a mismatch" true
+     * regardless of how far back its buffer happens to reach. On a match, the
+     * client's `resumeFrom` names something that has never changed underneath
+     * it, and normal replay-or-gap arithmetic applies exactly as it did before
+     * generations crossed the wire.
      */
-    resume(entityId, lastSeq) {
+    resume(entityId, from) {
       const sessionId = registry.sessionFor(entityId);
       if (sessionId === undefined) return null;
 
-      const result = ptyIpc.resume(sessionId, lastSeq);
+      /*
+        `sessionFor` having answered means `open()` minted this session for
+        this entity, which is the same call that set its `generationFor`
+        entry — the two are never out of step (see `registry.ts`), so this is
+        never the actual `undefined` case, only the type's.
+      */
+      const liveGen = registry.generationFor(entityId)!;
+
+      if (from.gen !== liveGen) {
+        /*
+          No ring lookup: `from.seq` was issued by a process that is not this
+          one, so whatever the ring can or cannot still reach is irrelevant —
+          answering from it would be exactly the swallowed-restart bug above,
+          just with extra steps. `ptyIpc.headSeq` gives the number the caller
+          needs for its marker frame without pretending a replay was
+          evaluated.
+        */
+        return { kind: 'gap', seq: ptyIpc.headSeq(sessionId) ?? 0 };
+      }
+
+      const result = ptyIpc.resume(sessionId, from.seq);
       /*
         A gap carries no events, so there is no id in it to translate — only a
         seq, and a seq is a property of the stream rather than of the id it is
@@ -2514,14 +2555,20 @@ export function createSessions(options: SessionsOptions): Sessions {
       /*
         The same rewrite `forward` performs on every live `pty:data`, applied
         to the replayed ones so a client cannot tell a replayed frame from a
-        live one. Anything else would hand it events for an id it has never
-        seen, on a session it is watching under another name.
+        live one. `gen` is stamped with `liveGen` for the same reason `forward`
+        stamps it there rather than trusting whatever `ipc/pty.ts` put in the
+        field (HIVE-144): this module owns the entity/generation mapping,
+        `ipc/pty.ts` does not, and `liveGen` is already proven correct by the
+        check above — the generation matched, so it is both what the client
+        asked for and what is still running.
       */
       return {
         kind: 'replay',
-        events: result.events.map((event) => ({ ...event, sessionId: entityId })),
+        events: result.events.map((event) => ({ ...event, sessionId: entityId, gen: liveGen })),
       };
     },
+
+    generationFor: (entityId) => registry.generationFor(entityId),
 
     kill(entityId) {
       const sessionId = registry.sessionFor(entityId);

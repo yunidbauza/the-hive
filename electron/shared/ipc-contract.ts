@@ -1092,6 +1092,22 @@ export interface DataEvent {
    * this file was quietly the one exception to.
    */
   seq: number;
+  /**
+   * Which live process `seq` counts within, for this entity (HIVE-144).
+   *
+   * `seq` alone cannot answer that: a restart mints a fresh pty session and
+   * `emptyChannel()` resets its `seq` to 0, so generation 2's batch 41 and
+   * generation 1's batch 41 are indistinguishable by `seq` and `sessionId`
+   * (the entity id survives the restart unchanged) alone. `gen` is the field
+   * that lets a client reattaching after a disconnect tell "the process I was
+   * reading is still running" from "the process I was reading is gone and a
+   * new one has taken its id" — see `electron/main/sessions/registry.ts`'s
+   * `generationFor` and `electron/main/sessions/index.ts`'s `resume` for where
+   * that check happens. Monotonic per entity, and it changes on every
+   * restart; it does not change within a generation, including across a
+   * reconnect that only misses `seq`s.
+   */
+  gen: number;
 }
 
 /**

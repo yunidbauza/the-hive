@@ -26,8 +26,22 @@ import { CH, type Channel } from './ipc-contract';
  * handshake is the only place that can catch the skew while it is still a
  * refusal with a readable message, rather than a payload that deserialises into
  * the wrong shape three frames later.
+ *
+ * **1 → 2 (HIVE-144):** {@link AttachRequest.resumeFrom} changed from
+ * `Record<string, number>` — a bare `seq` per session — to
+ * `Record<string, ResumePoint>`, a `{ gen, seq }` pair. A bare seq could not
+ * tell a client which *process* it counted: a restart mints a fresh generation
+ * whose `seq` also starts at 0, so a client that reattached after a restart
+ * with only its old `seq` got the new generation's batches renumbered onto its
+ * old transcript as though nothing had happened. `gen` is what lets the server
+ * answer a real discontinuity with `gap` instead of a contiguous, wrong,
+ * `replay`. A v1 client's bare-number `resumeFrom` is rejected by
+ * `isResumeFromShaped` rather than misread as `{ gen: <a seq>, seq: undefined }`
+ * — which is exactly what this version bump exists to force: an old client
+ * talking to a new server fails the handshake instead of being silently
+ * misunderstood.
  */
-export const REMOTE_PROTOCOL_VERSION = 1;
+export const REMOTE_PROTOCOL_VERSION = 2;
 
 /**
  * What a frame is for.
@@ -493,6 +507,19 @@ export function windowBoundReason(channel: string): string | null {
  * audience, different lifetime: this one survives a reboot and is revoked per
  * device.
  */
+/**
+ * What a client remembers about one entity's stream: which generation it was
+ * watching, and how far into it (HIVE-144).
+ *
+ * Both fields are required, not `seq` alone, because `seq` resets to 0 on
+ * every restart — see {@link DataEvent.gen} and `REMOTE_PROTOCOL_VERSION`'s
+ * doc comment for the failure a bare `seq` produced.
+ */
+export interface ResumePoint {
+  gen: number;
+  seq: number;
+}
+
 export interface AttachRequest {
   kind: 'attach';
   /** The client's {@link REMOTE_PROTOCOL_VERSION}. */
@@ -502,8 +529,10 @@ export interface AttachRequest {
   /** The device secret, compared in constant time by the server. */
   token: string;
   /**
-   * Last sequence seen per session, so the server can replay from `Scrollback`
-   * rather than the client re-rendering a transcript it already has.
+   * Last generation and sequence seen per session, so the server can replay
+   * from `Scrollback` rather than the client re-rendering a transcript it
+   * already has — or answer `gap` when the generation it names is not the one
+   * still running (HIVE-144).
    *
    * **Absent** on a first attach, never `{}`. The two are different questions —
    * "I have never been here" versus "I have been here and hold nothing" — and a
@@ -512,7 +541,7 @@ export interface AttachRequest {
    * reason. See `electron/pty-host/scrollback.ts` for what backs it, and the
    * existing gap notice for what happens when the buffer no longer reaches.
    */
-  resumeFrom?: Readonly<Record<string, number>>;
+  resumeFrom?: Readonly<Record<string, ResumePoint>>;
 }
 
 /** Everything a client needs to render a busy server without a second call. */

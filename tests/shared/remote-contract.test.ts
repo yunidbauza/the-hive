@@ -378,6 +378,10 @@ describe('remote contract: the version handshake', () => {
     expect(Number.isInteger(REMOTE_PROTOCOL_VERSION)).toBe(true);
     expect(REMOTE_PROTOCOL_VERSION).toBeGreaterThan(0);
   });
+
+  it('is protocol 2, because a bare seq could not carry a generation (HIVE-144)', () => {
+    expect(REMOTE_PROTOCOL_VERSION).toBe(2);
+  });
 });
 
 describe('remote contract: an unclassified channel is a compile error', () => {

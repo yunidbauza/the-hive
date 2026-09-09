@@ -85,6 +85,24 @@ export type ResumeResult =
   | { kind: 'replay'; events: DataEvent[] }
   | { kind: 'gap'; seq: number };
 
+/**
+ * The `gen` every `DataEvent` this file constructs is built with (HIVE-144).
+ *
+ * This module is keyed by **pty session id** — `hero-refresh.g2`, per
+ * generation — and never learns the entity behind one or which generation
+ * counter minted it; that mapping belongs to `sessions/index.ts`'s registry,
+ * on purpose (see `registry.ts`'s doc comment on why a session id's shape is
+ * not an API this file gets to parse). `DataEvent.gen` is a required field
+ * all the same, so every event built here needs *some* value, and `0` is
+ * never it: `sessions/index.ts` unconditionally overwrites `gen` with the
+ * entity's live generation on the way out — in `forward`, for a live batch,
+ * and in `resume`, for a replayed one — the same way it already overwrites
+ * `sessionId` with the entity id. Spelled out as a named constant, rather
+ * than a bare `0` at each call site, so a reader does not mistake it for a
+ * considered value.
+ */
+const PLACEHOLDER_GEN = { gen: 0 };
+
 export interface PtyIpc {
   /** Called by the channel handlers once the payload has been validated. */
   spawn(request: PtySpawn): void;
@@ -97,6 +115,23 @@ export interface PtyIpc {
    * {@link ResumeResult}.
    */
   resume(sessionId: string, lastSeq: number): ResumeResult | null;
+  /**
+   * The channel's current head `seq`, with no ring lookup and no replay
+   * (HIVE-144).
+   *
+   * Exists so a caller that already knows it is not going to accept whatever
+   * `resume` would answer — `sessions/index.ts`'s `resume`, on a generation
+   * mismatch — can still learn where this session's stream actually is,
+   * without asking `resume` to do replay-arithmetic work whose answer it is
+   * about to discard, and without depending on the coincidence that `resume`
+   * called with an enormous `lastSeq` happens to return the same number today
+   * because of *that* function's branch order rather than because it was ever
+   * asked to provide it.
+   *
+   * `undefined` for a session that was never spawned, or has exited — the
+   * same cases {@link resume} answers `null` for.
+   */
+  headSeq(sessionId: string): number | undefined;
   /** Dev-only counters, surfaced through `app:info`. */
   diagnostics(): PtyDiagnostics[];
   /** Drop every timer. Called on teardown so nothing outlives the app. */
@@ -225,7 +260,7 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
       channel.unacked += bytes;
       channel.outstanding.push({ seq: channel.seq, bytes });
 
-      const event: DataEvent = { sessionId, chunk, seq: channel.seq };
+      const event: DataEvent = { sessionId, chunk, seq: channel.seq, ...PLACEHOLDER_GEN };
       send(CH.ptyData, event);
 
       /*
@@ -520,8 +555,12 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
         kind: 'replay',
         events: channel.replay
           .filter((entry) => entry.seq > lastSeq)
-          .map((entry) => ({ sessionId, chunk: entry.chunk, seq: entry.seq })),
+          .map((entry) => ({ sessionId, chunk: entry.chunk, seq: entry.seq, ...PLACEHOLDER_GEN })),
       };
+    },
+
+    headSeq(sessionId) {
+      return channels.get(sessionId)?.seq;
     },
 
     diagnostics() {
