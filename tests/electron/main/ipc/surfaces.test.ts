@@ -189,6 +189,58 @@ describe('createSurfaceRegistry', () => {
     expect([...surfaces.sockets()]).toHaveLength(0);
   });
 
+  it('tracks a socket that carries no lifetime, because the fan-out is the point', () => {
+    const surfaces = createSurfaceRegistry();
+    const frames: ServerFrame[] = [];
+    const lifeless = {
+      send(frame: ServerFrame) {
+        frames.push(frame);
+      },
+    } as unknown as Parameters<typeof surfaces.trackSocket>[0];
+
+    surfaces.trackSocket(lifeless);
+
+    expect([...surfaces.sockets()]).toHaveLength(1);
+  });
+
+  it('untrack removes a socket that had no lifetime of its own', () => {
+    const surfaces = createSurfaceRegistry();
+    const gone = vi.fn();
+    surfaces.onGone(gone);
+    const lifeless = {
+      send() {},
+    } as unknown as Parameters<typeof surfaces.trackSocket>[0];
+    const id = surfaces.trackSocket(lifeless);
+
+    surfaces.untrack(lifeless);
+
+    expect(gone).toHaveBeenCalledExactlyOnceWith(id);
+    expect([...surfaces.sockets()]).toHaveLength(0);
+  });
+
+  it('untrack and a destroyed event together still announce once', () => {
+    const surfaces = createSurfaceRegistry();
+    const gone = vi.fn();
+    surfaces.onGone(gone);
+    const socket = fakeSocket();
+    surfaces.trackSocket(socket);
+
+    socket.fire('destroyed');
+    surfaces.untrack(socket);
+
+    expect(gone).toHaveBeenCalledTimes(1);
+  });
+
+  it('untrack ignores something it never tracked', () => {
+    const surfaces = createSurfaceRegistry();
+    const gone = vi.fn();
+    surfaces.onGone(gone);
+
+    expect(() => { surfaces.untrack({}); }).not.toThrow();
+    expect(() => { surfaces.untrack(null); }).not.toThrow();
+    expect(gone).not.toHaveBeenCalled();
+  });
+
   it('fires onFirst only on the empty to non-empty transition', () => {
     const surfaces = createSurfaceRegistry();
     const first = vi.fn();

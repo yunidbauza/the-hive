@@ -226,7 +226,9 @@ vi.mock('../../../../electron/main/ledger', () => ({
  * this door, which is the one production code uses too.
  */
 type OnAttach = (socket: AttachedSocket, resumeFrom: Readonly<Record<string, ResumePoint>> | undefined) => void;
+type OnDetach = (socket: AttachedSocket) => void;
 let capturedOnAttach: OnAttach | null = null;
+let capturedOnDetach: OnDetach | null = null;
 
 /** The captured callback, or a failure naming why it is missing. */
 const onAttach = (): OnAttach => {
@@ -234,6 +236,14 @@ const onAttach = (): OnAttach => {
     throw new Error('createRemoteListener was never handed an onAttach');
   }
   return capturedOnAttach;
+};
+
+/** Its pair, captured the same way (HIVE-145). */
+const onDetach = (): OnDetach => {
+  if (capturedOnDetach === null) {
+    throw new Error('createRemoteListener was never handed an onDetach');
+  }
+  return capturedOnDetach;
 };
 
 /**
@@ -268,8 +278,13 @@ vi.mock('@remote-host/listener', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@remote-host/listener')>();
   return {
     ...actual,
-    createRemoteListener: (options: { onAttach: OnAttach; buildSnapshot: BuildSnapshot }) => {
+    createRemoteListener: (options: {
+      onAttach: OnAttach;
+      onDetach: OnDetach;
+      buildSnapshot: BuildSnapshot;
+    }) => {
       capturedOnAttach = options.onAttach;
+      capturedOnDetach = options.onDetach;
       capturedBuildSnapshot = options.buildSnapshot;
       return {
         start: async () => {
@@ -388,6 +403,7 @@ beforeEach(() => {
   windows.length = 0;
   onChangeListener = undefined;
   capturedOnAttach = null;
+  capturedOnDetach = null;
   capturedBuildSnapshot = null;
   resumeAnswer = () => null;
   generationAnswer = () => 1;
@@ -604,6 +620,78 @@ describe('the attach replay loop (HIVE-143)', () => {
       { kind: 'event', channel: CH.ptyData, payload: { sessionId: 'stale', chunk: '', seq: 30, gen: 1 } },
       { kind: 'event', channel: CH.ptyData, payload: { sessionId: 'live', chunk: 'x', seq: 2, gen: 1 } },
     ]);
+  });
+
+  /**
+   * Two attached clients (HIVE-145).
+   *
+   * The fan-out has been N-way since HIVE-143, but nothing until now asserted
+   * it with two sockets actually present — and the `Set<AttachedSocket>` it
+   * read became a surface registry in this story, which is exactly the kind of
+   * swap that can quietly deliver to one client and not the other.
+   */
+  const withLifetime = (): {
+    socket: AttachedSocket;
+    sent: unknown[];
+    close: () => void;
+  } => {
+    const sent: unknown[] = [];
+    const closers: (() => void)[] = [];
+    const socket = {
+      send: (frame: unknown) => sent.push(frame),
+      on: (event: string, listener: () => void) => {
+        if (event === 'destroyed') closers.push(listener);
+        return undefined;
+      },
+    } as unknown as AttachedSocket;
+    return {
+      socket,
+      sent,
+      close: () => {
+        for (const closer of closers) closer();
+      },
+    };
+  };
+
+  it('delivers one push to both attached clients', () => {
+    registerIpcHandlers();
+    const a = withLifetime();
+    const b = withLifetime();
+
+    onAttach()(a.socket, undefined);
+    onAttach()(b.socket, undefined);
+    emitLedgerChanged({ id: 'both' });
+
+    const expected = { kind: 'event', channel: CH.ledgerChanged, payload: { id: 'both' } };
+    expect(a.sent).toEqual([expected]);
+    expect(b.sent).toEqual([expected]);
+  });
+
+  it('keeps delivering to the survivor when one client drops', () => {
+    registerIpcHandlers();
+    const a = withLifetime();
+    const b = withLifetime();
+    onAttach()(a.socket, undefined);
+    onAttach()(b.socket, undefined);
+
+    a.close();
+    emitLedgerChanged({ id: 'after' });
+
+    expect(a.sent).toEqual([]);
+    expect(b.sent).toEqual([
+      { kind: 'event', channel: CH.ledgerChanged, payload: { id: 'after' } },
+    ]);
+  });
+
+  it('removes a socket through onDetach even with no lifetime of its own', () => {
+    registerIpcHandlers();
+    const { socket, sent } = recordingSocket();
+    onAttach()(socket, undefined);
+
+    onDetach()(socket);
+    emitLedgerChanged({ id: 'gone' });
+
+    expect(sent).toEqual([]);
   });
 
   it('is in the fan-out before it replays anything', () => {

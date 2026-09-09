@@ -267,8 +267,8 @@ import { applySetRemote, type AttachedSnapshot, type ModeSwitcher } from './set-
 import {
   createFanOutBroadcaster,
   createSocketBroadcaster,
-  type AttachedSocket,
 } from './socket-broadcaster';
+import { createSurfaceRegistry, type SurfaceId } from './surfaces';
 
 /**
  * Channel handlers (story 082).
@@ -295,10 +295,35 @@ import {
 const remoteRegistry = createIpcRegistry();
 
 /**
- * Sockets currently attached. Mutated by the listener's attach callbacks, read
- * per emit by the socket half of the fan-out in `registerIpcHandlers`.
+ * Who is looking at this Hive, and how to reach exactly one of them
+ * (HIVE-145).
+ *
+ * Attached sockets *and* local windows, in one registry, because the state
+ * this file keys by surface — the input-box record, the foreground terminal,
+ * the ack window, the fs watch — is written by both. It replaced a bare
+ * `Set<AttachedSocket>` here: a second registry of the same connections is
+ * exactly the disagreement this story exists to close.
+ *
+ * Module scope for the reason `remoteRegistry` is: `registerIpcHandlers` fills
+ * it, and a live mode switch tears down and re-registers around it.
  */
-const attachedSockets = new Set<AttachedSocket>();
+const surfaces = createSurfaceRegistry();
+
+/**
+ * The surface behind an IPC event, registering it on first sight.
+ *
+ * Named for what it answers rather than for `trackWindow`, which it calls,
+ * because it cannot mislabel a socket: a notify dispatched from an attached
+ * socket arrives with the socket itself as `event.sender`
+ * (`recordNotify` below wraps it as `{ sender: reporter }`), and that object is
+ * already tracked as a `socket` surface by `onAttach`. `trackWindow` then
+ * returns the existing id, kind intact.
+ */
+const surfaceFor = (sender: unknown): SurfaceId =>
+  surfaces.trackWindow(sender, (channel, payload) => {
+    const contents = sender as { send?: (channel: string, payload: unknown) => void };
+    contents.send?.(channel, payload);
+  });
 
 /**
  * Every channel this process has bound (HIVE-144). Module scope for the same
@@ -1264,7 +1289,7 @@ export function registerIpcHandlers(
   */
   const fanOut = createFanOutBroadcaster([
     broadcaster,
-    createSocketBroadcaster(() => attachedSockets),
+    createSocketBroadcaster(() => surfaces.sockets()),
   ]);
 
   const supervisor = registerPtyHost();
@@ -1720,24 +1745,18 @@ export function registerIpcHandlers(
     write: (id, text) => sessions?.write(id, text) ?? false,
   });
 
-  /**
-   * `webContents` already watched for a reset (HIVE-135). A `WeakSet` so a
-   * closed window's contents can be collected; `on` is checked because the
-   * unit suites hand in a bare object as the event sender.
-   */
-  const watchedReporters = new WeakSet<object>();
-  const watchReporter = (sender: unknown): void => {
-    if (typeof sender !== 'object' || sender === null) return;
-    if (watchedReporters.has(sender)) return;
-    const contents = sender as {
-      on?: (event: string, listener: () => void) => unknown;
-    };
-    if (typeof contents.on !== 'function') return;
-    watchedReporters.add(sender);
-    for (const event of ['did-start-loading', 'render-process-gone', 'destroyed']) {
-      contents.on(event, () => deliver.onRendererReset());
-    }
-  };
+  /*
+    A surface going away resets what it was holding (HIVE-135, HIVE-145).
+
+    This was `watchReporter`: a `WeakSet` of senders, each wired to call
+    `deliver.onRendererReset()` on reload, crash or close. The dedupe, the
+    duck-typed `on` and the three lifetime events all moved into
+    `createSurfaceRegistry`, which does the same job for one more reason —
+    every other per-surface consumer needs the same announcement, and five
+    private copies of this loop would be five chances to disagree about who is
+    live.
+  */
+  surfaces.onGone(() => deliver.onRendererReset());
 
   /**
    * One entry landed, from any party — pushed the way `notifications:new` is
@@ -1952,7 +1971,7 @@ export function registerIpcHandlers(
         out of order would be worse than a gap, because the client's seq
         assertion would fire on a discontinuity that never happened.
       */
-      attachedSockets.add(socket);
+      surfaces.trackSocket(socket);
       if (resumeFrom === undefined) return;
 
       /*
@@ -2058,8 +2077,18 @@ export function registerIpcHandlers(
         });
       }
     },
+    /*
+      One removal, two triggers (HIVE-145). The listener's `close` handler
+      fires the socket's own `destroyed` listeners and then calls this, and
+      both converge on `untrack`, which is idempotent — so `onGone` reaches
+      every per-surface consumer exactly once however the socket went away.
+
+      Both are kept rather than one, because they cover different holes: the
+      `destroyed` path is what a surface with a lifetime announces for itself,
+      and this is what removes a handle that never had one.
+    */
     onDetach: (socket) => {
-      attachedSockets.delete(socket);
+      surfaces.untrack(socket);
     },
   });
   /*
@@ -4553,7 +4582,7 @@ export function registerIpcHandlers(
    * session forever, since nothing would ever report it empty.
    */
   on(CH.ptyPrompt, (event, payload) => {
-    watchReporter(event.sender);
+    surfaceFor(event.sender);
     const report = parsePromptReport(payload);
     deliver.onPrompt(report.sessionId, report.input);
   });
@@ -4625,7 +4654,7 @@ export function resetIpcHandlers(options: { flush?: boolean } = {}): void {
     `not-ready` rather than reaching a handler wired to a disposed layer.
   */
   remoteRegistry.clear();
-  attachedSockets.clear();
+  surfaces.clear();
   /*
     HIVE-144. This makes the test-only reset and the production mode switch
     the same path: a live switch calls this to leave `ipcMain` clean before

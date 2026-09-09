@@ -1,5 +1,6 @@
 import type { ServerFrame } from '@shared/remote-contract';
 
+import type { RemoteReporter } from './registry';
 import type { AttachedSocket } from './socket-broadcaster';
 
 /**
@@ -73,13 +74,15 @@ export interface Surface {
 }
 
 /**
- * Anything with a lifetime this registry can watch. `webContents` satisfies it,
- * an attached socket satisfies it, and so does the bare object the unit suites
- * hand in as an event sender — which is deliberate: nothing here needs Electron.
+ * An attached socket **and** its own lifetime, in one object.
+ *
+ * `RemoteReporter` is already the duck-typed "surface with a lifetime" shape
+ * (`./registry.ts`), and `AttachedSocket` is already the frame sink. Before
+ * HIVE-145 a connection had one of each and they were separate objects, which
+ * meant two identities for one socket and a lookup between them. They are the
+ * same object now, and this is the type that says so.
  */
-interface Reporter {
-  on(event: string, listener: () => void): unknown;
-}
+export type AttachedSurface = AttachedSocket & RemoteReporter;
 
 export interface SurfaceRegistry {
   /**
@@ -97,7 +100,18 @@ export interface SurfaceRegistry {
    * (HIVE-145): two objects for one connection meant two keys and a lookup
    * between them, which is the shape of bug this module closes.
    */
-  trackSocket(socket: AttachedSocket & Reporter): SurfaceId;
+  trackSocket(socket: AttachedSurface): SurfaceId;
+  /**
+   * Remove a surface by its object, if it is tracked. Idempotent, and the
+   * same removal the lifetime events trigger — `onGone` still fires exactly
+   * once however the surface goes away.
+   *
+   * The listener's `onDetach` calls this. Its `close` handler fires the
+   * socket's own `destroyed` listeners *and* `onDetach`, and both converge
+   * here: one removal, two triggers, rather than two removal paths that can
+   * disagree.
+   */
+  untrack(value: unknown): void;
   get(id: SurfaceId): Surface | undefined;
   all(): Surface[];
   /**
@@ -135,10 +149,10 @@ export interface SurfaceRegistry {
  */
 const LIFETIME_EVENTS = ['did-start-loading', 'render-process-gone', 'destroyed'] as const;
 
-const asReporter = (value: unknown): Reporter | null => {
+const asReporter = (value: unknown): RemoteReporter | null => {
   if (typeof value !== 'object' || value === null) return null;
   const candidate = value as { on?: unknown };
-  return typeof candidate.on === 'function' ? (value as Reporter) : null;
+  return typeof candidate.on === 'function' ? (value as RemoteReporter) : null;
 };
 
 export function createSurfaceRegistry(): SurfaceRegistry {
@@ -172,20 +186,39 @@ export function createSurfaceRegistry(): SurfaceRegistry {
     handle?: AttachedSocket,
   ): SurfaceId => {
     const reporter = asReporter(value);
-    if (reporter === null) return nextId();
 
-    const existing = ids.get(reporter);
-    if (existing !== undefined) return existing;
+    /*
+      A window with no lifetime to watch is not tracked at all, which is
+      `watchReporter`'s own rule kept intact: the unit suites hand in a bare
+      object as `event.sender`, and a surface that can never announce its own
+      death would hold that renderer's input-box record forever.
+
+      A socket is the other way round. Being in the fan-out is the whole point
+      of an attached socket and never depended on having a lifetime — the
+      `Set<AttachedSocket>` this replaced did not care — so one is registered
+      either way and `untrack` from the listener's `onDetach` is what removes
+      it. Silently dropping it would leave a client that looks attached and
+      receives nothing.
+    */
+    if (reporter === null && kind === 'window') return nextId();
+
+    const key = reporter ?? (value as object | null);
+    if (key !== null) {
+      const existing = ids.get(key);
+      if (existing !== undefined) return existing;
+    }
 
     const id = nextId();
     const wasEmpty = live.size === 0;
 
-    ids.set(reporter, id);
+    if (key !== null) ids.set(key, id);
     live.set(id, { id, kind, send });
     if (handle !== undefined) handles.set(id, handle);
 
-    for (const event of LIFETIME_EVENTS) {
-      reporter.on(event, () => remove(id, reporter));
+    if (reporter !== null) {
+      for (const event of LIFETIME_EVENTS) {
+        reporter.on(event, () => { remove(id, reporter); });
+      }
     }
 
     if (wasEmpty) {
@@ -215,6 +248,13 @@ export function createSurfaceRegistry(): SurfaceRegistry {
         },
         socket,
       );
+    },
+
+    untrack(value) {
+      if (typeof value !== 'object' || value === null) return;
+      const id = ids.get(value);
+      if (id === undefined) return;
+      remove(id, value);
     },
 
     get: (id) => live.get(id),

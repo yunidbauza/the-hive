@@ -20,9 +20,8 @@ import {
 
 import { describe } from '../main/config/paths';
 import { createOriginGuard } from '../main/hooks/http-guard';
-import type { RemoteReporter } from '../main/ipc/registry';
 import type { RemoteDispatch } from '../main/ipc/remote-dispatch';
-import type { AttachedSocket } from '../main/ipc/socket-broadcaster';
+import type { AttachedSurface } from '../main/ipc/surfaces';
 import { verifyDevice } from '../main/server/devices';
 
 import { refuseProtocol } from './index';
@@ -314,9 +313,9 @@ export function createRemoteListener(options: {
    * learns a socket exists at all: nothing above this option tracks attached
    * sockets for it.
    */
-  onAttach: (socket: AttachedSocket, resumeFrom: Readonly<Record<string, ResumePoint>> | undefined) => void;
+  onAttach: (socket: AttachedSurface, resumeFrom: Readonly<Record<string, ResumePoint>> | undefined) => void;
   /** Told when an attached socket is gone — closed, errored, or terminated. */
-  onDetach: (socket: AttachedSocket) => void;
+  onDetach: (socket: AttachedSurface) => void;
 }): RemoteListener {
   const { bind, devices, serverName, dispatch, buildSnapshot, onAttach, onDetach } = options;
 
@@ -653,30 +652,31 @@ export function createRemoteListener(options: {
                 return;
               }
 
-              const socketHandle: AttachedSocket = {
+              /*
+                One object per socket: the frame sink and the lifetime are the
+                same identity (HIVE-145).
+
+                They used to be two — a `socketHandle` for `onAttach` and a
+                separate `reporter` for notify dispatch — which meant one
+                connection had two identities and anything keying by surface
+                needed a lookup between them. The surface registry keys by this
+                object, so there is one.
+
+                `watchReporter` in `electron/main/ipc/index.ts` dedupes by
+                identity, so handing it a fresh object per frame would register
+                a new set of listeners on every keystroke report. It is the
+                socket that has a lifetime, not the frame.
+
+                Only `destroyed` is wired. A socket has no analogue of
+                `did-start-loading` or `render-process-gone` — it is either open
+                or it is gone — and firing a reset for events that cannot
+                happen would be inventing a lifecycle.
+              */
+              const closeListeners: (() => void)[] = [];
+              const socketHandle: AttachedSurface = {
                 send(outgoing) {
                   send(socket, outgoing);
                 },
-              };
-
-              /*
-                One reporter per socket, created at attach and reused for
-                every notify from it (HIVE-143).
-
-                `watchReporter` in `electron/main/ipc/index.ts` dedupes by
-                identity through a `WeakSet`, so handing it a fresh object per
-                frame would register a new set of listeners on every
-                keystroke report. It is the socket that has a lifetime, not
-                the frame, and this object is that lifetime given the shape
-                `watchReporter` already accepts.
-
-                Only `destroyed` is wired. A socket has no analogue of
-                `did-start-loading` or `render-process-gone` — it is either
-                open or it is gone — and firing a reset for events that
-                cannot happen would be inventing a lifecycle.
-              */
-              const closeListeners: (() => void)[] = [];
-              const reporter: RemoteReporter = {
                 on(event, listener) {
                   if (event === 'destroyed') closeListeners.push(listener);
                   return undefined;
@@ -898,7 +898,7 @@ export function createRemoteListener(options: {
                   return;
                 }
                 if (kind === 'notify') {
-                  dispatch.notify(postAttachFrame as NotifyFrame, reporter);
+                  dispatch.notify(postAttachFrame as NotifyFrame, socketHandle);
                   return;
                 }
                 // A second `attach`, a `result`/`error`/`event` this server
