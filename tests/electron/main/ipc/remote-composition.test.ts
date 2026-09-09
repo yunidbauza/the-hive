@@ -897,7 +897,7 @@ describe('handlers that dereference the Electron event', () => {
   const REGISTRATION =
     /^\s*(?:handle|on)\(\s*CH\.(\w+)\s*,\s*(?:async\s+)?\(\s*([A-Za-z$][\w$]*)/gm;
 
-  it('is exactly the WINDOW_BOUND four that dereference it, plus the ones adapted for a socket', () => {
+  it('is exactly the WINDOW_BOUND four that dereference it, plus the ones adapted for a surface', () => {
     const source = readFileSync(
       fileURLToPath(new URL('../../../../electron/main/ipc/index.ts', import.meta.url)),
       'utf8',
@@ -909,44 +909,48 @@ describe('handlers that dereference the Electron event', () => {
       channels.add(CH[key]);
     }
 
-    /*
-      `pty:prompt` is added: it uses the event for a surface *lifetime* rather
-      than for a window, and the surface registry accepts anything with an
-      `.on`, which `listener.ts` hands it. Refusing it would silently revert
-      HIVE-135's nudge holding for every remote session.
+    /**
+     * The channels that read the event for a **surface identity**, not for a
+     * window — added rather than refused, because a socket can supply one.
+     *
+     * `pty:prompt` was the first (HIVE-143): the surface registry accepts
+     * anything with an `.on`, which `listener.ts` hands it, and refusing it
+     * would have silently reverted HIVE-135's nudge holding for every remote
+     * session. HIVE-145 added the other three, all for the same reason — each
+     * holds state that is *per surface* and needs to know whose it is:
+     *
+     * - `ui:foreground` — which stage this surface is showing. One value for
+     *   every surface at once was the defect.
+     * - `pty:ack` — how far this surface has consumed. The flow-control window
+     *   follows the slowest of them.
+     * - `fs:watch` / `fs:unwatch` — which project tree this surface is
+     *   watching. One slot meant the second client stole the first's watcher.
+     *
+     * None of them belongs in `WINDOW_BOUND`, and the membership test is what
+     * says so: a channel qualifies there when its effect lands on the machine
+     * that answers it while the person who asked is at the other one. These
+     * record a fact about the asker and have no effect on the answering machine
+     * at all.
+     *
+     * `configReveal` is subtracted (HIVE-144, Ruling 25) — the one
+     * `WINDOW_BOUND` entry that does *not* dereference the event.
+     * `handle(CH.configReveal, (): void => ...)` binds no parameter at all,
+     * because `shell.showItemInFolder` needs none; it is refused for what it
+     * does to the server's filesystem, not for anything it would do with
+     * `REMOTE_INVOKE_EVENT`. Keeping it in `expected` here would assert a
+     * property of the source text that is not true — this test's own
+     * `REGISTRATION` regex correctly never matches its handler.
+     */
+    const SURFACE_ADAPTED = [
+      CH.ptyPrompt,
+      CH.uiForeground,
+      CH.ptyAck,
+      CH.fsWatch,
+      CH.fsUnwatch,
+    ];
 
-      `pty:ack` joined them in HIVE-145: the flow-control window follows the
-      slowest surface watching a session, so an ack has to say *whose* it is.
-      A client that acks a sequence it never received can now only move its own
-      mark, which is a tighter bound than the single window it used to widen
-      for everyone — the reason `CHANNEL_AUTHORIZATION` grades it `mutate`.
-
-      `ui:foreground` joined it in HIVE-145, for exactly the same reason and by
-      exactly the same mechanism: it needs to know *which* surface changed
-      stage, not which window, so it resolves the sender through
-      `surfaceFor` and a socket satisfies that as well as a `webContents` does.
-      Holding one `foregroundTerminalId` for every surface at once was the
-      defect; the event is how the handler learns whose stage it is being told
-      about.
-
-      The membership test is unchanged by that: a channel belongs in
-      `WINDOW_BOUND` when its effect lands on the machine that answers it while
-      the person who asked is at the other one. `ui:foreground` has no effect
-      on the answering machine at all — it records a fact about the asker.
-
-      `configReveal` is subtracted (HIVE-144, Ruling 25) — the one
-      `WINDOW_BOUND` entry that does *not* dereference the event.
-      `handle(CH.configReveal, (): void => ...)` binds no parameter at all,
-      because `shell.showItemInFolder` needs none; it is refused for what it
-      does to the server's filesystem, not for anything it would do with
-      `REMOTE_INVOKE_EVENT`. Keeping it in `expected` here would assert a
-      property of the source text that is not true — this test's own
-      `REGISTRATION` regex correctly never matches its handler, and this
-      exclusion is what keeps the assertion matching what the regex actually
-      finds rather than what `WINDOW_BOUND`'s membership implies.
-    */
     const expected = new Set(
-      [...Object.keys(WINDOW_BOUND), CH.ptyPrompt, CH.uiForeground, CH.ptyAck].filter(
+      [...Object.keys(WINDOW_BOUND), ...SURFACE_ADAPTED].filter(
         (channel) => channel !== CH.configReveal,
       ),
     );

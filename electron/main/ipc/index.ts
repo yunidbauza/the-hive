@@ -1797,6 +1797,11 @@ export function registerIpcHandlers(
     */
     sessions?.releaseSurface(surfaceId);
     /*
+      And its watcher, or the mini accumulates one recursive `FSEvents` stream
+      over a whole repository per device that ever attached.
+    */
+    fsWatch?.release(surfaceId);
+    /*
       A surface that has gone is looking at nothing, so its stage must not go
       on suppressing notifications for the session it last had (HIVE-145).
       Announced, because the hub's re-arm is what re-raises a row this surface's
@@ -2771,14 +2776,26 @@ export function registerIpcHandlers(
   });
 
   /**
-   * The project watcher, constructed here for the same reason the clone flow
-   * is: it needs `send`, and `send` resolves windows per call rather than
-   * capturing one. A watcher holding a stale `webContents` would emit into a
-   * destroyed renderer after a window reload.
+   * The project watchers, one per surface (HIVE-145).
+   *
+   * Constructed here for the same reason the clone flow is: it needs a way to
+   * push, and that has to be resolved per call rather than captured. A watcher
+   * holding a stale `webContents` would emit into a destroyed renderer after a
+   * window reload.
+   *
+   * **Targeted, not broadcast.** This went through `send` — the fan-out — so
+   * every surface received every surface's tree churn and an explorer reacted
+   * to a project it was not showing. With two clients on different projects
+   * that is not merely wasteful: each one's tree re-reads its expanded
+   * directories on a flush about the other's repository. A surface whose
+   * watcher fired is the only one that asked, so it is the only one told.
+   *
+   * A dropped surface's own release closes its watcher; the lookup returning
+   * `undefined` here is the harmless race where a flush lands in the same tick.
    */
-  fsWatch = createFsWatchLayer((event: FsChangedEvent) =>
-    send(CH.fsChanged, event),
-  );
+  fsWatch = createFsWatchLayer((surfaceId, event: FsChangedEvent) => {
+    surfaces.get(surfaceId)?.send(CH.fsChanged, event);
+  });
 
   /**
    * Drop this layer's timers on quit.
@@ -3905,13 +3922,13 @@ export function registerIpcHandlers(
    * render its failure into. The explorer treats a rejection as "no live
    * updates" and keeps its manual refresh, which is the honest degradation.
    */
-  handle(CH.fsWatch, async (_event, payload): Promise<void> => {
+  handle(CH.fsWatch, async (event, payload): Promise<void> => {
     const request = parseWatchRequest(payload);
-    await fsWatch?.watchProject(request.projectId, request.sessionId);
+    await fsWatch?.watchProject(surfaceFor(event.sender), request.projectId, request.sessionId);
   });
 
-  handle(CH.fsUnwatch, (): void => {
-    fsWatch?.unwatch();
+  handle(CH.fsUnwatch, (event): void => {
+    fsWatch?.unwatch(surfaceFor(event.sender));
   });
 
   /**

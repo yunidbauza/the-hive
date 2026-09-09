@@ -4,19 +4,39 @@ import { sep } from 'node:path';
 import type { FsChangedEvent } from '@shared/fs-contract';
 import { HIDDEN_ENTRIES } from '@shared/fs-contract';
 
+import type { SurfaceId } from '../ipc/surfaces';
+
 import { rootFor } from './paths';
 
 /**
- * One recursive watcher, for the project the explorer is currently showing.
+ * One recursive watcher per surface, for the project that surface's explorer is
+ * currently showing.
  *
- * ## Why exactly one
+ * ## Why one *per surface*, and still only one within it
  *
- * The explorer roots at the active session's project and shows one at a time.
- * A watcher per visited project would be a file-descriptor leak with a long
- * fuse: it grows with navigation, never shrinks, and on macOS each one holds an
- * `FSEvents` stream over a whole repository tree. `watchProject` therefore
- * *replaces* rather than adds, which is also why `unwatch` needs no argument —
- * there is only ever one thing to stop.
+ * The explorer roots at the active session's project and shows one at a time,
+ * so `watchProject` **replaces** rather than adds *for a given surface*. A
+ * watcher per visited project would be a file-descriptor leak with a long fuse:
+ * it grows with navigation, never shrinks, and on macOS each one holds an
+ * `FSEvents` stream over a whole repository tree.
+ *
+ * That argument bounds navigation, not devices. Since HIVE-145 two clients can
+ * be attached at once, and there was exactly one slot: client B's `fs:watch`
+ * silently stole client A's watcher, and A's explorer stopped refreshing with
+ * nothing on screen to say so. Surfaces are bounded by how many devices are
+ * attached — two, three — where navigation is unbounded, so a watcher each is
+ * a different question with a different answer.
+ *
+ * ## Why not one watcher per resolved root, shared
+ *
+ * It looks like free savings: the raw `fs.watch` stream for a root is identical
+ * whoever is listening. It is not, because this module is not a raw event
+ * source. It owns a pending set, a debounce timer and a burst ceiling, so a
+ * shared watcher shares one debounce clock — surface A's burst would extend
+ * surface B's wait, and both would flush on a cadence neither asked for. The
+ * lifetimes couple too, and "the same project" is not even reliably the same
+ * tree: {@link rootFor} resolves a session working in a worktree somewhere else
+ * entirely.
  *
  * ## Why the filter is here and not in the renderer
  *
@@ -60,11 +80,28 @@ interface ActiveWatch {
   timer: NodeJS.Timeout | null;
   /** When the current burst began, so it cannot be postponed indefinitely. */
   burstStartedAt: number | null;
+  /**
+   * Monotonic request id for **this surface** (HIVE-145).
+   *
+   * Per surface rather than per module: two `fs:watch` calls in flight can
+   * settle out of order and the loser must not install over the winner, but
+   * that race is only ever between one surface's own calls. A shared counter
+   * let surface B's slow `rootFor` cancel surface A's install, which is a
+   * second way to lose a watcher on top of the theft this replaced.
+   */
+  generation: number;
 }
 
 export interface FsWatchLayer {
-  watchProject(projectId: string, sessionId?: string): Promise<void>;
-  unwatch(): void;
+  watchProject(surfaceId: SurfaceId, projectId: string, sessionId?: string): Promise<void>;
+  /** That surface stopped watching. Every other surface's watcher stays. */
+  unwatch(surfaceId: SurfaceId): void;
+  /**
+   * That surface went away. Identical to {@link unwatch} in effect, and named
+   * for the caller: `surfaces.onGone`, the single release point.
+   */
+  release(surfaceId: SurfaceId): void;
+  /** Every watcher, on teardown. */
   dispose(): void;
 }
 
@@ -76,20 +113,36 @@ function isHiddenPath(relPath: string): boolean {
 }
 
 export function createFsWatchLayer(
-  emit: (event: FsChangedEvent) => void,
+  /**
+   * Targeted at the surface that asked (HIVE-145), never broadcast: an
+   * explorer must not react to a tree it is not showing, and with two clients
+   * on different projects a broadcast would send each of them the other's
+   * churn.
+   */
+  emit: (surfaceId: SurfaceId, event: FsChangedEvent) => void,
 ): FsWatchLayer {
-  let active: ActiveWatch | null = null;
-  /** Monotonic request id, so an out-of-order `watchProject` cannot install. */
+  const watches = new Map<SurfaceId, ActiveWatch>();
+  /**
+   * The newest request each surface has made, recorded **before** its `rootFor`
+   * await so a slower earlier call can see that it lost and decline to install.
+   * Kept beside `watches` rather than on `ActiveWatch`, because the losing call
+   * may find no `ActiveWatch` at all — the first two `fs:watch` calls a surface
+   * ever makes race with nothing installed yet.
+   */
+  const latest = new Map<SurfaceId, number>();
+  /** Monotonic across surfaces; only ever compared against a surface's own. */
   let requested = 0;
 
-  const stop = (): void => {
+  const stop = (surfaceId: SurfaceId): void => {
+    const active = watches.get(surfaceId);
     if (!active) return;
     if (active.timer) clearTimeout(active.timer);
     active.watcher.close();
-    active = null;
+    watches.delete(surfaceId);
   };
 
-  const flush = (): void => {
+  const flush = (surfaceId: SurfaceId): void => {
+    const active = watches.get(surfaceId);
     if (!active) return;
     active.timer = null;
     active.burstStartedAt = null;
@@ -97,17 +150,18 @@ export function createFsWatchLayer(
 
     const paths = [...active.pending];
     active.pending.clear();
-    emit({ projectId: active.projectId, paths });
+    emit(surfaceId, { projectId: active.projectId, paths });
   };
 
   return {
-    async watchProject(projectId, sessionId) {
+    async watchProject(surfaceId, projectId, sessionId) {
       /**
        * Resolved through the same guard every read goes through, so "watch" is
        * not a second, weaker way to name a directory. An unknown or unusable
        * project throws here exactly as it would on a read.
        */
       const generation = ++requested;
+      latest.set(surfaceId, generation);
       // `rootFor`, not `projectRoot`: a session working in a worktree outside
       // the project is watched where it actually is, or the tree the panel
       // shows would never refresh while the one it does not would.
@@ -119,25 +173,30 @@ export function createFsWatchLayer(
        * and install itself, leaving the *visible* project unwatched. The
        * generation counter is taken before the await and checked after it, so
        * only the most recent request may install.
+       *
+       * Compared against **this surface's** last request (HIVE-145). A shared
+       * counter would let another surface's slow `rootFor` cancel this one's
+       * install, which is not the race this guards.
        */
-      if (generation !== requested) return;
+      if (latest.get(surfaceId) !== generation) return;
 
-      stop();
+      stop(surfaceId);
 
       const watcher = watch(root, { recursive: true }, (_event, filename) => {
-        if (!active || filename === null) return;
+        const live = watches.get(surfaceId);
+        if (!live || live.watcher !== watcher || filename === null) return;
         const relPath = filename.toString();
         if (relPath === '' || isHiddenPath(relPath)) return;
 
-        active.pending.add(relPath);
-        active.burstStartedAt ??= Date.now();
+        live.pending.add(relPath);
+        live.burstStartedAt ??= Date.now();
 
         // Postpone, but never past the burst ceiling — see MAX_DEBOUNCE_MS.
-        const elapsed = Date.now() - active.burstStartedAt;
+        const elapsed = Date.now() - live.burstStartedAt;
         const wait = Math.max(0, Math.min(DEBOUNCE_MS, MAX_DEBOUNCE_MS - elapsed));
 
-        if (active.timer) clearTimeout(active.timer);
-        active.timer = setTimeout(flush, wait);
+        if (live.timer) clearTimeout(live.timer);
+        live.timer = setTimeout(() => { flush(surfaceId); }, wait);
       });
 
       /**
@@ -150,20 +209,26 @@ export function createFsWatchLayer(
        * replaced must not stop its successor.
        */
       watcher.on('error', () => {
-        if (active?.watcher !== watcher) return;
-        stop();
+        if (watches.get(surfaceId)?.watcher !== watcher) return;
+        stop(surfaceId);
       });
 
-      active = {
+      watches.set(surfaceId, {
         projectId,
         watcher,
         pending: new Set(),
         timer: null,
         burstStartedAt: null,
-      };
+        generation,
+      });
     },
 
     unwatch: stop,
-    dispose: stop,
+    release: stop,
+
+    dispose() {
+      for (const surfaceId of [...watches.keys()]) stop(surfaceId);
+      latest.clear();
+    },
   };
 }
