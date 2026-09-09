@@ -9,9 +9,13 @@ import type { ServerDevice } from '@shared/config-contract';
 import { MAX_FILE_BYTES } from '@shared/fs-contract';
 import { CH } from '@shared/ipc-contract';
 import {
+  CALL_DEADLINE_MS,
+  CALL_TIMEOUT_CODE,
   REMOTE_PROTOCOL_VERSION,
   type AttachRequest,
   type CallFrame,
+  type ErrorFrame,
+  type ResultFrame,
   type ResumePoint,
 } from '@shared/remote-contract';
 
@@ -1056,6 +1060,78 @@ describe('post-attach frames', () => {
     const first = dispatch.notify.mock.calls[0]![1];
     const second = dispatch.notify.mock.calls[1]![1];
     expect(second).toBe(first);
+  });
+});
+
+/**
+ * The call deadline (HIVE-144): `dispatch.call` never rejects, but a handler
+ * can fail to settle at all — `agents:run` genuinely can, per
+ * `listener.ts`'s own comment at the `dispatch.call` site. Fake timers
+ * throughout, armed *after* {@link attachedSocket}'s real handshake has
+ * already completed, so the production `setTimeout` under test is the only
+ * timer these cases control.
+ */
+describe('the call deadline (HIVE-144)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('answers an error frame when a call outruns the deadline', async () => {
+    // A handler that never settles, which is what agents:run genuinely can do.
+    const dispatch: RemoteDispatch = {
+      call: vi.fn(() => new Promise<ResultFrame | ErrorFrame>(() => {})),
+      notify: vi.fn(),
+    };
+    const { socket, sent } = await attachedSocket({ dispatch });
+
+    vi.useFakeTimers();
+    socket.emit('message', JSON.stringify({ kind: 'call', id: 'c1', channel: CH.agentsRun, payload: {} }));
+    await vi.advanceTimersByTimeAsync(CALL_DEADLINE_MS + 1);
+
+    expect(sent).toContainEqual(
+      expect.objectContaining({ kind: 'error', id: 'c1', code: CALL_TIMEOUT_CODE }),
+    );
+  });
+
+  it('does not answer twice when the call settles after the deadline', async () => {
+    let resolveLate: (answer: ResultFrame | ErrorFrame) => void = () => {
+      throw new Error('resolveLate called before the promise executor ran');
+    };
+    const late = new Promise<ResultFrame | ErrorFrame>((resolve) => {
+      resolveLate = resolve;
+    });
+    const dispatch: RemoteDispatch = { call: vi.fn(() => late), notify: vi.fn() };
+    const { socket, sent } = await attachedSocket({ dispatch });
+
+    vi.useFakeTimers();
+    socket.emit('message', JSON.stringify({ kind: 'call', id: 'c1', channel: CH.agentsRun, payload: {} }));
+    await vi.advanceTimersByTimeAsync(CALL_DEADLINE_MS + 1);
+
+    resolveLate({ kind: 'result', id: 'c1', payload: 'late' });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Two frames for one correlation id is worse than none: the client
+    // already resolved off the timeout's error frame.
+    expect(sent.filter((frame) => (frame as { id?: string }).id === 'c1')).toHaveLength(1);
+  });
+
+  it('clears the deadline when the call settles in time', async () => {
+    const dispatch: RemoteDispatch = {
+      call: vi.fn(async () => ({ kind: 'result' as const, id: 'c1', payload: 'ok' })),
+      notify: vi.fn(),
+    };
+    const { socket, sent } = await attachedSocket({ dispatch });
+
+    vi.useFakeTimers();
+    socket.emit('message', JSON.stringify({ kind: 'call', id: 'c1', channel: CH.configGet, payload: {} }));
+    await vi.advanceTimersByTimeAsync(0);
+    // Comfortably past the deadline, to prove the timer was actually
+    // cancelled rather than merely not yet due.
+    await vi.advanceTimersByTimeAsync(CALL_DEADLINE_MS + 1);
+
+    const framesForId = sent.filter((frame) => (frame as { id?: string }).id === 'c1');
+    expect(framesForId).toHaveLength(1);
+    expect(framesForId[0]).toMatchObject({ kind: 'result' });
   });
 });
 

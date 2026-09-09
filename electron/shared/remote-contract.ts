@@ -631,6 +631,46 @@ export interface ErrorFrame {
   message: string;
 }
 
+/**
+ * How long the server lets one `call` run before it answers a
+ * {@link CALL_TIMEOUT_CODE} error frame and lets go of the socket handle the
+ * call was holding closed over (HIVE-144).
+ *
+ * `dispatch.call` never rejects — every refusal and every thrown handler
+ * already comes back as an `error` frame — but it can fail to *settle* at
+ * all: `agents:run` awaits the memoised `mcp.start()`, and `slack:sign-in`
+ * spawns a real `claude` turn and waits for it, so a handler stuck on either
+ * one holds `electron/remote-host/listener.ts`'s `socketHandle` past a
+ * detach that has already happened, with the client's own correlation id
+ * outstanding and nothing on the wire to say so.
+ *
+ * Two minutes: comfortably longer than either of those genuinely slow paths
+ * takes to succeed, so a real `agents:run` or `slack:sign-in` never trips it,
+ * and short enough that a call which has not answered by then is a stuck
+ * handler rather than a slow one — the difference the deadline exists to
+ * draw.
+ */
+export const CALL_DEADLINE_MS = 120_000;
+
+/**
+ * How long a client waits for a `call` before giving up on it itself
+ * (HIVE-144) — {@link CALL_DEADLINE_MS} plus margin for the round trip, not
+ * the same number.
+ *
+ * It has to be strictly greater, and by more than jitter: a client that gave
+ * up at or before the instant the server's own timer fires would abandon a
+ * call the server is still going to answer — the race
+ * `electron/remote-host/listener.ts`'s call site describes as the reason a
+ * server-only deadline shipped unfixed until this constant had a partner. 15
+ * seconds of margin is generous flight time for a loopback or tailnet round
+ * trip and the time this process takes to notice its own timer fired, with
+ * room to spare.
+ */
+export const CALL_GIVE_UP_MS = 135_000;
+
+/** {@link ErrorFrame.code} for a call `listener.ts` gave up on at {@link CALL_DEADLINE_MS}. */
+export const CALL_TIMEOUT_CODE = 'call-timeout';
+
 /** A `notify`: client to server, no answer, ordered per session. */
 export interface NotifyFrame {
   kind: 'notify';

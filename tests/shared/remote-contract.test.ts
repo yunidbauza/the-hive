@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 
 import { CH, EVENT_CHANNELS, type Channel } from '@shared/ipc-contract';
 import {
+  CALL_DEADLINE_MS,
+  CALL_GIVE_UP_MS,
   CHANNEL_AUTHORIZATION,
   FRAME_KIND,
   REMOTE_PROTOCOL_VERSION,
@@ -381,6 +383,21 @@ describe('remote contract: the version handshake', () => {
 
   it('is protocol 2, because a bare seq could not carry a generation (HIVE-144)', () => {
     expect(REMOTE_PROTOCOL_VERSION).toBe(2);
+  });
+});
+
+describe('remote contract: the call deadline (HIVE-144)', () => {
+  /**
+   * `electron/remote-host/listener.ts`'s `dispatch.call` site names the
+   * reason directly: the two numbers have to agree or the client gives up on
+   * a call the server is still going to answer. A client whose own timeout
+   * fires at or before the server's would abandon a call mid-flight instead
+   * of waiting for the `CALL_TIMEOUT_CODE` error frame the server is already
+   * about to send — the give-up point has to be strictly the later of the
+   * two, not merely a different number.
+   */
+  it('gives the client strictly longer than the server\'s own deadline', () => {
+    expect(CALL_GIVE_UP_MS).toBeGreaterThan(CALL_DEADLINE_MS);
   });
 });
 

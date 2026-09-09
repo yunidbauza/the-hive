@@ -4,6 +4,8 @@ import { WebSocketServer, type WebSocket } from 'ws';
 
 import type { ServerBindConfig, ServerDevice } from '@shared/config-contract';
 import {
+  CALL_DEADLINE_MS,
+  CALL_TIMEOUT_CODE,
   REMOTE_PROTOCOL_VERSION,
   type AttachRefused,
   type AttachRequest,
@@ -676,33 +678,56 @@ export function createRemoteListener(options: {
                     matters for `notify` and is preserved there by handling
                     those synchronously.
 
-                    **Known hazard, deliberately parked: there is no
-                    server-side timeout on a call (HIVE-143 review; HIVE-144
-                    owns it).** `dispatch.call` never *rejects* — every refusal
-                    and every thrown handler comes back as an `error` frame —
-                    but it can fail to settle at all, because some handlers
-                    genuinely wait on the world: `agents:run` awaits the
-                    memoised `mcp.start()`, and `slack:sign-in` spawns a real
-                    `claude` turn and waits for it. Until one of those settles,
-                    this closure holds `socketHandle` — and therefore the
-                    socket — past a detach that has already happened, and the
-                    client's own correlation id is outstanding with nothing on
-                    the wire to say so.
+                    **A deadline on the call itself (HIVE-144).** `dispatch.call`
+                    never *rejects* — every refusal and every thrown handler
+                    comes back as an `error` frame — but it can fail to settle
+                    at all, because some handlers genuinely wait on the world:
+                    `agents:run` awaits the memoised `mcp.start()`, and
+                    `slack:sign-in` spawns a real `claude` turn and waits for
+                    it. Left unbounded, that would hold `socketHandle` — and
+                    therefore the socket — past a detach that has already
+                    happened, with the client's own correlation id outstanding
+                    and nothing on the wire to say so.
 
-                    It is bounded rather than unbounded: a client can only have
-                    as many of these as it has calls in flight, and every one
-                    of them settles or the app is quitting. It ships unfixed
-                    because the fix belongs with the client half — a deadline
-                    here without a matching one there would answer a `timeout`
-                    error frame to a client that has no branch for it, and the
-                    two numbers have to agree or the client gives up on a call
-                    the server is still going to answer. HIVE-144 should give
-                    `dispatch.call` a deadline, answer an `error` frame when it
-                    expires, and drop the handle it is holding.
+                    `CALL_DEADLINE_MS` is the fix: if the call has not settled
+                    by then, `deadline` fires, answers `CALL_TIMEOUT_CODE`, and
+                    is the *only* thing that sets `settled` — a fired timeout
+                    cannot itself run twice, so it needs no guard of its own.
+                    `settled` exists for the other direction: a `dispatch.call`
+                    that answers late, after the timeout already has, must not
+                    send a second frame for the same `id` — two answers to one
+                    correlation id is worse than the timeout alone, because the
+                    client already resolved. `clearTimeout(deadline)` on the
+                    settle path is what stops that stale timer from firing at
+                    all once a real answer is in hand; without it, an
+                    already-answered call would still get a spurious
+                    `CALL_TIMEOUT_CODE` error minutes later. `CALL_GIVE_UP_MS`
+                    (`electron/shared/remote-contract.ts`) is the client's own
+                    number — `CALL_DEADLINE_MS` plus flight time, not the same
+                    value — so it never gives up on a call this server is
+                    still going to answer.
                   */
+                  let settled = false;
+                  const deadline = setTimeout(() => {
+                    settled = true;
+                    if (socket.readyState !== socket.OPEN) return;
+                    send(socket, {
+                      kind: 'error',
+                      id: (postAttachFrame as CallFrame).id,
+                      code: CALL_TIMEOUT_CODE,
+                      message: `no answer within ${String(CALL_DEADLINE_MS)}ms`,
+                    });
+                  }, CALL_DEADLINE_MS);
+
                   void dispatch
                     .call(postAttachFrame as CallFrame)
                     .then((answer) => {
+                      // A late answer, after the deadline above already sent
+                      // its own error frame for this `id` — nothing left to
+                      // tell the client that would not be a second frame for
+                      // one correlation id.
+                      if (settled) return;
+                      clearTimeout(deadline);
                       socketHandle.send(answer);
                     })
                     .catch((cause: unknown) => {
@@ -719,6 +744,8 @@ export function createRemoteListener(options: {
                         replaces an unserialisable one must not itself be the
                         thing that throws.
                       */
+                      if (settled) return;
+                      clearTimeout(deadline);
                       console.error('[hive] server mode could not answer a call frame:', cause);
                       if (socket.readyState !== socket.OPEN) return;
                       try {
