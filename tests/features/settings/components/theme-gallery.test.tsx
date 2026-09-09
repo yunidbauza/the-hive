@@ -7,7 +7,11 @@ import { ThemeGallery } from '@features/settings/components/theme-gallery';
 import { BUILT_IN_THEME } from '@lib/theme/built-in';
 import { BUILT_IN_THEMES } from '@lib/theme/built-in-themes';
 import { PickThemeFailure, pickThemeFile, saveThemeFile } from '@lib/theme/files';
-import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
+import {
+  resetProjectConfig,
+  setAttachedServerForTest,
+  setProjectConfigForTest,
+} from '@lib/project-config';
 import { themeToJson } from '@lib/theme/template';
 import { emptySnapshot } from '@shared/config-contract';
 import { useAppearanceStore } from '@stores/appearance-store';
@@ -336,9 +340,11 @@ describe('ThemeGallery — attached to a remote server', () => {
     vi.mocked(saveThemeFile).mockReset();
     setProjectConfigForTest({
       ...emptySnapshot('/tmp/hive/config.json'),
-      remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
-      attachedServer: { name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' },
     });
+    // Attached is a runtime fact, never a config one: while attached
+    // `config:get` is answered by the server, whose own `remote.mode`
+    // reads 'local' (HIVE-144 review, C1).
+    setAttachedServerForTest('mini.tail1234.ts.net');
   });
 
   afterEach(() => {

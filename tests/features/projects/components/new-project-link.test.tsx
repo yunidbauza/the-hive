@@ -4,8 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { REMOTE_DISABLED_REASON } from '@config/runtime';
 import { NewProjectLink } from '@features/projects/components/new-project-link';
-import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
-import { emptySnapshot, type ConfigSnapshot } from '@shared/config-contract';
+import {
+  resetProjectConfig,
+  setAttachedServerForTest,
+  setProjectConfigForTest,
+} from '@lib/project-config';
+import { emptySnapshot } from '@shared/config-contract';
 
 const chooseProjectDirectory = vi.fn();
 const addProjectToConfig = vi.fn();
@@ -19,14 +23,17 @@ vi.mock('@lib/project-config', async (importOriginal) => {
   };
 });
 
-function remoteSnapshot(): ConfigSnapshot {
-  return {
-    ...emptySnapshot('/home/dev/.hive/config.json', '/bin/zsh'),
-    remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
-    // A snapshot in remote mode carries the server it is attached to — see
-    // `ConfigSnapshot.attachedServer`'s own doc comment.
-    attachedServer: { name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' },
-  };
+/**
+ * Put this window in the attached state (HIVE-144 review, C1).
+ *
+ * The snapshot is the plain one on purpose: while attached, `config:get` is
+ * answered by the server, whose own `remote.mode` reads `'local'`. Attachment
+ * is the runtime fact beside it, and `setAttachedServerForTest` is the only
+ * place it lives.
+ */
+function attach(): void {
+  setProjectConfigForTest(emptySnapshot('/home/dev/.hive/config.json', '/bin/zsh'));
+  setAttachedServerForTest('mini.tail1234.ts.net');
 }
 
 /**
@@ -133,7 +140,7 @@ describe('NewProjectLink', () => {
     });
 
     it('disables the control and carries the refusal as its title', () => {
-      setProjectConfigForTest(remoteSnapshot());
+      attach();
 
       render(<NewProjectLink />);
 
@@ -143,7 +150,7 @@ describe('NewProjectLink', () => {
     });
 
     it('never opens the dialog', async () => {
-      setProjectConfigForTest(remoteSnapshot());
+      attach();
       const user = userEvent.setup();
 
       render(<NewProjectLink />);

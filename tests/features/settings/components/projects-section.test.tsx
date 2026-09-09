@@ -9,7 +9,11 @@ import {
 } from '@shared/config-contract';
 
 import { ProjectsSection } from '@features/settings/components/projects-section';
-import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
+import {
+  resetProjectConfig,
+  setAttachedServerForTest,
+  setProjectConfigForTest,
+} from '@lib/project-config';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
 import { seedDemoFleet } from '@tests/support/demo-fleet';
@@ -168,10 +172,12 @@ describe('ProjectsSection', () => {
       const snapshot: ConfigSnapshot = {
         ...emptySnapshot('/tmp/hive/config.json'),
         projects: [entry({ id: 'the-hive' })],
-        remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
-        attachedServer: { name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' },
       };
       setProjectConfigForTest(snapshot);
+      // Attached is a runtime fact, never a config one: while attached
+      // `config:get` is answered by the server, whose own `remote.mode`
+      // reads 'local' (HIVE-144 review, C1).
+      setAttachedServerForTest('mini.tail1234.ts.net');
 
       render(<ProjectsSection />);
       const button = screen.getByRole('button', { name: /add project/i });

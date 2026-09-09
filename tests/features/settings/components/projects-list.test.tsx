@@ -6,7 +6,11 @@ import { REMOTE_DISABLED_REASON } from '@config/runtime';
 import { emptySnapshot, type ProjectConfig } from '@shared/config-contract';
 
 import { ProjectsList } from '@features/settings/components/projects-list';
-import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
+import {
+  resetProjectConfig,
+  setAttachedServerForTest,
+  setProjectConfigForTest,
+} from '@lib/project-config';
 import { useHiveStore } from '@stores/hive-store';
 import { seedDemoFleet } from '@tests/support/demo-fleet';
 
@@ -295,9 +299,11 @@ describe('ProjectsList', () => {
       it('disables Change folder… and carries the refusal as its title', async () => {
         setProjectConfigForTest({
           ...emptySnapshot('/tmp/hive/config.json'),
-          remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
-          attachedServer: { name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' },
         });
+        // Attached is a runtime fact, never a config one: while attached
+        // `config:get` is answered by the server, whose own `remote.mode`
+        // reads 'local' (HIVE-144 review, C1).
+        setAttachedServerForTest('mini.tail1234.ts.net');
 
         render(<ProjectsList entries={[entry({ id: 'a' })]} />);
         await openMenu('a');
@@ -310,9 +316,11 @@ describe('ProjectsList', () => {
       it('never opens the dialog', async () => {
         setProjectConfigForTest({
           ...emptySnapshot('/tmp/hive/config.json'),
-          remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
-          attachedServer: { name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' },
         });
+        // Attached is a runtime fact, never a config one: while attached
+        // `config:get` is answered by the server, whose own `remote.mode`
+        // reads 'local' (HIVE-144 review, C1).
+        setAttachedServerForTest('mini.tail1234.ts.net');
 
         render(<ProjectsList entries={[entry({ id: 'a' })]} />);
         await openMenu('a');

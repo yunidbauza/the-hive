@@ -6,7 +6,11 @@ import { DEFAULT_BIND, emptySnapshot, type ConfigSnapshot } from '@shared/config
 import type { AppInfo } from '@shared/ipc-contract';
 
 import { AdvancedSection } from '@features/settings/components/advanced-section';
-import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
+import {
+  resetProjectConfig,
+  setAttachedServerForTest,
+  setProjectConfigForTest,
+} from '@lib/project-config';
 
 import { testProjectKey } from '@tests/support/project-key';
 
@@ -319,12 +323,13 @@ describe('AdvancedSection', () => {
  */
 describe('AdvancedSection — revealing the config file while attached (HIVE-144, Ruling 25)', () => {
   beforeEach(() => {
-    install({
-      remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
-      // A snapshot claiming `mode: 'remote'` with no attached server
-      // describes a state the app cannot be in (HIVE-139's own lesson).
-      attachedServer: { name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' },
-    });
+    // The snapshot stays the plain one, because that is what an attached
+    // client actually holds: `config:get` is answered by the server, whose
+    // own `remote.mode` reads `'local'` (HIVE-144 review, C1). Attachment is
+    // the runtime fact beside it, and `app:info` is where it is answered.
+    install();
+    setAttachedServerForTest('mini.tail1234.ts.net');
+    readAppInfo.mockResolvedValue(info({ attachedServerName: 'mini.tail1234.ts.net' }));
   });
 
   it('disables the reveal button with WINDOW_BOUND’s own reason', async () => {

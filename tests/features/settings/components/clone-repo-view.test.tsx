@@ -6,7 +6,11 @@ import { REMOTE_DISABLED_REASON } from '@config/runtime';
 import { emptySnapshot, type CloneDoneEvent } from '@shared/config-contract';
 
 import { CloneRepoView } from '@features/settings/components/clone-repo-view';
-import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
+import {
+  resetProjectConfig,
+  setAttachedServerForTest,
+  setProjectConfigForTest,
+} from '@lib/project-config';
 import { resetPtyChannels } from '@lib/terminal/pty-transport';
 
 const chooseProjectDirectory = vi.fn();
@@ -270,9 +274,11 @@ describe('CloneRepoView', () => {
     it('disables Choose… and carries the refusal as its title', () => {
       setProjectConfigForTest({
         ...emptySnapshot('/tmp/hive/config.json'),
-        remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
-        attachedServer: { name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' },
       });
+      // Attached is a runtime fact, never a config one: while attached
+      // `config:get` is answered by the server, whose own `remote.mode`
+      // reads 'local' (HIVE-144 review, C1).
+      setAttachedServerForTest('mini.tail1234.ts.net');
 
       render(<CloneRepoView onDone={() => {}} />);
 
@@ -284,9 +290,11 @@ describe('CloneRepoView', () => {
     it('never opens the dialog', async () => {
       setProjectConfigForTest({
         ...emptySnapshot('/tmp/hive/config.json'),
-        remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
-        attachedServer: { name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' },
       });
+      // Attached is a runtime fact, never a config one: while attached
+      // `config:get` is answered by the server, whose own `remote.mode`
+      // reads 'local' (HIVE-144 review, C1).
+      setAttachedServerForTest('mini.tail1234.ts.net');
       const user = userEvent.setup();
 
       render(<CloneRepoView onDone={() => {}} />);

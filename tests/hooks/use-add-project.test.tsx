@@ -3,8 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { REMOTE_DISABLED_REASON } from '@config/runtime';
 import { useAddProject } from '@hooks/use-add-project';
-import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
-import { emptySnapshot, type ConfigSnapshot } from '@shared/config-contract';
+import {
+  resetProjectConfig,
+  setAttachedServerForTest,
+  setProjectConfigForTest,
+} from '@lib/project-config';
+import { emptySnapshot } from '@shared/config-contract';
 
 const chooseProjectDirectory = vi.fn();
 const addProjectToConfig = vi.fn();
@@ -18,16 +22,18 @@ vi.mock('@lib/project-config', async (importOriginal) => {
   };
 });
 
-/** A snapshot in the given remote mode — every other field is a stand-in. */
-function snapshotIn(mode: 'local' | 'remote'): ConfigSnapshot {
-  const host = mode === 'remote' ? 'mini.tail1234.ts.net' : '';
-  return {
-    ...emptySnapshot('/home/dev/.hive/config.json', '/bin/zsh'),
-    remote: { mode, host, port: 7433 },
-    // A snapshot in remote mode carries the server it is attached to — see
-    // `ConfigSnapshot.attachedServer`'s own doc comment.
-    attachedServer: mode === 'remote' ? { name: host, host } : null,
-  };
+/**
+ * Put this window in the attached state, or out of it (HIVE-144 review, C1).
+ *
+ * The snapshot stays the plain one in **both** cases, deliberately. An
+ * attached client's `config:get` is answered by the server, so the snapshot it
+ * holds is the server's — and a server is attached to nobody, so its
+ * `remote.mode` reads `'local'`. Attachment is a runtime fact, and
+ * `setAttachedServerForTest` is the only place it lives.
+ */
+function attachedTo(server: string | null): void {
+  setProjectConfigForTest(emptySnapshot('/home/dev/.hive/config.json', '/bin/zsh'));
+  setAttachedServerForTest(server);
 }
 
 /**
@@ -154,7 +160,7 @@ describe('useAddProject — attached to a remote server', () => {
   });
 
   it('reports no reason in local mode', () => {
-    setProjectConfigForTest(snapshotIn('local'));
+    attachedTo(null);
 
     const { result } = renderHook(() => useAddProject());
 
@@ -162,7 +168,7 @@ describe('useAddProject — attached to a remote server', () => {
   });
 
   it("carries WINDOW_BOUND's own reason once attached", () => {
-    setProjectConfigForTest(snapshotIn('remote'));
+    attachedTo('mini.tail1234.ts.net');
 
     const { result } = renderHook(() => useAddProject());
 
@@ -170,7 +176,7 @@ describe('useAddProject — attached to a remote server', () => {
   });
 
   it('never opens the dialog while attached', async () => {
-    setProjectConfigForTest(snapshotIn('remote'));
+    attachedTo('mini.tail1234.ts.net');
 
     const { result } = renderHook(() => useAddProject());
     await act(async () => {

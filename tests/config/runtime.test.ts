@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { can, canFor, isDesktop } from '@config/runtime';
-import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
+import {
+  loadProjectConfig,
+  projectConfigSnapshot,
+  resetProjectConfig,
+  setProjectConfigForTest,
+  subscribeProjectConfig,
+} from '@lib/project-config';
 import { emptySnapshot } from '@shared/config-contract';
 import { WINDOW_BOUND } from '@shared/remote-contract';
 
@@ -150,18 +156,49 @@ describe('can', () => {
   });
 
   /**
-   * The five capabilities as `can` actually exposes them: functions read off
-   * the config subscription, not `canFor` called directly. `withBridge()`
-   * plays no part here — these five are about remote-attach, not about the
-   * desktop/browser split `isDesktop()` gates, so they must answer the same
-   * way with or without a bridge.
+   * The five capabilities as `can` actually exposes them — **the wiring, not
+   * the pure rule beside it** (HIVE-144 review, C1).
+   *
+   * The block this replaces drove them by installing a snapshot whose
+   * `remote.mode` was `'remote'`, and that is a snapshot an attached window
+   * can never hold: `config:get` is proxied while attached, so the renderer's
+   * snapshot is the *server's*, and a server is attached to nobody. The
+   * assertions passed against a `currentRemote` that answered the wrong
+   * question, because they never went near the source it reads. Replacing
+   * `currentRemote`'s body with a constant left that suite green.
+   *
+   * So these drive the real path end to end instead: a bridge whose
+   * `app:info` names an attached server, `loadProjectConfig()` as the
+   * renderer's own boot calls it, and the predicates read afterwards. Nothing
+   * here hands `can` a mode — it has to go and find one.
    */
   describe('can — the five WINDOW_BOUND predicates', () => {
     afterEach(() => {
       resetProjectConfig();
     });
 
-    it('permits every capability with no snapshot read yet', () => {
+    /**
+     * The whole bridge these five consult: `config.get` for the snapshot that
+     * triggers the read, and `appInfo` for the answer itself.
+     *
+     * `attachedServer` and `remote` on the snapshot are set to the values a
+     * **real attached client** sees — the server's own file, which says
+     * `'local'` and names no attached server — so a gate that went back to
+     * reading the snapshot fails these rather than passing them.
+     */
+    function withAttachedBridge(attachedServerName: string | null) {
+      (window as { hive?: unknown }).hive = {
+        appInfo: () => Promise.resolve({ attachedServerName }),
+        config: {
+          get: () =>
+            Promise.resolve({
+              ...emptySnapshot('/home/dev/.hive/config.json', '/bin/zsh'),
+            }),
+        },
+      };
+    }
+
+    it('permits every capability with nothing read yet', () => {
       expect(can.chooseDirectory()).toBe(true);
       expect(can.pickTheme()).toBe(true);
       expect(can.saveTheme()).toBe(true);
@@ -169,10 +206,10 @@ describe('can', () => {
       expect(can.revealConfig()).toBe(true);
     });
 
-    it('permits every capability once the snapshot reads local mode', () => {
-      setProjectConfigForTest({
-        ...emptySnapshot('/home/dev/.hive/config.json', '/bin/zsh'),
-      });
+    it('permits every capability once the config read finds no socket open', async () => {
+      withAttachedBridge(null);
+
+      await loadProjectConfig();
 
       expect(can.chooseDirectory()).toBe(true);
       expect(can.pickTheme()).toBe(true);
@@ -181,21 +218,71 @@ describe('can', () => {
       expect(can.revealConfig()).toBe(true);
     });
 
-    it('withholds every capability once the snapshot reads remote mode', () => {
-      setProjectConfigForTest({
-        ...emptySnapshot('/home/dev/.hive/config.json', '/bin/zsh'),
-        remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
-        // A snapshot claiming `mode: 'remote'` with no attached server
-        // describes a state the app cannot be in (HIVE-139's own lesson) —
-        // this is the server the file says this window is attached to.
-        attachedServer: { name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' },
-      });
+    it('withholds every capability while a socket is open, though the proxied snapshot reads local', async () => {
+      withAttachedBridge('mini.tail1234.ts.net');
 
+      await loadProjectConfig();
+
+      // The state the gates exist for, and the one the old test could not
+      // reach: the snapshot in hand says `'local'` because it is the
+      // server's, and all five must still refuse.
+      expect(projectConfigSnapshot()?.remote.mode).toBe('local');
       expect(can.chooseDirectory()).toBe(false);
       expect(can.pickTheme()).toBe(false);
       expect(can.saveTheme()).toBe(false);
       expect(can.importSkillFiles()).toBe(false);
       expect(can.revealConfig()).toBe(false);
+    });
+
+    /**
+     * Ruling 19 leaves this machine's own `remote.mode` at `'remote'` after a
+     * failed boot attach, so the next launch retries — and that window is
+     * bound **local**, with every one of these five working. A config-keyed
+     * gate refuses them all; the runtime-keyed one does not.
+     */
+    it('permits every capability when the file says remote but no socket is open', async () => {
+      (window as { hive?: unknown }).hive = {
+        appInfo: () => Promise.resolve({ attachedServerName: null }),
+        config: {
+          get: () =>
+            Promise.resolve({
+              ...emptySnapshot('/home/dev/.hive/config.json', '/bin/zsh'),
+              remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
+              attachedServer: {
+                name: 'mini.tail1234.ts.net',
+                host: 'mini.tail1234.ts.net',
+              },
+            }),
+        },
+      };
+
+      await loadProjectConfig();
+
+      expect(can.chooseDirectory()).toBe(true);
+      expect(can.pickTheme()).toBe(true);
+      expect(can.saveTheme()).toBe(true);
+      expect(can.importSkillFiles()).toBe(true);
+      expect(can.revealConfig()).toBe(true);
+    });
+
+    /**
+     * The re-render half. `useRemoteCapabilities` subscribes to this module
+     * and reads `can.*` fresh, so an attachment that moves has to notify the
+     * same subscribers a snapshot change does — otherwise the five gates are
+     * correct and the buttons on screen are not.
+     */
+    it('notifies subscribers when the attachment moves', async () => {
+      withAttachedBridge('mini.tail1234.ts.net');
+      let notified = 0;
+      const stop = subscribeProjectConfig(() => {
+        notified += 1;
+      });
+
+      await loadProjectConfig();
+      stop();
+
+      // Twice: once for the snapshot, once for the attachment behind it.
+      expect(notified).toBe(2);
     });
   });
 });

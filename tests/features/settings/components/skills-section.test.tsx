@@ -12,6 +12,7 @@ import {
 import { resetSkills, setSkillsForTest } from '@lib/skills';
 import {
   resetProjectConfig,
+  setAttachedServerForTest,
   setProjectConfigForTest,
 } from '@lib/project-config';
 
@@ -1277,9 +1278,11 @@ describe('SkillsSection — attached to a remote server', () => {
   it('disables Add from your computer and never opens the picker', async () => {
     setProjectConfigForTest({
       ...emptySnapshot('/tmp/hive/config.json'),
-      remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
-      attachedServer: { name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' },
     });
+    // Attached is a runtime fact, never a config one: while attached
+    // `config:get` is answered by the server, whose own `remote.mode`
+    // reads 'local' (HIVE-144 review, C1).
+    setAttachedServerForTest('mini.tail1234.ts.net');
     setSkillsForTest(withSkills('standup'));
 
     render(<SkillsSection />);

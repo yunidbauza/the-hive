@@ -64,7 +64,7 @@ export function useProjectAccess(projectId: string): ProjectAccess {
 
 /**
  * The five `can.*` remote-attach predicates (HIVE-144), reactive to the
- * config subscription.
+ * `@lib/project-config` subscription.
  *
  * Same subscribe-then-derive shape as {@link useProjectAccess}: `can.*` are
  * plain functions so an event handler can call them without a hook (a
@@ -72,8 +72,14 @@ export function useProjectAccess(projectId: string): ProjectAccess {
  * disabled state has to re-paint the instant a live mode switch lands, which
  * a bare function call inside a component that reads no other config state
  * would not do on its own. Subscribing here for the re-render, then reading
- * `can.*` fresh, is what keeps the two from disagreeing about which snapshot
+ * `can.*` fresh, is what keeps the two from disagreeing about which state
  * either was computed from.
+ *
+ * The subscription is the same one either way, which is why one
+ * `useSyncExternalStore` still covers all five: these answer off the runtime
+ * attachment (`can`'s own `currentRemote`), and that module emits on its
+ * subscribers when the attachment moves exactly as it does when the snapshot
+ * does.
  */
 export function useRemoteCapabilities(): RemoteCapabilities {
   useSyncExternalStore(
