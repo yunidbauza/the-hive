@@ -165,8 +165,23 @@ describe('DESIGN-SYSTEM.md — terminal palette', () => {
 describe('AGENTS.md', () => {
   const agents = read('AGENTS.md');
 
-  it('stays under 200 lines — anything longer belongs in a deep-dive', () => {
-    expect(agents.split('\n').length).toBeLessThan(200);
+  /**
+   * Raised from 200 to 250 (HIVE-145).
+   *
+   * The cap is a forcing function for the file's own opening claim — "this file
+   * is deliberately thin" — not a measurement of anything, so the number moves
+   * when the always-applicable rules genuinely grow. Two session audits added a
+   * "Working a ticket" section that is forty-four lines of rules a session has
+   * to have loaded *before* it starts, which is exactly the content the routing
+   * table cannot hold: a rule you only read after following a link is a rule
+   * you follow after you needed it.
+   *
+   * What has not changed is what the cap is for. Anything that is reference —
+   * how a subsystem works, what a token means, why a decision went the way it
+   * did — still belongs in a deep-dive behind the table.
+   */
+  it('stays under 250 lines — anything longer belongs in a deep-dive', () => {
+    expect(agents.split('\n').length).toBeLessThan(250);
   });
 
   it('routes to every deep-dive doc that exists', () => {

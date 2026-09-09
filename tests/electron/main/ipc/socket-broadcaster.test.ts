@@ -71,7 +71,7 @@ describe('createSocketBroadcaster', () => {
 
     for (const channel of pushed) broadcaster.emit(channel, null);
 
-    expect(only.send).toHaveBeenCalledTimes(24);
+    expect(only.send).toHaveBeenCalledTimes(25);
     // The regression this guards: forwarding EVENT_CHANNELS would be 20, and
     // would silently drop every notification the remote inbox needs.
     expect(pushed.length).toBeGreaterThan(EVENT_CHANNELS.length);

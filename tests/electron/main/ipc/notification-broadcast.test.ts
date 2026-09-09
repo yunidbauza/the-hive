@@ -114,6 +114,15 @@ vi.mock('../../../../electron/main/notifications', async () => {
     },
     createNotifier: () => ({ observe, reevaluateForeground: vi.fn() }),
     createSessionNames: actual.createSessionNames,
+    /*
+      The real router and queue (HIVE-145). This suite fakes the *hub*, to
+      capture the options it is handed, and has no reason to fake what the hub
+      is handed *to* — the router is what turns a toast into a targeted push,
+      which is the thing a broadcast test should be watching happen rather than
+      standing in for.
+    */
+    createToastRoute: actual.createToastRoute,
+    createToastQueue: actual.createToastQueue,
   };
 });
 

@@ -7,13 +7,47 @@ import { createRemoteDispatch } from '../../../../electron/main/ipc/remote-dispa
 const callFrame = (channel: unknown, payload: unknown = null) =>
   ({ kind: 'call', id: 'c1', channel, payload }) as never;
 
+/**
+ * The socket a call arrived on (HIVE-145).
+ *
+ * `dispatch.call` takes one for the reason `dispatch.notify` always has: a
+ * handler that keys state by surface — `fs:watch`, `pty:ack`, `ui:foreground` —
+ * has to know whose call this is. Duck-typed, so a test needs no socket.
+ */
+const reporter = { on: () => undefined } as never;
+
 describe('createRemoteDispatch call', () => {
+  /**
+   * The hole HIVE-145's live suite found (case 25).
+   *
+   * A remotely dispatched call used to be handed the payload alone, and
+   * `ipc/index.ts` gave its handler a synthetic **empty** event. That was safe
+   * only while nothing keyed anything by surface. The moment `fs:watch` did, a
+   * watch arriving over a socket installed a watcher belonging to a surface
+   * that did not exist, and every `fs:changed` it produced was addressed to
+   * nobody — a remote explorer that never refreshed, with no error anywhere.
+   */
+  it('hands the handler the socket the call arrived on', async () => {
+    const registry = createIpcRegistry();
+    let seen: unknown = null;
+    registry.recordCall(CH.fsWatch, (_payload, surface) => {
+      seen = surface;
+      return null;
+    });
+    const dispatch = createRemoteDispatch(registry);
+
+    await dispatch.call(callFrame(CH.fsWatch), reporter);
+
+    expect(seen).toBe(reporter);
+  });
+
+
   it('answers a recorded channel with a result frame carrying the return value', async () => {
     const registry = createIpcRegistry();
     registry.recordCall(CH.configGet, () => ({ projects: [] }));
     const dispatch = createRemoteDispatch(registry);
 
-    const frame = await dispatch.call(callFrame(CH.configGet));
+    const frame = await dispatch.call(callFrame(CH.configGet), reporter);
 
     expect(frame).toEqual({ kind: 'result', id: 'c1', payload: { projects: [] } });
   });
@@ -23,7 +57,7 @@ describe('createRemoteDispatch call', () => {
     registry.recordCall(CH.githubPrs, async () => [{ number: 1 }]);
     const dispatch = createRemoteDispatch(registry);
 
-    const frame = await dispatch.call(callFrame(CH.githubPrs));
+    const frame = await dispatch.call(callFrame(CH.githubPrs), reporter);
 
     expect(frame).toEqual({ kind: 'result', id: 'c1', payload: [{ number: 1 }] });
   });
@@ -31,7 +65,7 @@ describe('createRemoteDispatch call', () => {
   it('refuses a channel that does not exist', async () => {
     const dispatch = createRemoteDispatch(createIpcRegistry());
 
-    const frame = await dispatch.call(callFrame('not:a:channel'));
+    const frame = await dispatch.call(callFrame('not:a:channel'), reporter);
 
     expect(frame).toMatchObject({ kind: 'error', id: 'c1', code: 'unknown-channel' });
   });
@@ -49,7 +83,7 @@ describe('createRemoteDispatch call', () => {
     registry.recordCall(CH.ptySpawn, vi.fn());
     const dispatch = createRemoteDispatch(registry);
 
-    const frame = await dispatch.call(callFrame([CH.ptySpawn]));
+    const frame = await dispatch.call(callFrame([CH.ptySpawn]), reporter);
 
     expect(frame).toMatchObject({ kind: 'error', id: 'c1', code: 'unknown-channel' });
   });
@@ -58,7 +92,7 @@ describe('createRemoteDispatch call', () => {
     const registry = createIpcRegistry();
     const dispatch = createRemoteDispatch(registry);
 
-    const frame = await dispatch.call(callFrame(CH.ptyData));
+    const frame = await dispatch.call(callFrame(CH.ptyData), reporter);
 
     expect(frame).toMatchObject({ kind: 'error', code: 'wrong-frame-kind' });
   });
@@ -68,7 +102,7 @@ describe('createRemoteDispatch call', () => {
     registry.recordCall(CH.configChooseDirectory, () => '/never/reached');
     const dispatch = createRemoteDispatch(registry);
 
-    const frame = await dispatch.call(callFrame(CH.configChooseDirectory));
+    const frame = await dispatch.call(callFrame(CH.configChooseDirectory), reporter);
 
     expect(frame).toMatchObject({ kind: 'error', code: 'window-bound' });
     expect((frame as { message: string }).message).toMatch(/HIVE-146/);
@@ -80,7 +114,7 @@ describe('createRemoteDispatch call', () => {
     registry.recordCall(CH.themePick, handler);
     const dispatch = createRemoteDispatch(registry);
 
-    await dispatch.call(callFrame(CH.themePick));
+    await dispatch.call(callFrame(CH.themePick), reporter);
 
     expect(handler).not.toHaveBeenCalled();
   });
@@ -103,7 +137,7 @@ describe('createRemoteDispatch call', () => {
     }));
     const dispatch = createRemoteDispatch(registry);
 
-    const frame = await dispatch.call(callFrame(CH.skillsFileDrop));
+    const frame = await dispatch.call(callFrame(CH.skillsFileDrop), reporter);
 
     expect(frame).toMatchObject({ kind: 'error', code: 'remote-refused' });
     const message = (frame as { message: string }).message;
@@ -117,7 +151,7 @@ describe('createRemoteDispatch call', () => {
     registry.recordCall(CH.skillsFileDrop, handler);
     const dispatch = createRemoteDispatch(registry);
 
-    await dispatch.call(callFrame(CH.skillsFileDrop));
+    await dispatch.call(callFrame(CH.skillsFileDrop), reporter);
 
     expect(handler).not.toHaveBeenCalled();
   });
@@ -125,7 +159,7 @@ describe('createRemoteDispatch call', () => {
   it('reports not-ready for a real channel with no handler recorded yet', async () => {
     const dispatch = createRemoteDispatch(createIpcRegistry());
 
-    const frame = await dispatch.call(callFrame(CH.configGet));
+    const frame = await dispatch.call(callFrame(CH.configGet), reporter);
 
     expect(frame).toMatchObject({ kind: 'error', code: 'not-ready' });
   });
@@ -139,7 +173,7 @@ describe('createRemoteDispatch call', () => {
     });
     const dispatch = createRemoteDispatch(registry);
 
-    const frame = await dispatch.call(callFrame(CH.configGet));
+    const frame = await dispatch.call(callFrame(CH.configGet), reporter);
 
     expect(frame).toMatchObject({
       kind: 'error',
@@ -156,7 +190,7 @@ describe('createRemoteDispatch call', () => {
     }));
     const dispatch = createRemoteDispatch(registry);
 
-    const frame = await dispatch.call(callFrame(CH.fsReadFile));
+    const frame = await dispatch.call(callFrame(CH.fsReadFile), reporter);
 
     expect(frame).toMatchObject({
       kind: 'result',

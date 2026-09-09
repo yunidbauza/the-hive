@@ -255,6 +255,40 @@ export interface HiveNotification {
   link?: { href: string; label: string };
 }
 
+/**
+ * What `notifications:toast` carries (HIVE-145).
+ *
+ * The **interruption**, as distinct from `HiveNotification`, which is the inbox
+ * row. A toast belongs to whichever surfaces are not already looking at the
+ * session it is about, so with two devices attached one may get it and the
+ * other not — a difference the row could never express, since the row goes to
+ * everyone.
+ *
+ * No `onClick`, because no closure crosses a socket. The receiver raises the
+ * notification locally and, on a click, sends the two effects the local path
+ * has — activate the action, dismiss the row — back through the channels that
+ * already exist for both. `id` is what the dismiss names; `action` is what the
+ * activate carries.
+ *
+ * Deliberately not `HiveNotification` itself: the toast's title is the *toast*
+ * title, which the hub composes from the row's `subject` and `title` rather
+ * than reading off either, and sending the whole row would invite a receiver
+ * to recompose it and disagree.
+ */
+export interface ToastPayload {
+  id: string;
+  /**
+   * Carried because the **queue** filters on it: only kinds a person must
+   * answer are replayed when a device attaches after nobody was looking, and
+   * `NOTIFICATION_KIND_SPECS` is keyed by this. A receiver may also read it —
+   * it is the one fact about a toast that the words do not already state.
+   */
+  kind: NotificationKind;
+  title: string;
+  body: string;
+  action: NotificationAction;
+}
+
 /** Everything any consumer needs to know about a kind. */
 export interface NotificationKindSpec {
   source: NotificationSource;

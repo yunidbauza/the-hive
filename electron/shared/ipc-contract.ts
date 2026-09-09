@@ -512,6 +512,33 @@ export const CH = {
    */
   notificationsNew: 'notifications:new', // main → renderer
   /**
+   * Raise an OS notification **on the machine receiving this** (HIVE-145).
+   * main → renderer, and main → attached client.
+   *
+   * Distinct from {@link CH.notificationsNew}, which is the inbox row and goes
+   * to every surface. This is the *interruption*, and it goes only to surfaces
+   * that are not already looking at the session it is about — so two attached
+   * devices can get different answers about the same notification, which one
+   * push could not express.
+   *
+   * It exists because the toast used to be raised by the process that decided
+   * to raise it. In server mode that is the mini, whose desktop nobody is at:
+   * the row reached the laptop and the interruption did not.
+   *
+   * Carries an `id` and an `action` rather than a callback, because no closure
+   * crosses a socket. The receiver raises the notification locally and, on a
+   * click, sends the same two effects the local path has — activate the action,
+   * dismiss the row — back through the channels that already exist for them.
+   *
+   * **Not in {@link EVENT_CHANNELS}**, and for the reason the three
+   * `notifications:*` pushes are not: that array is what main pushes to a
+   * *renderer*, and this is answered by the receiving **main process** — it
+   * raises an Electron `Notification`, which a renderer cannot do. It is graded
+   * `event` in `FRAME_KIND` all the same, which is what carries it over a
+   * socket.
+   */
+  notificationsToast: 'notifications:toast', // main → main, and main → attached client
+  /**
    * The buffer, newest first.
    *
    * Hydration exists because the hub outlives the window. Without it a reload —
@@ -3010,6 +3037,24 @@ export interface NotificationDismissedEvent {
  */
 export interface ForegroundReport {
   terminalId: string | null;
+  /**
+   * Whether the surface reporting this is itself focused (HIVE-145).
+   *
+   * Absent from a local renderer, and deliberately so: main reads a window's
+   * focus live from `BrowserWindow`, because a renderer-published boolean goes
+   * stale in exactly the case the suppression exists for — the window hidden,
+   * the app in the background, the renderer no longer running to update it.
+   *
+   * Present only on the way over a socket, stamped by the *client's* main
+   * process as it proxies, because that is the only process that can see that
+   * machine's windows. A served Mac usually has none of its own, so its
+   * `BrowserWindow` answer says nothing about the person at the far end.
+   *
+   * Absent is read as **not** focused. The failure that produces is a toast for
+   * a session the user was already watching; the opposite default's failure is
+   * silence about a session nobody is looking at.
+   */
+  focused?: boolean;
 }
 
 /**

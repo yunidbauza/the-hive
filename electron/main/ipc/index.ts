@@ -130,6 +130,7 @@ import type {
   JiraTransition,
 } from '@shared/jira-contract';
 import { LEDGER_DIR, OVERMIND } from '@shared/ledger-contract';
+import type { NotificationAction } from '@shared/notification-contract';
 import { SNAPSHOT_CHANNELS } from '@shared/remote-contract';
 import { SESSION_NAME_DISPLAY_MAX } from '@shared/session-contract';
 import {
@@ -231,6 +232,8 @@ import {
   createNotificationHub,
   createNotifier,
   createSessionNames,
+  createToastQueue,
+  createToastRoute,
 } from '../notifications';
 import { registerPtyHost } from '../pty-host';
 import {
@@ -260,15 +263,15 @@ import {
 
 import { createBindings } from './bindings';
 import { createWindowBroadcaster, type Broadcaster } from './broadcaster';
-import { createIpcRegistry, type CallHandler } from './registry';
+import { createIpcRegistry, type CallHandler, type RemoteReporter } from './registry';
 import { createRemoteDispatch } from './remote-dispatch';
 import { assertSender } from './sender';
 import { applySetRemote, type AttachedSnapshot, type ModeSwitcher } from './set-remote';
 import {
   createFanOutBroadcaster,
   createSocketBroadcaster,
-  type AttachedSocket,
 } from './socket-broadcaster';
+import { createSurfaceRegistry, type SurfaceId } from './surfaces';
 
 /**
  * Channel handlers (story 082).
@@ -295,10 +298,49 @@ import {
 const remoteRegistry = createIpcRegistry();
 
 /**
- * Sockets currently attached. Mutated by the listener's attach callbacks, read
- * per emit by the socket half of the fan-out in `registerIpcHandlers`.
+ * Who is looking at this Hive, and how to reach exactly one of them
+ * (HIVE-145).
+ *
+ * Attached sockets *and* local windows, in one registry, because the state
+ * this file keys by surface — the input-box record, the foreground terminal,
+ * the ack window, the fs watch — is written by both. It replaced a bare
+ * `Set<AttachedSocket>` here: a second registry of the same connections is
+ * exactly the disagreement this story exists to close.
+ *
+ * Module scope for the reason `remoteRegistry` is: `registerIpcHandlers` fills
+ * it, and a live mode switch tears down and re-registers around it.
  */
-const attachedSockets = new Set<AttachedSocket>();
+const surfaces = createSurfaceRegistry();
+
+/**
+ * Interruptions raised while nobody was looking (HIVE-145).
+ *
+ * Only the kinds a person must answer, bounded by age and by subject — see the
+ * module for why a faithful replay would be the worse product. Flushed the
+ * moment a surface arrives.
+ *
+ * Module scope beside `surfaces`, and for the same two reasons: it holds
+ * nothing that belongs to one registration, and `resetIpcHandlers` has to be
+ * able to empty it. A mode switch that left it full would raise the departed
+ * mode's questions at the machine you just attached to.
+ */
+const toastQueue = createToastQueue();
+
+/**
+ * The surface behind an IPC event, registering it on first sight.
+ *
+ * Named for what it answers rather than for `trackWindow`, which it calls,
+ * because it cannot mislabel a socket: a notify dispatched from an attached
+ * socket arrives with the socket itself as `event.sender`
+ * (`recordNotify` below wraps it as `{ sender: reporter }`), and that object is
+ * already tracked as a `socket` surface by `onAttach`. `trackWindow` then
+ * returns the existing id, kind intact.
+ */
+const surfaceFor = (sender: unknown): SurfaceId =>
+  surfaces.trackWindow(sender, (channel, payload) => {
+    const contents = sender as { send?: (channel: string, payload: unknown) => void };
+    contents.send?.(channel, payload);
+  });
 
 /**
  * Every channel this process has bound (HIVE-144). Module scope for the same
@@ -388,25 +430,40 @@ const noModeSwitcher: ModeSwitcher = () => {
 /**
  * The event object handed to a call handler reached over a socket.
  *
- * There is no `IpcMainInvokeEvent` to give it, because there is no renderer and
- * no window. That is safe rather than lucky: exactly four call channels
- * dereference this, all four for a parent `BrowserWindow`, and all four are
- * in `WINDOW_BOUND` and refused before `remote-dispatch` ever reaches a
- * handler. `skills:file:import` (HIVE-148) is the fourth — choosing files for
- * a skill opens the same native dialog the other three needed a window for.
- * If a fifth ever grows the dependency, it must be added to that table in the
- * same commit — this cast is the reason that is a rule and not a preference.
+ * There is no `IpcMainInvokeEvent` to give it — no renderer, no window — so
+ * this is a synthetic one carrying the **socket** as its `sender`, exactly as
+ * the notify path below has always done. That is what makes a call able to ask
+ * *which surface* it came from, and it is a correction rather than an addition:
+ * this was `{}` until HIVE-145, and the first channel to key anything by
+ * surface found the hole. `fs:watch` arriving over a socket installed a
+ * watcher belonging to a surface that did not exist, so every `fs:changed` it
+ * produced was addressed to nobody and the remote explorer never refreshed.
+ *
+ * **The attach snapshot is built before the socket is tracked.**
+ * `listener.ts` calls `buildSnapshot(socketHandle)` ahead of `onAttach`, so a
+ * `SNAPSHOT_CHANNELS` handler that called `surfaceFor` would register the
+ * socket through `trackWindow` and have it graded a `window` surface — after
+ * which `isForegroundFor` would read the *server's* `BrowserWindow` focus for a
+ * device four time zones away. None of the six does today. One that grows the
+ * dependency has to be tracked at attach instead.
+ *
+ * What is still absent is a **window**, and that is the fence that matters:
+ * five call channels dereference the event to resolve a parent `BrowserWindow`
+ * for a native dialog or to reach the server's own desktop, and all five are in
+ * `WINDOW_BOUND`, refused before `remote-dispatch` ever reaches a handler. A
+ * sixth growing that dependency must be added to that table in the same commit.
  *
  * **And the rule is checked, not merely stated (HIVE-143 review).**
  * `remote-composition.test.ts` reads this file as source text, finds every
  * `handle`/`on` site that binds an `event` parameter it actually uses, and
- * fails if that set is anything other than `WINDOW_BOUND`'s four channels plus
- * `pty:prompt` — the one that dereferences the event deliberately, for a
- * *surface lifetime* rather than a window, which a socket satisfies. That test
- * is what makes the paragraph above enforceable; the `_event` naming
- * convention every other handler follows is what makes it readable.
+ * fails if that set is anything other than `WINDOW_BOUND`'s channels plus the
+ * handful adapted to a surface — the ones that want an identity rather than a
+ * window, which a socket now genuinely supplies. That test is what makes the
+ * paragraph above enforceable; the `_event` naming convention every other
+ * handler follows is what makes it readable.
  */
-const REMOTE_INVOKE_EVENT = {} as IpcMainInvokeEvent;
+const remoteInvokeEvent = (reporter: RemoteReporter): IpcMainInvokeEvent =>
+  ({ sender: reporter }) as unknown as IpcMainInvokeEvent;
 
 /**
  * Fire-and-forget channels (story 093).
@@ -458,8 +515,8 @@ function handle<T>(
   // Registration-time, as in `on` above. `assertSender` is deliberately absent:
   // there is no sender to assert, and the socket's own gate is the handshake
   // plus `remote-dispatch.ts` — the one remote gate, kept out of the local path.
-  remoteRegistry.recordCall(channel as Channel, (payload) =>
-    handler(REMOTE_INVOKE_EVENT, payload),
+  remoteRegistry.recordCall(channel as Channel, (payload, reporter) =>
+    handler(remoteInvokeEvent(reporter), payload),
   );
   // HIVE-144: so a later mode switch can unbind this channel from `ipcMain`
   // and register it again against a different set of layers.
@@ -509,6 +566,7 @@ const SNAPSHOT_PAYLOAD: Partial<Record<Channel, unknown>> = {
 function raceSnapshotRead(
   channel: Channel,
   handler: CallHandler | null,
+  reporter: RemoteReporter,
 ): Promise<readonly [Channel, unknown] | null> {
   return new Promise((resolve) => {
     let settled = false;
@@ -543,7 +601,7 @@ function raceSnapshotRead(
       // The cast is the point, not a workaround for one: see the null branch
       // above. `await` on a non-promise is a no-op, so this one `.then` covers
       // both `github:prs` (genuinely asynchronous) and the five that are not.
-      .then(() => (handler as CallHandler)(SNAPSHOT_PAYLOAD[channel]))
+      .then(() => (handler as CallHandler)(SNAPSHOT_PAYLOAD[channel], reporter))
       .then((value) => {
         /*
           Reachable — the timeout can fire first on a genuinely slow read —
@@ -607,9 +665,13 @@ function raceSnapshotRead(
  * accept frame this becomes and drops keys if a busy server's answer would
  * not otherwise fit.
  */
-async function buildAttachSnapshot(): Promise<Partial<Record<Channel, unknown>>> {
+async function buildAttachSnapshot(
+  reporter: RemoteReporter,
+): Promise<Partial<Record<Channel, unknown>>> {
   const results = await Promise.all(
-    SNAPSHOT_CHANNELS.map((channel) => raceSnapshotRead(channel, remoteRegistry.call(channel))),
+    SNAPSHOT_CHANNELS.map((channel) =>
+      raceSnapshotRead(channel, remoteRegistry.call(channel), reporter),
+    ),
   );
   const snapshot: Partial<Record<Channel, unknown>> = {};
   for (const result of results) {
@@ -957,32 +1019,37 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
- * The terminal on the centre stage, as the renderer last reported it (HIVE-81).
+ * What each surface has on its centre stage, and whether that surface is
+ * focused (HIVE-81, HIVE-145).
  *
  * Module scope for the reason `systemNotificationRefusal` is: it is a fact
- * about this process's window, not about notifications, and the hub is
+ * about who is looking at this process, not about notifications, and the hub is
  * deliberately ignorant of what the user is looking at. The hub asks a
  * predicate; it never holds this.
  *
- * **Known hazard, deliberately parked: one value, many surfaces (HIVE-143
- * review; HIVE-145 "Two attached clients" must close it).** Every attached
- * socket sends `ui:foreground` down the same notify channel a renderer does, so
- * this holds whatever the last surface to change stage said. With two devices
- * attached, one of them switching tabs rewrites the other's answer: a
- * notification for the session device A is watching is suppressed because
- * device B happens to be looking at it, or — worse, because it is the case the
- * suppression exists for — is *raised* while device A is watching it, because
- * device B moved on. `windowFocused()` compounds it: it is a fact about this
- * machine's windows, and a served Mac usually has none, so the suppression it
- * gates is already the wrong question for a remote surface.
+ * **A map, because one value could not be true of two devices.** It was a
+ * single `foregroundTerminalId`, and every attached socket sends
+ * `ui:foreground` down the same notify channel a renderer does — so it held
+ * whatever the last surface to change stage said. With two devices attached,
+ * one switching tabs rewrote the other's answer: a notification for the session
+ * device A was watching got suppressed because device B happened to be on it,
+ * or — worse, because it is the case the suppression exists for — was *raised*
+ * while A was watching it, because B moved on.
  *
- * Unreachable today: no client half exists until HIVE-144, so exactly one
- * surface ever reports. The fix is to key this by surface — a map from the
- * socket (or the window) to what *it* is showing — and to suppress only when
- * every live surface that could see the session is both focused and on it,
- * which is the question `isForeground` was always really asking.
+ * **`focused` travels with it, and only a socket's is read.** `windowFocused()`
+ * is a fact about *this* machine's windows, and a served Mac usually has none,
+ * so it is the wrong question to ask of a remote surface. A window surface
+ * therefore still reads its focus live from `BrowserWindow` — a renderer-published
+ * boolean goes stale in exactly the case the feature exists for — while a socket
+ * reports its own, stamped by the client's main process, which is the only
+ * process that can see that machine's windows.
+ *
+ * Absent `focused` means **not** focused. That is the conservative default: the
+ * failure it produces is a toast for a session the user was already watching,
+ * and the one the opposite default produces is silence about a session nobody
+ * is looking at.
  */
-let foregroundTerminalId: string | null = null;
+const foreground = new Map<SurfaceId, { terminalId: string | null; focused: boolean }>();
 
 /**
  * Whether **any** window of this app has focus right now.
@@ -1014,14 +1081,39 @@ const windowFocused = (): boolean =>
   );
 
 /**
- * Is this terminal the one the user is already looking at?
+ * Is this terminal the one **that surface** is already looking at?
  *
- * Both halves, and neither alone is the question. A matching id with every
- * window of ours behind another app is precisely when the notification is
- * worth raising. See {@link windowFocused} for what "focused" counts as.
+ * Both halves, and neither alone is the question. A matching id with the
+ * surface behind another app is precisely when the notification is worth
+ * raising.
+ *
+ * Where "focused" comes from depends on the kind, and that asymmetry is the
+ * whole design (HIVE-145). A window's is read live from `BrowserWindow`,
+ * because a renderer-published boolean goes stale in exactly the case the
+ * feature exists for — the window hidden, the app in the background — since the
+ * renderer stops running to update it. A socket's is whatever it reported,
+ * because this machine's windows say nothing about a laptop four time zones
+ * away, and a served Mac has no windows at all.
+ *
+ * This is the per-surface question, which is what decides whether *this*
+ * surface gets a toast. {@link isForeground} is the any-surface one.
+ */
+const isForegroundFor = (surfaceId: SurfaceId, terminalId: string): boolean => {
+  const held = foreground.get(surfaceId);
+  if (held === undefined || held.terminalId !== terminalId) return false;
+  return surfaces.get(surfaceId)?.kind === 'window' ? windowFocused() : held.focused;
+};
+
+/**
+ * Is **any** surface already looking at this terminal?
+ *
+ * The hub's sweep asks this one (`notifications/hub.ts`): may this inbox row be
+ * dropped because somebody has seen it. "Any" is its right answer with two
+ * devices attached — a row one of them is staring at is a row that has been
+ * seen — where "which one" is only the toast's question.
  */
 export const isForeground = (terminalId: string): boolean =>
-  windowFocused() && foregroundTerminalId === terminalId;
+  surfaces.all().some((surface) => isForegroundFor(surface.id, terminalId));
 
 /** Told when foreground state changes, so the re-arm can run (HIVE-81). */
 const foregroundListeners = new Set<() => void>();
@@ -1264,7 +1356,7 @@ export function registerIpcHandlers(
   */
   const fanOut = createFanOutBroadcaster([
     broadcaster,
-    createSocketBroadcaster(() => attachedSockets),
+    createSocketBroadcaster(() => surfaces.sockets()),
   ]);
 
   const supervisor = registerPtyHost();
@@ -1277,10 +1369,15 @@ export function registerIpcHandlers(
   slackChildren = new AbortController();
 
   /**
-   * One window by design (story 000), so a broadcast reaches exactly the
-   * renderer that owns every session. Delivery is resolved per send rather than
-   * captured: the window is created after this runs, and on macOS it can be
-   * closed and re-created while the app keeps running.
+   * One push, every surface — a local window and every attached client alike.
+   *
+   * This said "one window by design (story 000)" until HIVE-145, and it was
+   * true for long enough to be worth recording why it stopped being: a
+   * broadcast reached exactly the renderer that owned every session, because
+   * there was exactly one. Delivery is still resolved per send rather than
+   * captured, for a reason that never changed — the window is created after
+   * this runs, on macOS it can be closed and re-created while the app keeps
+   * running, and a client attaches whenever it likes.
    *
    * HIVE-141 moved the loop itself into `Broadcaster.emit`. What stayed here is
    * the *tap*, because it is the tap that must not reach every push — see the
@@ -1288,7 +1385,13 @@ export function registerIpcHandlers(
    *
    * HIVE-143 made the delivery `fanOut` rather than the injected `broadcaster`
    * alone, so the same push reaches attached sockets. The tap is untouched by
-   * that: it still runs exactly once, here, before either surface.
+   * that: it still runs exactly once, here, before any surface.
+   *
+   * **Not everything main pushes comes through here.** Two things are targeted
+   * at one surface rather than broadcast (HIVE-145): `fs:changed`, which
+   * belongs to the surface whose explorer asked for the watch, and
+   * `notifications:toast`, which belongs to whoever is not already looking at
+   * the session it is about. Both go through `Surface.send`.
    */
   const send = (channel: string, payload: unknown): void => {
     // Story 106 taps the broadcast here rather than at each source, so an event
@@ -1313,9 +1416,24 @@ export function registerIpcHandlers(
    */
   const sessionNames = createSessionNames();
 
-  const hub = createNotificationHub({
-    prefs: () => getConfig().notifications,
-    present: ({ title, body, onClick }) => {
+  /**
+   * Raise a toast on **this machine's** desktop.
+   *
+   * Named and lifted out of the hub's options in HIVE-145: it is no longer the
+   * whole of what presenting means. The hub now hands its toasts to
+   * `createToastRoute`, which decides which surfaces should be interrupted and
+   * calls this only for a local window — an attached client raises its own,
+   * because a served Mac's desktop is not where the user is.
+   */
+  const presentLocally = ({
+    title,
+    body,
+    onClick,
+  }: {
+    title: string;
+    body: string;
+    onClick: () => void;
+  }): void => {
       // False on a Linux box with no notification daemon. Checked per send
       // rather than once at boot: the daemon can arrive or go away while the
       // app is running, and constructing one when unsupported throws.
@@ -1373,52 +1491,18 @@ export function registerIpcHandlers(
        * notification is entitled to; the **badge** is the part that persists,
        * and it persists honestly because it is a count rather than an alarm.
        */
-      app.dock?.bounce('informational');
-    },
-    /**
-     * Straight to the surfaces, not through `send` (HIVE-75).
-     *
-     * `send` taps the notifier, and the notifier produces into the hub — so
-     * broadcasting a notification through it would feed the hub's own output
-     * back into its input. `observe` ignores the channel, so nothing would
-     * actually loop today, but the cycle would be one `if` away from existing
-     * and nobody would see it coming.
-     *
-     * `fanOut.emit` rather than a hand-rolled window loop (HIVE-141): the
-     * bypass is of the *tap*, not of the fan-out. A remote client that never
-     * received these three would show an empty inbox on a busy server, which is
-     * exactly the bug a second copy of the loop invites.
-     */
-    broadcast: (notification) => {
-      fanOut.emit(CH.notificationsNew, notification);
-    },
-    announceRead: (id, unread) => {
-      fanOut.emit(CH.notificationsRead, {
-        id,
-        unread,
-      } satisfies NotificationReadEvent);
-    },
-    announceDismissed: (id) => {
-      fanOut.emit(CH.notificationsDismissed, {
-        id,
-      } satisfies NotificationDismissedEvent);
-    },
-    /**
-     * The count on the dock icon.
-     *
-     * Empty string, not `'0'`, clears it — that is Electron's API, and a badge
-     * reading `0` is a worse lie than no badge, because it says the app has
-     * something to report and the something is nothing.
-     *
-     * Off macOS `app.dock` is undefined and this is a no-op. Windows has a
-     * taskbar overlay that would serve the same purpose and needs an icon
-     * rather than a string, so it is left for whoever ships a Windows build
-     * rather than approximated here.
-     */
-    announceUnread: (count) => {
-      app.dock?.setBadge(count > 0 ? String(count) : '');
-    },
-    activate: (action) => {
+    app.dock?.bounce('informational');
+  };
+
+  /**
+   * Open whatever a notification is about.
+   *
+   * Lifted out of the hub's options in HIVE-145 for the reason `presentLocally`
+   * was: the toast queue's flush needs the same behaviour on a click, and a
+   * held toast that activated differently from a live one would be a second
+   * definition of what clicking a notification means.
+   */
+  const activateNotification = (action: NotificationAction): void => {
       /**
        * Main focuses the window; the renderer opens the session.
        *
@@ -1521,7 +1605,83 @@ export function registerIpcHandlers(
         type: 'entity',
         entityId: action.entityId,
       } satisfies NotificationActivateEvent);
+  };
+
+  /**
+   * Declared before the hub so the arrival flush below can reach it, and
+   * before `presentLocally`'s consumer for the same reason: `createToastRoute`
+   * closes over collaborators that are all already built by this line.
+   */
+  const routeToast = createToastRoute({
+    surfaces: () => surfaces.all(),
+    isForegroundFor,
+    present: presentLocally,
+    queue: (payload) => { toastQueue.push(payload); },
+    /*
+      Read from `BrowserWindow`, not from the registry: a surface registers
+      lazily on its first report, so "no surface" and "no window" are different
+      states and only the second is an empty room.
+    */
+    hasWindow: () => BrowserWindow.getAllWindows().some((window) => !window.isDestroyed()),
+  });
+
+  const hub = createNotificationHub({
+    prefs: () => getConfig().notifications,
+    /**
+     * Who gets interrupted (HIVE-145).
+     *
+     * The hub decides *whether* a notification is worth a toast — prefs,
+     * delivery, supersession — and that stays here. This decides *who*, which
+     * is a question that did not exist while there was one surface: it
+     * suppresses per surface rather than globally, sends an attached client the
+     * toast to raise itself, and holds the interruption when nobody is looking
+     * at all.
+     */
+    present: routeToast,
+    /**
+     * Straight to the surfaces, not through `send` (HIVE-75).
+     *
+     * `send` taps the notifier, and the notifier produces into the hub — so
+     * broadcasting a notification through it would feed the hub's own output
+     * back into its input. `observe` ignores the channel, so nothing would
+     * actually loop today, but the cycle would be one `if` away from existing
+     * and nobody would see it coming.
+     *
+     * `fanOut.emit` rather than a hand-rolled window loop (HIVE-141): the
+     * bypass is of the *tap*, not of the fan-out. A remote client that never
+     * received these three would show an empty inbox on a busy server, which is
+     * exactly the bug a second copy of the loop invites.
+     */
+    broadcast: (notification) => {
+      fanOut.emit(CH.notificationsNew, notification);
     },
+    announceRead: (id, unread) => {
+      fanOut.emit(CH.notificationsRead, {
+        id,
+        unread,
+      } satisfies NotificationReadEvent);
+    },
+    announceDismissed: (id) => {
+      fanOut.emit(CH.notificationsDismissed, {
+        id,
+      } satisfies NotificationDismissedEvent);
+    },
+    /**
+     * The count on the dock icon.
+     *
+     * Empty string, not `'0'`, clears it — that is Electron's API, and a badge
+     * reading `0` is a worse lie than no badge, because it says the app has
+     * something to report and the something is nothing.
+     *
+     * Off macOS `app.dock` is undefined and this is a no-op. Windows has a
+     * taskbar overlay that would serve the same purpose and needs an icon
+     * rather than a string, so it is left for whoever ships a Windows build
+     * rather than approximated here.
+     */
+    announceUnread: (count) => {
+      app.dock?.setBadge(count > 0 ? String(count) : '');
+    },
+    activate: activateNotification,
     now: () => Date.now(),
     isForeground: (action) =>
       action.type === 'session' && isForeground(action.entityId),
@@ -1720,24 +1880,78 @@ export function registerIpcHandlers(
     write: (id, text) => sessions?.write(id, text) ?? false,
   });
 
-  /**
-   * `webContents` already watched for a reset (HIVE-135). A `WeakSet` so a
-   * closed window's contents can be collected; `on` is checked because the
-   * unit suites hand in a bare object as the event sender.
-   */
-  const watchedReporters = new WeakSet<object>();
-  const watchReporter = (sender: unknown): void => {
-    if (typeof sender !== 'object' || sender === null) return;
-    if (watchedReporters.has(sender)) return;
-    const contents = sender as {
-      on?: (event: string, listener: () => void) => unknown;
-    };
-    if (typeof contents.on !== 'function') return;
-    watchedReporters.add(sender);
-    for (const event of ['did-start-loading', 'render-process-gone', 'destroyed']) {
-      contents.on(event, () => deliver.onRendererReset());
+  /*
+    A surface going away resets what it was holding (HIVE-135, HIVE-145).
+
+    This was `watchReporter`: a `WeakSet` of senders, each wired to call
+    `deliver.onRendererReset()` on reload, crash or close. The dedupe, the
+    duck-typed `on` and the three lifetime events all moved into
+    `createSurfaceRegistry`, which does the same job for one more reason —
+    every other per-surface consumer needs the same announcement, and five
+    private copies of this loop would be five chances to disagree about who is
+    live.
+  */
+  /*
+    Somebody is looking again, so raise what was held while nobody was
+    (HIVE-145).
+
+    On the empty-to-non-empty edge, not on every arrival: a second device
+    attaching to a server the first is already watching has missed nothing, and
+    replaying to it would interrupt about events the surface beside it was told
+    of at the time. The queue is emptied by the flush, so the toasts route
+    exactly once.
+
+    **The arriving surface's own foreground state cannot suppress these**, and
+    that is a property of when this fires rather than an oversight: `onFirst`
+    runs from inside `track()`, so for a socket it is before any
+    `ui:foreground` has crossed, and for a window it is inside the very handler
+    that is about to write one. `foreground.get(id)` is `undefined` either way,
+    so a device attaching while sitting on the session in question is
+    interrupted about it once. The alternative — deferring the flush until a
+    stage report arrives — trades a redundant interruption for a queue that
+    never drains when the arriving surface has nothing on stage.
+  */
+  surfaces.onFirst(() => {
+    for (const held of toastQueue.flush()) {
+      routeToast({
+        ...held,
+        /*
+          The same click behaviour a live toast has, built from the same two
+          pieces (HIVE-81, HIVE-118): dismiss the row, except for an `ask`,
+          whose click reveals the card rather than answering it and must not
+          delete the thing it was meant to reveal.
+        */
+        onClick: () => {
+          if (held.action.type !== 'ask') hub.dismiss(held.id);
+          activateNotification(held.action);
+        },
+      });
     }
-  };
+  });
+
+  surfaces.onGone((surfaceId) => {
+    deliver.onSurfaceGone(surfaceId);
+    /*
+      Release whatever this surface was holding of every session's flow-control
+      window (HIVE-145). Without it a slow client could freeze a session for
+      everyone else simply by disconnecting: its mark would sit at the bottom
+      of the window forever, and nothing would ever release the bytes it was
+      never going to acknowledge.
+    */
+    sessions?.releaseSurface(surfaceId);
+    /*
+      And its watcher, or the mini accumulates one recursive `FSEvents` stream
+      over a whole repository per device that ever attached.
+    */
+    fsWatch?.release(surfaceId);
+    /*
+      A surface that has gone is looking at nothing, so its stage must not go
+      on suppressing notifications for the session it last had (HIVE-145).
+      Announced, because the hub's re-arm is what re-raises a row this surface's
+      presence was holding down.
+    */
+    if (foreground.delete(surfaceId)) notifyForegroundChange();
+  });
 
   /**
    * One entry landed, from any party — pushed the way `notifications:new` is
@@ -1952,7 +2166,7 @@ export function registerIpcHandlers(
         out of order would be worse than a gap, because the client's seq
         assertion would fire on a discontinuity that never happened.
       */
-      attachedSockets.add(socket);
+      surfaces.trackSocket(socket);
       if (resumeFrom === undefined) return;
 
       /*
@@ -2058,8 +2272,18 @@ export function registerIpcHandlers(
         });
       }
     },
+    /*
+      One removal, two triggers (HIVE-145). The listener's `close` handler
+      fires the socket's own `destroyed` listeners and then calls this, and
+      both converge on `untrack`, which is idempotent — so `onGone` reaches
+      every per-surface consumer exactly once however the socket went away.
+
+      Both are kept rather than one, because they cover different holes: the
+      `destroyed` path is what a surface with a lifetime announces for itself,
+      and this is what removes a handle that never had one.
+    */
     onDetach: (socket) => {
-      attachedSockets.delete(socket);
+      surfaces.untrack(socket);
     },
   });
   /*
@@ -2602,6 +2826,13 @@ export function registerIpcHandlers(
     supervisor,
     config: getConfig,
     send,
+    /*
+      The flow-control window follows the slowest surface watching (HIVE-145).
+      Resolved per call rather than captured: a client attaches long after this
+      line has run, and a captured list would gate forever on a set that never
+      changes.
+    */
+    liveSurfaces: () => surfaces.all().map((surface) => surface.id),
     // Where the generated sets live (HIVE-133) — the same value `hooks`,
     // `skills` and `mcp` are each handed below, so a container project's
     // per-session directory and its host counterpart resolve against the
@@ -2688,14 +2919,26 @@ export function registerIpcHandlers(
   });
 
   /**
-   * The project watcher, constructed here for the same reason the clone flow
-   * is: it needs `send`, and `send` resolves windows per call rather than
-   * capturing one. A watcher holding a stale `webContents` would emit into a
-   * destroyed renderer after a window reload.
+   * The project watchers, one per surface (HIVE-145).
+   *
+   * Constructed here for the same reason the clone flow is: it needs a way to
+   * push, and that has to be resolved per call rather than captured. A watcher
+   * holding a stale `webContents` would emit into a destroyed renderer after a
+   * window reload.
+   *
+   * **Targeted, not broadcast.** This went through `send` — the fan-out — so
+   * every surface received every surface's tree churn and an explorer reacted
+   * to a project it was not showing. With two clients on different projects
+   * that is not merely wasteful: each one's tree re-reads its expanded
+   * directories on a flush about the other's repository. A surface whose
+   * watcher fired is the only one that asked, so it is the only one told.
+   *
+   * A dropped surface's own release closes its watcher; the lookup returning
+   * `undefined` here is the harmless race where a flush lands in the same tick.
    */
-  fsWatch = createFsWatchLayer((event: FsChangedEvent) =>
-    send(CH.fsChanged, event),
-  );
+  fsWatch = createFsWatchLayer((surfaceId, event: FsChangedEvent) => {
+    surfaces.get(surfaceId)?.send(CH.fsChanged, event);
+  });
 
   /**
    * Drop this layer's timers on quit.
@@ -3822,13 +4065,13 @@ export function registerIpcHandlers(
    * render its failure into. The explorer treats a rejection as "no live
    * updates" and keeps its manual refresh, which is the honest degradation.
    */
-  handle(CH.fsWatch, async (_event, payload): Promise<void> => {
+  handle(CH.fsWatch, async (event, payload): Promise<void> => {
     const request = parseWatchRequest(payload);
-    await fsWatch?.watchProject(request.projectId, request.sessionId);
+    await fsWatch?.watchProject(surfaceFor(event.sender), request.projectId, request.sessionId);
   });
 
-  handle(CH.fsUnwatch, (): void => {
-    fsWatch?.unwatch();
+  handle(CH.fsUnwatch, (event): void => {
+    fsWatch?.unwatch(surfaceFor(event.sender));
   });
 
   /**
@@ -4274,19 +4517,42 @@ export function registerIpcHandlers(
    * never coerced into `null` — a compromised or buggy renderer must not be
    * able to make a fabricated shape read as "nothing on stage".
    */
-  on(CH.uiForeground, (_event, payload) => {
+  on(CH.uiForeground, (event, payload) => {
     if (!isRecord(payload)) throw new Error('ui:foreground expects an object');
     const keys = Object.keys(payload);
-    if (keys.length !== 1 || keys[0] !== 'terminalId') {
-      throw new Error('ui:foreground expects exactly { terminalId }');
+    /*
+      `focused` is optional and only a socket sends it (HIVE-145): the client's
+      main process stamps it while proxying, because it is the only process
+      that can see that machine's windows. A local renderer sends the one-key
+      shape it always did, and a window surface's focus is read live from
+      `BrowserWindow` regardless of what arrives here.
+    */
+    if (keys.length === 0 || keys.length > 2) {
+      throw new Error('ui:foreground expects { terminalId } or { terminalId, focused }');
+    }
+    for (const key of keys) {
+      if (key !== 'terminalId' && key !== 'focused') {
+        throw new Error('ui:foreground expects { terminalId } or { terminalId, focused }');
+      }
+    }
+    if (!('terminalId' in payload)) {
+      throw new Error('ui:foreground expects a terminalId');
     }
     const { terminalId } = payload;
     if (terminalId !== null && typeof terminalId !== 'string') {
       throw new Error('ui:foreground expects a string terminalId or null');
     }
+    const reportedFocus = payload.focused;
+    if (reportedFocus !== undefined && typeof reportedFocus !== 'boolean') {
+      throw new Error('ui:foreground expects a boolean focused');
+    }
+    // Absent means not focused — the conservative default. See `foreground`.
+    const focused = reportedFocus ?? false;
 
-    if (foregroundTerminalId === terminalId) return;
-    foregroundTerminalId = terminalId;
+    const surfaceId = surfaceFor(event.sender);
+    const before = foreground.get(surfaceId);
+    if (before?.terminalId === terminalId && before.focused === focused) return;
+    foreground.set(surfaceId, { terminalId, focused });
     notifyForegroundChange();
   });
 
@@ -4522,40 +4788,45 @@ export function registerIpcHandlers(
    * which is what releases those bytes from the flow-control window
    * (`ipc/pty.ts`).
    *
-   * **Known hazard, deliberately parked: one window, many consumers (HIVE-143
-   * review; HIVE-145 "Two attached clients" must close it).** The unacked
-   * window is per *session*, and an ack releases it for everyone: with two
-   * surfaces watching one terminal, the first to finish parsing a batch
-   * unpauses the producer for both. A fast client on a fast link therefore lets
-   * the pty outrun a slow one, whose frames queue in `ws`'s own send buffer —
-   * which nothing here bounds — until it is arbitrarily far behind or the
-   * process is holding megabytes for it. `pty-transport.ts` records the same
-   * shape for split panes ("backpressure follows the fastest pane") and reaches
-   * the same conclusion: harmless while there is only ever one.
+   * **Keyed by the surface that acked (HIVE-145).** The window used to be per
+   * *session* and an ack released it for everyone: with two surfaces watching
+   * one terminal, the first to finish parsing a batch unpaused the producer for
+   * both, so a fast client on a fast link let the pty outrun a slow one, whose
+   * frames queued in `ws`'s own send buffer — which nothing here bounds — until
+   * it was arbitrarily far behind or the process was holding megabytes for it.
    *
-   * Unreachable today: no client half exists until HIVE-144. The fix is for the
-   * window to follow the **slowest** consumer — track acks per attached surface
-   * and release a batch only once every surface watching that session has
-   * acknowledged it — with a surface that goes away releasing whatever it was
-   * holding, or a slow client would pause a session forever by disconnecting.
+   * It follows the **slowest** surface now, and a surface that goes away
+   * releases whatever it was holding, or a slow client could pause a session
+   * forever by disconnecting. `ipc/pty.ts` holds the arithmetic and the two
+   * cases that are easy to get wrong: a newcomer seeded at the head rather than
+   * at zero, and an empty set releasing everything.
+   *
+   * `pty-transport.ts` records the same shape for split panes ("backpressure
+   * follows the fastest pane"). That one is still open and still harmless for
+   * the reason this one was until HIVE-144: both panes are the same surface, on
+   * the same link, so there is no slow consumer for the fast one to outrun.
    */
-  on(CH.ptyAck, (_event, payload) => {
+  on(CH.ptyAck, (event, payload) => {
     const request = parseAckRequest(payload);
-    sessions?.ack(request.sessionId, request.seq);
+    sessions?.ack(request.sessionId, request.seq, surfaceFor(event.sender));
   });
 
   /**
    * The input-box report (HIVE-135). Session ids arriving from the renderer are
    * entity ids, as they are for `ack`; `deliver` keys its record by the same.
    *
-   * The reporter is watched for its own reload, crash and close: a record left
-   * behind by a renderer that no longer exists would hold every nudge to that
+   * Keyed by the surface that sent it (HIVE-145), which is also what registers
+   * that surface's lifetime: a record left behind by a renderer that no longer
+   * exists — or by a socket that dropped — would hold every nudge to that
    * session forever, since nothing would ever report it empty.
+   *
+   * `surfaceFor` cannot mislabel an attached socket as a window: the socket is
+   * its own reporter and `onAttach` tracked it before any notify from it could
+   * arrive, so this resolves to the existing surface, kind intact.
    */
   on(CH.ptyPrompt, (event, payload) => {
-    watchReporter(event.sender);
     const report = parsePromptReport(payload);
-    deliver.onPrompt(report.sessionId, report.input);
+    deliver.onPrompt(surfaceFor(event.sender), report.sessionId, report.input);
   });
 
   /*
@@ -4625,7 +4896,8 @@ export function resetIpcHandlers(options: { flush?: boolean } = {}): void {
     `not-ready` rather than reaching a handler wired to a disposed layer.
   */
   remoteRegistry.clear();
-  attachedSockets.clear();
+  surfaces.clear();
+  toastQueue.clear();
   /*
     HIVE-144. This makes the test-only reset and the production mode switch
     the same path: a live switch calls this to leave `ipcMain` clean before
@@ -4750,7 +5022,7 @@ export function resetIpcHandlers(options: { flush?: boolean } = {}): void {
   // no listeners left over from a previous test — including the app-level
   // focus wiring and any tick it has already scheduled, which would otherwise
   // fire into the next test's handlers.
-  foregroundTerminalId = null;
+  foreground.clear();
   foregroundListeners.clear();
   unwatchWindowFocus?.();
   if (foregroundTick !== null) {

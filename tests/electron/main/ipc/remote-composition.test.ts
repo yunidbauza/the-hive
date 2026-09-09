@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SNAPSHOT_READ_BUDGET_MS } from '@remote-host/listener';
 import { emptySnapshot } from '../../../../electron/shared/config-contract';
+import { OVERMIND } from '../../../../electron/shared/ledger-contract';
 import type { Channel } from '../../../../electron/shared/ipc-contract';
 import { SNAPSHOT_CHANNELS, WINDOW_BOUND, type ResumePoint } from '../../../../electron/shared/remote-contract';
 import type { ResumeResult } from '../../../../electron/main/ipc/pty';
@@ -226,7 +227,9 @@ vi.mock('../../../../electron/main/ledger', () => ({
  * this door, which is the one production code uses too.
  */
 type OnAttach = (socket: AttachedSocket, resumeFrom: Readonly<Record<string, ResumePoint>> | undefined) => void;
+type OnDetach = (socket: AttachedSocket) => void;
 let capturedOnAttach: OnAttach | null = null;
+let capturedOnDetach: OnDetach | null = null;
 
 /** The captured callback, or a failure naming why it is missing. */
 const onAttach = (): OnAttach => {
@@ -234,6 +237,14 @@ const onAttach = (): OnAttach => {
     throw new Error('createRemoteListener was never handed an onAttach');
   }
   return capturedOnAttach;
+};
+
+/** Its pair, captured the same way (HIVE-145). */
+const onDetach = (): OnDetach => {
+  if (capturedOnDetach === null) {
+    throw new Error('createRemoteListener was never handed an onDetach');
+  }
+  return capturedOnDetach;
 };
 
 /**
@@ -268,8 +279,13 @@ vi.mock('@remote-host/listener', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@remote-host/listener')>();
   return {
     ...actual,
-    createRemoteListener: (options: { onAttach: OnAttach; buildSnapshot: BuildSnapshot }) => {
+    createRemoteListener: (options: {
+      onAttach: OnAttach;
+      onDetach: OnDetach;
+      buildSnapshot: BuildSnapshot;
+    }) => {
       capturedOnAttach = options.onAttach;
+      capturedOnDetach = options.onDetach;
       capturedBuildSnapshot = options.buildSnapshot;
       return {
         start: async () => {
@@ -388,6 +404,7 @@ beforeEach(() => {
   windows.length = 0;
   onChangeListener = undefined;
   capturedOnAttach = null;
+  capturedOnDetach = null;
   capturedBuildSnapshot = null;
   resumeAnswer = () => null;
   generationAnswer = () => 1;
@@ -606,6 +623,78 @@ describe('the attach replay loop (HIVE-143)', () => {
     ]);
   });
 
+  /**
+   * Two attached clients (HIVE-145).
+   *
+   * The fan-out has been N-way since HIVE-143, but nothing until now asserted
+   * it with two sockets actually present — and the `Set<AttachedSocket>` it
+   * read became a surface registry in this story, which is exactly the kind of
+   * swap that can quietly deliver to one client and not the other.
+   */
+  const withLifetime = (): {
+    socket: AttachedSocket;
+    sent: unknown[];
+    close: () => void;
+  } => {
+    const sent: unknown[] = [];
+    const closers: (() => void)[] = [];
+    const socket = {
+      send: (frame: unknown) => sent.push(frame),
+      on: (event: string, listener: () => void) => {
+        if (event === 'destroyed') closers.push(listener);
+        return undefined;
+      },
+    } as unknown as AttachedSocket;
+    return {
+      socket,
+      sent,
+      close: () => {
+        for (const closer of closers) closer();
+      },
+    };
+  };
+
+  it('delivers one push to both attached clients', () => {
+    registerIpcHandlers();
+    const a = withLifetime();
+    const b = withLifetime();
+
+    onAttach()(a.socket, undefined);
+    onAttach()(b.socket, undefined);
+    emitLedgerChanged({ id: 'both' });
+
+    const expected = { kind: 'event', channel: CH.ledgerChanged, payload: { id: 'both' } };
+    expect(a.sent).toEqual([expected]);
+    expect(b.sent).toEqual([expected]);
+  });
+
+  it('keeps delivering to the survivor when one client drops', () => {
+    registerIpcHandlers();
+    const a = withLifetime();
+    const b = withLifetime();
+    onAttach()(a.socket, undefined);
+    onAttach()(b.socket, undefined);
+
+    a.close();
+    emitLedgerChanged({ id: 'after' });
+
+    expect(a.sent).toEqual([]);
+    expect(b.sent).toEqual([
+      { kind: 'event', channel: CH.ledgerChanged, payload: { id: 'after' } },
+    ]);
+  });
+
+  it('removes a socket through onDetach even with no lifetime of its own', () => {
+    registerIpcHandlers();
+    const { socket, sent } = recordingSocket();
+    onAttach()(socket, undefined);
+
+    onDetach()(socket);
+    emitLedgerChanged({ id: 'gone' });
+
+    expect(sent).toEqual([]);
+  });
+
   it('is in the fan-out before it replays anything', () => {
     registerIpcHandlers();
     const { socket, sent } = recordingSocket();
@@ -809,7 +898,7 @@ describe('handlers that dereference the Electron event', () => {
   const REGISTRATION =
     /^\s*(?:handle|on)\(\s*CH\.(\w+)\s*,\s*(?:async\s+)?\(\s*([A-Za-z$][\w$]*)/gm;
 
-  it('is exactly the WINDOW_BOUND four that dereference it, plus the one adapted for a socket', () => {
+  it('is exactly the WINDOW_BOUND four that dereference it, plus the ones adapted for a surface', () => {
     const source = readFileSync(
       fileURLToPath(new URL('../../../../electron/main/ipc/index.ts', import.meta.url)),
       'utf8',
@@ -821,25 +910,55 @@ describe('handlers that dereference the Electron event', () => {
       channels.add(CH[key]);
     }
 
-    /*
-      `pty:prompt` is added: it uses the event for a surface *lifetime* rather
-      than for a window, and `watchReporter` accepts anything with an `.on`,
-      which `listener.ts` hands it. Refusing it would silently revert
-      HIVE-135's nudge holding for every remote session.
+    /**
+     * The channels that read the event for a **surface identity**, not for a
+     * window — added rather than refused, because a socket supplies one.
+     *
+     * It genuinely does, since HIVE-145: a call dispatched from a socket is
+     * handed a synthetic event carrying that socket as its `sender`, the same
+     * shape the notify path has always had. Before that it was handed `{}`, and
+     * the first channel to key anything by surface found the hole — `fs:watch`
+     * over a socket installed a watcher belonging to a surface that did not
+     * exist, and every `fs:changed` it produced was addressed to nobody.
+     *
+     * `pty:prompt` was the first (HIVE-143): the surface registry accepts
+     * anything with an `.on`, which `listener.ts` hands it, and refusing it
+     * would have silently reverted HIVE-135's nudge holding for every remote
+     * session. HIVE-145 added the other three, all for the same reason — each
+     * holds state that is *per surface* and needs to know whose it is:
+     *
+     * - `ui:foreground` — which stage this surface is showing. One value for
+     *   every surface at once was the defect.
+     * - `pty:ack` — how far this surface has consumed. The flow-control window
+     *   follows the slowest of them.
+     * - `fs:watch` / `fs:unwatch` — which project tree this surface is
+     *   watching. One slot meant the second client stole the first's watcher.
+     *
+     * None of them belongs in `WINDOW_BOUND`, and the membership test is what
+     * says so: a channel qualifies there when its effect lands on the machine
+     * that answers it while the person who asked is at the other one. These
+     * record a fact about the asker and have no effect on the answering machine
+     * at all.
+     *
+     * `configReveal` is subtracted (HIVE-144, Ruling 25) — the one
+     * `WINDOW_BOUND` entry that does *not* dereference the event.
+     * `handle(CH.configReveal, (): void => ...)` binds no parameter at all,
+     * because `shell.showItemInFolder` needs none; it is refused for what it
+     * does to the server's filesystem, not for anything it would do with
+     * `REMOTE_INVOKE_EVENT`. Keeping it in `expected` here would assert a
+     * property of the source text that is not true — this test's own
+     * `REGISTRATION` regex correctly never matches its handler.
+     */
+    const SURFACE_ADAPTED = [
+      CH.ptyPrompt,
+      CH.uiForeground,
+      CH.ptyAck,
+      CH.fsWatch,
+      CH.fsUnwatch,
+    ];
 
-      `configReveal` is subtracted (HIVE-144, Ruling 25) — the one
-      `WINDOW_BOUND` entry that does *not* dereference the event.
-      `handle(CH.configReveal, (): void => ...)` binds no parameter at all,
-      because `shell.showItemInFolder` needs none; it is refused for what it
-      does to the server's filesystem, not for anything it would do with
-      `REMOTE_INVOKE_EVENT`. Keeping it in `expected` here would assert a
-      property of the source text that is not true — this test's own
-      `REGISTRATION` regex correctly never matches its handler, and this
-      exclusion is what keeps the assertion matching what the regex actually
-      finds rather than what `WINDOW_BOUND`'s membership implies.
-    */
     const expected = new Set(
-      [...Object.keys(WINDOW_BOUND), CH.ptyPrompt].filter(
+      [...Object.keys(WINDOW_BOUND), ...SURFACE_ADAPTED].filter(
         (channel) => channel !== CH.configReveal,
       ),
     );
@@ -1233,5 +1352,153 @@ describe('the mode switch (HIVE-144)', () => {
     expect(connect).not.toHaveBeenCalled();
     expect(ipcBindingsSize()).toBe(local);
     expect(remoteProxyBindingsSize()).toBe(0);
+  });
+});
+
+/**
+ * Notifications delivered to whoever is attached (HIVE-145).
+ *
+ * ## Why here and not in the live suite
+ *
+ * The other half of this story's acceptance is "a session question notifies the
+ * remote client's OS", and the live suite cannot drive it: raising a real
+ * notification needs real hook traffic from a real `claude`, which
+ * `server-conformance.test.ts` deliberately stubs out with `true; false` so
+ * that a machine with a real `claude` on its PATH does not have one started by
+ * a socket.
+ *
+ * What it *can* be driven through is this file, which runs the real hub, the
+ * real router and the real queue over the real registry — only the listener and
+ * the session layer are stood in for. So the toast decision, the per-surface
+ * routing and the queue are all under test at their own seam, and the last
+ * inch, an Electron `Notification` actually appearing, is `remote-toast.test.ts`
+ * (no automated test anywhere can assert a real banner appeared on a desktop).
+ */
+describe('notifications reach the attached client (HIVE-145)', () => {
+  /** A socket that records what it was sent, in order. */
+  const recordingSocket = (): { socket: AttachedSocket; sent: unknown[] } => {
+    const sent: unknown[] = [];
+    return { socket: { send: (frame) => sent.push(frame) } as AttachedSocket, sent };
+  };
+
+  /** An ask addressed to the console, which is what mints an `agent.ask` card. */
+  const ask = (id: string) => ({
+    id,
+    ts: Date.now(),
+    from: 'scout',
+    to: OVERMIND,
+    kind: 'ask',
+    ref: 'a12',
+    body: 'May I force-push?\nThe rebase is clean.',
+  });
+
+  const toastsTo = (sent: unknown[]): unknown[] =>
+    sent.filter(
+      (frame) => (frame as { channel?: string }).channel === CH.notificationsToast,
+    );
+
+  it('sends the toast over the socket rather than raising it on the server', () => {
+    registerIpcHandlers();
+    const { socket, sent } = recordingSocket();
+    onAttach()(socket, undefined);
+
+    emitLedgerChanged(ask('20260909-120000-0001'));
+
+    /*
+      The whole point of the story's notification half. A served Mac raises a
+      toast on a desktop nobody is at; the row always crossed, the interruption
+      did not. `Notification.isSupported()` is false in this fixture, so the
+      local presenter is a no-op either way — what is asserted is that the
+      *frame* went to the socket.
+    */
+    const toasts = toastsTo(sent);
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0]).toMatchObject({
+      kind: 'event',
+      channel: CH.notificationsToast,
+      payload: {
+        id: '20260909-120000-0001',
+        kind: 'agent.ask',
+        /*
+          The asker's name, resolved by the hub at the moment the toast is made
+          rather than frozen when the ask was written (HIVE-118) — so what
+          crosses the socket is the composed toast title, not the row's own.
+          That is why `ToastPayload` is not `HiveNotification`: a receiver
+          recomposing this could disagree with the machine that decided it.
+        */
+        title: 'scout May I force-push?',
+        body: 'The rebase is clean.',
+      },
+    });
+  });
+
+  it('sends one toast to each of two attached clients', () => {
+    registerIpcHandlers();
+    const a = recordingSocket();
+    const b = recordingSocket();
+    onAttach()(a.socket, undefined);
+    onAttach()(b.socket, undefined);
+
+    emitLedgerChanged(ask('20260909-120000-0002'));
+
+    expect(toastsTo(a.sent)).toHaveLength(1);
+    expect(toastsTo(b.sent)).toHaveLength(1);
+  });
+
+  it('holds a toast raised with nobody attached, and delivers it on the next attach', () => {
+    registerIpcHandlers();
+
+    /*
+      Raised into an empty room: no window, no socket. The row is not lost
+      either way — the hub's buffer outlives every surface and the attach
+      snapshot carries it — so what is held here is only the interruption.
+    */
+    emitLedgerChanged(ask('20260909-120000-0003'));
+
+    const { socket, sent } = recordingSocket();
+    expect(toastsTo(sent)).toHaveLength(0);
+
+    onAttach()(socket, undefined);
+
+    const toasts = toastsTo(sent);
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0]).toMatchObject({
+      payload: { id: '20260909-120000-0003', kind: 'agent.ask' },
+    });
+  });
+
+  it('does not replay a held toast to a second client that missed nothing', () => {
+    registerIpcHandlers();
+    emitLedgerChanged(ask('20260909-120000-0004'));
+
+    const first = recordingSocket();
+    onAttach()(first.socket, undefined);
+    expect(toastsTo(first.sent)).toHaveLength(1);
+
+    /*
+      The flush is on the empty-to-non-empty edge, not on every arrival. A
+      second device joining a server the first is already watching has missed
+      nothing, and replaying to it would interrupt about an event the surface
+      beside it was told of at the time.
+    */
+    const second = recordingSocket();
+    onAttach()(second.socket, undefined);
+
+    expect(toastsTo(second.sent)).toHaveLength(0);
+  });
+
+  it('empties the queue on the flush, so a re-attach is quiet', () => {
+    registerIpcHandlers();
+    emitLedgerChanged(ask('20260909-120000-0005'));
+
+    const first = recordingSocket();
+    onAttach()(first.socket, undefined);
+    expect(toastsTo(first.sent)).toHaveLength(1);
+    onDetach()(first.socket);
+
+    const again = recordingSocket();
+    onAttach()(again.socket, undefined);
+
+    expect(toastsTo(again.sent)).toHaveLength(0);
   });
 });

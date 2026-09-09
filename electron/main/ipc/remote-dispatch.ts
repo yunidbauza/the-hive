@@ -39,7 +39,7 @@ export type DispatchRefusal =
 
 export interface RemoteDispatch {
   /** Answer a `call`. Never rejects: a refusal is an `error` frame, not a throw. */
-  call(frame: CallFrame): Promise<ResultFrame | ErrorFrame>;
+  call(frame: CallFrame, reporter: RemoteReporter): Promise<ResultFrame | ErrorFrame>;
   /** Run a `notify`. No reply, so a refusal is logged and dropped. */
   notify(frame: NotifyFrame, reporter: RemoteReporter): void;
 }
@@ -127,7 +127,7 @@ export function createRemoteDispatch(registry: IpcRegistry): RemoteDispatch {
   }
 
   return {
-    async call(frame) {
+    async call(frame, reporter) {
       const refusal = refuse('call', frame.channel);
       if (refusal) return { kind: 'error', id: frame.id, ...refusal };
 
@@ -153,7 +153,7 @@ export function createRemoteDispatch(registry: IpcRegistry): RemoteDispatch {
       try {
         // `await` on a non-promise is a no-op, so this covers both the 85
         // synchronous handlers and the asynchronous ones without branching.
-        const payload: unknown = await handler(frame.payload);
+        const payload: unknown = await handler(frame.payload, reporter);
         return { kind: 'result', id: frame.id, payload };
       } catch (cause) {
         /*

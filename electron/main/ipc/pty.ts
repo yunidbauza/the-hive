@@ -14,6 +14,8 @@ import {
 
 import type { PtyHostSupervisor } from '../pty-host/supervisor';
 
+import type { SurfaceId } from './surfaces';
+
 /**
  * PTY IPC: batching, flow control, sequencing (story 093).
  *
@@ -38,6 +40,25 @@ import type { PtyHostSupervisor } from '../pty-host/supervisor';
  * a real terminal.
  */
 
+/**
+ * The stand-in surface for a process with no surface registry behind it
+ * (HIVE-145).
+ *
+ * `createPtyIpc` is constructed in unit suites and in the composition root
+ * alike, and only the latter knows who is attached. One anonymous consumer is
+ * the honest default: it is exactly what a single-renderer app has, and it
+ * reproduces the pre-HIVE-145 behaviour where any ack released the window.
+ */
+export const SOLE_CONSUMER = 'sole-consumer';
+
+/**
+ * The bound {@link Channel.acks} produces when nothing may be released yet.
+ *
+ * Below every real `seq`, which starts at 1, so the drain loop releases
+ * nothing rather than needing a branch of its own.
+ */
+const HOLD_EVERYTHING = -1;
+
 export interface PtyIpcOptions {
   supervisor: PtyHostSupervisor;
   /** Push an event to the renderer. Injected — no `BrowserWindow` in here. */
@@ -48,6 +69,18 @@ export interface PtyIpcOptions {
   lowWaterBytes?: number;
   resizeThrottleMs?: number;
   replayBytes?: number;
+  /**
+   * Who is watching, right now (HIVE-145).
+   *
+   * Resolved per call rather than captured, for the reason the fan-out
+   * resolves its sockets per emit: a client attaches long after this layer was
+   * built, and a captured list would gate forever on a set that never changes.
+   *
+   * The default is one anonymous consumer, which is what a process with no
+   * surface registry behind it has: exactly the single-renderer behaviour this
+   * had before, where any ack released the window.
+   */
+  liveSurfaces?: () => Iterable<SurfaceId>;
 }
 
 /**
@@ -109,7 +142,22 @@ export interface PtyIpc {
   write(sessionId: string, data: string): void;
   resize(sessionId: string, cols: number, rows: number): void;
   kill(sessionId: string): void;
-  ack(sessionId: string, seq: number): void;
+  /**
+   * A surface has parsed everything through `seq`.
+   *
+   * `surfaceId` defaults to {@link SOLE_CONSUMER}, the sentinel a caller with
+   * no surface registry uses — see {@link PtyIpcOptions.liveSurfaces}.
+   */
+  ack(sessionId: string, seq: number, surfaceId?: SurfaceId): void;
+  /**
+   * A surface went away: drop its mark and release whatever it was holding
+   * (HIVE-145).
+   *
+   * Without this a slow client could freeze a session for everyone else by
+   * disconnecting — its mark would sit at the bottom of the window forever,
+   * and nothing would ever release bytes it was never going to acknowledge.
+   */
+  releaseSurface(surfaceId: SurfaceId): void;
   /**
    * What a reconnecting client missed since `lastSeq` (HIVE-143). See
    * {@link ResumeResult}.
@@ -169,6 +217,30 @@ interface Channel {
   paused: boolean;
 
   /**
+   * Whether any surface has *ever* acked this channel (HIVE-145).
+   *
+   * Distinguishes "nobody has opened this session" from "everyone who had it
+   * open has gone", which {@link releaseBound} answers in opposite directions.
+   */
+  everAcked: boolean;
+
+  /**
+   * How far each surface **watching this session** has acknowledged
+   * (HIVE-145).
+   *
+   * The window follows the **slowest** of them. It used to be one number per
+   * session released by whoever acked, so with two clients on one session the
+   * fast one's acks let the producer run ahead and the slow one's own socket
+   * send buffer grew without bound, nothing applying backpressure on its
+   * behalf.
+   *
+   * A surface appears here when it **acks**, which is what enrols it — see
+   * {@link releaseBound} for why being attached is not the same as watching,
+   * and why an ack is the only evidence this layer has of either.
+   */
+  acks: Map<SurfaceId, number>;
+
+  /**
    * Batches already sent, kept so a reconnecting socket can be given exactly
    * what it missed (HIVE-143).
    *
@@ -215,6 +287,8 @@ function emptyChannel(): Channel {
     outstanding: [],
     unacked: 0,
     paused: false,
+    acks: new Map(),
+    everAcked: false,
     replay: [],
     replayBytes: 0,
     exitEvent: null,
@@ -237,6 +311,7 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
     batchFlushBytes = BATCH_FLUSH_BYTES,
     highWaterBytes = HIGH_WATER_BYTES,
     lowWaterBytes = LOW_WATER_BYTES,
+    liveSurfaces = () => [SOLE_CONSUMER],
     resizeThrottleMs = RESIZE_THROTTLE_MS,
     replayBytes = REPLAY_BYTES,
   } = options;
@@ -244,6 +319,84 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
   const channels = new Map<string, Channel>();
   /** Messages for a session main has never heard of. Not attributable. */
   let orphanDrops = 0;
+
+  /**
+   * The highest seq every surface **watching this session** has acknowledged —
+   * the slowest of them.
+   *
+   * ## Watching, not merely attached
+   *
+   * A surface enrols in a channel's window by **acking it**, and by nothing
+   * else. That is the correction ship's whole-branch review forced: this used
+   * to seed every live surface at the head on the next flush, which read
+   * "attached" as "watching" and they are not the same thing. A surface only
+   * ever acks a session whose terminal it has actually mounted —
+   * `terminal-host.tsx` mounts lazily on first visit, and `pty-transport.ts`
+   * fires the ack through subscribers, so a channel with no subscriber acks
+   * nothing. So a laptop attaching and opening one session froze every *other*
+   * session for the person at the mini: the laptop's mark was seeded once,
+   * never moved, and the window never released for anyone.
+   *
+   * An ack is the only evidence this layer has that someone is consuming a
+   * session, which makes it the right enrolment signal. A client that stops
+   * acking mid-stream — the case backpressure exists for — has already acked,
+   * so it is enrolled and it does hold the window.
+   *
+   * ## Nobody enrolled, and the three ways to get there
+   *
+   * They do not all want the same answer.
+   *
+   * **No surface exists at all** — a served mini with no client attached,
+   * running the fleet it exists to run. Release everything. There is nobody to
+   * protect, and pausing here would stop every agent on an unattended server
+   * after half a megabyte, which is the deployment this whole Epic is for.
+   *
+   * **Surfaces exist, none has ever acked this session** — it was spawned and
+   * never opened. Release nothing, so the window fills and the producer pauses
+   * at the fd. That is what happened before any of this existed and it is
+   * still right: an agent nobody has looked at should not run away with the
+   * fd, and the pause lifts the moment somebody opens it.
+   *
+   * **Everyone who was acking has gone** — the client watching it detached.
+   * Release everything. Holding bytes for a surface that no longer exists
+   * would pause the session for the life of the process, which is the trap the
+   * HIVE-143 review named: a slow client could otherwise freeze a session
+   * permanently just by disconnecting.
+   */
+  function releaseBound(channel: Channel): number {
+    const live = new Set(liveSurfaces());
+    if (live.size === 0) return channel.seq;
+
+    let lowest: number | null = null;
+    for (const [surfaceId, mark] of channel.acks) {
+      if (!live.has(surfaceId)) continue;
+      if (lowest === null || mark < lowest) lowest = mark;
+    }
+    if (lowest !== null) return lowest;
+    // `seq` starts at 1, so nothing outstanding is ever `<= HOLD_EVERYTHING`.
+    return channel.everAcked ? channel.seq : HOLD_EVERYTHING;
+  }
+
+  /** Release every outstanding batch the slowest surface has acknowledged. */
+  function drain(sessionId: string, channel: Channel): void {
+    const upTo = releaseBound(channel);
+
+    let released = 0;
+    while (channel.outstanding.length > 0 && channel.outstanding[0]!.seq <= upTo) {
+      released += channel.outstanding.shift()!.bytes;
+    }
+    if (released === 0) return;
+
+    channel.unacked -= released;
+    channel.bytesAcked += released;
+
+    // Below the low-water mark, let the producer run again. The gap between
+    // the marks is what stops pause/resume oscillating on every batch.
+    if (channel.paused && channel.unacked < lowWaterBytes) {
+      channel.paused = false;
+      supervisor.resume(sessionId);
+    }
+  }
 
   function flush(sessionId: string, channel: Channel): void {
     if (channel.timer !== null) {
@@ -282,6 +435,14 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
         // joined text — see `Channel.replay` for why those differ.
         channel.replayBytes -= dropped.bytes;
       }
+
+      /*
+        Released here too, not only on an ack, so a channel nobody is watching
+        never accumulates a window it will never be asked to release — the
+        pause below would otherwise stop a session for the life of the process
+        on behalf of a surface that does not exist.
+      */
+      drain(sessionId, channel);
 
       /**
        * Above the high-water mark, stop the producer.
@@ -508,24 +669,33 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
       supervisor.kill(sessionId);
     },
 
-    ack(sessionId, seq) {
+    ack(sessionId, seq, surfaceId = SOLE_CONSUMER) {
       const channel = channels.get(sessionId);
       if (!channel) return;
 
-      let released = 0;
-      while (channel.outstanding.length > 0 && channel.outstanding[0]!.seq <= seq) {
-        released += channel.outstanding.shift()!.bytes;
-      }
-      if (released === 0) return;
+      /*
+        Monotonic per surface: a late, lower ack must not reopen a window
+        already released.
 
-      channel.unacked -= released;
-      channel.bytesAcked += released;
+        `pty:ack` is graded `mutate` because a client can ack sequences it never
+        received. What that buys such a client is worth stating accurately: it
+        can enrol itself in a session's window and claim to be far behind, which
+        holds the window for everyone watching that session. That is the
+        slowest-consumer rule working as designed rather than a hole in it — and
+        it is not a meaningful escalation, because `DEVICE_GRANT` already grades
+        a paired device `execute`, which is `pty:spawn` and `fs:write-file`.
+        Stalling one session is strictly less than that.
+      */
+      const current = channel.acks.get(surfaceId) ?? 0;
+      if (seq > current) channel.acks.set(surfaceId, seq);
+      channel.everAcked = true;
 
-      // Below the low-water mark, let the producer run again. The gap between
-      // the marks is what stops pause/resume oscillating on every batch.
-      if (channel.paused && channel.unacked < lowWaterBytes) {
-        channel.paused = false;
-        supervisor.resume(sessionId);
+      drain(sessionId, channel);
+    },
+
+    releaseSurface(surfaceId) {
+      for (const [sessionId, channel] of channels) {
+        if (channel.acks.delete(surfaceId)) drain(sessionId, channel);
       }
     },
 

@@ -149,6 +149,11 @@ vi.mock('../../../../electron/main/notifications', async () => {
     },
     createNotifier: () => ({ observe: vi.fn(), reevaluateForeground: vi.fn() }),
     createSessionNames: actual.createSessionNames,
+    // Real (HIVE-145): this suite fakes the hub to capture the predicate it is
+    // handed, and the router is a consumer of that predicate rather than
+    // something standing between this test and it.
+    createToastRoute: actual.createToastRoute,
+    createToastQueue: actual.createToastQueue,
   };
 });
 
@@ -178,7 +183,26 @@ const { registerIpcHandlers, resetIpcHandlers, isForeground } = await import(
  * so a trusted event has to share one object rather than two equal literals.
  */
 const mainFrame = { url: 'file:///out/renderer/index.html' };
-const trustedEvent = { senderFrame: mainFrame, sender: { mainFrame } } as never;
+
+/**
+ * A trusted event from one surface.
+ *
+ * `sender` carries an `on` because a real `WebContents` does, and since
+ * HIVE-145 that is what the surface registry keys by: a sender with no
+ * lifetime to watch is not tracked as a surface at all, exactly as
+ * `watchReporter` refused to watch one before it.
+ */
+const senderWith = (frame: { url: string }): never =>
+  ({
+    senderFrame: frame,
+    sender: { mainFrame: frame, on: () => undefined },
+  }) as never;
+
+const trustedEvent = senderWith(mainFrame);
+
+/** A second surface — another window, or a device attached over a socket. */
+const secondFrame = { url: 'file:///out/renderer/index.html' };
+const secondEvent = senderWith(secondFrame);
 
 /** A window that has, or has not, OS focus right now. */
 const fakeWindow = (focused: boolean) => ({
@@ -188,6 +212,11 @@ const fakeWindow = (focused: boolean) => ({
 
 const report = (payload: unknown) => {
   onHandlers.get(CH.uiForeground)!(trustedEvent, payload);
+};
+
+/** The same report, from the other surface. */
+const reportFromSecond = (payload: unknown) => {
+  onHandlers.get(CH.uiForeground)!(secondEvent, payload);
 };
 
 const reportName = (payload: unknown) => {
@@ -228,6 +257,69 @@ describe('ui:foreground', () => {
     report({ terminalId: 'term-1' });
 
     expect(isForeground('term-1')).toBe(true);
+  });
+
+  it('accepts a payload that also reports its own focus', () => {
+    report({ terminalId: 'term-1', focused: true });
+
+    expect(isForeground('term-1')).toBe(true);
+  });
+
+  it('rejects a non-boolean focused', () => {
+    report({ terminalId: 'term-1', focused: 'yes' });
+
+    expect(isForeground('term-1')).toBe(false);
+  });
+
+  /**
+   * One value, many surfaces — the hazard this story closes (HIVE-145).
+   *
+   * Every attached socket sends `ui:foreground` down the same notify channel a
+   * renderer does. Held as a single value, it said whatever the last surface to
+   * change stage said: one device switching tabs rewrote the other's answer, so
+   * a notification for the session device A is watching was suppressed because
+   * device B happened to be on it — or raised while A was watching it, because
+   * B moved on.
+   */
+  describe('two surfaces', () => {
+    it('does not let one surface clobber the other', () => {
+      report({ terminalId: 'term-1' });
+      reportFromSecond({ terminalId: 'term-2' });
+
+      /*
+        Both true at once, which a single value could never express: under the
+        old `foregroundTerminalId` the second report overwrote the first and
+        `term-1` went false the moment the other device changed tabs.
+
+        This is also the sweep's own question — may this row be dropped because
+        *somebody* is looking at it — so "any surface" is the right reading of
+        it, and the per-surface reading belongs to toast suppression, which is
+        `isForegroundFor`'s job (see the toast router).
+      */
+      expect(isForeground('term-1')).toBe(true);
+      expect(isForeground('term-2')).toBe(true);
+    });
+
+    it('keeps the survivor\'s stage when the other surface reports away', () => {
+      report({ terminalId: 'term-1' });
+      reportFromSecond({ terminalId: 'term-2' });
+
+      reportFromSecond({ terminalId: null });
+
+      expect(isForeground('term-1')).toBe(true);
+      expect(isForeground('term-2')).toBe(false);
+    });
+
+    it('forgets a surface\'s stage when that surface goes away', () => {
+      report({ terminalId: 'term-1' });
+      reportFromSecond({ terminalId: 'term-2' });
+
+      resetIpcHandlers();
+      registerIpcHandlers();
+
+      expect(isForeground('term-1')).toBe(false);
+      expect(isForeground('term-2')).toBe(false);
+    });
   });
 
   it('rejects a payload with an extra key', () => {

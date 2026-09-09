@@ -12,8 +12,21 @@ export interface RemoteReporter {
   on(event: string, listener: () => void): unknown;
 }
 
-/** A `call` handler with the Electron event already bound away. */
-export type CallHandler = (payload: unknown) => unknown;
+/**
+ * A `call` handler, still needing a surface identity.
+ *
+ * The `reporter` is the socket the call came in on (HIVE-145). It used to take
+ * the payload alone, and a remotely dispatched call was handed a synthetic
+ * **empty** event — which was fine while nothing keyed anything by surface, and
+ * became a silent hole the moment something did: `fs:watch` arriving over a
+ * socket installed a watcher belonging to a surface that did not exist, so the
+ * events it produced were addressed to nobody.
+ *
+ * Symmetric with {@link NotifyHandler}, which has always had one, and for the
+ * same reason: the socket is the thing with a lifetime and an identity, and
+ * both kinds of frame arrive on one.
+ */
+export type CallHandler = (payload: unknown, reporter: RemoteReporter) => unknown;
 
 /**
  * A `notify` handler, still needing a surface identity.

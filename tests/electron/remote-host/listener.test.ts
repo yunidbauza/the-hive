@@ -908,8 +908,16 @@ describe('post-attach frames', () => {
     socket.emit('message', JSON.stringify({ kind: 'call', id: 'c1', channel: CH.configGet, payload: null }));
     await flushMicrotasks();
 
+    /*
+      The socket goes with the frame (HIVE-145). `dispatch.call` takes the
+      surface for the reason `dispatch.notify` always has: a handler that keys
+      state by surface — `fs:watch`, `pty:ack`, `ui:foreground` — has to know
+      whose call it is answering, and the same object is both the frame sink
+      and the lifetime.
+    */
     expect(dispatch.call).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'call', id: 'c1', channel: CH.configGet }),
+      expect.objectContaining({ send: expect.any(Function), on: expect.any(Function) }),
     );
     expect(sent).toContainEqual({ kind: 'result', id: 'c1', payload: { ok: true } });
   });
@@ -1068,13 +1076,17 @@ describe('post-attach frames', () => {
     await flushMicrotasks();
 
     /*
-      The **same object**, not merely one of the same shape. `watchReporter` in
-      `ipc/index.ts` dedupes by identity through a `WeakSet`, so a fresh
-      reporter per frame would register a new `destroyed` listener on every
-      keystroke report — pushing into this socket's `closeListeners` array
-      without bound, and firing `deliver.onRendererReset()` once per keystroke
-      on close. Nothing else in this file would notice: every other assertion
-      here is about what a reporter *does*, and a fresh one does the same thing.
+      The **same object**, not merely one of the same shape. The surface
+      registry (`ipc/surfaces.ts`) dedupes by identity through a `WeakMap`, so a
+      fresh reporter per frame would register a new `destroyed` listener on
+      every keystroke report — pushing into this socket's `closeListeners`
+      array without bound, and announcing one surface's death per keystroke on
+      close. Since HIVE-145 it would be worse than noisy: each of those frames
+      would be a *distinct surface*, so the input-box record this socket wrote
+      would be keyed to a surface that nothing ever reports for again.
+
+      Nothing else in this file would notice: every other assertion here is
+      about what a reporter *does*, and a fresh one does the same thing.
     */
     expect(dispatch.notify).toHaveBeenCalledTimes(2);
     const first = dispatch.notify.mock.calls[0]![1];
@@ -1316,7 +1328,10 @@ describe('frame size bounds', () => {
     );
 
     await until(() => frames.some((frame) => frame.id === 'big'), 'the result frame');
-    expect(dispatch.call).toHaveBeenCalledWith(expect.objectContaining({ id: 'big' }));
+    expect(dispatch.call).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'big' }),
+      expect.anything(),
+    );
     expect(frames).toContainEqual({ kind: 'result', id: 'big', payload: { ok: true } });
     socket.close();
   }, 20_000);
@@ -1357,7 +1372,10 @@ describe('frame size bounds', () => {
     socket.send(encoded);
 
     await until(() => frames.some((frame) => frame.id === 'escaped'), 'the result frame');
-    expect(dispatch.call).toHaveBeenCalledWith(expect.objectContaining({ id: 'escaped' }));
+    expect(dispatch.call).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'escaped' }),
+      expect.anything(),
+    );
     expect(frames).toContainEqual({ kind: 'result', id: 'escaped', payload: { ok: true } });
     socket.close();
   }, 30_000);
