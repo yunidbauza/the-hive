@@ -179,22 +179,54 @@ describe('clearModeEntities', () => {
     expect(state().prs).toEqual([]);
   });
 
-  it('leaves a purely local concern untouched: tickets, metrics and the console transcript', () => {
-    // A session has to exist for `setSessionMetrics` to accept a report —
-    // `hydrateSessions` first, then the store's own writer for the slice, so
-    // this is a real entry rather than an empty default a buggy clear could
-    // coincidentally match.
+  /**
+   * `metrics` is `Record<sessionId, SessionMetrics>`, and session ids are
+   * **not unique across machines**: `nextSpawnId` mints `sess-01`, `sess-02`,
+   * … from the same base-36 counter everywhere, so the mode being left and
+   * the mode being joined can and do produce the same id. `useSessionMetrics`
+   * is a bare id lookup with no check on which mode an entity came from, so a
+   * metrics entry surviving the switch would render the *departed* session's
+   * model, effort and usage against the *newly attached* session wearing the
+   * same id — a wrong number shown with confidence, which is the exact
+   * failure Ruling 22 exists to prevent.
+   */
+  it('clears metrics too, so a session id reused by the joined mode does not inherit a stale value', () => {
     state().hydrateSessions([sessionRecord({ id: 'sess-01' })]);
-    state().setSessionMetrics('sess-01', { model: 'Opus 4.5', effort: 'high' });
+    state().setSessionMetrics('sess-01', { model: 'stale-local-model', effort: 'low' });
+
+    state().clearModeEntities();
+    // The joined mode mints the identical id — this is the collision, not an
+    // edge case.
+    state().applyAttachSnapshot({
+      [CH.sessionHistory]: [sessionRecord({ id: 'sess-01' })],
+    });
+
+    expect(state().metrics['sess-01']).toBeUndefined();
+  });
+
+  /**
+   * `hydratePrs` sets `prs` and `prSource` together as one fact — the source
+   * a list of PRs came from. Deleting the `prSource` line from
+   * `clearModeEntities` leaves the whole rest of this suite green, which is
+   * exactly why it needs its own assertion rather than resting on the
+   * reasoning in the doc comment above the action.
+   */
+  it('resets prSource along with the PRs it describes', () => {
+    state().hydratePrs([prRecord({ number: 1 })], 1);
+    expect(state().prSource).toEqual({ kind: 'live', stale: false, repos: 1 });
+
+    state().clearModeEntities();
+
+    expect(state().prSource).toEqual({ kind: 'loading' });
+  });
+
+  it('leaves a purely local concern untouched: tickets and the console transcript', () => {
     const ticketsBefore = state().tickets;
-    const metricsBefore = state().metrics;
     const orchLinesBefore = state().orchLines;
 
     state().clearModeEntities();
 
     expect(state().tickets).toBe(ticketsBefore);
-    expect(state().metrics).toBe(metricsBefore);
-    expect(state().metrics['sess-01']).toEqual({ model: 'Opus 4.5', effort: 'high' });
     expect(state().orchLines).toBe(orchLinesBefore);
   });
 });

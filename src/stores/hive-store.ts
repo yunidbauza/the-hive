@@ -691,11 +691,19 @@ interface HiveState {
    * anything narrower would leave a stale entity from the old mode standing
    * after the switch.
    *
+   * Also clears `metrics` — not one of the five, but its dangerous sibling:
+   * `Record<sessionId, SessionMetrics>`, keyed by an id `nextSpawnId` mints
+   * identically on every machine, so the mode being left and the mode being
+   * joined can and do produce the same `sess-01`. Left standing, a stale entry
+   * would render the departed session's numbers against the newly attached
+   * session wearing the same id — not a leak, a wrong answer shown with
+   * confidence. `entities` was the other id-keyed slice, and it is already
+   * cleared above.
+   *
    * Deliberately leaves `tickets` (Jira, not a snapshot channel — both modes
-   * read the same query), `metrics` (a session's self-reported usage, keyed
-   * by an id that either goes away with its session or gets fresh reports
-   * once one exists again) and `orchLines` (the local console transcript,
-   * a property of this window, not of either mode) untouched.
+   * read the same query) and `orchLines` (the local console transcript, a
+   * property of this window, not of either mode, and never keyed by a session
+   * id) untouched.
    */
   clearModeEntities: () => void;
   reset: () => void;
@@ -4870,6 +4878,21 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       // just emptied. `{ kind: 'loading' }` is the same value `reset()` and
       // this store's own initial state use for "nothing read yet".
       prSource: { kind: 'loading' },
+      /*
+        Not "an orphan quietly wasting memory" the way it first read — session
+        ids are **not unique across machines**. `nextSpawnId`/`rememberSpawnId`
+        mint them from the same base-36 counter everywhere, so the mode being
+        left and the mode being joined both produce `sess-01`, `sess-02`, and
+        so on. `useSessionMetrics(id)` is a bare id lookup with no check
+        against which mode the entity behind that id belongs to, so a stale
+        entry surviving the switch renders the *departed* session's model,
+        effort and usage against the *newly attached* session wearing the
+        same id — a wrong number shown with confidence, not a harmless leak.
+        This is exactly what Ruling 22 exists to prevent, and it is the only
+        other id-keyed slice in `HiveState` (`entities` is the other one, and
+        it is already cleared above).
+      */
+      metrics: {},
     });
   },
 
