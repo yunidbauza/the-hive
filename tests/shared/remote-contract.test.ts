@@ -443,15 +443,30 @@ describe('remote contract: an unclassified channel is a compile error', () => {
 });
 
 describe('WINDOW_BOUND', () => {
-  it('names exactly the four dialog channels', () => {
+  it('names exactly the five refused channels', () => {
     expect(Object.keys(WINDOW_BOUND).sort()).toEqual(
       [
         CH.configChooseDirectory,
         CH.skillsFileImport,
         CH.themePick,
         CH.themeSave,
+        CH.configReveal,
       ].sort(),
     );
+  });
+
+  /**
+   * `configReveal` (HIVE-144, Ruling 25) is the one entry that does not
+   * dereference the Electron event — `shell.showItemInFolder` needs none —
+   * which is exactly why it slipped past this table under its old, narrower
+   * test. Proven here rather than merely asserted: `frameKindOf` still says
+   * `'call'` for it (below, in `'only ever names a call channel'`), and
+   * `remote-composition.test.ts`'s own event-dereference scan excludes it
+   * explicitly, with the same reason stated on that side.
+   */
+  it('does not require configReveal to dereference the event, unlike its four siblings', () => {
+    expect(WINDOW_BOUND[CH.configReveal]).toMatch(/Finder/);
+    expect(WINDOW_BOUND[CH.configReveal]).toMatch(/server/);
   });
 
   it('names the ticket that removes an entry, where one exists', () => {

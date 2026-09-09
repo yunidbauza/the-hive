@@ -69,23 +69,28 @@ export const isDesktop = (): boolean =>
  * encounters it.
  */
 /**
- * The four capabilities `WINDOW_BOUND` (`electron/shared/remote-contract.ts`)
+ * The five capabilities `WINDOW_BOUND` (`electron/shared/remote-contract.ts`)
  * refuses while this window is attached to someone else's Hive (HIVE-144).
  *
- * One field per table entry, on purpose: `configChooseDirectory`,
+ * One field per table entry, on purpose. `configChooseDirectory`,
  * `skillsFileImport`, `themePick`, `themeSave` each dereference the Electron
  * event to resolve a parent `BrowserWindow` for a native dialog, and a server
- * opens no window. Four capabilities collapsing to one boolean is exactly the
- * shape a careless gate takes — see `tests/config/runtime.test.ts`'s own
- * guard-rail test, which ties this shape's key count to `WINDOW_BOUND`'s so a
- * fifth channel there cannot be forgotten here and one cannot be silently
- * dropped from here either.
+ * opens no window. `configReveal` is the fifth and satisfies `WINDOW_BOUND`'s
+ * membership test a different way (HIVE-144, Ruling 25): it opens Finder
+ * through `shell`, not a `BrowserWindow`, on the server rather than the
+ * machine the user is sitting at — see `WINDOW_BOUND`'s own doc comment for
+ * the widened test that covers both shapes. Five capabilities collapsing to
+ * one boolean is exactly the shape a careless gate takes — see
+ * `tests/config/runtime.test.ts`'s own guard-rail test, which ties this
+ * shape's key count to `WINDOW_BOUND`'s so a sixth channel there cannot be
+ * forgotten here and one cannot be silently dropped from here either.
  */
 export interface RemoteCapabilities {
   chooseDirectory: boolean;
   pickTheme: boolean;
   saveTheme: boolean;
   importSkillFiles: boolean;
+  revealConfig: boolean;
 }
 
 /**
@@ -104,6 +109,7 @@ export function canFor(remote: Pick<RemoteConfig, 'mode'>): RemoteCapabilities {
     pickTheme: !attached,
     saveTheme: !attached,
     importSkillFiles: !attached,
+    revealConfig: !attached,
   };
 }
 
@@ -119,6 +125,7 @@ export const REMOTE_DISABLED_REASON = {
   pickTheme: WINDOW_BOUND[CH.themePick],
   saveTheme: WINDOW_BOUND[CH.themeSave],
   importSkillFiles: WINDOW_BOUND[CH.skillsFileImport],
+  revealConfig: WINDOW_BOUND[CH.configReveal],
 } as const;
 
 /** `snapshot.remote`, or `DEFAULT_REMOTE` ('local') before one has been read. */
@@ -145,8 +152,8 @@ export const can = {
   spawnSessionIn: (projectId: string): boolean =>
     projectAccess(projectId).spawnable,
   /**
-   * The four `WINDOW_BOUND` predicates (HIVE-144). See {@link canFor} for the
-   * pure rule and {@link RemoteCapabilities} for why there are exactly four.
+   * The five `WINDOW_BOUND` predicates (HIVE-144). See {@link canFor} for the
+   * pure rule and {@link RemoteCapabilities} for why there are exactly five.
    *
    * Permissive with no snapshot, matching {@link spawnSessionIn}'s own
    * reasoning: `DEFAULT_REMOTE.mode` is `'local'`, so "not read yet" answers
@@ -157,6 +164,7 @@ export const can = {
   pickTheme: (): boolean => canFor(currentRemote()).pickTheme,
   saveTheme: (): boolean => canFor(currentRemote()).saveTheme,
   importSkillFiles: (): boolean => canFor(currentRemote()).importSkillFiles,
+  revealConfig: (): boolean => canFor(currentRemote()).revealConfig,
 } as const;
 
 /**

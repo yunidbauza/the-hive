@@ -782,7 +782,7 @@ describe('handlers that dereference the Electron event', () => {
   const REGISTRATION =
     /^\s*(?:handle|on)\(\s*CH\.(\w+)\s*,\s*(?:async\s+)?\(\s*([A-Za-z$][\w$]*)/gm;
 
-  it('is exactly the WINDOW_BOUND three, plus the one adapted for a socket', () => {
+  it('is exactly the WINDOW_BOUND four that dereference it, plus the one adapted for a socket', () => {
     const source = readFileSync(
       fileURLToPath(new URL('../../../../electron/main/ipc/index.ts', import.meta.url)),
       'utf8',
@@ -795,12 +795,27 @@ describe('handlers that dereference the Electron event', () => {
     }
 
     /*
-      `pty:prompt` is the deliberate fourth: it uses the event for a surface
-      *lifetime* rather than for a window, and `watchReporter` accepts anything
-      with an `.on`, which `listener.ts` hands it. Refusing it would silently
-      revert HIVE-135's nudge holding for every remote session.
+      `pty:prompt` is added: it uses the event for a surface *lifetime* rather
+      than for a window, and `watchReporter` accepts anything with an `.on`,
+      which `listener.ts` hands it. Refusing it would silently revert
+      HIVE-135's nudge holding for every remote session.
+
+      `configReveal` is subtracted (HIVE-144, Ruling 25) — the one
+      `WINDOW_BOUND` entry that does *not* dereference the event.
+      `handle(CH.configReveal, (): void => ...)` binds no parameter at all,
+      because `shell.showItemInFolder` needs none; it is refused for what it
+      does to the server's filesystem, not for anything it would do with
+      `REMOTE_INVOKE_EVENT`. Keeping it in `expected` here would assert a
+      property of the source text that is not true — this test's own
+      `REGISTRATION` regex correctly never matches its handler, and this
+      exclusion is what keeps the assertion matching what the regex actually
+      finds rather than what `WINDOW_BOUND`'s membership implies.
     */
-    const expected = new Set([...Object.keys(WINDOW_BOUND), CH.ptyPrompt]);
+    const expected = new Set(
+      [...Object.keys(WINDOW_BOUND), CH.ptyPrompt].filter(
+        (channel) => channel !== CH.configReveal,
+      ),
+    );
 
     expect(channels, [
       'A handler binds the Electron event that WINDOW_BOUND does not cover.',

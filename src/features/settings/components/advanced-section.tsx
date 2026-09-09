@@ -7,12 +7,13 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { useSwarmPhrase } from '@/hooks/use-swarm-phrase';
 
+import { REMOTE_DISABLED_REASON } from '@config/runtime';
 import { ConfigResetConfirm } from '@features/settings/components/config-reset-confirm';
 import { ContainerAliasGroup } from '@features/settings/components/container-alias-group';
 import { ServerModeGroup } from '@features/settings/components/server-mode-group';
 import { SettingsGroup } from '@features/settings/components/settings-group';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
-import { useProjectConfig } from '@hooks/use-project-config';
+import { useProjectConfig, useRemoteCapabilities } from '@hooks/use-project-config';
 import {
   readAppInfo,
   reloadProjectConfig,
@@ -184,6 +185,7 @@ function updateLine(
 
 export function AdvancedSection() {
   const snapshot = useProjectConfig();
+  const { revealConfig } = useRemoteCapabilities();
   const downloadingPhrase = useSwarmPhrase('loading.update');
   const readyPhrase = useSwarmPhrase('complete.update');
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -320,8 +322,13 @@ export function AdvancedSection() {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => void revealConfigFile()}
-            className="flex w-fit items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-[12.5px] text-muted hover:bg-hover hover:text-ink"
+            onClick={() => {
+              if (!revealConfig) return;
+              void revealConfigFile();
+            }}
+            disabled={!revealConfig}
+            title={revealConfig ? undefined : REMOTE_DISABLED_REASON.revealConfig}
+            className="flex w-fit items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-[12.5px] text-muted hover:bg-hover hover:text-ink disabled:opacity-60"
           >
             <FolderOpen size={12} weight="bold" />
             {fileManager(info?.platform)}

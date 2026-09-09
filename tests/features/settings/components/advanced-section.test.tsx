@@ -294,6 +294,47 @@ describe('AdvancedSection', () => {
 });
 
 /**
+ * Revealing the config file while attached (HIVE-144, Ruling 25).
+ *
+ * `configReveal` joined `WINDOW_BOUND` rather than being answered locally:
+ * while attached, Settings already shows the *server's* config, so even a
+ * correct local answer here would open Finder onto a file that is not the
+ * one on screen — see `WINDOW_BOUND`'s own doc comment. The control is gated
+ * the same way the other four `WINDOW_BOUND` controls already are, proven
+ * the same way Task 12 proved theirs: disabled, titled with the table's own
+ * reason, and — the property that actually matters — never reaching the
+ * bridge at all, not merely rendering as disabled.
+ */
+describe('AdvancedSection — revealing the config file while attached (HIVE-144, Ruling 25)', () => {
+  beforeEach(() => {
+    install({
+      remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
+      // A snapshot claiming `mode: 'remote'` with no attached server
+      // describes a state the app cannot be in (HIVE-139's own lesson).
+      attachedServer: { name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' },
+    });
+  });
+
+  it('disables the reveal button with WINDOW_BOUND’s own reason', async () => {
+    render(<AdvancedSection />);
+
+    const button = await screen.findByRole('button', { name: /reveal in finder/i });
+    expect(button).toBeDisabled();
+    expect(button.getAttribute('title')).toMatch(/Finder/);
+    expect(button.getAttribute('title')).toMatch(/server/);
+  });
+
+  it('never reaches the bridge when the disabled button is clicked', async () => {
+    render(<AdvancedSection />);
+
+    const button = await screen.findByRole('button', { name: /reveal in finder/i });
+    await userEvent.click(button);
+
+    expect(revealConfigFile).not.toHaveBeenCalled();
+  });
+});
+
+/**
  * HIVE-131's Containers group.
  *
  * Its own behaviour lives in `container-alias-group.test.tsx`; what this pins is

@@ -203,7 +203,10 @@ describe('registerRemoteProxy', () => {
   });
 
   it("refuses each WINDOW_BOUND channel locally with the table's own reason", async () => {
-    expect(Object.keys(WINDOW_BOUND).length).toBe(4);
+    // 5, not 4 (HIVE-144, Ruling 25): `configReveal` joined this table rather
+    // than `PROCESS_LOCAL`, refused for the same reason the other four are —
+    // its effect lands on the answering machine, not the one the user is at.
+    expect(Object.keys(WINDOW_BOUND).length).toBe(5);
 
     const client = fakeClient();
     registerRemoteProxy({ client, broadcaster: fakeBroadcaster() });

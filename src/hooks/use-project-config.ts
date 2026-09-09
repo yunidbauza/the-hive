@@ -63,7 +63,7 @@ export function useProjectAccess(projectId: string): ProjectAccess {
 }
 
 /**
- * The four `can.*` remote-attach predicates (HIVE-144), reactive to the
+ * The five `can.*` remote-attach predicates (HIVE-144), reactive to the
  * config subscription.
  *
  * Same subscribe-then-derive shape as {@link useProjectAccess}: `can.*` are
@@ -86,6 +86,7 @@ export function useRemoteCapabilities(): RemoteCapabilities {
     pickTheme: can.pickTheme(),
     saveTheme: can.saveTheme(),
     importSkillFiles: can.importSkillFiles(),
+    revealConfig: can.revealConfig(),
   };
 }
 

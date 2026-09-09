@@ -469,31 +469,50 @@ export const CHANNEL_AUTHORIZATION = {
 
 /**
  * Channels that cannot be answered for a socket, and the ticket that fixes each
- * (HIVE-143).
+ * (HIVE-143, widened by HIVE-144 Ruling 25).
  *
- * Exactly five channels in the whole surface dereference the Electron event
- * they are handed. Four of them do it for the same reason — resolving a parent
- * `BrowserWindow` for a native dialog — and server mode opens no window at all,
- * so `BrowserWindow.fromWebContents` has nothing to return. Proxied as-is they
- * would not throw: `config:choose-directory` returns `null` and reads to the
- * user as a cancelled dialog, which is a silent failure rather than a loud one.
+ * The membership test used to be narrower than the real one: "dereferences
+ * the Electron event it is handed." That was true of every entry until this
+ * one, and it is why `configReveal` slipped past this table for as long as it
+ * did — `shell.showItemInFolder` never touches the event at all. The test
+ * this table actually enforces, restated to cover both shapes: **a channel
+ * whose effect lands on the machine that answers it, when the person who
+ * asked is at the other one.** Four entries satisfy that through a
+ * `BrowserWindow` a server does not have; `configReveal` satisfies it through
+ * `shell` — a Finder window opened on a headless Mac mini, on a desktop
+ * nobody is looking at, while the user who clicked "Reveal" sees nothing
+ * happen on their own screen. Proxied as-is none of the five would throw:
+ * `config:choose-directory` returns `null` and reads as a cancelled dialog,
+ * and `config:reveal` returns `undefined` and reads as success — both a
+ * silent failure rather than a loud one, which is worse.
  *
  * Refused by name instead, so a remote client gets a code it can act on and a
- * message naming the work. HIVE-146 deletes three of these as it lands each
- * replacement — a server-side browser for the first, a client-side import and
- * export for the two theme ones.
+ * message naming the work. HIVE-146 deletes three of the event-dereferencing
+ * ones as it lands each replacement — a server-side browser for the first, a
+ * client-side import and export for the two theme ones.
  *
- * `skills:file:import` is the fourth and is **not** HIVE-146's, so this table
- * does not go away with it (HIVE-148). There is nothing to move to a
- * client-side picker: choosing files for a skill on the server would copy the
- * *server's* files rather than the user's, which is not a worse version of the
- * feature but a different and wrong one. `skills:file:drop` already carries
- * files from the machine the user is sitting at, so the refusal names it.
+ * `skills:file:import` is the fourth of those and is **not** HIVE-146's, so
+ * this table does not go away with it (HIVE-148). There is nothing to move to
+ * a client-side picker: choosing files for a skill on the server would copy
+ * the *server's* files rather than the user's, which is not a worse version
+ * of the feature but a different and wrong one. `skills:file:drop` already
+ * carries files from the machine the user is sitting at, so the refusal names
+ * it.
  *
- * The fifth, `pty:prompt`, is deliberately absent. It uses the event for a
- * surface *lifetime* rather than a window, and `watchReporter` already accepts
- * anything with an `.on`, so a socket satisfies it. Refusing it would silently
- * revert HIVE-135's nudge holding for every remote session.
+ * `configReveal` is the fifth, and the first refused for a reason other than
+ * the event (HIVE-144, Ruling 25). While attached, Settings is already
+ * showing the *server's* config (`ConfigSnapshot.attachedServer`,
+ * `RemoteConfig`'s own doc comment: `config:get` is answered by the far end)
+ * — so even a correct, non-silent local answer here would open a folder onto
+ * a file that is not the one on screen. There is no server-side counterpart
+ * to build the way HIVE-146 is building one for the dialogs; the file this
+ * channel would reveal simply is not on the machine the user is sitting at.
+ *
+ * `pty:prompt` is deliberately absent, the one case among the event-binding
+ * five that stays unrefused. It uses the event for a surface *lifetime*
+ * rather than a window, and `watchReporter` already accepts anything with an
+ * `.on`, so a socket satisfies it. Refusing it would silently revert
+ * HIVE-135's nudge holding for every remote session.
  */
 export const WINDOW_BOUND = {
   [CH.configChooseDirectory]:
@@ -504,6 +523,8 @@ export const WINDOW_BOUND = {
     'Importing a theme reads a file on the machine the user is sitting at. HIVE-146 keeps it on the client.',
   [CH.themeSave]:
     'Exporting a theme writes a file on the machine the user is sitting at. HIVE-146 keeps it on the client.',
+  [CH.configReveal]:
+    'Revealing the config file opens Finder on the server, which nobody is sitting at — and while attached, Settings is already showing the server’s config, not this machine’s.',
 } as const satisfies Partial<Record<Channel, string>>;
 
 /**
@@ -553,6 +574,19 @@ export function windowBoundReason(channel: string): string | null {
  * same way it reads `FRAME_KIND` and `WINDOW_BOUND`, so a channel added here
  * and forgotten in the loop is structurally impossible rather than merely
  * unlikely.
+ *
+ * **Three shapes now exist, not two — `CH.configReveal` is the channel that
+ * proved it (HIVE-144, Ruling 25).** It fails *this* list's test (its payload
+ * describes nothing) and it failed `WINDOW_BOUND`'s old, narrower test
+ * ("dereferences the Electron event") too, which is how it slipped past both
+ * for as long as it did. It belongs to `WINDOW_BOUND` under that table's
+ * widened test instead — a `shell` call that opens Finder on the answering
+ * machine is the same "wrong machine" defect this list closes for a payload,
+ * just for an OS-level side effect instead. The question that tells the three
+ * shapes apart: does the channel *return a fact* (proxy it, unless the fact
+ * is about the process, then it belongs here) or does it *cause an effect
+ * somewhere* (refuse it, in `WINDOW_BOUND`, if the effect lands on whichever
+ * machine answers rather than the one the user is sitting at)?
  */
 export const PROCESS_LOCAL: readonly Channel[] = [CH.appInfo, CH.updatesStatus, CH.updatesCheck];
 
