@@ -653,36 +653,6 @@ export function createRemoteListener(options: {
                 return;
               }
 
-              /*
-                Built and bounded before the accept frame goes out — never
-                after (HIVE-144). `buildSnapshot` already omits any channel
-                whose read threw, so this can only ever come back with as
-                many of `SNAPSHOT_CHANNELS` as could actually be answered;
-                `fitSnapshot` then weighs the frame this produces and drops
-                the heaviest keys first if a busy server's fleet would not
-                otherwise fit. Awaiting this holds the handshake open a beat
-                longer than a synchronous send would — every read behind it
-                is this same process answering itself, not a network call —
-                and it is still well inside `ATTACH_HANDSHAKE_TIMEOUT_MS`.
-              */
-              const snapshot = fitSnapshot(await buildSnapshot());
-
-              send(socket, {
-                kind: 'attach-accepted',
-                protocol: REMOTE_PROTOCOL_VERSION,
-                serverName,
-                snapshot,
-              });
-              accepted = true;
-              /*
-                Attached: the handshake deadline has been met and this socket
-                stops counting against {@link MAX_UNATTACHED_SOCKETS}, which
-                caps the *unauthenticated* phase and not how many paired
-                devices may be connected at once.
-              */
-              clearHandshakeTimer();
-              unattached.delete(socket);
-
               const socketHandle: AttachedSocket = {
                 send(outgoing) {
                   send(socket, outgoing);
@@ -713,26 +683,83 @@ export function createRemoteListener(options: {
                 },
               };
 
-              /*
-                The close listener is registered **before** `onAttach`, not
-                after (HIVE-143 review).
+              /** Set by the close listener below — the only writer. */
+              let gone = false;
 
-                `onAttach` is what puts this handle into the fan-out's set of
-                attached sockets, and it can throw — it iterates `resumeFrom`
-                and calls into the session layer to do it. A throw there is
-                caught by this handler's outer `catch`, which refuses and closes
-                the socket; but with the registration the other way round there
-                would be no `'close'` listener yet to hear that, so `onDetach`
-                would never run and a handle for a dead socket would sit in the
-                set forever, serialising a frame per push for the life of the
-                process. Registering first costs nothing — the listener cannot
-                fire before this synchronous block finishes — and makes the
-                add and the remove genuinely paired.
+              /*
+                The close listener is registered **before the snapshot await**,
+                not merely before `onAttach` (HIVE-144 review, I4).
+
+                The original ordering comment justified itself with "the
+                listener cannot fire before this **synchronous** block
+                finishes." That was true when it was written, and HIVE-144
+                stopped it being true by inserting an up-to-`SNAPSHOT_READ_BUDGET_MS`
+                `await buildSnapshot()` earlier in the same block. A peer whose
+                socket closed during that window fired the connection-level
+                `'close'` with no listener of ours registered; this handler then
+                resumed, sent the accept into a dead socket, registered a
+                `'close'` that could never fire again, and handed the dead
+                handle to `onAttach` — into `attachedSockets`, for the life of
+                the process, with `send` having no `readyState` check to notice.
+                Every later broadcast then serialised a frame and threw.
+
+                What makes the ordering safe now is not synchrony, which this
+                block no longer has, but that **nothing between registration and
+                `onAttach` can leave the pair unbalanced**: `onDetach` is a
+                `Set.delete`, so running it for a handle `onAttach` never added
+                is a no-op, and the `gone` guard below stops the accept and the
+                add from happening at all once the socket is closed.
+
+                It still also covers the case the HIVE-143 review added it for:
+                `onAttach` itself can throw — it iterates `resumeFrom` and calls
+                into the session layer — and the outer `catch` closes the
+                socket, which needs this listener already in place to unwind.
               */
               socket.once('close', () => {
+                gone = true;
                 for (const listener of closeListeners) listener();
                 onDetach(socketHandle);
               });
+
+              /*
+                Built and bounded before the accept frame goes out — never
+                after (HIVE-144). `buildSnapshot` already omits any channel
+                whose read threw, so this can only ever come back with as
+                many of `SNAPSHOT_CHANNELS` as could actually be answered;
+                `fitSnapshot` then weighs the frame this produces and drops
+                the heaviest keys first if a busy server's fleet would not
+                otherwise fit. Awaiting this holds the handshake open a beat
+                longer than a synchronous send would — every read behind it
+                is this same process answering itself, not a network call —
+                and it is still well inside `ATTACH_HANDSHAKE_TIMEOUT_MS`.
+              */
+              const snapshot = fitSnapshot(await buildSnapshot());
+
+              /*
+                The peer hung up while the snapshot was being built. There is
+                nothing left to accept *to*: sending would write into a dead
+                socket, and `onAttach`ing would put a handle nothing can ever
+                remove into the fan-out — its `'close'` has already fired.
+                `onDetach` has run for this handle, which is a no-op it never
+                joined, so leaving here balances rather than leaks.
+              */
+              if (gone) return;
+
+              send(socket, {
+                kind: 'attach-accepted',
+                protocol: REMOTE_PROTOCOL_VERSION,
+                serverName,
+                snapshot,
+              });
+              accepted = true;
+              /*
+                Attached: the handshake deadline has been met and this socket
+                stops counting against {@link MAX_UNATTACHED_SOCKETS}, which
+                caps the *unauthenticated* phase and not how many paired
+                devices may be connected at once.
+              */
+              clearHandshakeTimer();
+              unattached.delete(socket);
 
               onAttach(socketHandle, request.resumeFrom);
 

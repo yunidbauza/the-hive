@@ -1606,6 +1606,129 @@ describe('the attach snapshot (HIVE-144)', () => {
   });
 });
 
+/**
+ * The snapshot window is a window (HIVE-144 review, I4).
+ *
+ * The close-listener ordering comment justified itself with "the listener
+ * cannot fire before this **synchronous** block finishes", and HIVE-144 made
+ * that false by inserting an up-to-`SNAPSHOT_READ_BUDGET_MS` await earlier in
+ * the same block. A peer that closed inside it fired the connection-level
+ * `'close'` with no listener registered; the handler then resumed, sent the
+ * accept into a dead socket, registered a `'close'` that could never fire, and
+ * `onAttach`ed the dead handle into `attachedSockets` for the life of the
+ * process — where `send` has no `readyState` check, so every later broadcast
+ * serialised a frame and threw.
+ *
+ * These drive a real socket against a real listener and hold the snapshot open
+ * until the peer is gone, which is the only way to be inside that window on
+ * purpose.
+ */
+describe('a peer that closes during the snapshot window (HIVE-144 review)', () => {
+  /**
+   * Yield the loop `count` times, letting queued I/O callbacks run.
+   *
+   * Not a wait on a duration — nothing here is timer-driven — but a socket
+   * close is delivered by libuv on a poll turn, and there is no promise on
+   * this side of the fixture to await it on.
+   */
+  const turns = async (count: number): Promise<void> => {
+    for (let i = 0; i < count; i += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+  };
+
+  /**
+   * Attaches, waits until `buildSnapshot` has actually been entered, kills the
+   * client socket, and only then lets the snapshot resolve.
+   *
+   * `terminate()` rather than `close()`: a graceful close is a frame the
+   * server answers on its own schedule, and this needs the connection gone
+   * before the handler resumes, not politely closing.
+   */
+  const closeDuringSnapshot = async () => {
+    const { device, token } = mintDevice('MacBook');
+    const onAttach = vi.fn();
+    const onDetach = vi.fn();
+
+    let entered!: () => void;
+    const inSnapshot = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    listener = createRemoteListener({
+      bind: { host: '127.0.0.1', port: 0, allowedOrigins: [] },
+      devices: () => [device],
+      serverName: 'test-mini',
+      dispatch: noopDispatch,
+      buildSnapshot: async () => {
+        entered();
+        await held;
+        return {};
+      },
+      onAttach,
+      onDetach,
+    });
+    const url = (await listener.start()) as string;
+
+    const socket = new WebSocket(url);
+    await new Promise<void>((resolve, reject) => {
+      socket.on('open', () => resolve());
+      socket.on('error', reject);
+    });
+    const closed = new Promise<void>((resolve) => socket.on('close', () => resolve()));
+
+    socket.send(
+      JSON.stringify({
+        kind: 'attach',
+        protocol: REMOTE_PROTOCOL_VERSION,
+        deviceId: device.id,
+        token,
+      }),
+    );
+    await inSnapshot;
+    socket.terminate();
+    await closed;
+    /*
+      The client's own `'close'` is not the server's. The RST reaches the
+      listener's socket on a later poll turn, so the snapshot is released only
+      once that has had room to land — otherwise this drives the handler back
+      to life *before* the connection is observably gone, which is a different
+      race from the one under test and one the fix is not about.
+    */
+    await turns(5);
+
+    release();
+    await turns(3);
+
+    return { onAttach, onDetach };
+  };
+
+  it('never puts the dead handle into the fan-out', async () => {
+    const { onAttach } = await closeDuringSnapshot();
+
+    // The whole finding. `attachedSockets` is a `Set` nothing can ever remove
+    // this handle from — its `'close'` fired before the listener that would
+    // have run `onDetach` was ever registered.
+    expect(onAttach).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The close listener is registered before the await now, so it *does* fire
+   * — and `onDetach` for a handle `onAttach` never added is a `Set.delete`
+   * that removes nothing. That is what makes registering early safe rather
+   * than merely earlier.
+   */
+  it('runs its detach anyway, which is a no-op for a handle never added', async () => {
+    const { onDetach } = await closeDuringSnapshot();
+
+    expect(onDetach).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('the snapshot read budget (HIVE-144)', () => {
   /**
    * `SNAPSHOT_READ_BUDGET_MS`'s own doc comment (beside
