@@ -296,6 +296,7 @@ describe('ProjectsList', () => {
         setProjectConfigForTest({
           ...emptySnapshot('/tmp/hive/config.json'),
           remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
+          attachedServer: { name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' },
         });
 
         render(<ProjectsList entries={[entry({ id: 'a' })]} />);
@@ -310,6 +311,7 @@ describe('ProjectsList', () => {
         setProjectConfigForTest({
           ...emptySnapshot('/tmp/hive/config.json'),
           remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
+          attachedServer: { name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' },
         });
 
         render(<ProjectsList entries={[entry({ id: 'a' })]} />);

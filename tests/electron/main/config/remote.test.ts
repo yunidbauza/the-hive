@@ -199,6 +199,31 @@ describe('setRemote', () => {
     expect(onDisk().remote).toEqual({ mode: 'remote', host: '100.64.0.1' });
   });
 
+  /**
+   * `attachedServer` (HIVE-144, Task 12 fix round 1) — proven through the
+   * write path (`writeConfig`) as well as `loadConfig`'s own test above,
+   * since both build a `ConfigSnapshot` independently and `writeConfig`'s is
+   * the one every mutating verb — `setRemote` included — actually returns.
+   */
+  it('names the attached server on the snapshot the write returns', () => {
+    seed('{\n  "version": 2\n}\n');
+
+    const snapshot = setRemote({ mode: 'remote', host: '100.64.0.1' });
+
+    expect(snapshot.attachedServer).toEqual({
+      name: '100.64.0.1',
+      host: '100.64.0.1',
+    });
+  });
+
+  it('names nothing when the write switches back to local mode', () => {
+    seed('{\n  "version": 2,\n  "remote": { "mode": "remote", "host": "100.64.0.1" }\n}\n');
+
+    const snapshot = setRemote({ mode: 'local' });
+
+    expect(snapshot.attachedServer).toBeNull();
+  });
+
   it('leaves the key absent until something is actually set', () => {
     seed('{\n  "version": 2\n}\n');
 

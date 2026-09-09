@@ -1,12 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  DEFAULT_JIRA,
-  DEFAULT_RECEIVER,
-  DEFAULT_REMOTE,
   DEFAULT_SERVER,
-  DEFAULT_SLACK,
-  DEFAULT_NOTIFICATIONS,
+  emptySnapshot,
   type ConfigSnapshot,
   type ProjectStatus,
   type ServerDevice,
@@ -61,10 +57,7 @@ function snapshot(
   overrides: Partial<ConfigSnapshot> = {},
 ): ConfigSnapshot {
   return {
-    configPath: CONFIG_PATH,
-    templateWritten: false,
-    shell: '/bin/zsh',
-    claudeCommand: 'claude',
+    ...emptySnapshot(CONFIG_PATH, '/bin/zsh'),
     projects: projects.map(({ id, status, key, name }) => ({
       id,
       key: key ?? id.slice(0, 2),
@@ -75,17 +68,6 @@ function snapshot(
       status,
       isRepo: true,
     })),
-    env: {},
-    notifications: { ...DEFAULT_NOTIFICATIONS },
-    jira: { ...DEFAULT_JIRA },
-    receiver: { ...DEFAULT_RECEIVER },
-    server: { ...DEFAULT_SERVER },
-    remote: { ...DEFAULT_REMOTE },
-    slack: { ...DEFAULT_SLACK },
-    subscriptionAuth: true,
-  sessionMetrics: true,
-  importLoginEnv: true,
-    errors: [],
     ...overrides,
   };
 }

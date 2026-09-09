@@ -8,13 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_BIND,
   DEFAULT_CLAUDE_COMMAND,
-  DEFAULT_JIRA,
   DEFAULT_RECEIVER,
-  DEFAULT_REMOTE,
-  DEFAULT_SERVER,
-  DEFAULT_SLACK,
-  DEFAULT_NOTIFICATIONS,
   DEFAULT_SHELL,
+  emptySnapshot,
   type ConfigSnapshot,
   type EffectiveRuntime,
   type ProjectConfig,
@@ -37,22 +33,7 @@ import {
 let dir: string;
 
 const snapshot = (over: Partial<ConfigSnapshot> = {}): ConfigSnapshot => ({
-  configPath: '/tmp/hive/config.json',
-  templateWritten: false,
-  shell: DEFAULT_SHELL,
-  claudeCommand: DEFAULT_CLAUDE_COMMAND,
-  env: {},
-  projects: [],
-  notifications: { ...DEFAULT_NOTIFICATIONS },
-  jira: { ...DEFAULT_JIRA },
-  receiver: { ...DEFAULT_RECEIVER },
-  server: { ...DEFAULT_SERVER },
-  remote: { ...DEFAULT_REMOTE },
-  slack: { ...DEFAULT_SLACK },
-  subscriptionAuth: true,
-  sessionMetrics: true,
-  importLoginEnv: true,
-  errors: [],
+  ...emptySnapshot('/tmp/hive/config.json'),
   ...over,
 });
 

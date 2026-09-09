@@ -252,6 +252,11 @@ export function writeConfig(
   }
 
   const projects = resolveProjects(validated.projects, validated.errors);
+  // Computed once and read twice below, for the same reason `loadConfig`
+  // hoists it: `attachedServer` derives from the same value `remote` resolves
+  // to, and a second `{ ...DEFAULT_REMOTE, ...validated.remote }` here would
+  // be a second place for that fact to drift from this one.
+  const remote = { ...DEFAULT_REMOTE, ...validated.remote };
 
   return {
     ok: true,
@@ -331,7 +336,11 @@ export function writeConfig(
         partial `remote`. A plain spread suffices — no nested block, no array
         field the way `server` has.
       */
-      remote: { ...DEFAULT_REMOTE, ...validated.remote },
+      remote,
+      // `remote.host` is the only handle the file carries for the far end —
+      // see `ConfigSnapshot.attachedServer`'s own doc comment.
+      attachedServer:
+        remote.mode === 'remote' ? { name: remote.host, host: remote.host } : null,
       /*
         Resolved here as well as in `loadConfig` (HIVE-124), for the same
         reason `receiver` is: this snapshot is the one every mutating verb

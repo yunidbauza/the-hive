@@ -7,12 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   AUTH_ENV_KEYS,
-  DEFAULT_JIRA,
-  DEFAULT_RECEIVER,
-  DEFAULT_REMOTE,
-  DEFAULT_SERVER,
-  DEFAULT_SLACK,
-  DEFAULT_NOTIFICATIONS,
+  emptySnapshot,
   type ConfigSnapshot,
   type ResolvedContainer,
 } from '../../../../electron/shared/config-contract';
@@ -98,11 +93,7 @@ let emitLost: (event: { sessionId: string }) => void;
 let blocked: boolean;
 
 const CONFIG: ConfigSnapshot = {
-  configPath: '/home/dev/.hive/config.json',
-  templateWritten: false,
-  shell: '/bin/zsh',
-  claudeCommand: 'claude',
-  env: {},
+  ...emptySnapshot('/home/dev/.hive/config.json', '/bin/zsh'),
   projects: [
     {
       id: 'nova-web',
@@ -125,16 +116,6 @@ const CONFIG: ConfigSnapshot = {
       isRepo: false,
     },
   ],
-  notifications: { ...DEFAULT_NOTIFICATIONS },
-  jira: { ...DEFAULT_JIRA },
-  receiver: { ...DEFAULT_RECEIVER },
-  server: { ...DEFAULT_SERVER },
-  remote: { ...DEFAULT_REMOTE },
-  slack: { ...DEFAULT_SLACK },
-  subscriptionAuth: true,
-  sessionMetrics: true,
-  importLoginEnv: true,
-  errors: [],
 };
 
 function fakeSupervisor(): PtyHostSupervisor {

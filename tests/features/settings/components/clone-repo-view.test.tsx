@@ -271,6 +271,7 @@ describe('CloneRepoView', () => {
       setProjectConfigForTest({
         ...emptySnapshot('/tmp/hive/config.json'),
         remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
+        attachedServer: { name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' },
       });
 
       render(<CloneRepoView onDone={() => {}} />);
@@ -284,6 +285,7 @@ describe('CloneRepoView', () => {
       setProjectConfigForTest({
         ...emptySnapshot('/tmp/hive/config.json'),
         remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
+        attachedServer: { name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' },
       });
       const user = userEvent.setup();
 

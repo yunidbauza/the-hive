@@ -1276,13 +1276,25 @@ export interface ConfigSnapshot {
    * socket, for exactly that reason.
    *
    * `name` is `remote.host` today — the file carries no friendlier label for
-   * the far end, only the address it dials. Optional rather than required:
-   * the value has exactly two producers (`emptySnapshot` and `loadConfig`),
-   * and a required field would force every other fixture across the test
-   * tree that builds a `ConfigSnapshot` by hand to name a fact it does not
-   * exercise.
+   * the far end, only the address it dials. The runtime side genuinely does
+   * have a name — `RemoteClient.serverName()` (Task 7), what the header chip
+   * reads — which is the config-versus-runtime split demonstrated rather than
+   * merely asserted: config knows the host, runtime knows the name.
+   *
+   * **Required, not optional.** A snapshot is documented above as "always
+   * returned, even for a malformed file", and every other resolved field on
+   * this interface (`jira`, `receiver`, `server`, `remote` itself) keeps that
+   * promise the same way — fully computed, never left for a caller to
+   * default. An optional field here would let a hand-rolled fixture declare
+   * `remote.mode: 'remote'` while naming no attached server at all, which
+   * describes a state the app cannot be in, with `tsc` saying nothing about
+   * it. That is the exact shape of a real defect this repo already paid for
+   * once (HIVE-139's vitest teardown flake, traced back to a fixture missing
+   * a required field on a partial `ConfigSnapshot`) — the fix recorded from
+   * it was to never hand-roll a partial snapshot, and a required field is
+   * what makes the compiler enforce that rather than a comment.
    */
-  attachedServer?: { name: string; host: string } | null;
+  attachedServer: { name: string; host: string } | null;
   /**
    * Real-time Slack events, always fully resolved (HIVE-124).
    *

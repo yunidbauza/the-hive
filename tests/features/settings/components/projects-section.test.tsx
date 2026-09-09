@@ -169,6 +169,7 @@ describe('ProjectsSection', () => {
         ...emptySnapshot('/tmp/hive/config.json'),
         projects: [entry({ id: 'the-hive' })],
         remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
+        attachedServer: { name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' },
       };
       setProjectConfigForTest(snapshot);
 

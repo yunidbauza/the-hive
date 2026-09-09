@@ -2,14 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { can, canFor, isDesktop } from '@config/runtime';
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
-import {
-  DEFAULT_JIRA,
-  DEFAULT_NOTIFICATIONS,
-  DEFAULT_RECEIVER,
-  DEFAULT_REMOTE,
-  DEFAULT_SERVER,
-  DEFAULT_SLACK,
-} from '@shared/config-contract';
+import { emptySnapshot } from '@shared/config-contract';
 import { WINDOW_BOUND } from '@shared/remote-contract';
 
 /**
@@ -81,11 +74,7 @@ describe('can', () => {
 
     it('refuses a project the config cannot resolve', () => {
       setProjectConfigForTest({
-        configPath: '/home/dev/.hive/config.json',
-        templateWritten: false,
-        shell: '/bin/zsh',
-        claudeCommand: 'claude',
-        env: {},
+        ...emptySnapshot('/home/dev/.hive/config.json', '/bin/zsh'),
         projects: [
           {
             id: 'nova-web',
@@ -108,16 +97,6 @@ describe('can', () => {
             isRepo: false,
           },
         ],
-        notifications: { ...DEFAULT_NOTIFICATIONS },
-        jira: { ...DEFAULT_JIRA },
-        receiver: { ...DEFAULT_RECEIVER },
-        server: { ...DEFAULT_SERVER },
-        remote: { ...DEFAULT_REMOTE },
-        slack: { ...DEFAULT_SLACK },
-        subscriptionAuth: true,
-  sessionMetrics: true,
-  importLoginEnv: true,
-        errors: [],
       });
 
       expect(can.spawnSessionIn('nova-web')).toBe(true);
@@ -189,22 +168,7 @@ describe('can', () => {
 
     it('permits every capability once the snapshot reads local mode', () => {
       setProjectConfigForTest({
-        configPath: '/home/dev/.hive/config.json',
-        templateWritten: false,
-        shell: '/bin/zsh',
-        claudeCommand: 'claude',
-        env: {},
-        projects: [],
-        notifications: { ...DEFAULT_NOTIFICATIONS },
-        jira: { ...DEFAULT_JIRA },
-        receiver: { ...DEFAULT_RECEIVER },
-        server: { ...DEFAULT_SERVER },
-        remote: { ...DEFAULT_REMOTE },
-        slack: { ...DEFAULT_SLACK },
-        subscriptionAuth: true,
-        sessionMetrics: true,
-        importLoginEnv: true,
-        errors: [],
+        ...emptySnapshot('/home/dev/.hive/config.json', '/bin/zsh'),
       });
 
       expect(can.chooseDirectory()).toBe(true);
@@ -215,22 +179,12 @@ describe('can', () => {
 
     it('withholds every capability once the snapshot reads remote mode', () => {
       setProjectConfigForTest({
-        configPath: '/home/dev/.hive/config.json',
-        templateWritten: false,
-        shell: '/bin/zsh',
-        claudeCommand: 'claude',
-        env: {},
-        projects: [],
-        notifications: { ...DEFAULT_NOTIFICATIONS },
-        jira: { ...DEFAULT_JIRA },
-        receiver: { ...DEFAULT_RECEIVER },
-        server: { ...DEFAULT_SERVER },
+        ...emptySnapshot('/home/dev/.hive/config.json', '/bin/zsh'),
         remote: { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 },
-        slack: { ...DEFAULT_SLACK },
-        subscriptionAuth: true,
-        sessionMetrics: true,
-        importLoginEnv: true,
-        errors: [],
+        // A snapshot claiming `mode: 'remote'` with no attached server
+        // describes a state the app cannot be in (HIVE-139's own lesson) —
+        // this is the server the file says this window is attached to.
+        attachedServer: { name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' },
       });
 
       expect(can.chooseDirectory()).toBe(false);

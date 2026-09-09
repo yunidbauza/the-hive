@@ -4,14 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { REMOTE_DISABLED_REASON } from '@config/runtime';
 import { useAddProject } from '@hooks/use-add-project';
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
-import {
-  DEFAULT_JIRA,
-  DEFAULT_NOTIFICATIONS,
-  DEFAULT_RECEIVER,
-  DEFAULT_SERVER,
-  DEFAULT_SLACK,
-  type ConfigSnapshot,
-} from '@shared/config-contract';
+import { emptySnapshot, type ConfigSnapshot } from '@shared/config-contract';
 
 const chooseProjectDirectory = vi.fn();
 const addProjectToConfig = vi.fn();
@@ -27,23 +20,13 @@ vi.mock('@lib/project-config', async (importOriginal) => {
 
 /** A snapshot in the given remote mode — every other field is a stand-in. */
 function snapshotIn(mode: 'local' | 'remote'): ConfigSnapshot {
+  const host = mode === 'remote' ? 'mini.tail1234.ts.net' : '';
   return {
-    configPath: '/home/dev/.hive/config.json',
-    templateWritten: false,
-    shell: '/bin/zsh',
-    claudeCommand: 'claude',
-    env: {},
-    projects: [],
-    notifications: { ...DEFAULT_NOTIFICATIONS },
-    jira: { ...DEFAULT_JIRA },
-    receiver: { ...DEFAULT_RECEIVER },
-    server: { ...DEFAULT_SERVER },
-    remote: { mode, host: mode === 'remote' ? 'mini.tail1234.ts.net' : '', port: 7433 },
-    slack: { ...DEFAULT_SLACK },
-    subscriptionAuth: true,
-    sessionMetrics: true,
-    importLoginEnv: true,
-    errors: [],
+    ...emptySnapshot('/home/dev/.hive/config.json', '/bin/zsh'),
+    remote: { mode, host, port: 7433 },
+    // A snapshot in remote mode carries the server it is attached to — see
+    // `ConfigSnapshot.attachedServer`'s own doc comment.
+    attachedServer: mode === 'remote' ? { name: host, host } : null,
   };
 }
 
