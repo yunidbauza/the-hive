@@ -135,6 +135,13 @@ export interface SurfaceRegistry {
    * Silent on purpose: a teardown is not a disconnect. Firing `onGone` here
    * would drive consumers that are themselves being disposed in the same pass,
    * in an order nothing guarantees.
+   *
+   * Drops the subscribers too. They are registered by `registerIpcHandlers`
+   * and close over that registration's collaborators, so a mode switch that
+   * left them would accumulate one set per local→remote→local round trip —
+   * and `Set` iterates in insertion order, so the *stalest* `onFirst` would run
+   * first and win the toast queue's flush, routing held toasts through a
+   * disposed registration whose click closures reach a disposed hub.
    */
   clear(): void;
 }
@@ -148,6 +155,17 @@ export interface SurfaceRegistry {
  * that one, so the extra two cost a socket nothing.
  */
 const LIFETIME_EVENTS = ['did-start-loading', 'render-process-gone', 'destroyed'] as const;
+
+/**
+ * The id handed back for a window reporter with no lifetime to watch.
+ *
+ * One constant rather than a fresh id per call. Such a reporter is never in
+ * `live`, so nothing ever releases whatever is keyed to it — and a *fresh* id
+ * each time would let a caller that keys by surface grow without bound. Only
+ * the unit suites reach this, by handing in a bare object as `event.sender`;
+ * a real `WebContents` always has `on`.
+ */
+const UNTRACKED = 'surface-untracked';
 
 const asReporter = (value: unknown): RemoteReporter | null => {
   if (typeof value !== 'object' || value === null) return null;
@@ -214,7 +232,7 @@ export function createSurfaceRegistry(): SurfaceRegistry {
       it. Silently dropping it would leave a client that looks attached and
       receives nothing.
     */
-    if (reporter === null && kind === 'window') return nextId();
+    if (reporter === null && kind === 'window') return UNTRACKED;
 
     const key = reporter ?? (value as object | null);
     if (key !== null) {
@@ -226,7 +244,26 @@ export function createSurfaceRegistry(): SurfaceRegistry {
     const wasEmpty = live.size === 0;
 
     if (key !== null) ids.set(key, id);
-    live.set(id, { id, kind, send });
+    /*
+      Caught per surface, exactly as `createWindowBroadcaster` catches per
+      window and `createSocketBroadcaster` per socket, and for the reason the
+      first of those gives: a `webContents` can be torn down between the check
+      and the send landing. Targeted sends run from places that must not throw
+      — the watcher's debounce timer, and the toast router's loop over
+      surfaces, which sits under `Ledger.append`'s own rule that neither
+      delivery nor the notifier may fail the write that triggered them.
+    */
+    live.set(id, {
+      id,
+      kind,
+      send(channel, payload) {
+        try {
+          send(channel, payload);
+        } catch (cause) {
+          console.error(`[hive] send to surface ${id} failed on ${channel}:`, cause);
+        }
+      },
+    });
     if (handle !== undefined) handles.set(id, handle);
 
     if (reporter !== null) {
@@ -295,6 +332,8 @@ export function createSurfaceRegistry(): SurfaceRegistry {
     clear() {
       live.clear();
       handles.clear();
+      goneListeners.clear();
+      firstListeners.clear();
       /*
         Replaced, not merely emptied — a `WeakMap` has no `clear`, and leaving
         it would be worse than a leak. A reporter that survives the teardown

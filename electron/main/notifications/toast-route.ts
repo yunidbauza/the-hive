@@ -47,6 +47,16 @@ export interface ToastRouteOptions {
   present: (options: { title: string; body: string; onClick: () => void }) => void;
   /** Nobody is looking. Hold it for whoever attaches next (HIVE-145). */
   queue: (payload: ToastPayload) => void;
+  /**
+   * Does this machine have a window of its own right now?
+   *
+   * Not the same question as "is a surface registered". A surface registers
+   * *lazily*, on its first report — `ui:foreground`, `pty:ack`, `pty:prompt`,
+   * `fs:watch` — so a freshly launched app has a window and no surface for as
+   * long as it takes the renderer to mount. Asking `BrowserWindow` directly is
+   * what tells those two states apart.
+   */
+  hasWindow: () => boolean;
 }
 
 /**
@@ -60,7 +70,7 @@ export interface ToastRouteOptions {
 const DELIVERY_MEMORY = 512;
 
 export function createToastRoute(options: ToastRouteOptions): NotificationPresenter {
-  const { surfaces, isForegroundFor, present, queue } = options;
+  const { surfaces, isForegroundFor, present, queue, hasWindow } = options;
 
   /** Notification id → the surfaces already interrupted about it. */
   const delivered = new Map<string, Set<SurfaceId>>();
@@ -84,13 +94,27 @@ export function createToastRoute(options: ToastRouteOptions): NotificationPresen
     const live = surfaces();
 
     /*
-      Nobody at all — not "nobody who wants it". A surface that is watching the
+      No surface — not "no surface that wants it". A surface watching the
       session has *seen* this, so there is nothing to hold for it; an empty room
-      means the interruption would land nowhere and be gone. That is the whole
+      means the interruption would land nowhere and be gone. That is the
       distinction the queue exists on.
+
+      But an empty registry is not proof of an empty room, and treating it as
+      one lost real notifications (ship's whole-branch review). A surface
+      registers lazily, on its first report, so a freshly launched app has a
+      window and no surface for as long as the renderer takes to mount; and on
+      macOS the app outlives its window, at which point the surface is untracked
+      while the machine is still very much in front of someone. In both, the
+      old behaviour — raise it here — is right, and the queue would have
+      swallowed everything outside `TOAST_QUEUE_KINDS` entirely.
+
+      So the queue is for a machine with no window *at all*: a served mini,
+      which is the only place "nobody is looking" is a fact rather than an
+      inference.
     */
     if (live.length === 0) {
-      queue({ id, kind, title, body, action });
+      if (hasWindow()) present({ title, body, onClick });
+      else queue({ id, kind, title, body, action });
       return;
     }
 

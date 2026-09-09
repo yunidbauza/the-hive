@@ -439,6 +439,14 @@ const noModeSwitcher: ModeSwitcher = () => {
  * watcher belonging to a surface that did not exist, so every `fs:changed` it
  * produced was addressed to nobody and the remote explorer never refreshed.
  *
+ * **The attach snapshot is built before the socket is tracked.**
+ * `listener.ts` calls `buildSnapshot(socketHandle)` ahead of `onAttach`, so a
+ * `SNAPSHOT_CHANNELS` handler that called `surfaceFor` would register the
+ * socket through `trackWindow` and have it graded a `window` surface — after
+ * which `isForegroundFor` would read the *server's* `BrowserWindow` focus for a
+ * device four time zones away. None of the six does today. One that grows the
+ * dependency has to be tracked at attach instead.
+ *
  * What is still absent is a **window**, and that is the fence that matters:
  * five call channels dereference the event to resolve a parent `BrowserWindow`
  * for a native dialog or to reach the server's own desktop, and all five are in
@@ -1609,6 +1617,12 @@ export function registerIpcHandlers(
     isForegroundFor,
     present: presentLocally,
     queue: (payload) => { toastQueue.push(payload); },
+    /*
+      Read from `BrowserWindow`, not from the registry: a surface registers
+      lazily on its first report, so "no surface" and "no window" are different
+      states and only the second is an empty room.
+    */
+    hasWindow: () => BrowserWindow.getAllWindows().some((window) => !window.isDestroyed()),
   });
 
   const hub = createNotificationHub({
@@ -1885,8 +1899,17 @@ export function registerIpcHandlers(
     attaching to a server the first is already watching has missed nothing, and
     replaying to it would interrupt about events the surface beside it was told
     of at the time. The queue is emptied by the flush, so the toasts route
-    exactly once — through the same router, which means the arriving surface's
-    own foreground state still suppresses what it is already looking at.
+    exactly once.
+
+    **The arriving surface's own foreground state cannot suppress these**, and
+    that is a property of when this fires rather than an oversight: `onFirst`
+    runs from inside `track()`, so for a socket it is before any
+    `ui:foreground` has crossed, and for a window it is inside the very handler
+    that is about to write one. `foreground.get(id)` is `undefined` either way,
+    so a device attaching while sitting on the session in question is
+    interrupted about it once. The alternative — deferring the flush until a
+    stage report arrives — trades a redundant interruption for a queue that
+    never drains when the arriving surface has nothing on stage.
   */
   surfaces.onFirst(() => {
     for (const held of toastQueue.flush()) {

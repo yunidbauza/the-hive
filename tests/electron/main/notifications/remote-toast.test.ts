@@ -222,6 +222,42 @@ describe('createRemoteToasts', () => {
     });
   });
 
+  /**
+   * The one inbound payload this branch takes from the far end. A paired
+   * server is more trusted than a renderer and still not a reason to hand
+   * whatever arrives straight to the OS.
+   */
+  describe('a payload that is not a toast', () => {
+    it.each([
+      ['not an object', 'nope'],
+      ['null', null],
+      ['no id', { ...toast, id: undefined }],
+      ['an empty id', { ...toast, id: '' }],
+      ['a non-string title', { ...toast, title: 42 }],
+      ['a non-string body', { ...toast, body: {} }],
+      ['a kind this build does not know', { ...toast, kind: 'slack.mention' }],
+      ['no action', { ...toast, action: undefined }],
+      ['an action with no type', { ...toast, action: {} }],
+    ])('drops %s', (_label, payload) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      toasts.receive(payload);
+
+      expect(raised).toHaveLength(0);
+      expect(call).not.toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
+    it('truncates text long enough to be a problem rather than a message', () => {
+      toasts.receive({ ...toast, title: 'x'.repeat(900), body: 'y'.repeat(900) });
+
+      // Clipped rather than refused: the interruption is the point, and a
+      // clipped title still says which session wants you.
+      expect(raised[0]?.title).toHaveLength(512);
+      expect(raised[0]?.body).toHaveLength(512);
+    });
+  });
+
   it('raises nothing once disposed', () => {
     toasts.dispose();
 

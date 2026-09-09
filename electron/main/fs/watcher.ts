@@ -80,16 +80,6 @@ interface ActiveWatch {
   timer: NodeJS.Timeout | null;
   /** When the current burst began, so it cannot be postponed indefinitely. */
   burstStartedAt: number | null;
-  /**
-   * Monotonic request id for **this surface** (HIVE-145).
-   *
-   * Per surface rather than per module: two `fs:watch` calls in flight can
-   * settle out of order and the loser must not install over the winner, but
-   * that race is only ever between one surface's own calls. A shared counter
-   * let surface B's slow `rootFor` cancel surface A's install, which is a
-   * second way to lose a watcher on top of the theft this replaced.
-   */
-  generation: number;
 }
 
 export interface FsWatchLayer {
@@ -133,12 +123,28 @@ export function createFsWatchLayer(
   /** Monotonic across surfaces; only ever compared against a surface's own. */
   let requested = 0;
 
+  /** Tear down a surface's watcher. Leaves `latest` alone — see {@link forget}. */
   const stop = (surfaceId: SurfaceId): void => {
     const active = watches.get(surfaceId);
     if (!active) return;
     if (active.timer) clearTimeout(active.timer);
     active.watcher.close();
     watches.delete(surfaceId);
+  };
+
+  /**
+   * That surface is done watching: tear the watcher down **and** drop its
+   * generation.
+   *
+   * Separate from {@link stop}, which `watchProject` also calls just before
+   * installing a replacement — dropping the generation there would be deleting
+   * the entry the guard three lines above had just written. Surface ids are
+   * never reused, so a generation left behind is permanent, and on a
+   * long-running server every renderer reload and every attach leaves one.
+   */
+  const forget = (surfaceId: SurfaceId): void => {
+    latest.delete(surfaceId);
+    stop(surfaceId);
   };
 
   const flush = (surfaceId: SurfaceId): void => {
@@ -219,12 +225,11 @@ export function createFsWatchLayer(
         pending: new Set(),
         timer: null,
         burstStartedAt: null,
-        generation,
       });
     },
 
-    unwatch: stop,
-    release: stop,
+    unwatch: forget,
+    release: forget,
 
     dispose() {
       for (const surfaceId of [...watches.keys()]) stop(surfaceId);

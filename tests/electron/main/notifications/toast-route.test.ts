@@ -24,6 +24,8 @@ type Present = (options: { title: string; body: string; onClick: () => void }) =
 let present: ReturnType<typeof vi.fn<Present>>;
 let queued: unknown[];
 let foregroundFor: (surfaceId: SurfaceId, terminalId: string) => boolean;
+/** Whether this machine has a window of its own — see the empty-room branch. */
+let hasWindow: boolean;
 
 const surface = (id: SurfaceId, kind: 'window' | 'socket'): Surface => ({
   id,
@@ -37,6 +39,7 @@ const route = () =>
     isForegroundFor: (surfaceId, terminalId) => foregroundFor(surfaceId, terminalId),
     present,
     queue: (payload) => queued.push(payload),
+    hasWindow: () => hasWindow,
   });
 
 const toast = {
@@ -53,6 +56,7 @@ beforeEach(() => {
   queued = [];
   present = vi.fn<Present>();
   foregroundFor = () => false;
+  hasWindow = false;
   live = [surface('sock-a', 'socket')];
 });
 
@@ -169,6 +173,47 @@ describe('createToastRoute', () => {
       ]);
       expect(present).not.toHaveBeenCalled();
       expect(sent).toEqual([]);
+    });
+
+    /**
+     * An empty registry is not proof of an empty room, and treating it as one
+     * lost real notifications.
+     *
+     * A surface registers lazily, on its first report, so a freshly launched
+     * app has a window and no surface for as long as the renderer takes to
+     * mount; and on macOS the app outlives its window, at which point the
+     * surface is untracked while the machine is still in front of someone.
+     * Everything outside `TOAST_QUEUE_KINDS` was being swallowed in both.
+     */
+    it('presents locally when this machine has a window but no surface yet', () => {
+      live = [];
+      hasWindow = true;
+
+      route()(toast);
+
+      expect(present).toHaveBeenCalledTimes(1);
+      expect(queued).toEqual([]);
+    });
+
+    it('queues only for a machine with no window at all', () => {
+      live = [];
+      hasWindow = false;
+
+      route()(toast);
+
+      expect(present).not.toHaveBeenCalled();
+      expect(queued).toHaveLength(1);
+    });
+
+    it('does not lose a kind the queue would refuse', () => {
+      live = [];
+      hasWindow = true;
+
+      // `pr.merged` is not a `TOAST_QUEUE_KINDS` member, so before this the
+      // queue swallowed it and nothing raised it anywhere.
+      route()({ ...toast, kind: 'pr.merged', action: { type: 'none' } });
+
+      expect(present).toHaveBeenCalledTimes(1);
     });
 
     it('does not queue when a surface exists but is watching the session', () => {

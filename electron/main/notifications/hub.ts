@@ -810,6 +810,15 @@ export function createNotificationHub(
           notifier's `pendingForeground`. Those are the any-surface question —
           has anybody seen this — which is a different one and still has one
           right answer.
+
+          **Parked, knowingly (HIVE-145 whole-branch review).** It leaves one
+          asymmetry: with device A watching a session and device B not, B is
+          interrupted about a row its own inbox already shows as read, with no
+          badge. Closing it means a per-surface `unread`, and the inbox is
+          shared state — one buffer, one `notifications:read` push, one badge
+          count — so that is a change to what a notification *is*, not a fix to
+          where a toast goes. The interruption is right and the badge is
+          arguably wrong, which is the better way round.
         */
         if (delivery === 'both') {
           present({

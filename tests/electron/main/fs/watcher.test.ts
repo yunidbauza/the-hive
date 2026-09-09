@@ -375,10 +375,14 @@ describe('two surfaces', () => {
     const second = fsWatch.watchProject(S2, 'demo');
     await Promise.all([first, second]);
 
+    /*
+      Both installed, and that is the whole assertion. Nothing here indexes
+      `handlers` positionally: two concurrent `rootFor` calls can settle in
+      either order, so which of these two watchers is `handlers[0]` is a
+      coin flip and a test that assumed one flaked about once in eight runs.
+      Which surface an event reaches is asserted by the sequential case above,
+      where the install order is determined.
+    */
     expect(watchers).toHaveLength(2);
-
-    handlers[0]('change', 'a.ts');
-    await vi.advanceTimersByTimeAsync(400);
-    expect(emittedTo).toEqual([[S1, { projectId: 'demo', paths: ['a.ts'] }]]);
   });
 });

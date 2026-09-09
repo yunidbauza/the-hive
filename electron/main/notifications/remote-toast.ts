@@ -1,7 +1,11 @@
 import { BrowserWindow, Notification } from 'electron';
 
 import { CH, type Channel } from '@shared/ipc-contract';
-import type { NotificationAction, ToastPayload } from '@shared/notification-contract';
+import {
+  isNotificationKind,
+  type NotificationAction,
+  type ToastPayload,
+} from '@shared/notification-contract';
 
 /**
  * Raise an attached server's toasts on **this** machine (HIVE-145).
@@ -60,9 +64,45 @@ const SERVER_SCOPED: readonly NotificationAction['type'][] = [
 ];
 
 export interface RemoteToasts {
-  /** One toast frame arrived from the server. */
-  receive(payload: ToastPayload): void;
+  /**
+   * One toast frame arrived from the server.
+   *
+   * `unknown`, not {@link ToastPayload}: this is the branch's only inbound
+   * payload from the far end, and the type says what the *contract* promises,
+   * not what arrived on the socket. Guarded below.
+   */
+  receive(payload: unknown): void;
   dispose(): void;
+}
+
+/**
+ * A toast title or body long enough to be a problem rather than a message.
+ *
+ * Generous — a real one is a sentence — and present because an attached server
+ * puts these straight onto the user's desktop. Truncated rather than refused:
+ * the interruption is the point, and a clipped title still tells the user
+ * which session wants them.
+ */
+const TOAST_TEXT_MAX = 512;
+
+/** Everything this can act on, checked rather than assumed. */
+function asToast(payload: unknown): ToastPayload | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const candidate = payload as Partial<ToastPayload>;
+  if (typeof candidate.id !== 'string' || candidate.id === '') return null;
+  if (typeof candidate.title !== 'string') return null;
+  if (typeof candidate.body !== 'string') return null;
+  if (!isNotificationKind(candidate.kind)) return null;
+  const { action } = candidate;
+  if (typeof action !== 'object' || action === null) return null;
+  if (typeof (action as { type?: unknown }).type !== 'string') return null;
+  return {
+    id: candidate.id,
+    kind: candidate.kind,
+    title: candidate.title.slice(0, TOAST_TEXT_MAX),
+    body: candidate.body.slice(0, TOAST_TEXT_MAX),
+    action: action as ToastPayload['action'],
+  };
 }
 
 export interface RemoteToastOptions {
@@ -90,8 +130,23 @@ export function createRemoteToasts(options: RemoteToastOptions): RemoteToasts {
   let disposed = false;
 
   return {
-    receive({ id, title, body, action }) {
+    receive(incoming) {
       if (disposed) return;
+
+      /*
+        Guarded, like every other inbound payload in this codebase —
+        `ui:foreground` and `ui:session-name` both reject rather than sanitise,
+        the latter explicitly because "without a bound on either half of the
+        pair that claim would rest on the renderer behaving". The far end here
+        is a paired server rather than a renderer, which is *more* trusted and
+        still not a reason to hand whatever arrives to the OS.
+      */
+      const toast = asToast(incoming);
+      if (toast === null) {
+        console.warn('[hive] dropped a malformed remote toast');
+        return;
+      }
+      const { id, title, body, action } = toast;
 
       if (!SERVER_SCOPED.includes(action.type)) {
         console.warn(
