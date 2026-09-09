@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -95,10 +95,32 @@ describe('createTokenStore', () => {
     expect(store.read()).toBeNull();
   });
 
-  it('write is a silent no-op when encryption is unavailable, not a throw', () => {
+  /**
+   * Fix-round review (Important-2): `write` used to answer `void`, so
+   * `remote:pair`'s handler had no way to tell the pane a locked keychain
+   * silently discarded the pairing token. It now reports success as a
+   * boolean, and the handler surfaces `false` as `{ error }` rather than a
+   * false `{ paired: true }`.
+   */
+  it('write returns true on a successful persist', () => {
+    const { store } = harness();
+    expect(store.write('dev-1', 'tok')).toBe(true);
+  });
+
+  it('write is a silent no-op when encryption is unavailable, not a throw — and reports false', () => {
     const { store, written } = harness({ available: false });
-    expect(() => store.write('dev-1', 'tok')).not.toThrow();
+    let result: boolean | undefined;
+    expect(() => {
+      result = store.write('dev-1', 'tok');
+    }).not.toThrow();
+    expect(result).toBe(false);
     expect(written()).toBe('');
+  });
+
+  it('writes the file owner-only, because a world-readable secrets file outlives its reasoning', () => {
+    const { store } = harness();
+    store.write('dev-1', 'tok');
+    expect(statSync(filePath).mode & 0o777).toBe(0o600);
   });
 
   it('a second write replaces the first rather than merging', () => {
@@ -114,6 +136,43 @@ describe('createTokenStore', () => {
     // Something else's ciphertext, or a truncated write — decrypts fine but
     // is not a { deviceId, token } pair.
     writeFileSync(filePath, safeStorage.encryptString('"just a string"'));
+    expect(store.read()).toBeNull();
+  });
+
+  /**
+   * The case the interface doc names *first* — a copied `userData`, a
+   * rotated OS key — and, before this fix round, the one branch this file
+   * never actually exercised: `decryptString` throwing on bytes that were
+   * never this machine's ciphertext at all.
+   */
+  it('reads null rather than throwing when decryptString itself throws', () => {
+    const safeStorage: RemoteSafeStorage = {
+      isEncryptionAvailable: () => true,
+      encryptString: (plain) => Buffer.from(plain, 'utf8'),
+      decryptString: () => {
+        throw new Error('OS key rotated — this ciphertext is not this machine\'s');
+      },
+    };
+    const store = createTokenStore({ safeStorage, filePath });
+    writeFileSync(filePath, Buffer.from('anything'));
+
+    expect(store.read()).toBeNull();
+  });
+
+  /**
+   * `readBytes` rethrows anything that is not ENOENT (fix-round review):
+   * `read()` used to call it *outside* its own `try`, so an EACCES or an
+   * EISDIR on the credential file threw straight out of `read()`, breaking
+   * the interface's "never throws" promise. A directory where the file is
+   * expected reproduces a real non-ENOENT `readFileSync` failure without
+   * needing to fake `fs` or touch file permissions.
+   */
+  it('reads null rather than throwing when the credential path is not a plain file', () => {
+    const dirAsFile = join(dir, 'is-a-directory');
+    mkdirSync(dirAsFile);
+    const store = createTokenStore({ safeStorage: fakeSafeStorage(), filePath: dirAsFile });
+
+    expect(() => store.read()).not.toThrow();
     expect(store.read()).toBeNull();
   });
 });

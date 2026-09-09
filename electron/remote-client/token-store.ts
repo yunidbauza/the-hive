@@ -45,13 +45,25 @@ export interface StoredDeviceCredential {
   token: string;
 }
 
+/**
+ * Why the reason is a sentence rather than a code — the same rationale
+ * `jira/auth.ts`'s own `NO_ENCRYPTION` states: the only realistic reader is a
+ * user whose session has no keyring, and the actionable half of that sentence
+ * is naming the problem plainly, so `remote:pair`'s handler can hand this
+ * back to the pane verbatim.
+ */
+export const NO_ENCRYPTION_REASON =
+  `This system has no keyring available to encrypt the device credential, ` +
+  `so pairing did not persist. Unlock the keychain (or, on a machine with ` +
+  `none, this credential cannot be stored) and pair again.`;
+
 export interface TokenStore {
   /**
    * `null` covers three cases the caller must not have to tell apart: no
    * credential was ever paired, `safeStorage` cannot decrypt what is on disk
    * (a copied `userData`, a rotated OS key), and encryption is unavailable on
    * this machine right now. All three mean the same thing to a settings pane:
-   * there is no usable credential, offer pairing again.
+   * there is no usable credential, offer pairing again. Never throws.
    */
   read(): StoredDeviceCredential | null;
   /**
@@ -60,14 +72,22 @@ export interface TokenStore {
    * call on the far end and are useless apart, so a partial write is never a
    * meaningful state.
    *
-   * Silently does nothing when encryption is unavailable, for the same
-   * reason {@link TokenStore.read} answers `null` rather than throwing: this
-   * is only ever reached from a renderer, which exists only after
-   * `app.whenReady()`, but a locked keychain is a real state a machine can be
-   * in at that point, and the settings pane should degrade rather than crash
-   * a handler over a pairing attempt it could not have prevented.
+   * Returns whether the credential was actually persisted, rather than
+   * throwing, for the same reason {@link TokenStore.read} answers `null`
+   * rather than throwing: this is only ever reached from a renderer, which
+   * exists only after `app.whenReady()`, but a locked keychain is a real
+   * state a machine can be in at that point, and the settings pane should
+   * degrade rather than crash a handler over a pairing attempt it could not
+   * have prevented.
+   *
+   * A fix-round review caught the boolean's absence: `read()` is
+   * main-internal (no IPC verb returns it), so a caller that only got `void`
+   * back had no way to tell "stored" from "silently discarded" — the pane
+   * would show a pairing dialog's success state over a credential that was
+   * never written. `remote:pair`'s handler surfaces this value as `{ error }`
+   * rather than the false `{ paired: true }` a bare `void` return invited.
    */
-  write(deviceId: string, token: string): void;
+  write(deviceId: string, token: string): boolean;
   /** Idempotent, and does not depend on `safeStorage` — deleting a file needs no key. */
   clear(): void;
 }
@@ -102,9 +122,15 @@ export function createTokenStore(deps: {
   return {
     read() {
       if (!safeStorage.isEncryptionAvailable()) return null;
-      const bytes = readBytes();
-      if (bytes === null) return null;
+      // `readBytes()` is inside this `try` on purpose (fix-round review): it
+      // rethrows any error that is not ENOENT — an EACCES or an EISDIR on the
+      // credential file, say — and this interface promises never to throw.
+      // Folding it into the same `try` that already guards decrypt and parse
+      // means every one of those failure modes lands on the identical `catch`
+      // below, rather than only some of them.
       try {
+        const bytes = readBytes();
+        if (bytes === null) return null;
         const parsed: unknown = JSON.parse(safeStorage.decryptString(bytes));
         if (
           typeof parsed !== 'object' ||
@@ -132,15 +158,17 @@ export function createTokenStore(deps: {
       // throw over it is this module's own, because `remote:pair`'s caller is
       // always a renderer with a pairing dialog open, not a script that can
       // act on a thrown reason. A pairing attempt on a machine with no keyring
-      // simply does not persist — the pane's `read()` right after will report
-      // no credential, which is the true state.
-      if (!safeStorage.isEncryptionAvailable()) return;
+      // simply does not persist — and the `false` return is how the caller
+      // (`remote:pair`'s handler) learns that, since `read()` is
+      // main-internal and the renderer has no other way to check.
+      if (!safeStorage.isEncryptionAvailable()) return false;
       const bytes = safeStorage.encryptString(JSON.stringify({ deviceId, token }));
       writeFileSync(filePath, bytes, { mode: 0o600 });
       // `writeFileSync`'s mode applies only when it creates the file, so an
       // existing one keeps whatever mode it had — re-asserted here for the
       // same one-syscall reason `credentialFile.write` does.
       chmodSync(filePath, 0o600);
+      return true;
     },
 
     clear() {

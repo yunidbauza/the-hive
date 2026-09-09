@@ -1354,8 +1354,20 @@ describe('parseSetRemoteRequest (HIVE-144)', () => {
     });
   });
 
-  it('accepts an empty host when mode is absent, defaulting to local for this check', () => {
-    expect(parseSetRemoteRequest({ host: '' })).toEqual({ host: '' });
+  /**
+   * The fix-round regrade (Important-1): an absent `mode` alongside `host`
+   * used to be treated as `'local'` for validation purposes, which let a
+   * host-only payload — a text field's Settings save on blur, the likely
+   * real shape — through unvalidated while the config it merges onto was
+   * already `mode: 'remote'`. It is refused outright now, regardless of
+   * what mode the payload does or does not carry, because this guard has no
+   * way to know the config's actual current mode.
+   */
+  it('refuses host without mode — this guard cannot resolve the effective mode without it', () => {
+    expect(() => parseSetRemoteRequest({ host: '' })).toThrow(/setRemote\.host/);
+    expect(() => parseSetRemoteRequest({ host: 'evil.example.com' })).toThrow(
+      /setRemote\.host/,
+    );
   });
 
   it('accepts a loopback or tailnet host when mode is remote', () => {

@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { reloadConfig, setRemote } from '../../../../electron/main/config';
 import { parseConfig } from '../../../../electron/main/config/parse';
 import { CONFIG_PATH_ENV, DEFAULT_REMOTE } from '../../../../electron/shared/config-contract';
+import { parseSetRemoteRequest } from '../../../../electron/shared/guards';
 
 /**
  * The remote block's defaulting (HIVE-144).
@@ -239,6 +240,49 @@ describe('setRemote', () => {
     expect(snapshot.remote).toEqual({ mode: 'local', host: '', port: DEFAULT_REMOTE.port });
     expect(snapshot.errors).toEqual([]);
     expect(onDisk().remote).toEqual({ mode: 'local', host: '' });
+  });
+
+  /**
+   * Important-1 (fix-round regrade), reproduced end to end through
+   * `parseSetRemoteRequest` and the real writer, in both orderings the review
+   * named:
+   *
+   * - **Already remote, then a host-only save.** The config was put into
+   *   remote mode by an earlier, unrelated call; a later Settings save that
+   *   only touches `host` (the likely real shape — a text field's blur
+   *   handler) must not silently land an unvalidated host against the mode
+   *   that is already in effect.
+   * - **Just turned remote, then a host-only save.** Same shape, but the
+   *   mode-setting call happens immediately before rather than long before —
+   *   proving the refusal does not depend on how long ago `mode` was set.
+   *
+   * Before the fix, both wrote `{"mode":"remote","host":"evil.example.com"}`
+   * to disk. Now `parseSetRemoteRequest` refuses the host-only payload
+   * outright, so `setRemote` is never reached with it.
+   */
+  it('refuses a host-only save when the config is already in remote mode', () => {
+    seed(
+      '{\n  "version": 2,\n  "remote": { "mode": "remote", "host": "100.64.1.2", "port": 7433 }\n}\n',
+    );
+
+    expect(() => setRemote(parseSetRemoteRequest({ host: 'evil.example.com' }))).toThrow(
+      /setRemote\.host/,
+    );
+    expect(onDisk().remote).toEqual({
+      mode: 'remote',
+      host: '100.64.1.2',
+      port: 7433,
+    });
+  });
+
+  it('refuses a host-only save immediately after a mode-only call turned it remote', () => {
+    seed('{\n  "version": 2\n}\n');
+
+    setRemote(parseSetRemoteRequest({ mode: 'remote' }));
+    expect(() => setRemote(parseSetRemoteRequest({ host: 'evil.example.com' }))).toThrow(
+      /setRemote\.host/,
+    );
+    expect(onDisk().remote).toEqual({ mode: 'remote' });
   });
 
   /**

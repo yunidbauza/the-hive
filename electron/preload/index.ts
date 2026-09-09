@@ -337,7 +337,9 @@ const bridge: HiveBridge = {
   // given, in the opposite direction. Two verbs named "pair" pointing
   // opposite ways would read as one feature — they are two.
   remote: {
-    pair: (request: RemotePairRequest): Promise<void> =>
+    pair: (
+      request: RemotePairRequest,
+    ): Promise<{ paired: true } | { error: string }> =>
       ipcRenderer.invoke(CH.remotePair, request),
     forget: (): Promise<void> => ipcRenderer.invoke(CH.remoteForget),
   },

@@ -1459,15 +1459,31 @@ export function parseRevokeDeviceRequest(input: unknown): DeviceNameRequest {
 /**
  * Payload of `config:set-remote` (HIVE-144).
  *
- * Ruling 3, restated for a live payload rather than a hand-edited file:
- * `host` is checked against {@link isRemoteTarget} only when *this same
- * payload's* `mode` names `'remote'`. An absent `mode` is treated as
- * `'local'` for that one purpose — `optionalRemote` (`config/parse.ts`) makes
- * the identical choice reading the file, and the two have to agree or a value
- * Settings just wrote here would be refused reading it back. That is also why
- * `host` takes no "must not be empty" check of its own: {@link DEFAULT_REMOTE}
- * carries `''`, and a payload restating `mode: 'local'` alongside that empty
- * default is the normal, never-attached state, not a malformed request.
+ * Ruling 3 says `host` is checked against {@link isRemoteTarget} only when
+ * the *effective* mode is `'remote'` — but this guard sees one incremental
+ * patch, not the whole stored block, so "effective" cannot mean "this
+ * payload's `mode` field." `optionalRemote` (`config/parse.ts`) parses one
+ * complete, self-contained block, and an absent `mode` there truly means "no
+ * mode was ever written" — the never-attached default. Here, an absent
+ * `mode` means only "this call is not changing it," and the config `setRemote`
+ * merges onto might already carry `mode: 'remote'` from an earlier call. A
+ * fix-round review caught the gap this created: `{ host: 'evil.example.com' }`
+ * alone — a host field's Settings save on blur, the most likely real
+ * shape — validated as if local and landed the forbidden pair on disk once
+ * merged onto a config already in remote mode.
+ *
+ * So `host` **requires** `mode` in the same payload, rather than falling
+ * back to a guessed default. That is stricter than `optionalRemote` needs to
+ * be, and deliberately so: this guard has no access to the config `host` is
+ * about to be merged into, so it cannot resolve "effective" any other way
+ * without threading config state into a module that has never taken any.
+ * Requiring the caller to restate `mode` alongside `host` is the one fix that
+ * does not depend on knowing what is already on disk.
+ *
+ * That is also why `host` takes no "must not be empty" check of its own:
+ * {@link DEFAULT_REMOTE} carries `''`, and a payload restating `mode: 'local'`
+ * alongside that empty default is the normal, never-attached state, not a
+ * malformed request.
  *
  * Unlike `optionalRemote`, this guard salvages nothing on a bad field: the
  * payload arrives from a live form, not a file a human hand-edited, so one
@@ -1490,6 +1506,15 @@ export function parseSetRemoteRequest(input: unknown): SetRemoteRequest {
 
   let host: string | undefined;
   if (raw.host !== undefined) {
+    if (mode === undefined) {
+      // The hole a fix-round review found: an absent `mode` here does not
+      // mean "local" — it means "unspecified," and the config this merges
+      // onto may already be `'remote'`. Refusing rather than guessing is the
+      // only option that needs no knowledge of what is already stored.
+      return fail(
+        `setRemote.host: must be sent together with mode — this guard cannot tell whether the effective mode is local or remote without it, and validating host against the wrong assumption is exactly the bug this refusal exists to prevent`,
+      );
+    }
     const value = assertString(raw.host, 'setRemote.host');
     if (mode === 'remote' && !isRemoteTarget(value)) {
       return fail(

@@ -144,7 +144,7 @@ import {
 } from '@shared/slack-contract';
 import type { UpdateStatus } from '@shared/update-contract';
 
-import { createTokenStore } from '../../remote-client/token-store';
+import { NO_ENCRYPTION_REASON, createTokenStore } from '../../remote-client/token-store';
 import { createAgentsRuntime, type AgentRegistry } from '../agents';
 import { resolveClaude } from '../agents/claude-path';
 import { agentsDirectoryFor } from '../agents/directory';
@@ -3176,14 +3176,23 @@ export function registerIpcHandlers(
    * handed back (HIVE-144) — the opposite direction from `server:pair` above,
    * see `CH.remotePair`'s own doc comment for why the two are not one verb.
    *
-   * Answers `void`: unlike `server:pair`, there is nothing to hand back —
-   * the plaintext arrived *in* this payload rather than being minted by this
-   * call, so echoing it back would be the one thing this handler must not do.
+   * Answers `{ paired: true } | { error }` rather than a bare `void`
+   * (fix-round review, Important-2): unlike `server:pair` there is no
+   * plaintext to hand back — it arrived *in* this payload rather than being
+   * minted by this call — but `remoteTokenStore.write` can still no-op on a
+   * locked keychain, and `read()` is main-internal, so this handler is the
+   * renderer's only way to learn that. A bare `void` return let a pairing
+   * dialog report success over a credential that was never written.
    */
-  handle(CH.remotePair, (_event, payload): void => {
-    const { deviceId, token } = parseRemotePairRequest(payload);
-    remoteTokenStore.write(deviceId, token);
-  });
+  handle(
+    CH.remotePair,
+    (_event, payload): { paired: true } | { error: string } => {
+      const { deviceId, token } = parseRemotePairRequest(payload);
+      const stored = remoteTokenStore.write(deviceId, token);
+      if (stored) return { paired: true };
+      return { error: NO_ENCRYPTION_REASON };
+    },
+  );
   /**
    * Discard the credential `remote:pair` stored (HIVE-144). Idempotent, and
    * takes no payload — there is exactly one credential on this machine to

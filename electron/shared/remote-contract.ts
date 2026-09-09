@@ -53,7 +53,7 @@ export const REMOTE_PROTOCOL_VERSION = 2;
  * promote a `notify` to a `call` and the typing path acquires a round trip.
  *
  * - `call` — request/response. The client asks, the server answers with
- *   `result` or `error`. 96 channels.
+ *   `result` or `error`. 99 channels.
  * - `notify` — fire and forget, client to server, ordered per session. 6
  *   channels. Ordering between a `pty:write` and a `pty:resize` is observable,
  *   so a transport may not reorder them.
@@ -241,7 +241,7 @@ export const FRAME_KIND = {
  * should be reviewed as a table, in one diff, before it is the thing standing
  * between a socket and `pty:spawn`.
  *
- * `event` channels carry a class too, because the ticket asks for all 124
+ * `event` channels carry a class too, because the ticket asks for all 127
  * classified exactly once and a hole in a default-deny table is worse than an
  * over-classification. For a push the class is the privilege needed to *receive*
  * it, which is `read` for all 22: a client cannot cause an event, only observe

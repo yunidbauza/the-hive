@@ -1727,10 +1727,14 @@ export interface HiveBridge {
   remote: {
     /**
      * Store the `deviceId`/`token` pair a `server.pair` call on the *other*
-     * Hive handed back. There is nothing to return: unlike `server.pair`,
-     * the plaintext arrives *in* this call rather than being minted by it.
+     * Hive handed back. There is no plaintext to hand back — unlike
+     * `server.pair`, it arrived *in* this call rather than being minted by
+     * it — but `{ error }` on a locked keychain that could not persist it
+     * (fix-round review, Important-2): the store's `read()` is main-internal,
+     * so a bare `void` return would leave the pane unable to tell "stored"
+     * from "silently discarded."
      */
-    pair(request: RemotePairRequest): Promise<void>;
+    pair(request: RemotePairRequest): Promise<{ paired: true } | { error: string }>;
     /** Discard the credential {@link HiveBridge.remote.pair} stored. Idempotent. */
     forget(): Promise<void>;
   };
