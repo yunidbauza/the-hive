@@ -45,6 +45,18 @@ const fakeWindow = (): FakeWindow => ({
   },
 });
 
+/**
+ * Channels the fake `ipcMain.handle` below currently considers bound.
+ *
+ * A bare `vi.fn()` here would accept a second registration for the same
+ * channel silently, which makes `expect(() => registerIpcHandlers()).not
+ * .toThrow()` a placebo — real Electron's `ipcMain.handle` throws on exactly
+ * that, and that throw is what HIVE-144's whole reversibility guarantee is
+ * proven against. So `handle` tracks what it has bound and `removeHandler`
+ * un-tracks it, mirroring the one behaviour that matters here.
+ */
+const handledChannels = new Set<string>();
+
 vi.mock('electron', () => ({
   app: {
     getVersion: () => '0.0.0',
@@ -63,7 +75,21 @@ vi.mock('electron', () => ({
     encryptString: () => Buffer.alloc(0),
     decryptString: () => '',
   },
-  ipcMain: { handle: vi.fn(), on: vi.fn(), removeHandler: vi.fn(), removeAllListeners: vi.fn() },
+  ipcMain: {
+    handle: (channel: string, _fn: unknown) => {
+      // The exact refusal Electron's real `ipcMain.handle` makes — the throw
+      // HIVE-144's re-registration test exists to survive.
+      if (handledChannels.has(channel)) {
+        throw new Error(`Attempted to register a second handler for '${channel}'`);
+      }
+      handledChannels.add(channel);
+    },
+    on: vi.fn(),
+    removeHandler: (channel: string) => {
+      handledChannels.delete(channel);
+    },
+    removeAllListeners: vi.fn(),
+  },
   session: { defaultSession: { webRequest: { onHeadersReceived: vi.fn() } } },
   shell: { showItemInFolder: vi.fn(), openExternal: vi.fn() },
 }));

@@ -4093,7 +4093,15 @@ export function registerIpcHandlers(
   });
 }
 
-/** Test-only: drop the sessions layer and its timers. */
+/**
+ * Drop the sessions layer, its timers, and every `ipcMain` binding this
+ * process made.
+ *
+ * Was test-only until HIVE-144: the production mode switch calls this too,
+ * to leave `ipcMain` clean before `registerIpcHandlers` runs again against a
+ * different set of layers. See the `bindings.unbindAll()` comment below for
+ * why the switch can trust this path.
+ */
 export function resetIpcHandlers(): void {
   /*
     HIVE-142. Most tests never call `startRemoteListener`, so this is usually
