@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SNAPSHOT_READ_BUDGET_MS } from '@remote-host/listener';
 import { emptySnapshot } from '../../../../electron/shared/config-contract';
+import { OVERMIND } from '../../../../electron/shared/ledger-contract';
 import type { Channel } from '../../../../electron/shared/ipc-contract';
 import { SNAPSHOT_CHANNELS, WINDOW_BOUND, type ResumePoint } from '../../../../electron/shared/remote-contract';
 import type { ResumeResult } from '../../../../electron/main/ipc/pty';
@@ -1351,5 +1352,153 @@ describe('the mode switch (HIVE-144)', () => {
     expect(connect).not.toHaveBeenCalled();
     expect(ipcBindingsSize()).toBe(local);
     expect(remoteProxyBindingsSize()).toBe(0);
+  });
+});
+
+/**
+ * Notifications delivered to whoever is attached (HIVE-145).
+ *
+ * ## Why here and not in the live suite
+ *
+ * The other half of this story's acceptance is "a session question notifies the
+ * remote client's OS", and the live suite cannot drive it: raising a real
+ * notification needs real hook traffic from a real `claude`, which
+ * `server-conformance.test.ts` deliberately stubs out with `true; false` so
+ * that a machine with a real `claude` on its PATH does not have one started by
+ * a socket.
+ *
+ * What it *can* be driven through is this file, which runs the real hub, the
+ * real router and the real queue over the real registry — only the listener and
+ * the session layer are stood in for. So the toast decision, the per-surface
+ * routing and the queue are all under test at their own seam, and the last
+ * inch, an Electron `Notification` actually appearing, is `remote-toast.test.ts`
+ * (no automated test anywhere can assert a real banner appeared on a desktop).
+ */
+describe('notifications reach the attached client (HIVE-145)', () => {
+  /** A socket that records what it was sent, in order. */
+  const recordingSocket = (): { socket: AttachedSocket; sent: unknown[] } => {
+    const sent: unknown[] = [];
+    return { socket: { send: (frame) => sent.push(frame) } as AttachedSocket, sent };
+  };
+
+  /** An ask addressed to the console, which is what mints an `agent.ask` card. */
+  const ask = (id: string) => ({
+    id,
+    ts: Date.now(),
+    from: 'scout',
+    to: OVERMIND,
+    kind: 'ask',
+    ref: 'a12',
+    body: 'May I force-push?\nThe rebase is clean.',
+  });
+
+  const toastsTo = (sent: unknown[]): unknown[] =>
+    sent.filter(
+      (frame) => (frame as { channel?: string }).channel === CH.notificationsToast,
+    );
+
+  it('sends the toast over the socket rather than raising it on the server', () => {
+    registerIpcHandlers();
+    const { socket, sent } = recordingSocket();
+    onAttach()(socket, undefined);
+
+    emitLedgerChanged(ask('20260909-120000-0001'));
+
+    /*
+      The whole point of the story's notification half. A served Mac raises a
+      toast on a desktop nobody is at; the row always crossed, the interruption
+      did not. `Notification.isSupported()` is false in this fixture, so the
+      local presenter is a no-op either way — what is asserted is that the
+      *frame* went to the socket.
+    */
+    const toasts = toastsTo(sent);
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0]).toMatchObject({
+      kind: 'event',
+      channel: CH.notificationsToast,
+      payload: {
+        id: '20260909-120000-0001',
+        kind: 'agent.ask',
+        /*
+          The asker's name, resolved by the hub at the moment the toast is made
+          rather than frozen when the ask was written (HIVE-118) — so what
+          crosses the socket is the composed toast title, not the row's own.
+          That is why `ToastPayload` is not `HiveNotification`: a receiver
+          recomposing this could disagree with the machine that decided it.
+        */
+        title: 'scout May I force-push?',
+        body: 'The rebase is clean.',
+      },
+    });
+  });
+
+  it('sends one toast to each of two attached clients', () => {
+    registerIpcHandlers();
+    const a = recordingSocket();
+    const b = recordingSocket();
+    onAttach()(a.socket, undefined);
+    onAttach()(b.socket, undefined);
+
+    emitLedgerChanged(ask('20260909-120000-0002'));
+
+    expect(toastsTo(a.sent)).toHaveLength(1);
+    expect(toastsTo(b.sent)).toHaveLength(1);
+  });
+
+  it('holds a toast raised with nobody attached, and delivers it on the next attach', () => {
+    registerIpcHandlers();
+
+    /*
+      Raised into an empty room: no window, no socket. The row is not lost
+      either way — the hub's buffer outlives every surface and the attach
+      snapshot carries it — so what is held here is only the interruption.
+    */
+    emitLedgerChanged(ask('20260909-120000-0003'));
+
+    const { socket, sent } = recordingSocket();
+    expect(toastsTo(sent)).toHaveLength(0);
+
+    onAttach()(socket, undefined);
+
+    const toasts = toastsTo(sent);
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0]).toMatchObject({
+      payload: { id: '20260909-120000-0003', kind: 'agent.ask' },
+    });
+  });
+
+  it('does not replay a held toast to a second client that missed nothing', () => {
+    registerIpcHandlers();
+    emitLedgerChanged(ask('20260909-120000-0004'));
+
+    const first = recordingSocket();
+    onAttach()(first.socket, undefined);
+    expect(toastsTo(first.sent)).toHaveLength(1);
+
+    /*
+      The flush is on the empty-to-non-empty edge, not on every arrival. A
+      second device joining a server the first is already watching has missed
+      nothing, and replaying to it would interrupt about an event the surface
+      beside it was told of at the time.
+    */
+    const second = recordingSocket();
+    onAttach()(second.socket, undefined);
+
+    expect(toastsTo(second.sent)).toHaveLength(0);
+  });
+
+  it('empties the queue on the flush, so a re-attach is quiet', () => {
+    registerIpcHandlers();
+    emitLedgerChanged(ask('20260909-120000-0005'));
+
+    const first = recordingSocket();
+    onAttach()(first.socket, undefined);
+    expect(toastsTo(first.sent)).toHaveLength(1);
+    onDetach()(first.socket);
+
+    const again = recordingSocket();
+    onAttach()(again.socket, undefined);
+
+    expect(toastsTo(again.sent)).toHaveLength(0);
   });
 });
