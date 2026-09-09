@@ -4,6 +4,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 
 import type { ServerBindConfig, ServerDevice } from '@shared/config-contract';
 import {
+  ATTACH_FRAME_MAX_BYTES,
   CALL_DEADLINE_MS,
   CALL_TIMEOUT_CODE,
   POST_ATTACH_FRAME_MAX_BYTES,
@@ -107,32 +108,6 @@ const ATTACH_HANDSHAKE_TIMEOUT_MS = 5_000;
  * with a different right answer.
  */
 const MAX_UNATTACHED_SOCKETS = 8;
-
-/**
- * The most a **first** frame may weigh, checked against the raw bytes below
- * before anything parses them.
- *
- * An attach frame — `kind`, `protocol`, `deviceId`, `token`, and an optional
- * `resumeFrom` map — is a few hundred bytes even with a realistic session
- * count in `resumeFrom`. Nothing an unauthenticated peer sends needs more than
- * this, and the same discipline the hook receiver applies per route
- * (`HOOK_MAX_BODY_BYTES` and its siblings in `electron/shared/hook-contract.ts`)
- * applies here, sized for what this one frame actually needs.
- *
- * **Enforced explicitly, not by `maxPayload` (HIVE-143 review).** This used to
- * be handed to `WebSocketServer` as its `maxPayload`, which was a bug rather
- * than a shortcut: `ws` builds each connection's `Receiver` **once**, with that
- * value, and enforces it on every message for the life of the socket. A
- * handshake-shaped bound was therefore silently bounding every post-attach
- * frame too — a `fs:write-file`, `skills:write`, `agents:write`, `theme:save`,
- * `ledger:post`, `jira:add-comment` or pasted `pty:write` over 8 KiB never
- * reached `dispatch.call` at all, answered neither `result` nor `error`, left
- * the client's correlation id unresolved forever, and closed the connection
- * with 1009. Checking the first frame here, where "first" is a fact this file
- * knows and `ws` does not, is also simply more honest than delegating a
- * handshake-specific limit to a connection-wide option.
- */
-const ATTACH_FRAME_MAX_BYTES = 8 * 1024;
 
 /**
  * How many bytes a `ws` message actually is, across the three shapes `ws` can

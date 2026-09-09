@@ -22,6 +22,7 @@ import {
 } from '@shared/remote-contract';
 
 import {
+  AttachFrameTooLargeError,
   AttachRefusedError,
   PlaintextRefusedError,
   RemoteCallError,
@@ -308,6 +309,33 @@ describe('connectRemote — the resolved-address fence', () => {
     expect(graded('203.0.113.7', { all: true }).error).toBeInstanceOf(PlaintextRefusedError);
   });
 
+  /**
+   * `resolveAddress` is an injectable dependency, so "the resolver answers
+   * once" is a property of its caller, not of this file. Without the latch a
+   * resolver that answered twice — refused, then good — would record the
+   * refusal and then hand `net` the second answer anyway, and the connection
+   * would proceed. `node:dns` does not do that; the fence does not get to
+   * assume it.
+   */
+  it('answers net exactly once, even when the resolver calls back twice', () => {
+    const twice: LookupFunction = ((_hostname, _options, callback) => {
+      callback(null, '203.0.113.7', 4);
+      callback(null, '127.0.0.1', 4);
+    }) as LookupFunction;
+
+    const { socket } = dial({ host: 'mini.tail1234.ts.net', resolveAddress: twice });
+    const answers: LookupResult[] = [];
+    socket?.options.lookup?.('mini.tail1234.ts.net', { family: 4 } as Parameters<LookupFunction>[1], ((
+      error: Error | null,
+      resolved: unknown,
+    ) => {
+      answers.push({ error, resolved });
+    }) as unknown as Parameters<LookupFunction>[2]);
+
+    expect(answers).toHaveLength(1);
+    expect(answers[0].error).toBeInstanceOf(PlaintextRefusedError);
+  });
+
   it('pins the lookup to IPv4 so every answer it grades is a dotted quad', () => {
     const { socket } = dial({ host: 'mini.tail1234.ts.net' });
 
@@ -549,6 +577,44 @@ describe('connectRemote — the frame ceiling', () => {
 
     expect(socket?.options.maxPayload).toBe(POST_ATTACH_FRAME_MAX_BYTES);
   });
+
+  /**
+   * The sibling `sendBounded` cannot see (fix round). The attach frame is the
+   * third client-sent frame and the only one with an unbounded shape —
+   * `resumeFrom` is one `{ gen, seq }` per tracked session — and it is bounded
+   * against the server's own, much smaller, handshake ceiling rather than the
+   * post-attach one.
+   */
+  it('refuses to send an attach frame over the handshake ceiling, naming the real cause', async () => {
+    const resumeFrom: Record<string, { gen: number; seq: number }> = {};
+    // Roughly 40 bytes a session, so a few hundred clears 8 KiB.
+    for (let index = 0; index < 500; index += 1) {
+      resumeFrom[`session-${String(index)}`] = { gen: 2, seq: index };
+    }
+
+    const { promise, socket } = dial({ resumeFrom });
+    socket?.emit('open');
+
+    // Nothing went out: the socket is not spent proving what this side knew.
+    expect(socket?.sent).toEqual([]);
+    expect(socket?.closeCalls).toBe(1);
+    await expect(promise).rejects.toBeInstanceOf(AttachFrameTooLargeError);
+    // The message must not read as a credential problem, which is exactly what
+    // the server's own `unauthorized` refusal would have looked like here.
+    await expect(promise).rejects.toThrow(/500 sessions/);
+    await expect(promise).rejects.toThrow(/not a credential problem/);
+  });
+
+  it('sends an attach frame that fits under the handshake ceiling', async () => {
+    const resumeFrom: Record<string, { gen: number; seq: number }> = {};
+    for (let index = 0; index < 20; index += 1) {
+      resumeFrom[`session-${String(index)}`] = { gen: 2, seq: index };
+    }
+
+    const { socket } = await attachedClient({ resumeFrom });
+
+    expect(Object.keys(socket.attachFrame().resumeFrom ?? {})).toHaveLength(20);
+  });
 });
 
 describe('connectRemote — events', () => {
@@ -592,6 +658,32 @@ describe('connectRemote — events', () => {
 
     socket.deliver({ kind: 'event', channel: CH.ptyData, payload: 'yes' } satisfies EventFrame);
     expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The fan-out runs inside `ws`'s `'message'` emit, so an unguarded throw does
+   * two things at once: it aborts the loop, losing the event for every listener
+   * registered after the thrower, and it leaves the EventEmitter as an uncaught
+   * exception in main. The throwing listener sits **between** two good ones so
+   * the test can tell "the others still got it" from "the first one did".
+   */
+  it('keeps fanning out when a listener throws, and does not let the throw escape', async () => {
+    const { client, socket } = await attachedClient();
+    const before = vi.fn();
+    const after = vi.fn();
+
+    client.onEvent(before);
+    client.onEvent(() => {
+      throw new Error('a subscriber that cannot cope');
+    });
+    client.onEvent(after);
+
+    expect(() => {
+      socket.deliver({ kind: 'event', channel: CH.ptyData, payload: 'chunk' } satisfies EventFrame);
+    }).not.toThrow();
+
+    expect(before).toHaveBeenCalledWith(CH.ptyData, 'chunk');
+    expect(after).toHaveBeenCalledWith(CH.ptyData, 'chunk');
   });
 
   it('survives a frame that is not JSON', async () => {

@@ -677,6 +677,41 @@ export const CALL_GIVE_UP_MS = 135_000;
 export const CALL_TIMEOUT_CODE = 'call-timeout';
 
 /**
+ * The most a **first** frame may weigh — the attach frame, and only that one.
+ *
+ * An attach frame — `kind`, `protocol`, `deviceId`, `token`, and an optional
+ * `resumeFrom` map — is a few hundred bytes even with a realistic session
+ * count in `resumeFrom`. Nothing an unauthenticated peer sends needs more than
+ * this, and the same discipline the hook receiver applies per route
+ * (`HOOK_MAX_BODY_BYTES` and its siblings in `electron/shared/hook-contract.ts`)
+ * applies here, sized for what this one frame actually needs.
+ *
+ * **Enforced explicitly by the server, not by `maxPayload` (HIVE-143 review).**
+ * It used to be handed to `WebSocketServer` as its `maxPayload`, which was a bug
+ * rather than a shortcut: `ws` builds each connection's `Receiver` **once**,
+ * with that value, and enforces it on every message for the life of the socket.
+ * A handshake-shaped bound was therefore silently bounding every post-attach
+ * frame too — a `fs:write-file`, `skills:write`, `agents:write`, `theme:save`,
+ * `ledger:post`, `jira:add-comment` or pasted `pty:write` over 8 KiB never
+ * reached `dispatch.call` at all, answered neither `result` nor `error`, left
+ * the client's correlation id unresolved forever, and closed the connection
+ * with 1009. `electron/remote-host/listener.ts` checks the first frame by hand,
+ * where "first" is a fact that file knows and `ws` does not.
+ *
+ * **Here rather than in `listener.ts`, where it was defined through HIVE-143
+ * (HIVE-144 review).** Unlike the unattached-phase bounds beside it there —
+ * `ATTACH_HANDSHAKE_TIMEOUT_MS`, `MAX_UNATTACHED_SOCKETS` — this one is not the
+ * server's problem alone: the client is the *only* thing that ever sends the
+ * frame it bounds. `electron/remote-client/socket.ts` checks its own attach
+ * frame against this before sending it, so a `resumeFrom` grown past the
+ * ceiling fails with a message naming the session count rather than as the
+ * server's `unauthorized` refusal, which a settings pane would present as a
+ * credential problem. That mattering more over time is the point: HIVE-144's
+ * later tasks put a snapshot behind this handshake, so the frame only grows.
+ */
+export const ATTACH_FRAME_MAX_BYTES = 8 * 1024;
+
+/**
  * The most **any** frame on an attached socket may weigh — `ws`'s `maxPayload`
  * on both ends, and therefore the ceiling an attached device's `call` and
  * `notify` frames live under (HIVE-143 review).
@@ -718,13 +753,13 @@ export const CALL_TIMEOUT_CODE = 'call-timeout';
  *
  * The trade the server makes, stated because it is the cost of fixing the bug
  * above: an unauthenticated peer that clears the Origin/Host guard can make
- * `ws` buffer up to this before `listener.ts`'s own `ATTACH_FRAME_MAX_BYTES`
- * refuses it, where before that `maxPayload` bug it could buffer only 8 KiB.
- * Per socket that is bounded by `ATTACH_HANDSHAKE_TIMEOUT_MS` and by the socket
- * being closed the instant the oversized frame is inspected; in *aggregate* it
- * is bounded by `MAX_UNATTACHED_SOCKETS`. All three of those stay in
- * `listener.ts`: they bound the *unauthenticated* phase, which is the server's
- * problem alone and means nothing to a client.
+ * `ws` buffer up to this before {@link ATTACH_FRAME_MAX_BYTES} refuses it,
+ * where before that `maxPayload` bug it could buffer only 8 KiB. Per socket
+ * that is bounded by `ATTACH_HANDSHAKE_TIMEOUT_MS` and by the socket being
+ * closed the instant the oversized frame is inspected; in *aggregate* it is
+ * bounded by `MAX_UNATTACHED_SOCKETS`. Both of those stay in `listener.ts`:
+ * they bound the *unauthenticated* phase, which is the server's problem alone
+ * and means nothing to a client.
  */
 export const POST_ATTACH_FRAME_MAX_BYTES = 8 * 1024 * 1024;
 

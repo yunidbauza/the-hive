@@ -6,6 +6,7 @@ import { WebSocket, type ClientOptions } from 'ws';
 import { isRemoteTarget } from '@shared/config-contract';
 import type { Channel } from '@shared/ipc-contract';
 import {
+  ATTACH_FRAME_MAX_BYTES,
   CALL_GIVE_UP_MS,
   CALL_TIMEOUT_CODE,
   POST_ATTACH_FRAME_MAX_BYTES,
@@ -101,6 +102,21 @@ export class AttachRefusedError extends Error {
 }
 
 /**
+ * An attach frame this client refused to send, because the server would refuse
+ * it as `unauthorized` and the caller would read that as a bad credential.
+ *
+ * Its own class rather than a bare `Error` for exactly that reason: "pair
+ * again" is the wrong remedy for a `resumeFrom` that outgrew the ceiling, and a
+ * settings pane needs to be able to tell the two apart.
+ */
+export class AttachFrameTooLargeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AttachFrameTooLargeError';
+  }
+}
+
+/**
  * A `call` that came back as an `error` frame, or that this client gave up on.
  *
  * The code crosses the wire intact for the reason `ErrorFrame` states: the
@@ -173,7 +189,20 @@ function fencedLookup(
   refuse: (cause: PlaintextRefusedError) => void,
 ): LookupFunction {
   return (hostname, options, callback) => {
+    /*
+      Answered once, whatever the resolver does (HIVE-144 review).
+
+      `resolveAddress` is an injectable dependency, and a resolver that called
+      back twice — a refused answer, then a good one — would run this body
+      twice: the refusal is recorded, and a second `callback(null, address)`
+      still goes out and the connection proceeds. `node:dns` does not do that,
+      but every other fence in this file is fail-closed by construction rather
+      than by trusting its caller, and this one should be too.
+    */
+    let answered = false;
     resolve(hostname, options, (error, address, family) => {
+      if (answered) return;
+      answered = true;
       if (error !== null) {
         callback(error, '', 4);
         return;
@@ -289,7 +318,41 @@ export function connectRemote(deps: ConnectRemoteDeps): Promise<RemoteClient> {
     };
 
     socket.on('open', () => {
-      socket.send(JSON.stringify(attachRequest(credential.deviceId, credential.token, resumeFrom)));
+      const frame = JSON.stringify(
+        attachRequest(credential.deviceId, credential.token, resumeFrom),
+      );
+      /*
+        The attach frame is the one client-sent frame `sendBounded` never sees,
+        and the only one with an unbounded shape (HIVE-144 review). `deviceId`,
+        `token` and `protocol` are fixed; `resumeFrom` is one `{ gen, seq }` per
+        tracked session, roughly forty bytes each, so a few hundred sessions
+        reaches the server's `ATTACH_FRAME_MAX_BYTES` on its own — and the
+        snapshot HIVE-144's later tasks put behind this handshake only grows it.
+
+        Unbounded, the server answers `unauthorized('The first frame on a
+        connection is too large.')`, which is indistinguishable at this end from
+        a bad credential: a settings pane would tell the user to pair again over
+        a problem pairing cannot fix. It fails closed either way, so this is
+        diagnosability rather than a hole — but naming the real cause costs one
+        comparison, and it is checked *before* the frame goes out so the socket
+        is not spent proving something this side already knew.
+      */
+      const weight = frameBytes(frame);
+      if (weight > ATTACH_FRAME_MAX_BYTES) {
+        const sessions = resumeFrom === undefined ? 0 : Object.keys(resumeFrom).length;
+        failHandshake(
+          new AttachFrameTooLargeError(
+            `The attach frame is ${String(weight)} bytes, over the ` +
+              `${String(ATTACH_FRAME_MAX_BYTES)}-byte handshake ceiling, carrying resume ` +
+              `points for ${String(sessions)} sessions. This is not a credential problem — ` +
+              `the server would refuse it as "unauthorized" and mean this. Reattach with ` +
+              `fewer resume points.`,
+          ),
+        );
+        socket.close();
+        return;
+      }
+      socket.send(frame);
     });
 
     socket.on('message', (data: Buffer | ArrayBuffer | Buffer[]) => {
@@ -353,7 +416,26 @@ export function connectRemote(deps: ConnectRemoteDeps): Promise<RemoteClient> {
           drift from the table the server grades against.
         */
         if (frameKindOf(server.channel) !== 'event') return;
-        for (const listener of attached.listeners) listener(server.channel, server.payload);
+        for (const listener of attached.listeners) {
+          /*
+            Guarded per listener (HIVE-144 review). This loop runs inside `ws`'s
+            `'message'` emit, so a subscriber that throws does two things at
+            once: it aborts the fan-out, silently losing the event for every
+            listener registered after it, and it propagates out of the
+            EventEmitter as an uncaught exception in the main process. HIVE-144's
+            later tasks register the remote proxy against this fan-out and drive
+            the store from it, so "one bad consumer" would mean "the app is
+            gone". A subscriber's own failure is its own; it is not this socket's
+            to re-raise, and it is certainly not the other subscribers'.
+          */
+          try {
+            listener(server.channel, server.payload);
+          } catch {
+            // Deliberately swallowed. There is no channel back to a subscriber
+            // that has already failed, and a console line per dropped frame on
+            // `pty:data` would be its own denial of service.
+          }
+        }
       }
     });
 
@@ -379,13 +461,15 @@ export function connectRemote(deps: ConnectRemoteDeps): Promise<RemoteClient> {
      * Sends one client frame, refusing it rather than letting `ws` close the
      * socket over it.
      *
-     * Both client-to-server frame kinds go through here, deliberately: a
-     * `notify` over the ceiling is refused by the far end's `maxPayload`
+     * Both **post-attach** client-to-server frame kinds go through here,
+     * deliberately: a `notify` over the ceiling is refused by the far end's `maxPayload`
      * exactly as a `call` is — with a 1009 close that takes every unrelated
      * in-flight correlation id with it — so bounding only the kind that has a
      * promise to reject would leave the cheaper-looking half able to kill the
      * connection. `pty:write` carrying a very large paste is the realistic way
-     * that happens.
+     * that happens. The **attach** frame is bounded separately, in the `'open'`
+     * handler, against the server's own and much smaller handshake ceiling: it
+     * is the third client-sent frame, and the only one that has to clear 8 KiB.
      */
     const sendBounded = (frame: CallFrame | NotifyFrame): string | null => {
       const text = JSON.stringify(frame);
