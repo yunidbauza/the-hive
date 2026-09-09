@@ -982,32 +982,37 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
- * The terminal on the centre stage, as the renderer last reported it (HIVE-81).
+ * What each surface has on its centre stage, and whether that surface is
+ * focused (HIVE-81, HIVE-145).
  *
  * Module scope for the reason `systemNotificationRefusal` is: it is a fact
- * about this process's window, not about notifications, and the hub is
+ * about who is looking at this process, not about notifications, and the hub is
  * deliberately ignorant of what the user is looking at. The hub asks a
  * predicate; it never holds this.
  *
- * **Known hazard, deliberately parked: one value, many surfaces (HIVE-143
- * review; HIVE-145 "Two attached clients" must close it).** Every attached
- * socket sends `ui:foreground` down the same notify channel a renderer does, so
- * this holds whatever the last surface to change stage said. With two devices
- * attached, one of them switching tabs rewrites the other's answer: a
- * notification for the session device A is watching is suppressed because
- * device B happens to be looking at it, or — worse, because it is the case the
- * suppression exists for — is *raised* while device A is watching it, because
- * device B moved on. `windowFocused()` compounds it: it is a fact about this
- * machine's windows, and a served Mac usually has none, so the suppression it
- * gates is already the wrong question for a remote surface.
+ * **A map, because one value could not be true of two devices.** It was a
+ * single `foregroundTerminalId`, and every attached socket sends
+ * `ui:foreground` down the same notify channel a renderer does — so it held
+ * whatever the last surface to change stage said. With two devices attached,
+ * one switching tabs rewrote the other's answer: a notification for the session
+ * device A was watching got suppressed because device B happened to be on it,
+ * or — worse, because it is the case the suppression exists for — was *raised*
+ * while A was watching it, because B moved on.
  *
- * Unreachable today: no client half exists until HIVE-144, so exactly one
- * surface ever reports. The fix is to key this by surface — a map from the
- * socket (or the window) to what *it* is showing — and to suppress only when
- * every live surface that could see the session is both focused and on it,
- * which is the question `isForeground` was always really asking.
+ * **`focused` travels with it, and only a socket's is read.** `windowFocused()`
+ * is a fact about *this* machine's windows, and a served Mac usually has none,
+ * so it is the wrong question to ask of a remote surface. A window surface
+ * therefore still reads its focus live from `BrowserWindow` — a renderer-published
+ * boolean goes stale in exactly the case the feature exists for — while a socket
+ * reports its own, stamped by the client's main process, which is the only
+ * process that can see that machine's windows.
+ *
+ * Absent `focused` means **not** focused. That is the conservative default: the
+ * failure it produces is a toast for a session the user was already watching,
+ * and the one the opposite default produces is silence about a session nobody
+ * is looking at.
  */
-let foregroundTerminalId: string | null = null;
+const foreground = new Map<SurfaceId, { terminalId: string | null; focused: boolean }>();
 
 /**
  * Whether **any** window of this app has focus right now.
@@ -1039,14 +1044,39 @@ const windowFocused = (): boolean =>
   );
 
 /**
- * Is this terminal the one the user is already looking at?
+ * Is this terminal the one **that surface** is already looking at?
  *
- * Both halves, and neither alone is the question. A matching id with every
- * window of ours behind another app is precisely when the notification is
- * worth raising. See {@link windowFocused} for what "focused" counts as.
+ * Both halves, and neither alone is the question. A matching id with the
+ * surface behind another app is precisely when the notification is worth
+ * raising.
+ *
+ * Where "focused" comes from depends on the kind, and that asymmetry is the
+ * whole design (HIVE-145). A window's is read live from `BrowserWindow`,
+ * because a renderer-published boolean goes stale in exactly the case the
+ * feature exists for — the window hidden, the app in the background — since the
+ * renderer stops running to update it. A socket's is whatever it reported,
+ * because this machine's windows say nothing about a laptop four time zones
+ * away, and a served Mac has no windows at all.
+ *
+ * This is the per-surface question, which is what decides whether *this*
+ * surface gets a toast. {@link isForeground} is the any-surface one.
+ */
+const isForegroundFor = (surfaceId: SurfaceId, terminalId: string): boolean => {
+  const held = foreground.get(surfaceId);
+  if (held === undefined || held.terminalId !== terminalId) return false;
+  return surfaces.get(surfaceId)?.kind === 'window' ? windowFocused() : held.focused;
+};
+
+/**
+ * Is **any** surface already looking at this terminal?
+ *
+ * The hub's sweep asks this one (`notifications/hub.ts`): may this inbox row be
+ * dropped because somebody has seen it. "Any" is its right answer with two
+ * devices attached — a row one of them is staring at is a row that has been
+ * seen — where "which one" is only the toast's question.
  */
 export const isForeground = (terminalId: string): boolean =>
-  windowFocused() && foregroundTerminalId === terminalId;
+  surfaces.all().some((surface) => isForegroundFor(surface.id, terminalId));
 
 /** Told when foreground state changes, so the re-arm can run (HIVE-81). */
 const foregroundListeners = new Set<() => void>();
@@ -1756,7 +1786,16 @@ export function registerIpcHandlers(
     private copies of this loop would be five chances to disagree about who is
     live.
   */
-  surfaces.onGone((surfaceId) => { deliver.onSurfaceGone(surfaceId); });
+  surfaces.onGone((surfaceId) => {
+    deliver.onSurfaceGone(surfaceId);
+    /*
+      A surface that has gone is looking at nothing, so its stage must not go
+      on suppressing notifications for the session it last had (HIVE-145).
+      Announced, because the hub's re-arm is what re-raises a row this surface's
+      presence was holding down.
+    */
+    if (foreground.delete(surfaceId)) notifyForegroundChange();
+  });
 
   /**
    * One entry landed, from any party — pushed the way `notifications:new` is
@@ -4303,19 +4342,42 @@ export function registerIpcHandlers(
    * never coerced into `null` — a compromised or buggy renderer must not be
    * able to make a fabricated shape read as "nothing on stage".
    */
-  on(CH.uiForeground, (_event, payload) => {
+  on(CH.uiForeground, (event, payload) => {
     if (!isRecord(payload)) throw new Error('ui:foreground expects an object');
     const keys = Object.keys(payload);
-    if (keys.length !== 1 || keys[0] !== 'terminalId') {
-      throw new Error('ui:foreground expects exactly { terminalId }');
+    /*
+      `focused` is optional and only a socket sends it (HIVE-145): the client's
+      main process stamps it while proxying, because it is the only process
+      that can see that machine's windows. A local renderer sends the one-key
+      shape it always did, and a window surface's focus is read live from
+      `BrowserWindow` regardless of what arrives here.
+    */
+    if (keys.length === 0 || keys.length > 2) {
+      throw new Error('ui:foreground expects { terminalId } or { terminalId, focused }');
+    }
+    for (const key of keys) {
+      if (key !== 'terminalId' && key !== 'focused') {
+        throw new Error('ui:foreground expects { terminalId } or { terminalId, focused }');
+      }
+    }
+    if (!('terminalId' in payload)) {
+      throw new Error('ui:foreground expects a terminalId');
     }
     const { terminalId } = payload;
     if (terminalId !== null && typeof terminalId !== 'string') {
       throw new Error('ui:foreground expects a string terminalId or null');
     }
+    const reportedFocus = payload.focused;
+    if (reportedFocus !== undefined && typeof reportedFocus !== 'boolean') {
+      throw new Error('ui:foreground expects a boolean focused');
+    }
+    // Absent means not focused — the conservative default. See `foreground`.
+    const focused = reportedFocus ?? false;
 
-    if (foregroundTerminalId === terminalId) return;
-    foregroundTerminalId = terminalId;
+    const surfaceId = surfaceFor(event.sender);
+    const before = foreground.get(surfaceId);
+    if (before?.terminalId === terminalId && before.focused === focused) return;
+    foreground.set(surfaceId, { terminalId, focused });
     notifyForegroundChange();
   });
 
@@ -4783,7 +4845,7 @@ export function resetIpcHandlers(options: { flush?: boolean } = {}): void {
   // no listeners left over from a previous test — including the app-level
   // focus wiring and any tick it has already scheduled, which would otherwise
   // fire into the next test's handlers.
-  foregroundTerminalId = null;
+  foreground.clear();
   foregroundListeners.clear();
   unwatchWindowFocus?.();
   if (foregroundTick !== null) {

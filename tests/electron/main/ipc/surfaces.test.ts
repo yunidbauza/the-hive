@@ -278,6 +278,25 @@ describe('createSurfaceRegistry', () => {
     expect(gone).not.toHaveBeenCalled();
   });
 
+  it('re-tracks a surviving reporter after clear, rather than reusing a dead id', () => {
+    const surfaces = createSurfaceRegistry();
+    /*
+      A `WeakMap` has no `clear`, so an emptied registry that kept it would hand
+      back the old id for a reporter that outlived the teardown — a module-scope
+      test event, or the same `webContents` across a mode switch. Every
+      per-surface lookup would then miss while the surface looked tracked.
+    */
+    const reporter = fakeReporter();
+    const before = surfaces.trackWindow(reporter, vi.fn());
+
+    surfaces.clear();
+    const after = surfaces.trackWindow(reporter, vi.fn());
+
+    expect(after).not.toBe(before);
+    expect(surfaces.get(after)).toBeDefined();
+    expect(surfaces.size()).toBe(1);
+  });
+
   it('stops announcing to an unsubscribed listener', () => {
     const surfaces = createSurfaceRegistry();
     const gone = vi.fn();

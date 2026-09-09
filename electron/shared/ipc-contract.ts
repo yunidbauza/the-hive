@@ -3010,6 +3010,24 @@ export interface NotificationDismissedEvent {
  */
 export interface ForegroundReport {
   terminalId: string | null;
+  /**
+   * Whether the surface reporting this is itself focused (HIVE-145).
+   *
+   * Absent from a local renderer, and deliberately so: main reads a window's
+   * focus live from `BrowserWindow`, because a renderer-published boolean goes
+   * stale in exactly the case the suppression exists for — the window hidden,
+   * the app in the background, the renderer no longer running to update it.
+   *
+   * Present only on the way over a socket, stamped by the *client's* main
+   * process as it proxies, because that is the only process that can see that
+   * machine's windows. A served Mac usually has none of its own, so its
+   * `BrowserWindow` answer says nothing about the person at the far end.
+   *
+   * Absent is read as **not** focused. The failure that produces is a toast for
+   * a session the user was already watching; the opposite default's failure is
+   * silence about a session nobody is looking at.
+   */
+  focused?: boolean;
 }
 
 /**

@@ -897,7 +897,7 @@ describe('handlers that dereference the Electron event', () => {
   const REGISTRATION =
     /^\s*(?:handle|on)\(\s*CH\.(\w+)\s*,\s*(?:async\s+)?\(\s*([A-Za-z$][\w$]*)/gm;
 
-  it('is exactly the WINDOW_BOUND four that dereference it, plus the one adapted for a socket', () => {
+  it('is exactly the WINDOW_BOUND four that dereference it, plus the ones adapted for a socket', () => {
     const source = readFileSync(
       fileURLToPath(new URL('../../../../electron/main/ipc/index.ts', import.meta.url)),
       'utf8',
@@ -911,9 +911,22 @@ describe('handlers that dereference the Electron event', () => {
 
     /*
       `pty:prompt` is added: it uses the event for a surface *lifetime* rather
-      than for a window, and `watchReporter` accepts anything with an `.on`,
-      which `listener.ts` hands it. Refusing it would silently revert
+      than for a window, and the surface registry accepts anything with an
+      `.on`, which `listener.ts` hands it. Refusing it would silently revert
       HIVE-135's nudge holding for every remote session.
+
+      `ui:foreground` joined it in HIVE-145, for exactly the same reason and by
+      exactly the same mechanism: it needs to know *which* surface changed
+      stage, not which window, so it resolves the sender through
+      `surfaceFor` and a socket satisfies that as well as a `webContents` does.
+      Holding one `foregroundTerminalId` for every surface at once was the
+      defect; the event is how the handler learns whose stage it is being told
+      about.
+
+      The membership test is unchanged by that: a channel belongs in
+      `WINDOW_BOUND` when its effect lands on the machine that answers it while
+      the person who asked is at the other one. `ui:foreground` has no effect
+      on the answering machine at all — it records a fact about the asker.
 
       `configReveal` is subtracted (HIVE-144, Ruling 25) — the one
       `WINDOW_BOUND` entry that does *not* dereference the event.
@@ -927,7 +940,7 @@ describe('handlers that dereference the Electron event', () => {
       finds rather than what `WINDOW_BOUND`'s membership implies.
     */
     const expected = new Set(
-      [...Object.keys(WINDOW_BOUND), CH.ptyPrompt].filter(
+      [...Object.keys(WINDOW_BOUND), CH.ptyPrompt, CH.uiForeground].filter(
         (channel) => channel !== CH.configReveal,
       ),
     );

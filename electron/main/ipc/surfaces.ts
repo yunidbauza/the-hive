@@ -160,7 +160,7 @@ export function createSurfaceRegistry(): SurfaceRegistry {
   /** Socket handles, by id, so `sockets()` needs no cast back. */
   const handles = new Map<SurfaceId, AttachedSocket>();
   /** Identity → id, weak so a closed window's contents can be collected. */
-  const ids = new WeakMap<object, SurfaceId>();
+  let ids = new WeakMap<object, SurfaceId>();
   const goneListeners = new Set<(id: SurfaceId) => void>();
   const firstListeners = new Set<() => void>();
 
@@ -275,6 +275,15 @@ export function createSurfaceRegistry(): SurfaceRegistry {
     clear() {
       live.clear();
       handles.clear();
+      /*
+        Replaced, not merely emptied — a `WeakMap` has no `clear`, and leaving
+        it would be worse than a leak. A reporter that survives the teardown
+        (the same `webContents`, or a suite's module-scope fake event) would
+        still resolve to its old id, and `track` would hand that id back for a
+        surface no longer in `live` — so every per-surface lookup would miss
+        and the surface would be invisible while looking tracked.
+      */
+      ids = new WeakMap<object, SurfaceId>();
     },
   };
 }
