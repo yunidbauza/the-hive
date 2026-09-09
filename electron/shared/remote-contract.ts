@@ -676,6 +676,58 @@ export const CALL_GIVE_UP_MS = 135_000;
 /** {@link ErrorFrame.code} for a call `listener.ts` gave up on at {@link CALL_DEADLINE_MS}. */
 export const CALL_TIMEOUT_CODE = 'call-timeout';
 
+/**
+ * The most **any** frame on an attached socket may weigh — `ws`'s `maxPayload`
+ * on both ends, and therefore the ceiling an attached device's `call` and
+ * `notify` frames live under (HIVE-143 review).
+ *
+ * A bound, not an absence of one: `ws` defaults `maxPayload` to 100 MiB, and
+ * even an authorized device must not be able to make the server buffer that
+ * much per socket on demand. An attached client is trusted to *execute*
+ * (`DEVICE_GRANT` in `remote-dispatch.ts`), which is not the same as being
+ * trusted with that process's heap — a paired laptop with a bug in its send
+ * path is the ordinary case here, not an attacker.
+ *
+ * 8 MiB, derived from the worst-case **encoded** payload rather than picked
+ * (HIVE-143 review). The largest body any channel legitimately carries is a
+ * file, and `MAX_FILE_BYTES` (`electron/shared/fs-contract.ts`) caps that at
+ * 1,000,000 bytes — but what crosses this socket is not the file, it is the
+ * file *inside a JSON string*, and JSON spends six characters — a \uXXXX escape — on
+ * a single unprintable byte such as ESC. So the worst honest `fs:write-file` is
+ * 1,000,000 × 6 = 6,000,000 bytes of escaped text plus the envelope, and an
+ * earlier constant cited that six and then multiplied by four: an escape-dense
+ * file the editor is willing to open encoded to ~6 MB, exceeded the 4 MiB
+ * ceiling, and was refused by `ws` at 1009 — which does not refuse the *frame*,
+ * it drops the socket and every in-flight correlation id on it. 8 MiB
+ * (8,388,608) is the next power of two above 6,000,000 and leaves ~2.4 MB for
+ * `path`, `channel`, `id` and the JSON structure around them. Everything else on
+ * the wire is far smaller: `pty:write` carries a paste, `ledger:post` and
+ * `jira:add-comment` carry prose, and `pty:data` only ever travels the other way
+ * in `BATCH_FLUSH_BYTES`-sized batches.
+ *
+ * **Here rather than in `electron/remote-host/listener.ts`, where it was
+ * defined through HIVE-143 (HIVE-144).** It is a property of the wire, not of
+ * one end of it: the server hands it to `WebSocketServer` as `maxPayload`, and
+ * `electron/remote-client/socket.ts` checks its own outgoing `call` and
+ * `notify` frames against the same number before sending them, because a frame
+ * over this ceiling is not answered with an error — `ws` closes the connection
+ * at 1009 and takes every in-flight correlation id with it. Two copies of a
+ * number whose whole job is that both ends agree on it would be the defect the
+ * check exists to prevent, and `electron/remote-client/**` may not import
+ * `electron/remote-host/**` in any case.
+ *
+ * The trade the server makes, stated because it is the cost of fixing the bug
+ * above: an unauthenticated peer that clears the Origin/Host guard can make
+ * `ws` buffer up to this before `listener.ts`'s own `ATTACH_FRAME_MAX_BYTES`
+ * refuses it, where before that `maxPayload` bug it could buffer only 8 KiB.
+ * Per socket that is bounded by `ATTACH_HANDSHAKE_TIMEOUT_MS` and by the socket
+ * being closed the instant the oversized frame is inspected; in *aggregate* it
+ * is bounded by `MAX_UNATTACHED_SOCKETS`. All three of those stay in
+ * `listener.ts`: they bound the *unauthenticated* phase, which is the server's
+ * problem alone and means nothing to a client.
+ */
+export const POST_ATTACH_FRAME_MAX_BYTES = 8 * 1024 * 1024;
+
 /** A `notify`: client to server, no answer, ordered per session. */
 export interface NotifyFrame {
   kind: 'notify';

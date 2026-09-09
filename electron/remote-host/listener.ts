@@ -6,6 +6,7 @@ import type { ServerBindConfig, ServerDevice } from '@shared/config-contract';
 import {
   CALL_DEADLINE_MS,
   CALL_TIMEOUT_CODE,
+  POST_ATTACH_FRAME_MAX_BYTES,
   REMOTE_PROTOCOL_VERSION,
   type AttachRefused,
   type AttachRequest,
@@ -132,48 +133,6 @@ const MAX_UNATTACHED_SOCKETS = 8;
  * handshake-specific limit to a connection-wide option.
  */
 const ATTACH_FRAME_MAX_BYTES = 8 * 1024;
-
-/**
- * The most **any** frame on this socket may weigh — `ws`'s `maxPayload`, and
- * therefore the ceiling an attached device's `call` and `notify` frames live
- * under (HIVE-143 review).
- *
- * A bound, not an absence of one: `ws` defaults `maxPayload` to 100 MiB, and
- * even an authorized device must not be able to make this process buffer that
- * much per socket on demand. An attached client is trusted to *execute*
- * (`DEVICE_GRANT` in `remote-dispatch.ts`), which is not the same as being
- * trusted with this process's heap — a paired laptop with a bug in its send
- * path is the ordinary case here, not an attacker.
- *
- * 8 MiB, derived from the worst-case **encoded** payload rather than picked
- * (HIVE-143 review). The largest body any channel legitimately carries is a
- * file, and `MAX_FILE_BYTES` (`electron/shared/fs-contract.ts`) caps that at
- * 1,000,000 bytes — but what crosses this socket is not the file, it is the
- * file *inside a JSON string*, and JSON spends six characters — a \uXXXX escape — on
- * a single unprintable byte such as ESC. So the worst honest `fs:write-file` is
- * 1,000,000 × 6 = 6,000,000 bytes of escaped text plus the envelope, and the
- * previous constant cited that six and then multiplied by four: an escape-dense
- * file the editor is willing to open encoded to ~6 MB, exceeded the 4 MiB
- * ceiling, and was refused by `ws` at 1009 — which does not refuse the *frame*,
- * it drops the socket and every in-flight correlation id on it. 8 MiB
- * (8,388,608) is the next power of two above 6,000,000 and leaves ~2.4 MB for
- * `path`, `channel`, `id` and the JSON structure around them. Everything else on
- * the wire is far smaller: `pty:write` carries a paste, `ledger:post` and
- * `jira:add-comment` carry prose, and `pty:data` only ever travels the other way
- * in `BATCH_FLUSH_BYTES`-sized batches.
- *
- * The trade this makes, stated because it is the cost of fixing the bug above:
- * an unauthenticated peer that clears the Origin/Host guard can make `ws` buffer
- * up to this before {@link ATTACH_FRAME_MAX_BYTES} refuses it, where before the
- * `maxPayload` bug it could buffer only 8 KiB. Per socket that is bounded by
- * {@link ATTACH_HANDSHAKE_TIMEOUT_MS} and by the socket being closed the instant
- * the oversized frame is inspected; in *aggregate* it is bounded by
- * {@link MAX_UNATTACHED_SOCKETS}, which is the half the first version of this
- * comment left unbounded while claiming otherwise. The alternative — a
- * per-connection limit that tightens after attach — is not something `ws`
- * exposes without reaching into a `Receiver`'s private state.
- */
-const POST_ATTACH_FRAME_MAX_BYTES = 8 * 1024 * 1024;
 
 /**
  * How many bytes a `ws` message actually is, across the three shapes `ws` can
