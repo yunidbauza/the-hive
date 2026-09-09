@@ -7,7 +7,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { reloadConfig, setRemote } from '../../../../electron/main/config';
 import { parseConfig } from '../../../../electron/main/config/parse';
-import { CONFIG_PATH_ENV, DEFAULT_REMOTE } from '../../../../electron/shared/config-contract';
+import {
+  CONFIG_PATH_ENV,
+  DEFAULT_REMOTE,
+  isRemoteTarget,
+} from '../../../../electron/shared/config-contract';
 import { parseSetRemoteRequest } from '../../../../electron/shared/guards';
 
 /**
@@ -161,14 +165,14 @@ describe('setRemote', () => {
   it('creates the block on a file that has none', () => {
     seed('{\n  "version": 2\n}\n');
 
-    const snapshot = setRemote({ mode: 'remote' });
+    const snapshot = setRemote({ mode: 'remote', host: '100.64.0.1' });
 
     expect(snapshot.remote).toEqual({
       mode: 'remote',
-      host: DEFAULT_REMOTE.host,
+      host: '100.64.0.1',
       port: DEFAULT_REMOTE.port,
     });
-    expect(onDisk().remote).toEqual({ mode: 'remote' });
+    expect(onDisk().remote).toEqual({ mode: 'remote', host: '100.64.0.1' });
   });
 
   it('leaves the key absent until something is actually set', () => {
@@ -187,9 +191,13 @@ describe('setRemote', () => {
       '{\n  "version": 2,\n  "remote": { "mode": "local", "futureKey": "kept" }\n}\n',
     );
 
-    setRemote({ mode: 'remote' });
+    setRemote({ mode: 'remote', host: '100.64.0.1' });
 
-    expect(onDisk().remote).toEqual({ mode: 'remote', futureKey: 'kept' });
+    expect(onDisk().remote).toEqual({
+      mode: 'remote',
+      host: '100.64.0.1',
+      futureKey: 'kept',
+    });
   });
 
   it('preserves unrelated top-level keys and hand-written comments', () => {
@@ -197,20 +205,20 @@ describe('setRemote', () => {
       '{\n  "//mine": "a comment",\n  "version": 2,\n  "futureKey": "unknown",\n  "remote": { "mode": "local" }\n}\n',
     );
 
-    setRemote({ mode: 'remote' });
+    setRemote({ mode: 'remote', host: '100.64.0.1' });
 
     const after = onDisk();
     expect(after['//mine']).toBe('a comment');
     expect(after.futureKey).toBe('unknown');
-    expect(after.remote).toEqual({ mode: 'remote' });
+    expect(after.remote).toEqual({ mode: 'remote', host: '100.64.0.1' });
   });
 
   it('replaces a non-object block rather than merging into it', () => {
     seed('{\n  "version": 2,\n  "remote": "nope"\n}\n');
 
-    setRemote({ mode: 'remote' });
+    setRemote({ mode: 'remote', host: '100.64.0.1' });
 
-    expect(onDisk().remote).toEqual({ mode: 'remote' });
+    expect(onDisk().remote).toEqual({ mode: 'remote', host: '100.64.0.1' });
   });
 
   it('writes mode, host and port independently, one field at a time', () => {
@@ -243,46 +251,99 @@ describe('setRemote', () => {
   });
 
   /**
-   * Important-1 (fix-round regrade), reproduced end to end through
-   * `parseSetRemoteRequest` and the real writer, in both orderings the review
-   * named:
-   *
-   * - **Already remote, then a host-only save.** The config was put into
-   *   remote mode by an earlier, unrelated call; a later Settings save that
-   *   only touches `host` (the likely real shape — a text field's blur
-   *   handler) must not silently land an unvalidated host against the mode
-   *   that is already in effect.
-   * - **Just turned remote, then a host-only save.** Same shape, but the
-   *   mode-setting call happens immediately before rather than long before —
-   *   proving the refusal does not depend on how long ago `mode` was set.
-   *
-   * Before the fix, both wrote `{"mode":"remote","host":"evil.example.com"}`
-   * to disk. Now `parseSetRemoteRequest` refuses the host-only payload
-   * outright, so `setRemote` is never reached with it.
+   * A `{ mode: 'remote' }` payload with no host of its own, against a config
+   * that has never stored a valid one, cannot satisfy the invariant no matter
+   * what `host` defaults to — `DEFAULT_REMOTE.host` is `''`, which is not a
+   * remote target. The write is refused rather than silently landing
+   * `mode: 'remote'` next to an empty host.
    */
-  it('refuses a host-only save when the config is already in remote mode', () => {
-    seed(
-      '{\n  "version": 2,\n  "remote": { "mode": "remote", "host": "100.64.1.2", "port": 7433 }\n}\n',
-    );
-
-    expect(() => setRemote(parseSetRemoteRequest({ host: 'evil.example.com' }))).toThrow(
-      /setRemote\.host/,
-    );
-    expect(onDisk().remote).toEqual({
-      mode: 'remote',
-      host: '100.64.1.2',
-      port: 7433,
-    });
-  });
-
-  it('refuses a host-only save immediately after a mode-only call turned it remote', () => {
+  it('refuses turning remote mode on when no valid host has ever been stored', () => {
     seed('{\n  "version": 2\n}\n');
 
-    setRemote(parseSetRemoteRequest({ mode: 'remote' }));
-    expect(() => setRemote(parseSetRemoteRequest({ host: 'evil.example.com' }))).toThrow(
-      /setRemote\.host/,
-    );
-    expect(onDisk().remote).toEqual({ mode: 'remote' });
+    const snapshot = setRemote({ mode: 'remote' });
+
+    expect(snapshot.errors.join(' ')).toContain('remote.host');
+    expect(onDisk().remote).toBeUndefined();
+  });
+
+  /**
+   * The invariant, stated once in `setRemote`'s own doc comment: after any
+   * `config:set-remote`, if the effective mode is `'remote'`, the effective
+   * host satisfies `isRemoteTarget` — checked against the *merge*, not
+   * against any one payload's fields, so no sequence of otherwise-valid
+   * calls can assemble the forbidden pair one field at a time.
+   *
+   * Each row applies its payloads to a fresh file, in order, and asserts
+   * after **every** step — not just the last — that the file on disk never
+   * holds `mode: 'remote'` next to a host `isRemoteTarget` rejects. A step
+   * that violates it is expected to be refused (no throw — `setRemote`
+   * reports refusal through `ConfigSnapshot.errors`, the same as every other
+   * "the write conflicts with what is already on disk" check in this file),
+   * leaving the file exactly as the previous, valid step left it.
+   *
+   * This is the fix-round-2 regrade: rounds 1 and 2 each closed one payload
+   * shape (`{ host }` alone against an already-remote config; `{ mode:
+   * 'remote' }` alone after an earlier call stored an unvalidated host under
+   * `'local'`) by special-casing that shape. Both are the same defect through
+   * a different door, and a per-shape fix can always be walked around by a
+   * sequence that assembles the pair differently — which is exactly what
+   * rows 2 and 3 below are the two earlier "fixes," and rows 1, 4 and 5 are
+   * the shapes that were never named before this round.
+   */
+  const remoteInvariantSequences: ReadonlyArray<{
+    name: string;
+    payloads: readonly Record<string, unknown>[];
+  }> = [
+    {
+      name: 'local with a bad host stored first, then flip to remote (round-2 residual)',
+      payloads: [{ mode: 'local', host: 'evil.example.com' }, { mode: 'remote' }],
+    },
+    {
+      name: 'remote first (no host to give it), then a host-only save (round-1 shape, ordering A)',
+      payloads: [{ mode: 'remote' }, { host: 'evil.example.com' }],
+    },
+    {
+      name: 'a bad host stored first while mode is unset, then flip to remote (round-1 shape, ordering B)',
+      payloads: [{ host: 'evil.example.com' }, { mode: 'remote' }],
+    },
+    {
+      name: 'already remote with a good host, then a host-only save overwrites it with a bad one',
+      payloads: [
+        { mode: 'remote', host: '100.64.0.1' },
+        { host: 'evil.example.com' },
+      ],
+    },
+    {
+      name: 'remote-good, back to local, bad host stored while local, then flip to remote again',
+      payloads: [
+        { mode: 'remote', host: '100.64.0.1' },
+        { mode: 'local' },
+        { host: 'evil.example.com' },
+        { mode: 'remote' },
+      ],
+    },
+  ];
+
+  it.each(remoteInvariantSequences)('$name', ({ payloads }) => {
+    seed('{\n  "version": 2\n}\n');
+
+    for (const payload of payloads) {
+      setRemote(parseSetRemoteRequest(payload));
+
+      const remote = onDisk().remote;
+      const effectiveMode =
+        typeof remote === 'object' && remote !== null && !Array.isArray(remote)
+          ? (remote as Record<string, unknown>).mode
+          : undefined;
+      const effectiveHost =
+        typeof remote === 'object' && remote !== null && !Array.isArray(remote)
+          ? (remote as Record<string, unknown>).host
+          : undefined;
+
+      if (effectiveMode === 'remote') {
+        expect(isRemoteTarget(effectiveHost)).toBe(true);
+      }
+    }
   });
 
   /**

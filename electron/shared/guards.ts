@@ -18,7 +18,6 @@ import {
   isHostAlias,
   isOrigin,
   isProjectKey,
-  isRemoteTarget,
   isServerBindHost,
   unsafeEnvReason,
 } from './config-contract';
@@ -1459,31 +1458,36 @@ export function parseRevokeDeviceRequest(input: unknown): DeviceNameRequest {
 /**
  * Payload of `config:set-remote` (HIVE-144).
  *
- * Ruling 3 says `host` is checked against {@link isRemoteTarget} only when
- * the *effective* mode is `'remote'` — but this guard sees one incremental
- * patch, not the whole stored block, so "effective" cannot mean "this
- * payload's `mode` field." `optionalRemote` (`config/parse.ts`) parses one
- * complete, self-contained block, and an absent `mode` there truly means "no
- * mode was ever written" — the never-attached default. Here, an absent
- * `mode` means only "this call is not changing it," and the config `setRemote`
- * merges onto might already carry `mode: 'remote'` from an earlier call. A
- * fix-round review caught the gap this created: `{ host: 'evil.example.com' }`
- * alone — a host field's Settings save on blur, the most likely real
- * shape — validated as if local and landed the forbidden pair on disk once
- * merged onto a config already in remote mode.
+ * This guard validates **shape only** — `mode` is `'local'` or `'remote'`,
+ * `host` is a string, `port` is in range — and, as of fix-round 2, no longer
+ * enforces Ruling 3's "`host` must satisfy `isRemoteTarget` once mode is
+ * remote" rule at all. Two review rounds each closed one payload shape that
+ * broke that rule when it lived here: checking `request.mode` against
+ * `request.host` in isolation missed `{ host }` alone against a config
+ * already remote, and then missed `{ mode: 'remote' }` alone after an earlier
+ * call had legitimately stored an unvalidated host under `'local'`. Both are
+ * the same defect through a different door — a guard that sees one
+ * incremental patch can never resolve "effective mode" from that patch alone,
+ * because the config it merges onto is state this function does not have and
+ * must not be given (threading config reads into a shared, stateless guard
+ * module would be a bigger change than the bug warrants).
  *
- * So `host` **requires** `mode` in the same payload, rather than falling
- * back to a guessed default. That is stricter than `optionalRemote` needs to
- * be, and deliberately so: this guard has no access to the config `host` is
- * about to be merged into, so it cannot resolve "effective" any other way
- * without threading config state into a module that has never taken any.
- * Requiring the caller to restate `mode` alongside `host` is the one fix that
- * does not depend on knowing what is already on disk.
+ * The invariant now lives in exactly one place: `setRemote`
+ * (`electron/main/config/index.ts`), checked once against the merged result
+ * `writeConfig` is about to write — the only place that actually holds both
+ * the payload and the config it lands on. See that function's own doc
+ * comment for the property statement and why a single merged-state check
+ * closes every sequence of calls, not just the one shape a review happened
+ * to try.
  *
  * That is also why `host` takes no "must not be empty" check of its own:
  * {@link DEFAULT_REMOTE} carries `''`, and a payload restating `mode: 'local'`
  * alongside that empty default is the normal, never-attached state, not a
- * malformed request.
+ * malformed request — and it is also why a bare `{ host }` payload, with no
+ * `mode`, is accepted here again: a host-only save while the stored config is
+ * genuinely local is harmless (Ruling 3), and one that would leave the
+ * effective state remote-with-a-bad-host is caught by `setRemote`,
+ * regardless of which field this call happened to carry.
  *
  * Unlike `optionalRemote`, this guard salvages nothing on a bad field: the
  * payload arrives from a live form, not a file a human hand-edited, so one
@@ -1504,29 +1508,11 @@ export function parseSetRemoteRequest(input: unknown): SetRemoteRequest {
     mode = raw.mode;
   }
 
-  let host: string | undefined;
-  if (raw.host !== undefined) {
-    if (mode === undefined) {
-      // The hole a fix-round review found: an absent `mode` here does not
-      // mean "local" — it means "unspecified," and the config this merges
-      // onto may already be `'remote'`. Refusing rather than guessing is the
-      // only option that needs no knowledge of what is already stored.
-      return fail(
-        `setRemote.host: must be sent together with mode — this guard cannot tell whether the effective mode is local or remote without it, and validating host against the wrong assumption is exactly the bug this refusal exists to prevent`,
-      );
-    }
-    const value = assertString(raw.host, 'setRemote.host');
-    if (mode === 'remote' && !isRemoteTarget(value)) {
-      return fail(
-        `setRemote.host: must be loopback or a tailnet address — this socket is plaintext, so anything else would send a credential to the open internet`,
-      );
-    }
-    host = value;
-  }
-
   const request: SetRemoteRequest = {
     ...(mode !== undefined ? { mode } : {}),
-    ...(host !== undefined ? { host } : {}),
+    ...(raw.host !== undefined
+      ? { host: assertString(raw.host, 'setRemote.host') }
+      : {}),
     ...(raw.port !== undefined ? { port: assertPort(raw.port, 'setRemote.port') } : {}),
   };
 

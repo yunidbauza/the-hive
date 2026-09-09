@@ -14,6 +14,7 @@ import {
   DEFAULT_SUBSCRIPTION_AUTH,
   DEFAULT_PROJECT_ICON,
   emptySnapshot,
+  isRemoteTarget,
   projectAliases,
   type AddProjectRequest,
   type ConfigSnapshot,
@@ -1007,11 +1008,49 @@ export function setServerReportingWrite(
  * {@link setServer}'s mirror, field for field: the block is spread rather than
  * rebuilt so a key this build has not heard of survives a save made by this
  * one, and there is no credential key here — `remote:pair`'s job, stored in
- * `safeStorage`, never in this file. See `parseSetRemoteRequest`
- * (`shared/guards.ts`) for Ruling 3's rule, applied to the payload this
- * function receives already validated: `host` was checked against
- * `isRemoteTarget` there only when *this same request's* `mode` was
- * `'remote'`, so nothing further needs checking here.
+ * `safeStorage`, never in this file.
+ *
+ * ## The invariant this function owns (fix-round 2)
+ *
+ * **After this write, if the effective mode is `'remote'`, the effective host
+ * satisfies {@link isRemoteTarget}. No payload shape, and no sequence of
+ * payloads, may leave the stored config in violation.** "Effective" means the
+ * merged `current` below — what is actually about to be written — not
+ * whatever subset of fields this one call's `request` happens to carry.
+ *
+ * Two review rounds each closed one payload shape that violated an earlier,
+ * narrower version of this rule (checking only `request.mode` against
+ * `request.host`, inside `parseSetRemoteRequest`): `{ host }` alone while the
+ * stored config was already remote, and `{ mode: 'remote' }` alone after an
+ * earlier call had legitimately stored an unvalidated host under `'local'`.
+ * Both are the same defect through a different door — a per-shape check can
+ * always be walked around by a sequence of calls that assembles the forbidden
+ * pair one field at a time, because no single call ever carries the pair
+ * `parseSetRemoteRequest` would have refused if it saw both fields at once.
+ *
+ * So the check moved here, to the one place that actually holds the merged,
+ * about-to-be-written state, and runs exactly once against it — not per field,
+ * not per payload shape. `parseSetRemoteRequest` now validates only that
+ * `host` is a well-formed string and `mode` is `'local'` or `'remote'`; it no
+ * longer refuses a host-only payload, because that refusal bought nothing
+ * once this invariant holds: a host-only payload while the config is
+ * genuinely local is harmless (Ruling 3), and one that would leave the
+ * effective state remote-with-a-bad-host is caught right here, on the merged
+ * result, regardless of which field this particular call carried.
+ *
+ * `WriteRefused` — the same mechanism `addLocalDirectory`'s duplicate-path
+ * check and every duplicate-id check in this file use — because this is a
+ * check that "must see the current file" (`write.ts`'s own doc comment): the
+ * cached snapshot can be older than the file, so the merge has to happen
+ * against what `writeConfig` just re-read from disk, not against a payload in
+ * isolation. `writeConfig` converts the throw into an ordinary
+ * `{ ok: false, reason }` — nothing here throws at the user's data, and the
+ * old file is untouched on disk when this fires.
+ *
+ * Ruling 3 is otherwise unchanged: a config genuinely staying in `'local'`
+ * mode with an empty or unvalidated host produces no error, here or anywhere
+ * else — this function only ever refuses a merge whose *effective* mode is
+ * `'remote'`.
  */
 export function setRemote(request: SetRemoteRequest): ConfigSnapshot {
   return commit(
@@ -1029,6 +1068,21 @@ export function setRemote(request: SetRemoteRequest): ConfigSnapshot {
       if (request.mode !== undefined) current.mode = request.mode;
       if (request.host !== undefined) current.host = request.host;
       if (request.port !== undefined) current.port = request.port;
+
+      // The invariant, checked once against the merged result — see this
+      // function's own doc comment. `current.mode === 'remote'` rather than
+      // `!== 'local'`: anything else (absent, a hand-edited typo, a stale
+      // value from a build that predates this key) is not the literal string
+      // `'remote'` and resolves to `'local'` on read, the identical fallback
+      // `optionalRemote` (`config/parse.ts`) applies — the writer and the
+      // reader have to agree on what "effectively remote" means, or a value
+      // this function let through could still be refused, or the reverse,
+      // the moment the file is reloaded.
+      if (current.mode === 'remote' && !isRemoteTarget(current.host)) {
+        throw new WriteRefused(
+          `remote.host must be loopback or a tailnet address before mode can be "remote" — this socket is plaintext, so anything else would send a credential to the open internet`,
+        );
+      }
 
       return { ...draft, remote: current };
     }),

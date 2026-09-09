@@ -1331,6 +1331,16 @@ describe('parsePairDeviceRequest and parseRevokeDeviceRequest (HIVE-142)', () =>
  * checked against `isRemoteTarget` only when *this same request's* `mode`
  * names `'remote'`.
  */
+/**
+ * Fix-round 2: this guard validates shape only — `mode` is an enum, `host` is
+ * a string, `port` is in range. The Ruling 3 / `isRemoteTarget` invariant no
+ * longer lives here at all; it moved to `setRemote`
+ * (`electron/main/config/index.ts`), checked once against the merged result,
+ * because a guard that sees one payload can never resolve "effective mode"
+ * from that payload alone — see `parseSetRemoteRequest`'s own doc comment and
+ * `tests/electron/main/config/remote.test.ts`'s sequence-table coverage of
+ * the invariant itself.
+ */
 describe('parseSetRemoteRequest (HIVE-144)', () => {
   it('accepts mode alone', () => {
     expect(parseSetRemoteRequest({ mode: 'local' })).toEqual({ mode: 'local' });
@@ -1355,41 +1365,32 @@ describe('parseSetRemoteRequest (HIVE-144)', () => {
   });
 
   /**
-   * The fix-round regrade (Important-1): an absent `mode` alongside `host`
-   * used to be treated as `'local'` for validation purposes, which let a
-   * host-only payload — a text field's Settings save on blur, the likely
-   * real shape — through unvalidated while the config it merges onto was
-   * already `mode: 'remote'`. It is refused outright now, regardless of
-   * what mode the payload does or does not carry, because this guard has no
-   * way to know the config's actual current mode.
+   * The fix-round-1 refusal (host requires mode in the same payload) is gone
+   * as of fix-round 2: it bought nothing once `setRemote` checks the merged
+   * result, and a bare `{ host }` while the config is genuinely local is
+   * Ruling 3's ordinary case. This guard accepts any well-formed string here,
+   * host validity included — `setRemote`'s sequence-table tests are what
+   * prove a bad value can never reach disk paired with `mode: 'remote'`.
    */
-  it('refuses host without mode — this guard cannot resolve the effective mode without it', () => {
-    expect(() => parseSetRemoteRequest({ host: '' })).toThrow(/setRemote\.host/);
-    expect(() => parseSetRemoteRequest({ host: 'evil.example.com' })).toThrow(
-      /setRemote\.host/,
-    );
+  it('accepts host without mode — shape only; the invariant is setRemote’s job now', () => {
+    expect(parseSetRemoteRequest({ host: '' })).toEqual({ host: '' });
+    expect(parseSetRemoteRequest({ host: 'evil.example.com' })).toEqual({
+      host: 'evil.example.com',
+    });
   });
 
-  it('accepts a loopback or tailnet host when mode is remote', () => {
+  it('accepts any well-formed host string alongside mode: remote — value validity is setRemote’s job', () => {
     expect(parseSetRemoteRequest({ mode: 'remote', host: '127.0.0.1' })).toEqual({
       mode: 'remote',
       host: '127.0.0.1',
     });
     expect(
-      parseSetRemoteRequest({ mode: 'remote', host: 'mini.tail1234.ts.net' }),
-    ).toEqual({ mode: 'remote', host: 'mini.tail1234.ts.net' });
-  });
-
-  it('refuses a non-tailnet, non-loopback host when mode is remote', () => {
-    expect(() =>
       parseSetRemoteRequest({ mode: 'remote', host: 'evil.example.com' }),
-    ).toThrow(/setRemote\.host/);
+    ).toEqual({ mode: 'remote', host: 'evil.example.com' });
   });
 
-  it('does not salvage the good fields when host is bad — the whole request fails', () => {
-    expect(() =>
-      parseSetRemoteRequest({ mode: 'remote', host: 'evil.example.com', port: 7433 }),
-    ).toThrow(/setRemote\.host/);
+  it('refuses a non-string host', () => {
+    expect(() => parseSetRemoteRequest({ host: 7 })).toThrow(/setRemote\.host/);
   });
 
   it('accepts a port alone', () => {
@@ -1398,6 +1399,12 @@ describe('parseSetRemoteRequest (HIVE-144)', () => {
 
   it('refuses a port out of range', () => {
     expect(() => parseSetRemoteRequest({ port: 70_000 })).toThrow(/setRemote\.port/);
+  });
+
+  it('does not salvage the good fields when one is bad — the whole request fails', () => {
+    expect(() =>
+      parseSetRemoteRequest({ mode: 'both', host: '127.0.0.1', port: 7433 }),
+    ).toThrow(/setRemote\.mode/);
   });
 
   it('refuses a token key — there is no route for a credential on this channel', () => {
