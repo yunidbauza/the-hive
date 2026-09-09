@@ -162,10 +162,11 @@ import {
  *     remote mode through the very IPC channel that switch unbinds. Driven
  *     through the client's own renderer over the Chrome DevTools Protocol —
  *     see {@link openRenderer} for why that, and not a second `ws` client,
- *     is the only surface that can observe Ruling 24 at all. **It does not
- *     flip back**: case 21g pins the defect this task found — a detach is
- *     proxied to the server rather than applied to the window that asked —
- *     and 21h holds the criterion it blocks.
+ *     is the only surface that can observe Rulings 24 and 28 at all. Then it
+ *     flips back: 21g asserts the detach lands on *this* window and leaves
+ *     the server's config byte-for-byte alone — the direct inverse of the
+ *     defect this task found, where a detach was proxied to the server and a
+ *     client could enter remote mode and never leave it.
  * 22. A call that never settles is answered `call-timeout` at
  *     `CALL_DEADLINE_MS`. See {@link deadlineCall} for how that two-minute
  *     wait is paid for by the rest of the file rather than added to it.
@@ -2767,52 +2768,45 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       );
     }, 120_000);
 
-    it('21g. DEFECT: a detach is proxied to the server instead of applied to this window', async () => {
+    it('21g. flips back to local, and the detach never touches the server (HIVE-144, Ruling 28)', async () => {
       /*
-        ## What this case pins, and why it is written as a defect
+        ## The criterion, and the defect it used to hide
 
-        The brief's fifth case ends "…and flips back". **It does not.** This
-        block is the characterisation of what a real attached client actually
-        does when the user turns the Settings switch off, measured against two
-        real apps, and every assertion below is a fact this run observed rather
-        than a behaviour anyone designed.
+        This case was, for one commit, written the other way round: it pinned
+        what an attached client *actually did*, because it did not do this.
+        `CH.configSetRemote` was graded `mutate`, absent from `WINDOW_BOUND`
+        and absent from `PROCESS_LOCAL`, so `registerRemoteProxy` forwarded a
+        detach down the socket like any other write. The server parsed it, ran
+        its *own* `switchIpcMode('local')` (already local, so `{ ok: true }`),
+        wrote its *own* `config.json`, and handed back its *own* snapshot. The
+        pane read `switched.ok` and `config.remote.mode === 'local'`, both
+        true, and rendered success over a window that never detached — and
+        because the client's file still said `remote`, the next launch
+        reattached. A client could enter remote mode and never leave it.
 
-        `CH.configSetRemote` is graded `mutate` in `FRAME_KIND`/`DEVICE_GRANT`,
-        is not in `WINDOW_BOUND`, and — this is the bug — is **not in
-        `PROCESS_LOCAL`** either. So while a window is attached,
-        `registerRemoteProxy` forwards `config:set-remote` down the socket like
-        any other mutating channel, and the far machine runs it: the *server*
-        parses the payload, the *server* calls its own `switchIpcMode('local')`
-        (already local, so its early return answers `{ ok: true }`), the
-        *server* writes its own `config.json`, and the *server's* fresh
-        snapshot comes back as `SetRemoteResult.config`. The pane reads
-        `switched.ok` and `config.remote.mode === 'local'`, both true, and
-        renders a successful detach.
+        Ruling 28 put the channel on `PROCESS_LOCAL` and widened that list's
+        membership test from "every field of its payload describes this
+        process" to "reads or changes this process's own identity or
+        attachment", because the old wording could not classify a *command*
+        at all. `applySetRemote` (`electron/main/ipc/set-remote.ts`) is the one
+        body both surfaces call.
 
-        Nothing detached. This window is still attached, its own `config.json`
-        still says `remote`, and — because the file is what the next launch
-        reads — **relaunching reattaches it**. There is no sequence of
-        in-app actions that gets a client back to local mode.
-        `src/features/settings/components/server-mode-group.tsx`'s
-        `handleDetach` is the shipped path and sends exactly this payload.
+        ## What is asserted, and why the server's file is read
 
-        It is the same class of bug Ruling 24 fixed for `CH.appInfo`: a channel
-        that describes or acts on *this* process being answered by the other
-        one. The remedy looks like the same remedy — `config:set-remote` on
-        `PROCESS_LOCAL` — but it is not a one-liner, because unlike `appInfo`
-        the handler needs its payload and lives inside `registerIpcHandlers`,
-        which remote mode has already torn down. That is a design call for
-        review, not something a live-test task should decide, so this task
-        proves it and stops.
-
-        **When it is fixed, this case fails.** That is intended: its
-        assertions are the defect, and 21h below is the criterion. Delete this
-        one and drop the `.fails` from that one together.
+        Three things, and the third is the one no in-process test can reach:
+        the window is answered locally again; its runtime attachment readout
+        agrees; and the **server's `config.json` is byte-for-byte what it was**.
+        That last assertion is the direct inverse of the defect's own evidence
+        — the file used to grow a `"remote": { "mode": "local" }` block it
+        never had — so a regression that re-proxied this channel fails here
+        rather than merely somewhere.
       */
       assert(renderer !== undefined, 'the client app must have a renderer');
 
       const beforeServerConfig = readFileSync(serverConfigPath, 'utf8');
-      // Never had a `remote` block: the fixture in `beforeAll` writes none.
+      // The fixture in `beforeAll` writes no `remote` block at all, which is
+      // what makes the byte comparison below a sharp instrument rather than a
+      // comparison of two things that were always going to match.
       expect(beforeServerConfig).not.toContain('"remote"');
 
       const result = await bounded(
@@ -2820,79 +2814,97 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
         60_000,
         'setRemote back to local',
       );
-      // It answers, and it answers success — which is the whole trap.
+      /*
+        Bounded, for case 21d's reason and one more: this call is answered by
+        `registerRemoteProxy`'s own `ipcMain.handle`, and what it awaits
+        (`switchIpcMode`) unbinds that handler mid-flight. The failure mode is
+        a hang, and only a real Electron process can show the reply landing
+        anyway — the local surface's version of this is 21d, and this is the
+        proxy's.
+      */
       expect(result.switched).toEqual({ ok: true });
       expect(result.config.remote.mode).toBe('local');
 
-      /*
-        The smoking gun, and the reason this case reads a file rather than
-        inferring from a snapshot: the **server's** config.json has grown a
-        `remote` block it never had. Only the far process can have written
-        that, so the call provably executed over there.
-      */
-      const afterServerConfig = readFileSync(serverConfigPath, 'utf8');
-      const serverRemote = (JSON.parse(afterServerConfig) as { remote?: unknown }).remote;
-      expect(serverRemote).toEqual({ mode: 'local' });
-
-      // And this window is exactly where it was: still attached, still
-      // answered by the server, still recorded as remote in its own file.
-      const info = await renderer.evaluate<AppInfo>('window.hive.appInfo()');
-      expect(info.attachedServerName).toBe(hostname());
+      // Answering locally again: this window's own project is back, and the
+      // server's is gone from it.
       const config = await renderer.evaluate<ConfigSnapshot>('window.hive.config.get()');
-      expect(config.projects.map((project) => project.id)).toEqual([servedProjectId]);
+      expect(config.projects.map((project) => project.id)).toEqual([clientProjectId]);
+
+      // And the runtime readout agrees with the file, which is the pair
+      // `AppInfo.attachedServerName`'s doc comment says can disagree.
+      const info = await renderer.evaluate<AppInfo>('window.hive.appInfo()');
+      expect(info.attachedServerName).toBeNull();
+
+      // The client's own file is what the next launch reads, so this is the
+      // half that makes the detach survive a relaunch rather than only this
+      // session.
       const clientOnDisk = JSON.parse(readFileSync(clientConfigPath, 'utf8')) as {
         remote?: { mode?: string };
       };
-      expect(clientOnDisk.remote?.mode).toBe('remote');
+      expect(clientOnDisk.remote?.mode).toBe('local');
+
+      // The inverse of the defect's own evidence — see this case's comment.
+      const afterServerConfig = readFileSync(serverConfigPath, 'utf8');
+      expect(afterServerConfig).toBe(beforeServerConfig);
 
       measurements.push({
-        case: '21g. DEFECT: detach lands on the server',
-        answeredSwitched: result.switched,
-        serverRemoteBlockAfter: serverRemote,
+        case: '21g. detach applied locally, server untouched',
+        switched: result.switched,
         clientRemoteBlockAfter: clientOnDisk.remote,
-        stillAttachedTo: info.attachedServerName,
+        serverConfigUnchanged: afterServerConfig === beforeServerConfig,
+        attachedServerNameAfter: info.attachedServerName,
       });
     }, 120_000);
 
-    it.fails(
-      '21h. flips back to local (the acceptance criterion — expected to fail, see 21g)',
-      async () => {
-        /*
-          The brief's own words, asserted without softening, and marked
-          `.fails` rather than deleted or weakened: the suite stays green while
-          the defect stands, and turns red the moment someone fixes
-          `config:set-remote` — at which point this becomes an ordinary `it`
-          and 21g goes away. A green case asserting the criterion would have
-          required weakening it into something that is not the criterion, which
-          is the one outcome worse than a gap.
-        */
-        assert(renderer !== undefined, 'the client app must have a renderer');
-        await bounded(
-          renderer.evaluate<SetRemoteResult>("window.hive.config.setRemote({ mode: 'local' })"),
-          60_000,
-          'setRemote back to local',
-        );
+    it('21h. a detached client is answered by its own process again, end to end', async () => {
+      /*
+        21g proves the detach; this proves the surface it left behind is a
+        whole one rather than the one channel that was asked about. The
+        rebind-local arm of `switchIpcMode` re-registers *every* channel, and
+        a partial rebind — the failure `remote-composition.test.ts` asserts by
+        count in-process — looks exactly like a working app until the user
+        touches whichever channel is missing.
 
-        // Answering locally again: this window's own project is back, the
-        // server's is gone from it, and the runtime readout agrees.
-        const config = await renderer.evaluate<ConfigSnapshot>('window.hive.config.get()');
-        expect(config.projects.map((project) => project.id)).toEqual([clientProjectId]);
-        const info = await renderer.evaluate<AppInfo>('window.hive.appInfo()');
-        expect(info.attachedServerName).toBeNull();
-      },
-      120_000,
-    );
+        Three different layers, deliberately: a `read` off the config module, a
+        `PROCESS_LOCAL` channel that was answered locally even while attached
+        (so it must not have been *doubly* bound by the rebind), and an
+        `execute`-graded channel that reaches the pty layer this process
+        re-created. `pty:spawn` on the client's own project is the strongest of
+        the three: it can only be answered by a local sessions layer, which
+        `resetIpcHandlers` had disposed of.
+      */
+      assert(renderer !== undefined, 'the client app must have a renderer');
+
+      const info = await renderer.evaluate<AppInfo>('window.hive.appInfo()');
+      expect(info.attachedServerName).toBeNull();
+      expect(info.receiverBoundHost).not.toBeNull();
+
+      const status = await renderer.evaluate<{ state?: string }>('window.hive.updates.status()');
+      expect(status).toBeDefined();
+
+      const spawned = await bounded(
+        renderer.evaluate<{ ok: boolean; error?: string }>(
+          `window.hive.pty.spawn({ sessionId: 'after-detach', projectId: ${JSON.stringify(clientProjectId)}, cols: 80, rows: 24 })` +
+            `.then(() => ({ ok: true })).catch((e) => ({ ok: false, error: String(e && e.message ? e.message : e) }))`,
+        ),
+        60_000,
+        'pty:spawn on the detached client',
+      );
+      expect(spawned).toEqual({ ok: true });
+      measurements.push({ case: '21h. the local surface after a detach', spawned });
+
+      await renderer.evaluate("window.hive.pty.kill('after-detach')");
+    }, 120_000);
 
     it('21i. the server’s sessions keep running whatever the client does', async () => {
       /*
-        The half of the "flips back" criterion that is *not* blocked by 21g's
-        defect, and worth its own case rather than being lost with the rest:
-        the sessions a client watches belong to the other machine, so nothing a
-        client does to its own mode may touch them. `switchIpcMode`'s doc
-        comment says `remote → local` is never refused for exactly this reason
-        — this is that claim against the real thing. Driven over the raw
-        socket, which never detached, after two detach attempts have been made
-        through the window.
+        The last half of the "flips back" criterion: the sessions a client
+        watched belong to the other machine, so a detach must not touch them.
+        `switchIpcMode`'s doc comment says `remote → local` is never refused
+        for exactly this reason — there is nothing to strand, so nothing to
+        refuse over. This is that claim against the real thing, driven over the
+        raw socket, which never detached, after the window on the other
+        connection has detached and re-spawned a pty of its own.
       */
       assert(onServer !== undefined, 'case 21e must have opened a socket on the server');
       onServer.notify(CH.ptyWrite, {

@@ -236,11 +236,11 @@ describe('registerRemoteProxy', () => {
    * (`@shared/remote-contract`) for the full argument and the sweep that
    * settled on exactly these three.
    */
-  describe('PROCESS_LOCAL channels (HIVE-144, Ruling 24)', () => {
-    it('names exactly three channels', () => {
-      expect(PROCESS_LOCAL.length).toBe(3);
+  describe('PROCESS_LOCAL channels (HIVE-144, Rulings 24 and 28)', () => {
+    it('names exactly four channels', () => {
+      expect(PROCESS_LOCAL.length).toBe(4);
       expect([...PROCESS_LOCAL].sort()).toEqual(
-        ['app:info', 'updates:check', 'updates:status'].sort(),
+        ['app:info', 'config:set-remote', 'updates:check', 'updates:status'].sort(),
       );
     });
 
@@ -291,6 +291,47 @@ describe('registerRemoteProxy', () => {
       await expect(invoke('app:info', trustedEvent, undefined)).rejects.toThrow(
         /no localAppInfo supplied/,
       );
+      expect(client.call).not.toHaveBeenCalled();
+    });
+
+    /*
+      Ruling 28. The three above are reads; this one is the command, and it is
+      the only entry on this list whose payload matters — a local answer that
+      dropped it would detach a client that asked to be re-pointed, or
+      re-point one that asked to detach.
+    */
+    it('answers config:set-remote from localSetRemote, with the payload, never client.call', async () => {
+      const client = fakeClient();
+      const localSetRemote = vi.fn().mockResolvedValue('FAKE_SET_REMOTE_RESULT');
+      registerRemoteProxy({
+        client,
+        broadcaster: fakeBroadcaster(),
+        localAppInfo: fakeAppInfo,
+        localSetRemote,
+      });
+
+      await expect(
+        invoke('config:set-remote', trustedEvent, { mode: 'local' }),
+      ).resolves.toBe('FAKE_SET_REMOTE_RESULT');
+
+      expect(localSetRemote).toHaveBeenCalledExactlyOnceWith({ mode: 'local' });
+      expect(client.call).not.toHaveBeenCalled();
+    });
+
+    /*
+      The failure this guards is worse than `app:info`'s. Forwarding a detach
+      does not merely answer wrongly — it answers `{ ok: true }` for a detach
+      that never happened, which is exactly what the defect looked like from
+      the pane, so nothing downstream can tell the two apart. Loud, or not at
+      all.
+    */
+    it('rejects rather than forwarding config:set-remote when no localSetRemote is supplied', async () => {
+      const client = fakeClient();
+      registerRemoteProxy({ client, broadcaster: fakeBroadcaster() });
+
+      await expect(
+        invoke('config:set-remote', trustedEvent, { mode: 'local' }),
+      ).rejects.toThrow(/no localSetRemote supplied/);
       expect(client.call).not.toHaveBeenCalled();
     });
   });

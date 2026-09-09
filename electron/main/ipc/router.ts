@@ -12,6 +12,7 @@ import { getConfig } from '../config';
 
 import { createWindowBroadcaster, type Broadcaster } from './broadcaster';
 import { registerRemoteProxy, remoteProxyBindingsSize, resetRemoteProxy } from './remote-proxy';
+import { applySetRemote } from './set-remote';
 
 import {
   ipcBindingsSize,
@@ -78,6 +79,23 @@ export function registerIpc(mode: IpcMode, options: RegisterIpcOptions = {}): vo
       // answering from *this* process even once it stops answering anything
       // else (HIVE-144, Ruling 24).
       localAppInfo: localAppInfo ?? undefined,
+      /*
+        `CH.configSetRemote`, answered here rather than over the socket
+        (HIVE-144, Ruling 28).
+
+        Built fresh at each registration rather than captured the way
+        `localAppInfo` is, because unlike that one it closes over no
+        registration at all — `applySetRemote` reaches only config-module
+        functions and `switchIpcMode`, both of which outlive every teardown
+        this module performs. `switchIpcMode` is named directly, from inside
+        the module that defines it, which is what keeps this out of the
+        `import/no-cycle` bind that makes `localAppInfo` a handed-down value:
+        `remote-proxy.ts` cannot import this module back.
+
+        The reflexive call is the point and not an accident: this hands the
+        proxy a function whose job is to tear the proxy down.
+      */
+      localSetRemote: (payload) => applySetRemote(payload, switchIpcMode),
     });
     return;
   }

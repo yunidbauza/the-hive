@@ -32,9 +32,7 @@ import type {
   CommandDiagnostic,
   ConfigSnapshot,
   EnvDiagnostic,
-  RemoteMode,
   SetRemoteResult,
-  SwitchOutcome,
 } from '@shared/config-contract';
 import type {
   DirEntry,
@@ -85,7 +83,6 @@ import {
   parseSetJiraTokenRequest,
   parseRemotePairRequest,
   parseSetReceiverRequest,
-  parseSetRemoteRequest,
   parseSetServerRequest,
   parseSetSlackRequest,
   parseSetSlackTokensRequest,
@@ -190,7 +187,6 @@ import {
   setProjectKey,
   setProjectRuntime,
   setReceiver,
-  setRemote,
   setRuntime,
   setServer,
   setSlack,
@@ -265,6 +261,7 @@ import { createWindowBroadcaster, type Broadcaster } from './broadcaster';
 import { createIpcRegistry, type CallHandler } from './registry';
 import { createRemoteDispatch } from './remote-dispatch';
 import { assertSender } from './sender';
+import { applySetRemote, type ModeSwitcher } from './set-remote';
 import {
   createFanOutBroadcaster,
   createSocketBroadcaster,
@@ -362,21 +359,12 @@ export function readRemoteCredential(): StoredDeviceCredential | null {
 /**
  * How `config:set-remote` asks this process to change mode (HIVE-144).
  *
- * Structural, and declared here rather than imported from `./router`, because
- * that module already imports this one and `import/no-cycle` is an error.
- * `registerIpcHandlers` takes the real `switchIpcMode` as an argument — the
- * router owns which mode is bound, and the handler asks it rather than
- * reaching into it.
- *
- * Only `target` is named of the switch's own options: it is the one the
- * handler must pass, because Ruling 19 forbids writing the address to disk
- * until the switch has succeeded, so the stored config is the wrong place for
- * the switch to read it from here.
+ * Re-exported rather than declared here since Ruling 28: the verb's body moved
+ * to `./set-remote` so `registerRemoteProxy` can answer it too, and the type
+ * moved with it. Both callers name the same one, which is the point — a second
+ * structural declaration would be free to drift from the switcher it describes.
  */
-export type ModeSwitcher = (
-  mode: RemoteMode,
-  options?: { target?: { host: string; port: number } },
-) => Promise<SwitchOutcome>;
+export type { ModeSwitcher };
 
 /**
  * The default {@link ModeSwitcher}: a loud failure, never a quiet success.
@@ -3511,21 +3499,17 @@ export function registerIpcHandlers(
    * handler never touches `remoteTokenStore` — writing the credential is
    * `remote:pair`'s job below, not this one's.
    */
-  handle(CH.configSetRemote, async (_event, payload): Promise<SetRemoteResult> => {
-    const request = parseSetRemoteRequest(payload);
-    const current = getConfig().remote;
-    const switched = await switchMode(request.mode ?? current.mode, {
-      target: {
-        host: request.host ?? current.host,
-        port: request.port ?? current.port,
-      },
-    });
-    // The old snapshot, unchanged, on every refusal — the file was never
-    // opened. `getConfig()` rather than the `current` block above, because a
-    // pane needs the whole snapshot back either way.
-    if (!switched.ok) return { switched, config: getConfig() };
-    return { switched, config: setRemote(request) };
-  });
+  /*
+    The body lives in `./set-remote` since Ruling 28, not here, because
+    `registerRemoteProxy` has to answer this same channel from a process whose
+    local handlers have already been torn down — see {@link applySetRemote}
+    for why that is the one verb with two answering surfaces, and why copying
+    it into the proxy instead would have been a client that detaches
+    differently depending on the mode it asked from.
+  */
+  handle(CH.configSetRemote, (_event, payload): Promise<SetRemoteResult> =>
+    applySetRemote(payload, switchMode),
+  );
   /**
    * Store the device credential a `server:pair` mint on some *other* Hive
    * handed back (HIVE-144) — the opposite direction from `server:pair` above,

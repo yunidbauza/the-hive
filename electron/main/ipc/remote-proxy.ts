@@ -12,7 +12,7 @@ import { assertSender } from './sender';
 
 /**
  * What each `PROCESS_LOCAL` channel is actually answered with (HIVE-144,
- * Ruling 24).
+ * Rulings 24 and 28).
  *
  * `CH.updatesStatus` and `CH.updatesCheck` reach stable, already-a-singleton
  * module functions (`electron/main/updates/index.ts`'s own doc comment: "one
@@ -27,18 +27,31 @@ import { assertSender } from './sender';
  * inside one call to `registerIpcHandlers`), so it cannot be imported the
  * same way — `localAppInfo` is handed down instead, the same seam
  * `switchMode` already crosses for the identical reason.
+ *
+ * `CH.configSetRemote` is the fourth, added by Ruling 28, and it is the one
+ * that made this table take a **payload**. The other three are read verbs a
+ * renderer calls with nothing; this one carries `{ mode, host, port }` and is
+ * meaningless without it. It is handed down like `localAppInfo` rather than
+ * imported like `updateStatus` for a different reason from `localAppInfo`'s,
+ * worth stating because the shapes look alike: nothing about it is
+ * per-registration state — {@link applySetRemote} closes over no registration
+ * at all — but the switcher it needs is `router.ts`'s own `switchIpcMode`, and
+ * this module is on `router.ts`'s import graph already, so reaching back for
+ * it would close a cycle `import/no-cycle` refuses.
  */
 function localAnswerFor(
   channel: Channel,
-  localAppInfo: () => AppInfo,
-): (() => unknown | Promise<unknown>) | null {
+  deps: { localAppInfo: () => AppInfo; localSetRemote: (payload: unknown) => Promise<unknown> },
+): ((payload: unknown) => unknown | Promise<unknown>) | null {
   switch (channel) {
     case CH.appInfo:
-      return localAppInfo;
+      return () => deps.localAppInfo();
     case CH.updatesStatus:
-      return updateStatus;
+      return () => updateStatus();
     case CH.updatesCheck:
-      return checkForUpdatesInteractively;
+      return () => checkForUpdatesInteractively();
+    case CH.configSetRemote:
+      return (payload) => deps.localSetRemote(payload);
     default:
       return null;
   }
@@ -56,6 +69,26 @@ function noLocalAppInfo(): AppInfo {
   throw new Error(
     'registerRemoteProxy reached CH.appInfo with no localAppInfo supplied. ' +
       'registerRemoteProxy was called directly rather than through registerIpc.',
+  );
+}
+
+/**
+ * {@link noLocalAppInfo}'s sibling for `CH.configSetRemote` (Ruling 28), and
+ * it throws for a sharper reason than that one does.
+ *
+ * A missing `localAppInfo` would answer a placeholder that told a user the
+ * wrong version. A missing `localSetRemote` would have nowhere to go at all:
+ * the whole point of the channel being here is that forwarding it detaches
+ * nothing, so a default that quietly proxied would restore the exact defect
+ * Ruling 28 removed, and one that answered `{ ok: true }` would report a
+ * detach that never happened — which is what the defect *looked like*.
+ */
+function noLocalSetRemote(): Promise<never> {
+  return Promise.reject(
+    new Error(
+      'registerRemoteProxy reached CH.configSetRemote with no localSetRemote supplied. ' +
+        'registerRemoteProxy was called directly rather than through registerIpc.',
+    ),
   );
 }
 
@@ -105,19 +138,21 @@ let unsubscribe: (() => void) | null = null;
  * listener — so the stale first client would keep answering `pty:write`
  * alongside the new one, unbindable because nothing still references it.
  *
- * `localAppInfo` answers `CH.appInfo` (HIVE-144, Ruling 24) — see
- * `isProcessLocal`'s own doc comment for the three channels this bypasses the
- * socket for entirely, and why. Optional only so the many call sites in this
- * module's own test file that never touch those three channels do not all
- * need one; every production caller (`ipc/router.ts`'s `registerIpc`) passes
- * the real one, and {@link noLocalAppInfo} throws rather than answering
- * quietly wrong if a caller that skips `router.ts` ever does exercise
- * `CH.appInfo` without supplying it.
+ * `localAppInfo` answers `CH.appInfo` (HIVE-144, Ruling 24) and
+ * `localSetRemote` answers `CH.configSetRemote` (Ruling 28) — see
+ * `isProcessLocal`'s own doc comment for the four channels this bypasses the
+ * socket for entirely, and why. Both optional only so the many call sites in
+ * this module's own test file that never touch those channels do not all need
+ * one; every production caller (`ipc/router.ts`'s `registerIpc`) passes the
+ * real ones, and {@link noLocalAppInfo} and {@link noLocalSetRemote} fail
+ * loudly rather than answering quietly wrong if a caller that skips
+ * `router.ts` ever does exercise those channels without supplying them.
  */
 export function registerRemoteProxy(deps: {
   client: RemoteClient;
   broadcaster: Broadcaster;
   localAppInfo?: () => AppInfo;
+  localSetRemote?: (payload: unknown) => Promise<unknown>;
 }): void {
   if (bindings !== null) {
     throw new Error(
@@ -127,7 +162,12 @@ export function registerRemoteProxy(deps: {
     );
   }
 
-  const { client, broadcaster, localAppInfo = noLocalAppInfo } = deps;
+  const {
+    client,
+    broadcaster,
+    localAppInfo = noLocalAppInfo,
+    localSetRemote = noLocalSetRemote,
+  } = deps;
 
   bindings = createBindings(ipcMain);
 
@@ -147,7 +187,7 @@ export function registerRemoteProxy(deps: {
         every time, never depending on what the socket would have said.
       */
       const localAnswer = isProcessLocal(channel)
-        ? localAnswerFor(channel as Channel, localAppInfo)
+        ? localAnswerFor(channel as Channel, { localAppInfo, localSetRemote })
         : null;
 
       ipcMain.handle(channel, (event: IpcMainInvokeEvent, payload: unknown) => {
@@ -165,15 +205,31 @@ export function registerRemoteProxy(deps: {
         */
         if (reason !== null) return Promise.reject(new RemoteCallError('window-bound', reason));
         /*
-          Answered here, never forwarded (HIVE-144, Ruling 24): every field of
-          this channel's payload describes *this* process — see
-          `isProcessLocal`'s own doc comment — so the far end's answer would be
-          a plausible, wrong one, not merely an unreachable one the way
-          `WINDOW_BOUND`'s channels are. No `client.call` at all, not even a
-          discarded one: the round trip itself would be a socket the client
+          Answered here, never forwarded (HIVE-144, Rulings 24 and 28): this
+          channel reads or changes *this* process's own identity or attachment
+          — see `isProcessLocal`'s own doc comment — so the far end's answer
+          would be a plausible, wrong one, not merely an unreachable one the
+          way `WINDOW_BOUND`'s channels are. No `client.call` at all, not even
+          a discarded one: the round trip itself would be a socket the client
           did not need to spend.
+
+          `payload` is forwarded to the local answer rather than dropped, and
+          that is not symmetry for its own sake: `CH.configSetRemote` carries
+          `{ mode, host, port }` and means nothing without them. The three
+          read verbs beside it ignore what they are handed, exactly as their
+          local handlers do.
+
+          **This is also the one local answer that unbinds the handler running
+          it.** `applySetRemote` awaits `switchIpcMode`, whose every path calls
+          `unbindEverything()` — including `resetRemoteProxy()`, which removes
+          the very `ipcMain.handle` this closure is executing inside. That is
+          survivable for the reason the local surface's own copy of this
+          sequence is: `ipcMain.handle` resolves the promise it already
+          returned, and removing the handler afterwards cannot reach back into
+          a call in flight. Nothing below this line touches `bindings`, which
+          is `null` by the time the await returns.
         */
-        if (localAnswer !== null) return Promise.resolve(localAnswer());
+        if (localAnswer !== null) return Promise.resolve(localAnswer(payload));
         return client.call(channel as Channel, payload);
       });
       bindings.record(channel);

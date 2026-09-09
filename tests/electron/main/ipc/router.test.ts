@@ -119,6 +119,12 @@ describe('registerIpc', () => {
     expect(registerRemoteProxy).toHaveBeenCalledWith({
       client,
       broadcaster: { emit: expect.any(Function) },
+      // Ruling 28: the proxy answers `config:set-remote` itself, so the router
+      // has to hand it something that can. Asserted here rather than only in
+      // `remote-proxy.test.ts` because a router that stopped passing one would
+      // leave the proxy on its rejecting default — a detach that fails loudly
+      // instead of one that works.
+      localSetRemote: expect.any(Function),
     });
   });
 
@@ -134,7 +140,11 @@ describe('registerIpc', () => {
 
     registerIpc('remote', { client, broadcaster });
 
-    expect(registerRemoteProxy).toHaveBeenCalledWith({ client, broadcaster });
+    expect(registerRemoteProxy).toHaveBeenCalledWith({
+      client,
+      broadcaster,
+      localSetRemote: expect.any(Function),
+    });
   });
 
   it('refuses remote mode without a client, and registers nothing', () => {

@@ -518,10 +518,25 @@ describe('WINDOW_BOUND', () => {
  * exactly these three.
  */
 describe('PROCESS_LOCAL', () => {
-  it('names exactly three channels', () => {
+  it('names exactly four channels', () => {
     expect([...PROCESS_LOCAL].sort()).toEqual(
-      [CH.appInfo, CH.updatesStatus, CH.updatesCheck].sort(),
+      [CH.appInfo, CH.updatesStatus, CH.updatesCheck, CH.configSetRemote].sort(),
     );
+  });
+
+  /*
+    Named on its own, not merely counted (Ruling 28). `config:set-remote` is
+    the one entry that is a *command* rather than a read, and it is the one a
+    later sweep could most plausibly take back off this list on the grounds
+    that a `mutate` channel "obviously" belongs on the wire. It does not: a
+    client's detach forwarded to the server switches the server, writes the
+    server's config, answers `{ ok: true }`, and leaves the client attached
+    with its own file still saying `remote` — so it reattaches on the next
+    launch and can never get out. Proved against two real apps in
+    `tests/live/server-conformance.test.ts` (21g/21h).
+  */
+  it('answers config:set-remote locally, because attachment cannot live on the far end', () => {
+    expect(isProcessLocal(CH.configSetRemote)).toBe(true);
   });
 
   it('only ever names a call channel', () => {

@@ -543,17 +543,48 @@ export function windowBoundReason(channel: string): string | null {
  * Channels answered by this process itself even while attached, never
  * forwarded over the socket (HIVE-144, Ruling 24).
  *
- * A channel belongs here when **every field of its payload describes the
- * running process rather than the fleet it may be attached to** — this
- * window's own Electron/Chrome/Node build, its own log path, its own receiver
- * and server-mode binds, whether it is itself attached to something, its own
- * installed version against its own update track. `AppInfo` (`CH.appInfo`)
- * and `UpdateStatus` (`CH.updatesStatus`, `CH.updatesCheck`) are the three
- * channels on this branch that pass that test — see the sweep note on
- * `CH.updatesStatus`'s own history for the other candidates it does *not*
- * include and why (login environment, command diagnostics, config file
- * paths: all genuinely about the fleet, because sessions run on whichever
- * machine answers `pty:spawn`, not on the machine reading its own `AppInfo`).
+ * A channel belongs here when it **reads or changes this process's own
+ * identity or attachment**, rather than the fleet it may be attached to.
+ *
+ * **That test is wider than the one this list shipped with, and Ruling 28
+ * widened it for a defect a live test found rather than for tidiness.** The
+ * original wording was "every field of its *payload* describes the running
+ * process", which reads a channel as something that *returns* a fact and so
+ * cannot classify a **command** at all. `CH.configSetRemote` is that command,
+ * and it fell through: graded `mutate`, absent from `WINDOW_BOUND`, absent
+ * from here, so an attached client's "detach" was forwarded down the socket
+ * like any other write. The server parsed it, ran its *own*
+ * `switchIpcMode('local')` — already local, so `{ ok: true }` — wrote its own
+ * `config.json`, and handed back its own snapshot. The pane read
+ * `switched.ok` and rendered success; nothing detached, and because the
+ * client's own file still said `remote`, the next launch reattached. **A
+ * client could enter remote mode and never leave it**, this run or any later
+ * one (`tests/live/server-conformance.test.ts`, cases 21g/21h — two real
+ * apps, which is the only place this was observable).
+ *
+ * Attachment is the field the widened test turns on, and it is not a
+ * preference: *which machine this one is attached to* is a fact that cannot
+ * live on the far end **by definition**, because the far end is the thing
+ * being attached to. A server asked "are you attached?" answers about itself
+ * and is not wrong, only irrelevant — the same plausible-but-wrong shape a
+ * server's own Electron version has when it stands in for the client's.
+ *
+ * Four channels pass on this branch. `AppInfo` (`CH.appInfo`) and
+ * `UpdateStatus` (`CH.updatesStatus`, `CH.updatesCheck`) *read* this process's
+ * identity — its own Electron/Chrome/Node build, its own log path, its own
+ * receiver and server-mode binds, whether it is itself attached, its own
+ * installed version against its own update track. `CH.configSetRemote`
+ * *changes* this process's attachment, which is the half the original wording
+ * had no room for. See the sweep note on `CH.updatesStatus`'s own history for
+ * the candidates this list still does *not* include and why (login
+ * environment, command diagnostics, config file paths: all genuinely about
+ * the fleet, because sessions run on whichever machine answers `pty:spawn`,
+ * not on the machine reading its own `AppInfo`).
+ *
+ * A locally-answered channel is still **bound**, and its binding is still
+ * recorded — `registerRemoteProxy` swaps what the handler does, never whether
+ * one exists — so the binding counts Task 9 pins do not move when a channel
+ * joins this list.
  *
  * This is the same problem `WINDOW_BOUND` solves, and it rests on the same
  * observation — proxying some channels wholesale is wrong — but it needs the
@@ -587,8 +618,20 @@ export function windowBoundReason(channel: string): string | null {
  * is about the process, then it belongs here) or does it *cause an effect
  * somewhere* (refuse it, in `WINDOW_BOUND`, if the effect lands on whichever
  * machine answers rather than the one the user is sitting at)?
+ *
+ * `CH.configSetRemote` is the case that shows those two questions are not
+ * exhaustive, and where a third answer sits: it *causes an effect*, but the
+ * effect belongs on the near end and the near end can perform it, so it is
+ * neither proxied nor refused — it is **answered here**. `WINDOW_BOUND` would
+ * have been the wrong remedy: refusing a detach leaves a client just as stuck
+ * as forwarding it did.
  */
-export const PROCESS_LOCAL: readonly Channel[] = [CH.appInfo, CH.updatesStatus, CH.updatesCheck];
+export const PROCESS_LOCAL: readonly Channel[] = [
+  CH.appInfo,
+  CH.updatesStatus,
+  CH.updatesCheck,
+  CH.configSetRemote,
+];
 
 /** Whether `channel` must be answered by this process itself, never proxied. */
 export function isProcessLocal(channel: string): boolean {
