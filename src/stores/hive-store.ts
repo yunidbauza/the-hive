@@ -53,21 +53,23 @@ import {
   SESSION_ID_PREFIX_PATTERN,
   type AgentLinesPush,
   type AgentRunResult,
+  type AgentsSnapshot,
   type AgentStatus,
   type AgentStatusPush,
   type AgentSummary,
   type LiveRunSummary,
   type RunSummary,
 } from '@shared/agent-contract';
-import type { PrRecord } from '@shared/github-contract';
+import type { GhResult, PrRecord, PrsSnapshot } from '@shared/github-contract';
 import type { IdleDetail } from '@shared/hook-contract';
-import type { SessionNameReport } from '@shared/ipc-contract';
+import { CH, type Channel, type SessionNameReport } from '@shared/ipc-contract';
 import type { JiraIssue } from '@shared/jira-contract';
 import {
   LEDGER_MEMORY_CAP,
   type LedgerEntry,
   type LedgerReadQuery,
   type LedgerResult,
+  type LedgerSnapshot,
   type OpenAsk,
 } from '@shared/ledger-contract';
 import { matches, openAsks, thread } from '@shared/ledger-derive';
@@ -662,6 +664,40 @@ interface HiveState {
    * {@link Session.resumable} and asks main to `--resume` rather than begin.
    */
   resumeSession: (id: string) => void;
+  /**
+   * Apply an attach snapshot in one pass (HIVE-144).
+   *
+   * Walks the snapshot's **own keys** rather than `SNAPSHOT_CHANNELS`: the
+   * server drops keys from an oversized or slow snapshot by design (a
+   * snapshot is a convenience, not a precondition), so the payload
+   * legitimately arrives incomplete, and a newer server may send a channel
+   * this build has no handler for — walking the payload copes with both,
+   * silently skipping what it does not recognise rather than throwing.
+   *
+   * Dispatches each recognised channel to the hydrate action it already has,
+   * keeping every one of those actions' existing merge-or-replace behaviour
+   * untouched: `hydrateSessions`, `hydrateLedger` and `hydrateNotifs` merge,
+   * `hydrateAgents` and `hydratePrs` replace, because a server snapshot is
+   * authoritative for agents and PRs.
+   */
+  applyAttachSnapshot: (snapshot: Readonly<Partial<Record<Channel, unknown>>>) => void;
+  /**
+   * Drop the entities that belonged to the mode being left (HIVE-144).
+   *
+   * The exact inverse of {@link HiveActions.applyAttachSnapshot} over the same
+   * set — what it clears is what that action can repopulate: sessions,
+   * agents, the ledger tail, notifications and PRs. Clearing anything wider
+   * would drop state neither mode's snapshot ever fills back in; clearing
+   * anything narrower would leave a stale entity from the old mode standing
+   * after the switch.
+   *
+   * Deliberately leaves `tickets` (Jira, not a snapshot channel — both modes
+   * read the same query), `metrics` (a session's self-reported usage, keyed
+   * by an id that either goes away with its session or gets fresh reports
+   * once one exists again) and `orchLines` (the local console transcript,
+   * a property of this window, not of either mode) untouched.
+   */
+  clearModeEntities: () => void;
   reset: () => void;
 }
 
@@ -1516,6 +1552,43 @@ function rankTicketSearch(term: string, issues: JiraIssue[]): Ticket[] {
 
   return [tickets[at], ...tickets.slice(0, at), ...tickets.slice(at + 1)];
 }
+
+/**
+ * Where each {@link SNAPSHOT_CHANNELS} entry lands, and how its raw IPC shape
+ * becomes the argument the hydrate action it owns actually takes.
+ *
+ * Keyed on the channel constants rather than on a hand-written literal, so a
+ * channel renamed in `ipc-contract.ts` fails this file's build instead of
+ * silently going unmatched.
+ *
+ * `CH.configGet` has deliberately no entry: nothing in this store hydrates
+ * from the workspace config — `loadProjectConfig()` in `lib/project-config.ts`
+ * owns that read — so `applyAttachSnapshot` below falls through its "no
+ * action for this channel" branch for it exactly as it would for a channel
+ * this build has never heard of.
+ */
+const ATTACH_SNAPSHOT_HANDLERS: Partial<
+  Record<Channel, (value: unknown, store: HiveState) => void>
+> = {
+  [CH.sessionHistory]: (value, store) =>
+    store.hydrateSessions(value as SessionHistoryEntry[]),
+  [CH.agentsList]: (value, store) =>
+    store.hydrateAgents((value as AgentsSnapshot).agents),
+  [CH.ledgerList]: (value, store) =>
+    store.hydrateLedger((value as LedgerSnapshot).entries),
+  [CH.notificationsList]: (value, store) =>
+    store.hydrateNotifs(value as HiveNotification[]),
+  [CH.githubPrs]: (value, store) => {
+    const result = value as GhResult<PrsSnapshot>;
+    // A failed sweep on the server side is not this client's failure to
+    // report: `reportPrFailure` is for a fetch *this* window attempted and
+    // lost, and the server's own PR panel already carries that message.
+    // Silently keeping whatever PRs this store already has is the same
+    // "a snapshot is a convenience, not a precondition" rule the server's
+    // own `raceSnapshotRead` applies to a slow or broken read.
+    if (result.ok) store.hydratePrs(result.value.prs, result.value.repos);
+  },
+};
 
 export const useHiveStore = create<HiveState>()((set, get) => ({
   ...emptySeeds(),
@@ -4762,6 +4835,42 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
   clearTicketSearch: () => {
     ticketSearchTicket += 1;
     set({ ticketSearch: NO_TICKET_SEARCH });
+  },
+
+  applyAttachSnapshot: (snapshot) => {
+    const store = get();
+
+    // Walks the snapshot's own keys, not `SNAPSHOT_CHANNELS`: the server
+    // drops keys from an oversized or slow snapshot by design, so this
+    // payload can legitimately arrive with fewer than six of them, and a
+    // newer server may send a channel this build has no handler for.
+    // `ATTACH_SNAPSHOT_HANDLERS[channel]` is `undefined` for both cases, and
+    // the optional call below simply skips it rather than throwing.
+    for (const [channel, value] of Object.entries(snapshot) as Array<
+      [Channel, unknown]
+    >) {
+      ATTACH_SNAPSHOT_HANDLERS[channel]?.(value, store);
+    }
+  },
+
+  clearModeEntities: () => {
+    set({
+      // `entities` holds only sessions and agents (`Entity = Session |
+      // Agent`), so clearing it and both order arrays drops exactly what
+      // `hydrateSessions` and `hydrateAgents` can put back — nothing wider,
+      // nothing narrower.
+      entities: {},
+      order: [],
+      agentOrder: [],
+      notifs: [],
+      ledger: [],
+      prs: [],
+      // `hydratePrs` sets `prs` and `prSource` together; leaving the old
+      // mode's `prSource` standing would claim a source for a list that was
+      // just emptied. `{ kind: 'loading' }` is the same value `reset()` and
+      // this store's own initial state use for "nothing read yet".
+      prSource: { kind: 'loading' },
+    });
   },
 
   reset: () => {
