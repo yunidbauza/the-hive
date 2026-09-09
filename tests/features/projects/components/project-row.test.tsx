@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_JIRA,
   DEFAULT_RECEIVER,
+  DEFAULT_REMOTE,
   DEFAULT_SERVER,
   DEFAULT_SLACK,
   DEFAULT_NOTIFICATIONS,
@@ -66,6 +67,7 @@ function snapshot(projects: { id: string; status: ProjectStatus }[]): ConfigSnap
     jira: { ...DEFAULT_JIRA },
     receiver: { ...DEFAULT_RECEIVER },
     server: { ...DEFAULT_SERVER },
+    remote: { ...DEFAULT_REMOTE },
     slack: { ...DEFAULT_SLACK },
     subscriptionAuth: true,
   sessionMetrics: true,

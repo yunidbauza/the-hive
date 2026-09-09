@@ -7,6 +7,7 @@ import {
   DEFAULT_IMPORT_LOGIN_ENV,
   DEFAULT_JIRA,
   DEFAULT_RECEIVER,
+  DEFAULT_REMOTE,
   DEFAULT_SERVER,
   DEFAULT_SESSION_METRICS,
   DEFAULT_SLACK,
@@ -171,6 +172,13 @@ export function loadConfig(): ConfigSnapshot {
       bind: { ...DEFAULT_SERVER.bind, ...parsed.server?.bind },
       devices: parsed.server?.devices ?? [],
     },
+    // Defaults *under* whatever the file named, exactly as `jira` and
+    // `receiver` do above (HIVE-144) — a plain spread suffices, since `remote`
+    // has no nested block and no array field the way `server` does. Every
+    // config written before this story has no `remote` key at all, so this is
+    // the line that makes `DEFAULT_REMOTE` — `mode: 'local'`, no target — the
+    // outcome for every existing install rather than `undefined`.
+    remote: { ...DEFAULT_REMOTE, ...parsed.remote },
     // Defaults *under* whatever the file named, exactly as `jira` and
     // `receiver` do above (HIVE-124). A plain spread suffices here too.
     slack: { ...DEFAULT_SLACK, ...parsed.slack },

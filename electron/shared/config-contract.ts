@@ -1190,6 +1190,18 @@ export interface ConfigSnapshot {
    */
   server: ServerConfig;
   /**
+   * How this window reaches its own PTYs, always fully resolved (HIVE-144).
+   *
+   * Defaulted here for the same reason `server` is: main reads
+   * `remote.mode` at boot to decide whether to spawn PTYs locally or attach
+   * as a client, and a consumer that had to remember to apply defaults is one
+   * that will eventually forget on one branch. There is no separate `mode`
+   * field on this snapshot — `remote.mode` is the one stored value, so a
+   * reader that wants a flatter shape gets a derived getter, never a second
+   * place for the same fact to drift from this one.
+   */
+  remote: RemoteConfig;
+  /**
    * Real-time Slack events, always fully resolved (HIVE-124).
    *
    * Defaulted here for the reason `jira` and `receiver` are: main reads it on
@@ -1671,6 +1683,9 @@ export function emptySnapshot(
     // one shared array instance handed to every empty snapshot is exactly
     // what `readServerDevicesFromDisk`'s own doc comment warns against.
     server: { ...DEFAULT_SERVER, devices: [] },
+    // No array field to worry about the way `server.devices` is — a plain
+    // spread is the whole story.
+    remote: { ...DEFAULT_REMOTE },
     slack: { ...DEFAULT_SLACK },
     errors: [],
   };

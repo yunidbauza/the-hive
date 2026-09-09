@@ -21,6 +21,7 @@ import {
   DEFAULT_SUBSCRIPTION_AUTH,
   DEFAULT_JIRA,
   DEFAULT_RECEIVER,
+  DEFAULT_REMOTE,
   DEFAULT_SERVER,
   DEFAULT_SLACK,
   type ConfigSnapshot,
@@ -322,6 +323,15 @@ export function writeConfig(
         bind: { ...DEFAULT_SERVER.bind, ...validated.server?.bind },
         devices: validated.server?.devices ?? [],
       },
+      /*
+        Resolved here as well as in `loadConfig` (HIVE-144), for the same
+        reason `receiver` and `server` are: this snapshot is the one every
+        mutating verb returns and becomes the cache, and a block resolved on
+        only the read path would leave every settings write answering with a
+        partial `remote`. A plain spread suffices — no nested block, no array
+        field the way `server` has.
+      */
+      remote: { ...DEFAULT_REMOTE, ...validated.remote },
       /*
         Resolved here as well as in `loadConfig` (HIVE-124), for the same
         reason `receiver` is: this snapshot is the one every mutating verb
