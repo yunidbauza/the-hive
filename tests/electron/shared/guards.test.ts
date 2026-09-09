@@ -16,6 +16,7 @@ import {
   parseRenameProjectRequest,
   parseReorderProjectsRequest,
   parsePairDeviceRequest,
+  parseRemotePairRequest,
   parseRepointProjectRequest,
   parseResizeRequest,
   parseRevokeDeviceRequest,
@@ -23,6 +24,7 @@ import {
   parseSetProjectKeyRequest,
   parseSetProjectRuntimeRequest,
   parseSetReceiverRequest,
+  parseSetRemoteRequest,
   parseSetServerRequest,
   parseSetSlackRequest,
   parseSetSlackTokensRequest,
@@ -1320,6 +1322,125 @@ describe('parsePairDeviceRequest and parseRevokeDeviceRequest (HIVE-142)', () =>
     ['revoke', parseRevokeDeviceRequest],
   ] as const)('%s refuses a missing name', (_label, parse) => {
     expect(() => parse({})).toThrow(/missing key/);
+  });
+});
+
+/**
+ * `config:set-remote` (HIVE-144) — `setServer`'s mirror, and Ruling 3's rule
+ * applied to a live payload rather than a hand-edited file: `host` is
+ * checked against `isRemoteTarget` only when *this same request's* `mode`
+ * names `'remote'`.
+ */
+describe('parseSetRemoteRequest (HIVE-144)', () => {
+  it('accepts mode alone', () => {
+    expect(parseSetRemoteRequest({ mode: 'local' })).toEqual({ mode: 'local' });
+    expect(parseSetRemoteRequest({ mode: 'remote' })).toEqual({ mode: 'remote' });
+  });
+
+  it('refuses a mode that is neither local nor remote', () => {
+    expect(() => parseSetRemoteRequest({ mode: 'both' })).toThrow(/setRemote\.mode/);
+  });
+
+  /**
+   * Ruling 3, the case the ticket calls out by name: every install that has
+   * never attached carries `mode: 'local'` alongside `DEFAULT_REMOTE`'s empty
+   * `host`, and a payload restating that pair is the ordinary state, not a
+   * malformed request.
+   */
+  it('accepts an empty host when mode is local', () => {
+    expect(parseSetRemoteRequest({ mode: 'local', host: '' })).toEqual({
+      mode: 'local',
+      host: '',
+    });
+  });
+
+  it('accepts an empty host when mode is absent, defaulting to local for this check', () => {
+    expect(parseSetRemoteRequest({ host: '' })).toEqual({ host: '' });
+  });
+
+  it('accepts a loopback or tailnet host when mode is remote', () => {
+    expect(parseSetRemoteRequest({ mode: 'remote', host: '127.0.0.1' })).toEqual({
+      mode: 'remote',
+      host: '127.0.0.1',
+    });
+    expect(
+      parseSetRemoteRequest({ mode: 'remote', host: 'mini.tail1234.ts.net' }),
+    ).toEqual({ mode: 'remote', host: 'mini.tail1234.ts.net' });
+  });
+
+  it('refuses a non-tailnet, non-loopback host when mode is remote', () => {
+    expect(() =>
+      parseSetRemoteRequest({ mode: 'remote', host: 'evil.example.com' }),
+    ).toThrow(/setRemote\.host/);
+  });
+
+  it('does not salvage the good fields when host is bad — the whole request fails', () => {
+    expect(() =>
+      parseSetRemoteRequest({ mode: 'remote', host: 'evil.example.com', port: 7433 }),
+    ).toThrow(/setRemote\.host/);
+  });
+
+  it('accepts a port alone', () => {
+    expect(parseSetRemoteRequest({ port: 7433 })).toEqual({ port: 7433 });
+  });
+
+  it('refuses a port out of range', () => {
+    expect(() => parseSetRemoteRequest({ port: 70_000 })).toThrow(/setRemote\.port/);
+  });
+
+  it('refuses a token key — there is no route for a credential on this channel', () => {
+    expect(() => parseSetRemoteRequest({ token: 'secret' })).toThrow(/unexpected key/);
+  });
+
+  it('refuses an unexpected key', () => {
+    expect(() => parseSetRemoteRequest({ nope: 1 })).toThrow(/unexpected key/);
+  });
+
+  it('rejects a request that changes nothing', () => {
+    expect(() => parseSetRemoteRequest({})).toThrow(/nothing to change/);
+  });
+});
+
+/**
+ * `remote:pair` (HIVE-144) — the opposite direction from
+ * `parsePairDeviceRequest`: this one takes the `deviceId`/`token` pair a
+ * `server:pair` mint on some *other* machine handed back, not a free-text
+ * name typed by a person.
+ */
+describe('parseRemotePairRequest (HIVE-144)', () => {
+  it('accepts a well-formed pair', () => {
+    expect(
+      parseRemotePairRequest({ deviceId: 'dev-1', token: 'K7QM-3XTV-9WHZ-2BNP' }),
+    ).toEqual({ deviceId: 'dev-1', token: 'K7QM-3XTV-9WHZ-2BNP' });
+  });
+
+  it('refuses a malformed deviceId', () => {
+    expect(() =>
+      parseRemotePairRequest({ deviceId: '../etc', token: 'tok' }),
+    ).toThrow(/remotePair\.deviceId/);
+  });
+
+  it('refuses an empty token', () => {
+    expect(() => parseRemotePairRequest({ deviceId: 'dev-1', token: '' })).toThrow(
+      /remotePair\.token/,
+    );
+  });
+
+  it('refuses a token with non-printable-ASCII content', () => {
+    expect(() =>
+      parseRemotePairRequest({ deviceId: 'dev-1', token: 'has space' }),
+    ).toThrow(/remotePair\.token/);
+  });
+
+  it('refuses a missing key', () => {
+    expect(() => parseRemotePairRequest({ deviceId: 'dev-1' })).toThrow(/missing key/);
+    expect(() => parseRemotePairRequest({ token: 'tok' })).toThrow(/missing key/);
+  });
+
+  it('refuses an unexpected key', () => {
+    expect(() =>
+      parseRemotePairRequest({ deviceId: 'dev-1', token: 'tok', extra: 1 }),
+    ).toThrow(/unexpected key/);
   });
 });
 

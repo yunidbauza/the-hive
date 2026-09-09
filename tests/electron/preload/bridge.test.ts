@@ -13,6 +13,7 @@ import {
   BRIDGE_LEDGER_KEYS,
   BRIDGE_NOTIFICATIONS_KEYS,
   BRIDGE_PTY_KEYS,
+  BRIDGE_REMOTE_KEYS,
   BRIDGE_SERVER_KEYS,
   BRIDGE_SESSION_KEYS,
   BRIDGE_SKILLS_KEYS,
@@ -102,6 +103,8 @@ const ui = () =>
 
 const server = () =>
   exposed.server as Record<string, (...args: unknown[]) => unknown>;
+const remote = () =>
+  exposed.remote as Record<string, (...args: unknown[]) => unknown>;
 const session = () =>
   exposed.session as Record<string, (...args: unknown[]) => unknown>;
 const ledger = () =>
@@ -123,6 +126,16 @@ describe('exposed surface', () => {
      * quietly.
      */
     expect(Object.keys(server()).sort()).toEqual([...BRIDGE_SERVER_KEYS].sort());
+    /**
+     * HIVE-144's namespace. **Not** `server` above despite sharing a verb
+     * name: `pair` here stores a credential this device was *given*, for
+     * attaching outward as a client, rather than minting one for a device
+     * this machine admits. `pair` and `forget` are the two verbs; a third
+     * here is a change to what this window can do with the credential a
+     * remote server handed it, and this line is what stops it arriving
+     * quietly.
+     */
+    expect(Object.keys(remote()).sort()).toEqual([...BRIDGE_REMOTE_KEYS].sort());
     expect(Object.keys(integrations()).sort()).toEqual([
       ...BRIDGE_INTEGRATIONS_KEYS,
     ].sort());

@@ -18,6 +18,7 @@ import {
   isHostAlias,
   isOrigin,
   isProjectKey,
+  isRemoteTarget,
   isServerBindHost,
   unsafeEnvReason,
 } from './config-contract';
@@ -29,6 +30,8 @@ import type {
   DiagnoseCommandRequest,
   DiagnoseEnvRequest,
   ReceiverBindConfig,
+  RemoteMode,
+  RemotePairRequest,
   RemoveProjectRequest,
   RenameProjectRequest,
   ReorderProjectsRequest,
@@ -46,6 +49,7 @@ import type {
   SetProjectKeyRequest,
   SetProjectRuntimeRequest,
   SetReceiverRequest,
+  SetRemoteRequest,
   SetRuntimeRequest,
   SetServerRequest,
   SetSlackRequest,
@@ -1450,6 +1454,80 @@ export function parsePairDeviceRequest(input: unknown): DeviceNameRequest {
 export function parseRevokeDeviceRequest(input: unknown): DeviceNameRequest {
   const raw = assertShape(input, ['name'], 'serverRevoke');
   return { name: assertText(raw.name, 'serverRevoke.name') };
+}
+
+/**
+ * Payload of `config:set-remote` (HIVE-144).
+ *
+ * Ruling 3, restated for a live payload rather than a hand-edited file:
+ * `host` is checked against {@link isRemoteTarget} only when *this same
+ * payload's* `mode` names `'remote'`. An absent `mode` is treated as
+ * `'local'` for that one purpose — `optionalRemote` (`config/parse.ts`) makes
+ * the identical choice reading the file, and the two have to agree or a value
+ * Settings just wrote here would be refused reading it back. That is also why
+ * `host` takes no "must not be empty" check of its own: {@link DEFAULT_REMOTE}
+ * carries `''`, and a payload restating `mode: 'local'` alongside that empty
+ * default is the normal, never-attached state, not a malformed request.
+ *
+ * Unlike `optionalRemote`, this guard salvages nothing on a bad field: the
+ * payload arrives from a live form, not a file a human hand-edited, so one
+ * bad field fails the whole request — the same rule {@link
+ * parseSetServerRequest} applies to its own three fields.
+ *
+ * There is no token field, and there never will be: `remote:pair` is the only
+ * verb that ever writes one, and it writes to `safeStorage`, never here.
+ */
+export function parseSetRemoteRequest(input: unknown): SetRemoteRequest {
+  const raw = assertShape(input, [], 'setRemote', ['mode', 'host', 'port']);
+
+  let mode: RemoteMode | undefined;
+  if (raw.mode !== undefined) {
+    if (raw.mode !== 'local' && raw.mode !== 'remote') {
+      return fail(`setRemote.mode: expected "local" or "remote"`);
+    }
+    mode = raw.mode;
+  }
+
+  let host: string | undefined;
+  if (raw.host !== undefined) {
+    const value = assertString(raw.host, 'setRemote.host');
+    if (mode === 'remote' && !isRemoteTarget(value)) {
+      return fail(
+        `setRemote.host: must be loopback or a tailnet address — this socket is plaintext, so anything else would send a credential to the open internet`,
+      );
+    }
+    host = value;
+  }
+
+  const request: SetRemoteRequest = {
+    ...(mode !== undefined ? { mode } : {}),
+    ...(host !== undefined ? { host } : {}),
+    ...(raw.port !== undefined ? { port: assertPort(raw.port, 'setRemote.port') } : {}),
+  };
+
+  if (Object.keys(request).length === 0) {
+    return fail('setRemote: nothing to change');
+  }
+  return request;
+}
+
+/**
+ * Payload of `remote:pair` (HIVE-144).
+ *
+ * The opposite direction from {@link parsePairDeviceRequest}: that one takes a
+ * free-text name typed by a person; this one takes the two values a
+ * `server:pair` mint on some *other* machine handed back — a `deviceId` this
+ * app already recognises as an id (`assertId`, the same guard every session
+ * and project id on this bridge takes), and a `token`, which is exactly the
+ * "credential in a payload" shape {@link assertJiraToken} was generalised to
+ * describe, not anything specific to Jira.
+ */
+export function parseRemotePairRequest(input: unknown): RemotePairRequest {
+  const raw = assertShape(input, ['deviceId', 'token'], 'remotePair');
+  return {
+    deviceId: assertId(raw.deviceId, 'remotePair.deviceId'),
+    token: assertJiraToken(raw.token, 'remotePair.token'),
+  };
 }
 
 /**

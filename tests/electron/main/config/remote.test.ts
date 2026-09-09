@@ -1,11 +1,11 @@
 // @vitest-environment node
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { reloadConfig } from '../../../../electron/main/config';
+import { reloadConfig, setRemote } from '../../../../electron/main/config';
 import { parseConfig } from '../../../../electron/main/config/parse';
 import { CONFIG_PATH_ENV, DEFAULT_REMOTE } from '../../../../electron/shared/config-contract';
 
@@ -82,9 +82,9 @@ describe('remote resolution', () => {
  * The reader, tested against real files — the same rationale `server.test.ts`
  * and `receiver.test.ts` state: every property worth proving here is a
  * property of the *file*, and `loadConfig` (not a hand-rolled merge formula)
- * is the code path that ships. There is no `setRemote` yet — the mode switch
- * that will write this block is a later task — so this section covers only
- * the read side.
+ * is the code path that ships. `setRemote` — the mode switch's writer,
+ * HIVE-144's Task 5 — gets its own `describe` blocks below, once this
+ * section's harness (`seed`, `path`) is in scope.
  */
 
 const originalConfigPath = process.env[CONFIG_PATH_ENV];
@@ -141,5 +141,134 @@ describe('the remote block on a real snapshot', () => {
 
     expect(snapshot.remote).toEqual(DEFAULT_REMOTE);
     expect(snapshot.errors).toEqual([]);
+  });
+});
+
+const onDisk = (): Record<string, unknown> =>
+  JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+
+/**
+ * The writer (HIVE-144, Task 5) — `setServer`'s mirror, field for field, and
+ * the same rationale `server.test.ts`'s `describe('setServer', …)` states:
+ * every property worth proving here is a property of the *file*. There is no
+ * credential field: `parseSetRemoteRequest` refuses one before this function
+ * ever sees a request, so nothing here needs to prove `remoteTokenStore` was
+ * left alone — the payload type makes that unreachable rather than merely
+ * untested.
+ */
+describe('setRemote', () => {
+  it('creates the block on a file that has none', () => {
+    seed('{\n  "version": 2\n}\n');
+
+    const snapshot = setRemote({ mode: 'remote' });
+
+    expect(snapshot.remote).toEqual({
+      mode: 'remote',
+      host: DEFAULT_REMOTE.host,
+      port: DEFAULT_REMOTE.port,
+    });
+    expect(onDisk().remote).toEqual({ mode: 'remote' });
+  });
+
+  it('leaves the key absent until something is actually set', () => {
+    seed('{\n  "version": 2\n}\n');
+
+    // Reading is not writing: the default is applied in memory only.
+    expect(onDisk().remote).toBeUndefined();
+  });
+
+  /**
+   * The promise `setRemote`'s doc comment makes, and the reason it spreads
+   * the block rather than rebuilding it.
+   */
+  it('preserves a sibling key this build does not know', () => {
+    seed(
+      '{\n  "version": 2,\n  "remote": { "mode": "local", "futureKey": "kept" }\n}\n',
+    );
+
+    setRemote({ mode: 'remote' });
+
+    expect(onDisk().remote).toEqual({ mode: 'remote', futureKey: 'kept' });
+  });
+
+  it('preserves unrelated top-level keys and hand-written comments', () => {
+    seed(
+      '{\n  "//mine": "a comment",\n  "version": 2,\n  "futureKey": "unknown",\n  "remote": { "mode": "local" }\n}\n',
+    );
+
+    setRemote({ mode: 'remote' });
+
+    const after = onDisk();
+    expect(after['//mine']).toBe('a comment');
+    expect(after.futureKey).toBe('unknown');
+    expect(after.remote).toEqual({ mode: 'remote' });
+  });
+
+  it('replaces a non-object block rather than merging into it', () => {
+    seed('{\n  "version": 2,\n  "remote": "nope"\n}\n');
+
+    setRemote({ mode: 'remote' });
+
+    expect(onDisk().remote).toEqual({ mode: 'remote' });
+  });
+
+  it('writes mode, host and port independently, one field at a time', () => {
+    seed('{\n  "version": 2,\n  "remote": { "mode": "remote", "host": "100.64.1.2", "port": 7433 }\n}\n');
+
+    setRemote({ port: 9000 });
+
+    expect(onDisk().remote).toEqual({
+      mode: 'remote',
+      host: '100.64.1.2',
+      port: 9000,
+    });
+  });
+
+  /**
+   * Ruling 3, exercised through the writer this time rather than the reader:
+   * `setRemote`'s own payload was already checked by `parseSetRemoteRequest`
+   * before this function runs, so a `{ mode: 'local', host: '' }` request —
+   * exactly what an install that has never attached would send — must write
+   * cleanly rather than being treated as a value to reject a second time.
+   */
+  it('writes mode local with an empty host with no error — the ordinary never-attached state', () => {
+    seed('{\n  "version": 2\n}\n');
+
+    const snapshot = setRemote({ mode: 'local', host: '' });
+
+    expect(snapshot.remote).toEqual({ mode: 'local', host: '', port: DEFAULT_REMOTE.port });
+    expect(snapshot.errors).toEqual([]);
+    expect(onDisk().remote).toEqual({ mode: 'local', host: '' });
+  });
+
+  /**
+   * `config:set-remote` never writes the device credential (see this task's
+   * brief): its payload type, `SetRemoteRequest`, has no `token` field to
+   * begin with, so there is no code path in `setRemote` that could reach
+   * `remoteTokenStore` even by accident. This asserts the promise at the
+   * boundary that matters — the bytes actually written to `config.json` —
+   * rather than merely re-stating the type.
+   */
+  it('never writes a token onto the remote block, whatever the request shape', () => {
+    seed('{\n  "version": 2\n}\n');
+
+    setRemote({
+      mode: 'remote',
+      host: '100.64.1.2',
+      port: 7433,
+      // A request built from an `any` (a stale caller, a hand-rolled IPC
+      // call bypassing the guard) could still carry this key at runtime even
+      // though `SetRemoteRequest` has no such field — that is exactly the
+      // shape this test needs to catch.
+      ...({ token: 'K7QM-3XTV-9WHZ-2BNP' } as Record<string, unknown>),
+    });
+
+    const written = readFileSync(path, 'utf8');
+    expect(written).not.toContain('K7QM-3XTV-9WHZ-2BNP');
+    expect(onDisk().remote).toEqual({
+      mode: 'remote',
+      host: '100.64.1.2',
+      port: 7433,
+    });
   });
 });

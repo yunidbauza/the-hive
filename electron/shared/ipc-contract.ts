@@ -42,6 +42,7 @@ import type {
   DiagnoseEnvRequest,
   EnvDiagnostic,
   PathProbe,
+  RemotePairRequest,
   RemoveProjectRequest,
   RenameProjectRequest,
   ReorderProjectsRequest,
@@ -58,6 +59,7 @@ import type {
   SetProjectKeyRequest,
   SetProjectRuntimeRequest,
   SetReceiverRequest,
+  SetRemoteRequest,
   SetRuntimeRequest,
   SetServerRequest,
   SetSlackRequest,
@@ -320,6 +322,46 @@ export const CH = {
    * every session on this machine.
    */
   serverRevoke: 'server:revoke',
+  /**
+   * Whether this window is a client and where it attaches (HIVE-144).
+   *
+   * `config:` for the same reason {@link CH.configSetServer} is one: it writes
+   * the config file and returns the fresh snapshot, and only ever writes what
+   * {@link ConfigSnapshot.remote} already resolves to. There is deliberately
+   * no credential field here, for the identical reason `config:set-server`
+   * carries none — the token this verb's host block would need is
+   * `remote:pair`'s job, stored in `safeStorage`, never in this file.
+   */
+  configSetRemote: 'config:set-remote',
+  /**
+   * Store the device credential this machine was handed by someone else's
+   * server (HIVE-144).
+   *
+   * **Not** the other direction from {@link CH.serverPair}, which mints a
+   * credential *on* this machine *for* a device it is admitting — this one
+   * takes a credential *given to* this machine so it can attach *outward*,
+   * as a client, to a server elsewhere. Two verbs named "pair" pointing
+   * opposite ways would read as one feature; they are two, hence the
+   * separate `remote:` namespace rather than reusing `server:pair`'s name or
+   * folding this into `config:set-remote` above.
+   *
+   * The plaintext token this payload carries goes to `electron/remote-client/
+   * token-store.ts`'s `safeStorage`-encrypted file and nowhere else — not the
+   * config, not a log line. See that module's own doc comment, which quotes
+   * `server/devices.ts:17-19` on where a token's plaintext is ever allowed to
+   * exist.
+   */
+  remotePair: 'remote:pair',
+  /**
+   * Forget the credential {@link CH.remotePair} stored (HIVE-144).
+   *
+   * The mirror of {@link CH.remotePair} on this machine's own side, and
+   * **not** {@link CH.serverRevoke} — revoking is the *far* server's decision
+   * about *this* device; forgetting is this device discarding what it was
+   * given, which it can do unilaterally and which does not, by itself, revoke
+   * anything on the server that issued the credential.
+   */
+  remoteForget: 'remote:forget',
   /**
    * The Jira credential and the connection test (HIVE-67).
    *
@@ -1593,6 +1635,15 @@ export interface HiveBridge {
      */
     setServer(request: SetServerRequest): Promise<ConfigSnapshot>;
     /**
+     * Turn client mode on or off, and change where it attaches (HIVE-144).
+     *
+     * {@link HiveBridge.config.setServer}'s mirror: the one verb that touches
+     * {@link ConfigSnapshot.remote} without storing or forgetting a
+     * credential — see {@link HiveBridge.remote} for those. No credential
+     * field here either, for the same reason `setServer` carries none.
+     */
+    setRemote(request: SetRemoteRequest): Promise<ConfigSnapshot>;
+    /**
      * Show the config file in the OS file manager (story 107).
      *
      * Takes no argument: main reveals its own `configPath()`. *Reveal* rather
@@ -1660,6 +1711,28 @@ export interface HiveBridge {
      * must not report "done" for a revoke that changed nothing on disk.
      */
     revoke(request: DeviceNameRequest): Promise<{ revoked: true } | { error: string }>;
+  };
+  /**
+   * Storing and forgetting the credential this machine was handed to attach
+   * outward, as a client, to someone else's server (HIVE-144).
+   *
+   * **Not** {@link HiveBridge.server}, and deliberately its own namespace
+   * rather than a rename of it: `server.pair`/`.revoke` mint or destroy a
+   * credential this machine hands out to devices *it* admits; `remote.pair`/
+   * `.forget` hold a credential *this* device was given, for the opposite
+   * direction. Two verbs named "pair" pointing opposite ways would read as
+   * one feature and confuse whoever has to reason about which side of a
+   * connection they are looking at.
+   */
+  remote: {
+    /**
+     * Store the `deviceId`/`token` pair a `server.pair` call on the *other*
+     * Hive handed back. There is nothing to return: unlike `server.pair`,
+     * the plaintext arrives *in* this call rather than being minted by it.
+     */
+    pair(request: RemotePairRequest): Promise<void>;
+    /** Discard the credential {@link HiveBridge.remote.pair} stored. Idempotent. */
+    forget(): Promise<void>;
   };
   pty: {
     spawn(request: SpawnRequest): Promise<void>;
@@ -2349,6 +2422,14 @@ export const BRIDGE_KEYS = [
   'notifications',
   'pty',
   /**
+   * HIVE-144 adds `remote`. What a web page can now do that it could not
+   * before: store the device credential a `server.pair` mint on some *other*
+   * Hive handed back, and forget it. **Not** the same capability `server`
+   * adds below — see the comment above {@link BRIDGE_REMOTE_KEYS} for why the
+   * two are kept apart rather than sharing a namespace.
+   */
+  'remote',
+  /**
    * HIVE-142 adds `server`. What a web page can now do that it could not
    * before: mint a device credential, hand back its plaintext once, and
    * revoke one by name. Neither verb is an ordinary settings write — see the
@@ -2977,6 +3058,15 @@ export const BRIDGE_CONFIG_KEYS = [
    * revoking a device credential is the `server` namespace's job, below.
    */
   'setServer',
+  /**
+   * HIVE-144. Whether this window is a client and where it attaches —
+   * `setServer`'s mirror, and with the identical no-credential rule:
+   * `parseSetRemoteRequest` refuses one. Storing and forgetting the
+   * credential this device was handed is the `remote` namespace's job below,
+   * a distinct namespace from `server` — see the comment above
+   * {@link BRIDGE_REMOTE_KEYS}.
+   */
+  'setRemote',
 ] as const;
 
 /**
@@ -2988,6 +3078,20 @@ export const BRIDGE_CONFIG_KEYS = [
  * implementation the CLI's `--pair`/`--revoke` and the server-mode tray call.
  */
 export const BRIDGE_SERVER_KEYS = ['pair', 'revoke'] as const;
+
+/**
+ * The exact key set of `window.hive.remote` (HIVE-144).
+ *
+ * **Not** {@link BRIDGE_SERVER_KEYS} renamed, despite sharing a verb name:
+ * `server.pair`/`.revoke` mint or destroy a credential this machine hands out
+ * to a device *it* admits; `remote.pair`/`.forget` store or discard a
+ * credential *this* machine was handed, for attaching outward as a client to
+ * someone else's server. A device holding this credential can reach the
+ * entire IPC surface of the server it attaches to — the same register
+ * `server.pair`'s own doc comment states — which is exactly why the two
+ * verbs must not be confused for one feature pointing one direction.
+ */
+export const BRIDGE_REMOTE_KEYS = ['pair', 'forget'] as const;
 
 /** The exact key set of `window.hive.pty`. */
 export const BRIDGE_PTY_KEYS = [

@@ -128,6 +128,9 @@ export const FRAME_KIND = {
   [CH.configSetServer]: 'call',
   [CH.serverPair]: 'call',
   [CH.serverRevoke]: 'call',
+  [CH.configSetRemote]: 'call',
+  [CH.remotePair]: 'call',
+  [CH.remoteForget]: 'call',
   [CH.jiraStatus]: 'call',
   [CH.jiraSetToken]: 'call',
   [CH.jiraClearToken]: 'call',
@@ -313,6 +316,20 @@ export const FRAME_KIND = {
  *   and `bind`, both already resolved by {@link ConfigSnapshot.server};
  *   minting and destroying the credential itself is what `server:pair` and
  *   `server:revoke` are for.
+ * - `remote:pair`, `remote:forget` (HIVE-144) stay `mutate`, and are **not**
+ *   graded like `server:pair`/`server:revoke` above despite both storing a
+ *   secret: `server:pair` mints a *new* credential that grants its holder
+ *   this machine's entire IPC surface — the capability the `execute` grade is
+ *   for. `remote:pair` stores a credential *this device* was already handed,
+ *   for attaching *outward* as a client to someone else's server; whoever can
+ *   already call it could already call every other channel on this bridge, so
+ *   the call itself grants nothing new here. It can still redirect where this
+ *   window attaches next (paired with `config:set-remote`'s `host`), which is
+ *   why it is graded above a plain settings write rather than folded into
+ *   `read` — but it is not the "mint a master key" register `server:pair` is.
+ *   `config:set-remote` is `mutate` for the same reason `config:set-server`
+ *   is: it only ever writes what {@link ConfigSnapshot.remote} resolves to,
+ *   never a credential.
  *
  * Two channels that read like `read` and are `mutate`: `session:pr` returns
  * `void` and calls `history.record` (`ipc/index.ts:2162`), a persistent write —
@@ -345,6 +362,9 @@ export const CHANNEL_AUTHORIZATION = {
   [CH.configSetServer]: 'mutate',
   [CH.serverPair]: 'execute',
   [CH.serverRevoke]: 'execute',
+  [CH.configSetRemote]: 'mutate',
+  [CH.remotePair]: 'mutate',
+  [CH.remoteForget]: 'mutate',
   [CH.jiraStatus]: 'read',
   [CH.jiraSetToken]: 'mutate',
   [CH.jiraClearToken]: 'mutate',

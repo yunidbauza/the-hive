@@ -1946,6 +1946,43 @@ export interface DeviceNameRequest {
 }
 
 /**
+ * Payload of `config:set-remote` (HIVE-144).
+ *
+ * The client-side mirror of {@link SetServerRequest}, and deliberately as thin:
+ * this verb writes exactly what {@link RemoteConfig} resolves to and nothing
+ * else — there is no credential field here, for the identical reason
+ * `SetServerRequest` carries no credential. Pairing this device is
+ * `remote:pair`'s job; this one only ever writes `mode`, `host` and `port`.
+ *
+ * All three optional and merged into the stored block, one field at a time,
+ * the same shape {@link SetReceiverRequest} and {@link SetServerRequest} take —
+ * Settings commits a field on blur or on a toggle, and a payload that had to
+ * restate all three every time would make committing one reset the others.
+ */
+export interface SetRemoteRequest {
+  mode?: RemoteMode;
+  host?: string;
+  port?: number;
+}
+
+/**
+ * Payload of `remote:pair` (HIVE-144).
+ *
+ * The opposite direction from {@link DeviceNameRequest}: `server:pair` mints a
+ * credential *on* this machine *for* some other device; `remote:pair` stores a
+ * credential *given to* this machine so it can attach to someone else's
+ * server. Both halves — the id and the token — arrive together because a
+ * `server:pair` mint on the far end hands them back together, and a
+ * credential that stored one without the other could never authenticate a
+ * socket attach ({@link ResumePoint} and `AttachRequest` both need `deviceId`
+ * and `token` at once).
+ */
+export interface RemotePairRequest {
+  deviceId: string;
+  token: string;
+}
+
+/**
  * Payload of `config:set-slack` (HIVE-124).
  *
  * Partial in the same way {@link SetRuntimeRequest} is: only the fields named

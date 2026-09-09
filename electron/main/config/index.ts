@@ -29,6 +29,7 @@ import {
   type SetProjectKeyRequest,
   type SetProjectRuntimeRequest,
   type SetReceiverRequest,
+  type SetRemoteRequest,
   type SetRuntimeRequest,
   type SetServerRequest,
   type SetSlackRequest,
@@ -998,6 +999,40 @@ export function setServerReportingWrite(
 ): { ok: boolean; snapshot: ConfigSnapshot } {
   const result = writeConfig(serverMutation(request));
   return { ok: result.ok, snapshot: commit(result) };
+}
+
+/**
+ * Change whether this window is a client and where it attaches (HIVE-144).
+ *
+ * {@link setServer}'s mirror, field for field: the block is spread rather than
+ * rebuilt so a key this build has not heard of survives a save made by this
+ * one, and there is no credential key here — `remote:pair`'s job, stored in
+ * `safeStorage`, never in this file. See `parseSetRemoteRequest`
+ * (`shared/guards.ts`) for Ruling 3's rule, applied to the payload this
+ * function receives already validated: `host` was checked against
+ * `isRemoteTarget` there only when *this same request's* `mode` was
+ * `'remote'`, so nothing further needs checking here.
+ */
+export function setRemote(request: SetRemoteRequest): ConfigSnapshot {
+  return commit(
+    writeConfig((draft) => {
+      // A non-object block is replaced rather than merged into. The reader has
+      // already reported it, and merging onto a string would produce something
+      // neither the user nor the parser meant.
+      const current =
+        typeof draft.remote === 'object' &&
+        draft.remote !== null &&
+        !Array.isArray(draft.remote)
+          ? { ...(draft.remote as Record<string, unknown>) }
+          : {};
+
+      if (request.mode !== undefined) current.mode = request.mode;
+      if (request.host !== undefined) current.host = request.host;
+      if (request.port !== undefined) current.port = request.port;
+
+      return { ...draft, remote: current };
+    }),
+  );
 }
 
 /**

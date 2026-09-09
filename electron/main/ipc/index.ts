@@ -80,7 +80,9 @@ import {
   parseJiraTransitionsRequest,
   parseSetJiraRequest,
   parseSetJiraTokenRequest,
+  parseRemotePairRequest,
   parseSetReceiverRequest,
+  parseSetRemoteRequest,
   parseSetServerRequest,
   parseSetSlackRequest,
   parseSetSlackTokensRequest,
@@ -142,6 +144,7 @@ import {
 } from '@shared/slack-contract';
 import type { UpdateStatus } from '@shared/update-contract';
 
+import { createTokenStore } from '../../remote-client/token-store';
 import { createAgentsRuntime, type AgentRegistry } from '../agents';
 import { resolveClaude } from '../agents/claude-path';
 import { agentsDirectoryFor } from '../agents/directory';
@@ -178,6 +181,7 @@ import {
   setProjectKey,
   setProjectRuntime,
   setReceiver,
+  setRemote,
   setRuntime,
   setServer,
   setSlack,
@@ -2980,6 +2984,22 @@ export function registerIpcHandlers(
   });
 
   /**
+   * The device credential this machine was handed when it attached to
+   * someone else's Hive (HIVE-144) — composed exactly as Jira's is, a few
+   * lines up: `safeStorage` and a file under `userData`, both injected, so
+   * `token-store.ts` can be answered by a unit test without a keyring.
+   *
+   * `read()` is main-internal — see `electron/remote-client/token-store.ts`'s
+   * own doc comment for why this is a distinct module from `jira/auth.ts`
+   * rather than a shared helper. No IPC verb returns the token; `remote:pair`
+   * below only ever writes it, and `remote:forget` only ever clears it.
+   */
+  const remoteTokenStore = createTokenStore({
+    safeStorage,
+    filePath: join(app.getPath('userData'), 'remote-credential.bin'),
+  });
+
+  /**
    * The PR poller's read — the app's second handler that executes a binary,
    * and the first that does so on a timer.
    *
@@ -3140,6 +3160,39 @@ export function registerIpcHandlers(
       return { error: revokeOutcomeMessage(outcome, name) };
     },
   );
+  /**
+   * HIVE-144. Whether this window is a client and where it attaches — an
+   * ordinary settings write, exactly like `config:set-server` above.
+   *
+   * `parseSetRemoteRequest` never lets a token through this payload, so this
+   * handler never touches `remoteTokenStore` — writing the credential is
+   * `remote:pair`'s job below, not this one's.
+   */
+  handle(CH.configSetRemote, (_event, payload): ConfigSnapshot =>
+    setRemote(parseSetRemoteRequest(payload)),
+  );
+  /**
+   * Store the device credential a `server:pair` mint on some *other* Hive
+   * handed back (HIVE-144) — the opposite direction from `server:pair` above,
+   * see `CH.remotePair`'s own doc comment for why the two are not one verb.
+   *
+   * Answers `void`: unlike `server:pair`, there is nothing to hand back —
+   * the plaintext arrived *in* this payload rather than being minted by this
+   * call, so echoing it back would be the one thing this handler must not do.
+   */
+  handle(CH.remotePair, (_event, payload): void => {
+    const { deviceId, token } = parseRemotePairRequest(payload);
+    remoteTokenStore.write(deviceId, token);
+  });
+  /**
+   * Discard the credential `remote:pair` stored (HIVE-144). Idempotent, and
+   * takes no payload — there is exactly one credential on this machine to
+   * forget, never a name to disambiguate by, which is what separates this
+   * from `server:revoke` above.
+   */
+  handle(CH.remoteForget, (): void => {
+    remoteTokenStore.clear();
+  });
 
   /**
    * Slack's MCP server (HIVE-123) — four verbs, none taking a payload.

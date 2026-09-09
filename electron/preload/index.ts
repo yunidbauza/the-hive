@@ -26,6 +26,7 @@ import type {
   DiagnoseEnvRequest,
   EnvDiagnostic,
   RemoveProjectRequest,
+  RemotePairRequest,
   RenameProjectRequest,
   ReorderProjectsRequest,
   AddJiraCommentRequest,
@@ -41,6 +42,7 @@ import type {
   SetProjectKeyRequest,
   SetProjectRuntimeRequest,
   SetReceiverRequest,
+  SetRemoteRequest,
   SetRuntimeRequest,
   SetServerRequest,
   SetSlackRequest,
@@ -290,6 +292,13 @@ const bridge: HiveBridge = {
     // credential here — pairing is the `server` namespace's job, below.
     setServer: (request: SetServerRequest): Promise<ConfigSnapshot> =>
       ipcRenderer.invoke(CH.configSetServer, request),
+    // HIVE-144. Whether this window is a client and where it attaches. No
+    // credential here either — storing one is the `remote` namespace's job,
+    // below, and is a deliberately different verb from `server.pair` above:
+    // that one mints a credential this machine hands out; this one stores
+    // one this machine was handed.
+    setRemote: (request: SetRemoteRequest): Promise<ConfigSnapshot> =>
+      ipcRenderer.invoke(CH.configSetRemote, request),
     /*
       Story 107. Neither takes an argument — see the contract for why that is
       the security design and not an oversight. Written with no parameter list
@@ -319,6 +328,18 @@ const bridge: HiveBridge = {
       request: DeviceNameRequest,
     ): Promise<{ revoked: true } | { error: string }> =>
       ipcRenderer.invoke(CH.serverRevoke, request),
+  },
+  // HIVE-144. Storing and forgetting the credential this machine was handed
+  // to attach outward, as a client, to someone else's server. Its own
+  // namespace and not `server` above, on purpose: `server.pair`/`.revoke`
+  // mint or destroy a credential this machine hands out to devices it
+  // admits; `remote.pair`/`.forget` hold a credential this machine was
+  // given, in the opposite direction. Two verbs named "pair" pointing
+  // opposite ways would read as one feature — they are two.
+  remote: {
+    pair: (request: RemotePairRequest): Promise<void> =>
+      ipcRenderer.invoke(CH.remotePair, request),
+    forget: (): Promise<void> => ipcRenderer.invoke(CH.remoteForget),
   },
   pty: {
     spawn: (request: SpawnRequest): Promise<void> =>

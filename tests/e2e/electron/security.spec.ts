@@ -75,6 +75,7 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     notifications: Object.keys(window.hive!.notifications).sort(),
     jira: Object.keys(window.hive!.jira).sort(),
     server: Object.keys(window.hive!.server).sort(),
+    remote: Object.keys(window.hive!.remote).sort(),
     updates: Object.keys(window.hive!.updates).sort(),
     theme: Object.keys(window.hive!.theme).sort(),
     ui: Object.keys(window.hive!.ui).sort(),
@@ -296,6 +297,18 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'notifications',
     'pty',
     /**
+     * HIVE-144 adds `remote`. What a web page can now do that it could not
+     * before: store the device credential a `server.pair` mint on some
+     * *other* Hive handed back, and forget it — asserted separately below on
+     * `surface.remote`. **Not** the same direction as `server` below despite
+     * sharing a verb name: `server.pair`/`.revoke` mint or destroy a
+     * credential this machine hands out; `remote.pair`/`.forget` store or
+     * discard a credential this machine was given. Both verbs persist to
+     * `remote-credential.bin` under `userData`, never to the config file —
+     * see `electron/remote-client/token-store.ts`.
+     */
+    'remote',
+    /**
      * HIVE-142 adds `server`. What a web page can now do that it could not
      * before: mint a device credential and hand back its plaintext once, or
      * revoke one by name — asserted separately below on `surface.server`.
@@ -357,6 +370,17 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * this whole test exists to make impossible to add quietly.
    */
   expect(surface.server).toEqual(['pair', 'revoke']);
+  /**
+   * HIVE-144. Two verbs, and **not** `server` above pointing the same way:
+   * `pair` here stores a `deviceId`/`token` pair this machine was *handed* by
+   * a `server.pair` mint on some other Hive, so it can attach outward as a
+   * client; `forget` discards it. Neither mints or destroys a credential that
+   * grants access *to* this machine — that register is `server`'s, above —
+   * which is why this pair is graded `mutate` rather than `execute`
+   * (`remote-contract.ts`). A third verb here is the same kind of widening
+   * this whole test exists to make impossible to add quietly.
+   */
+  expect(surface.remote).toEqual(['forget', 'pair']);
   expect(surface.skills).toEqual([
     'fileDrop',
     'fileImport',
@@ -765,6 +789,30 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
      *   shipped platform sets is a guard nothing exercises.
      */
     'setReceiver',
+    /**
+     * HIVE-144's `setRemote`, and it does exactly what `setServer` below
+     * does for the other direction: writes `mode`, `host` and `port`, all
+     * already resolved by `ConfigSnapshot.remote`, and carries **no
+     * credential** — `parseSetRemoteRequest` refuses a `token` key outright,
+     * so this payload has no route for one. Storing and forgetting the
+     * credential this device was handed is the new `remote` namespace's job,
+     * asserted separately below, and — unlike `server.pair`/`.revoke` — it is
+     * graded `mutate` rather than `execute`: it stores a credential this
+     * device receives, not one that grants access to a device this machine
+     * admits. See `remote-contract.ts`'s `CHANNEL_AUTHORIZATION` comment for
+     * the full reasoning.
+     *
+     * `host` is the one field worth reading plainly: it **does name a network
+     * destination**, exactly as `setReceiver` above does, and `isRemoteTarget`
+     * is the predicate that bounds it — loopback or a tailnet address only,
+     * because the socket this app dials is plaintext and anything else would
+     * send the credential `remote.pair` stores to whoever controls the
+     * address. Ruling 3 means an empty `host` alongside `mode: 'local'` is
+     * accepted rather than refused: every install that has never attached
+     * carries exactly that pair, and validating a field nobody is using would
+     * make the ordinary, never-configured state an error.
+     */
+    'setRemote',
     'setRuntime',
     /**
      * HIVE-124's Socket Mode switch, and it reached the bridge in 52fb16b
