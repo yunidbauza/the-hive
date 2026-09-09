@@ -276,6 +276,173 @@ describe('flow control', () => {
   });
 });
 
+/**
+ * Flow control with more than one surface watching (HIVE-145).
+ *
+ * The window used to be one per session, released by whoever acked. Two
+ * clients on the same session meant the fast one's acks let the producer run
+ * ahead, and the slow one's own socket send buffer grew without bound because
+ * nothing applied backpressure on its behalf.
+ *
+ * The naive fix has a trap the HIVE-143 review named: requiring every attached
+ * client to ack before releasing means one stalled client freezes the session
+ * for everyone. What closes it is that a surface which goes away releases
+ * whatever it was holding.
+ */
+describe('flow control across surfaces', () => {
+  let surfaceIds: string[];
+  let multi: PtyIpc;
+
+  beforeEach(() => {
+    surfaceIds = ['fast', 'slow'];
+    multi = build({ liveSurfaces: () => surfaceIds });
+    multi.spawn(SPAWN);
+  });
+
+  afterEach(() => {
+    multi.dispose();
+  });
+
+  const stats = () => multi.diagnostics().find((entry) => entry.sessionId === 'a')!;
+
+  it('releases only up to the slowest surface', () => {
+    flood('a', 10);
+    flood('a', 20);
+    flood('a', 30);
+
+    multi.ack('a', 3, 'fast');
+    multi.ack('a', 1, 'slow');
+
+    // The fast client has consumed everything; the slow one is one batch in.
+    // Only that first batch's bytes may be released.
+    expect(stats().bytesAcked).toBe(10);
+    expect(stats().unacked).toBe(50);
+  });
+
+  it('releases the rest once the slowest catches up', () => {
+    flood('a', 10);
+    flood('a', 20);
+    multi.ack('a', 2, 'fast');
+    expect(stats().unacked).toBe(30);
+
+    multi.ack('a', 2, 'slow');
+
+    expect(stats().unacked).toBe(0);
+  });
+
+  it('keeps the producer paused while one surface lags', () => {
+    flood('a', 600 * 1024);
+    expect(supervisor.pause).toHaveBeenCalledWith('a');
+
+    multi.ack('a', 1, 'fast');
+
+    // A fast client on a fast link must not let the pty outrun a slow one.
+    expect(supervisor.resume).not.toHaveBeenCalled();
+  });
+
+  it('resumes when the slow surface finally acks', () => {
+    flood('a', 600 * 1024);
+    multi.ack('a', 1, 'fast');
+    expect(supervisor.resume).not.toHaveBeenCalled();
+
+    multi.ack('a', 1, 'slow');
+
+    expect(supervisor.resume).toHaveBeenCalledWith('a');
+  });
+
+  it('a departing surface releases what it was holding', () => {
+    flood('a', 600 * 1024);
+    multi.ack('a', 1, 'fast');
+    expect(supervisor.resume).not.toHaveBeenCalled();
+
+    /*
+      The trap, closed. Without this a slow client could freeze a session for
+      everyone else simply by disconnecting: its mark would sit at the bottom
+      of the window forever, and nothing would ever release the bytes it was
+      never going to acknowledge.
+    */
+    surfaceIds = ['fast'];
+    multi.releaseSurface('slow');
+
+    expect(supervisor.resume).toHaveBeenCalledWith('a');
+    expect(stats().unacked).toBe(0);
+  });
+
+  it('does not gate on a surface that arrived after the batches were sent', () => {
+    surfaceIds = ['fast'];
+    flood('a', 10);
+    flood('a', 20);
+
+    /*
+      A laptop attaching to a busy session was never sent those two batches. If
+      it started at zero it would hold them forever — it has nothing to ack
+      them with — and the session would stall for the client that *is* watching.
+    */
+    surfaceIds = ['fast', 'late'];
+    multi.ack('a', 2, 'fast');
+
+    expect(stats().unacked).toBe(0);
+  });
+
+  it('gates the newcomer on everything stamped after it arrived', () => {
+    surfaceIds = ['fast'];
+    flood('a', 10);
+    surfaceIds = ['fast', 'late'];
+    multi.ack('a', 1, 'fast');
+    expect(stats().unacked).toBe(0);
+
+    // From here on it is an ordinary consumer, and the window waits for it.
+    flood('a', 20);
+    multi.ack('a', 2, 'fast');
+    expect(stats().unacked).toBe(20);
+
+    multi.ack('a', 2, 'late');
+    expect(stats().unacked).toBe(0);
+  });
+
+  it('gates on a surface that was present when the batch was stamped', () => {
+    flood('a', 10);
+
+    multi.ack('a', 1, 'fast');
+
+    expect(stats().unacked).toBe(10);
+  });
+
+  it('releases everything while nobody is watching at all', () => {
+    surfaceIds = [];
+
+    flood('a', 600 * 1024);
+
+    /*
+      No consumer means nothing to protect, and holding bytes for nobody would
+      pause the channel for the life of the session. The scrollback in the
+      pty-host is what a surface arriving later reads from.
+    */
+    expect(stats().unacked).toBe(0);
+    expect(supervisor.pause).not.toHaveBeenCalled();
+  });
+
+  it('never moves a surface\'s mark backwards', () => {
+    flood('a', 10);
+    flood('a', 20);
+    multi.ack('a', 2, 'fast');
+    multi.ack('a', 2, 'slow');
+    expect(stats().unacked).toBe(0);
+
+    // A late, lower ack must not reopen a window already released.
+    multi.ack('a', 1, 'slow');
+    flood('a', 30);
+    multi.ack('a', 3, 'fast');
+    multi.ack('a', 3, 'slow');
+
+    expect(stats().unacked).toBe(0);
+  });
+
+  it('ignores a release for a surface it never saw', () => {
+    expect(() => { multi.releaseSurface('ghost'); }).not.toThrow();
+  });
+});
+
 describe('resize throttling', () => {
   it('applies the first resize immediately', () => {
     ipc.resize('a', 100, 30);

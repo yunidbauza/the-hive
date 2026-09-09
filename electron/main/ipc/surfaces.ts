@@ -176,7 +176,21 @@ export function createSurfaceRegistry(): SurfaceRegistry {
     // Dropped so the same object coming back — a reloaded `webContents` — is a
     // new surface rather than an id pointing at nothing.
     ids.delete(reporter);
-    for (const listener of goneListeners) listener(id);
+    /*
+      Every listener runs, whatever the ones before it did. This is the single
+      release point — the ledger's focus record, the foreground map, the
+      flow-control window and the fs watch layer all unhook here — so one
+      throwing consumer must not strand the rest holding state for a surface
+      that is gone. A stranded flow-control mark in particular would pause a
+      session for the life of the process.
+    */
+    for (const listener of goneListeners) {
+      try {
+        listener(id);
+      } catch (cause) {
+        console.error('[hive] surface release listener failed:', cause);
+      }
+    }
   };
 
   const track = (
@@ -222,7 +236,13 @@ export function createSurfaceRegistry(): SurfaceRegistry {
     }
 
     if (wasEmpty) {
-      for (const listener of firstListeners) listener();
+      for (const listener of firstListeners) {
+        try {
+          listener();
+        } catch (cause) {
+          console.error('[hive] surface arrival listener failed:', cause);
+        }
+      }
     }
     return id;
   };

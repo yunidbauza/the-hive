@@ -57,6 +57,7 @@ import { withHostAlias } from '../hooks/container-origin';
 import { ticketKeysFromBranch } from '../hooks/ticket-intent';
 import { createStatusTracker } from '../hooks/tracker';
 import { createPtyIpc, type PtyIpc, type ResumeResult } from '../ipc/pty';
+import type { SurfaceId } from '../ipc/surfaces';
 import type { McpRuntime } from '../mcp';
 import type { PtyHostSupervisor } from '../pty-host/supervisor';
 import type { SkillsRuntime } from '../skills';
@@ -101,6 +102,11 @@ export interface SessionsOptions {
    * `app` itself would drag Electron into a unit test that has none.
    */
   userDataPath: string;
+  /**
+   * Who is watching, right now (HIVE-145). Passed straight to `PtyIpc`, whose
+   * flow-control window follows the slowest of them; see `PtyIpcOptions`.
+   */
+  liveSurfaces?: () => Iterable<SurfaceId>;
   maxSessions?: number;
   /**
    * The hook pipeline, when the app has one (HIVE-62).
@@ -354,7 +360,9 @@ export interface Sessions {
    */
   write(entityId: string, data: string): boolean;
   resize(entityId: string, cols: number, rows: number): void;
-  ack(entityId: string, seq: number): void;
+  ack(entityId: string, seq: number, surfaceId?: SurfaceId): void;
+  /** A surface went away: release whatever it was holding (HIVE-145). */
+  releaseSurface(surfaceId: SurfaceId): void;
   /**
    * What a reconnecting remote client missed since `from` (HIVE-143, HIVE-144).
    *
@@ -887,7 +895,11 @@ export function createSessions(options: SessionsOptions): Sessions {
    * activity tracker and the bootstrap above. Every reference runs inside a
    * callback, well after this line, so the cycle is only in the source order.
    */
-  const ptyIpc: PtyIpc = createPtyIpc({ supervisor, send: forward });
+  const ptyIpc: PtyIpc = createPtyIpc({
+    supervisor,
+    send: forward,
+    ...(options.liveSurfaces !== undefined ? { liveSurfaces: options.liveSurfaces } : {}),
+  });
 
   /**
    * Start reporting (HIVE-62).
@@ -2610,10 +2622,14 @@ export function createSessions(options: SessionsOptions): Sessions {
       ptyIpc.resize(sessionId, cols, rows);
     },
 
-    ack(entityId, seq) {
+    ack(entityId, seq, surfaceId) {
       const sessionId = registry.sessionFor(entityId);
       if (sessionId === undefined) return;
-      ptyIpc.ack(sessionId, seq);
+      ptyIpc.ack(sessionId, seq, surfaceId);
+    },
+
+    releaseSurface(surfaceId) {
+      ptyIpc.releaseSurface(surfaceId);
     },
 
     /**

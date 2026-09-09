@@ -231,6 +231,42 @@ describe('createSurfaceRegistry', () => {
     expect(gone).toHaveBeenCalledTimes(1);
   });
 
+  it('runs every release listener even when one of them throws', () => {
+    const surfaces = createSurfaceRegistry();
+    const after = vi.fn();
+    surfaces.onGone(() => {
+      throw new Error('a consumer that was disposed out from under us');
+    });
+    surfaces.onGone(after);
+    const reporter = fakeReporter();
+    const id = surfaces.trackWindow(reporter, vi.fn());
+
+    /*
+      This is the single release point: the ledger's focus record, the
+      foreground map, the flow-control window and the fs watch layer all unhook
+      here. One throwing consumer must not strand the rest holding state for a
+      surface that is gone — a stranded flow-control mark would pause a session
+      for the life of the process.
+    */
+    expect(() => { reporter.fire('destroyed'); }).not.toThrow();
+
+    expect(after).toHaveBeenCalledExactlyOnceWith(id);
+    expect(surfaces.size()).toBe(0);
+  });
+
+  it('runs every arrival listener even when one of them throws', () => {
+    const surfaces = createSurfaceRegistry();
+    const after = vi.fn();
+    surfaces.onFirst(() => {
+      throw new Error('a queue that could not flush');
+    });
+    surfaces.onFirst(after);
+
+    expect(() => surfaces.trackWindow(fakeReporter(), vi.fn())).not.toThrow();
+
+    expect(after).toHaveBeenCalledTimes(1);
+  });
+
   it('untrack ignores something it never tracked', () => {
     const surfaces = createSurfaceRegistry();
     const gone = vi.fn();

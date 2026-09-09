@@ -915,6 +915,12 @@ describe('handlers that dereference the Electron event', () => {
       `.on`, which `listener.ts` hands it. Refusing it would silently revert
       HIVE-135's nudge holding for every remote session.
 
+      `pty:ack` joined them in HIVE-145: the flow-control window follows the
+      slowest surface watching a session, so an ack has to say *whose* it is.
+      A client that acks a sequence it never received can now only move its own
+      mark, which is a tighter bound than the single window it used to widen
+      for everyone — the reason `CHANNEL_AUTHORIZATION` grades it `mutate`.
+
       `ui:foreground` joined it in HIVE-145, for exactly the same reason and by
       exactly the same mechanism: it needs to know *which* surface changed
       stage, not which window, so it resolves the sender through
@@ -940,7 +946,7 @@ describe('handlers that dereference the Electron event', () => {
       finds rather than what `WINDOW_BOUND`'s membership implies.
     */
     const expected = new Set(
-      [...Object.keys(WINDOW_BOUND), CH.ptyPrompt, CH.uiForeground].filter(
+      [...Object.keys(WINDOW_BOUND), CH.ptyPrompt, CH.uiForeground, CH.ptyAck].filter(
         (channel) => channel !== CH.configReveal,
       ),
     );

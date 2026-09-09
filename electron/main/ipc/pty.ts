@@ -14,6 +14,8 @@ import {
 
 import type { PtyHostSupervisor } from '../pty-host/supervisor';
 
+import type { SurfaceId } from './surfaces';
+
 /**
  * PTY IPC: batching, flow control, sequencing (story 093).
  *
@@ -38,6 +40,17 @@ import type { PtyHostSupervisor } from '../pty-host/supervisor';
  * a real terminal.
  */
 
+/**
+ * The stand-in surface for a process with no surface registry behind it
+ * (HIVE-145).
+ *
+ * `createPtyIpc` is constructed in unit suites and in the composition root
+ * alike, and only the latter knows who is attached. One anonymous consumer is
+ * the honest default: it is exactly what a single-renderer app has, and it
+ * reproduces the pre-HIVE-145 behaviour where any ack released the window.
+ */
+export const SOLE_CONSUMER = 'sole-consumer';
+
 export interface PtyIpcOptions {
   supervisor: PtyHostSupervisor;
   /** Push an event to the renderer. Injected — no `BrowserWindow` in here. */
@@ -48,6 +61,18 @@ export interface PtyIpcOptions {
   lowWaterBytes?: number;
   resizeThrottleMs?: number;
   replayBytes?: number;
+  /**
+   * Who is watching, right now (HIVE-145).
+   *
+   * Resolved per call rather than captured, for the reason the fan-out
+   * resolves its sockets per emit: a client attaches long after this layer was
+   * built, and a captured list would gate forever on a set that never changes.
+   *
+   * The default is one anonymous consumer, which is what a process with no
+   * surface registry behind it has: exactly the single-renderer behaviour this
+   * had before, where any ack released the window.
+   */
+  liveSurfaces?: () => Iterable<SurfaceId>;
 }
 
 /**
@@ -109,7 +134,22 @@ export interface PtyIpc {
   write(sessionId: string, data: string): void;
   resize(sessionId: string, cols: number, rows: number): void;
   kill(sessionId: string): void;
-  ack(sessionId: string, seq: number): void;
+  /**
+   * A surface has parsed everything through `seq`.
+   *
+   * `surfaceId` defaults to {@link SOLE_CONSUMER}, the sentinel a caller with
+   * no surface registry uses — see {@link PtyIpcOptions.liveSurfaces}.
+   */
+  ack(sessionId: string, seq: number, surfaceId?: SurfaceId): void;
+  /**
+   * A surface went away: drop its mark and release whatever it was holding
+   * (HIVE-145).
+   *
+   * Without this a slow client could freeze a session for everyone else by
+   * disconnecting — its mark would sit at the bottom of the window forever,
+   * and nothing would ever release bytes it was never going to acknowledge.
+   */
+  releaseSurface(surfaceId: SurfaceId): void;
   /**
    * What a reconnecting client missed since `lastSeq` (HIVE-143). See
    * {@link ResumeResult}.
@@ -169,6 +209,22 @@ interface Channel {
   paused: boolean;
 
   /**
+   * How far each watching surface has acknowledged (HIVE-145).
+   *
+   * The window follows the **slowest** of them. It used to be one number per
+   * session released by whoever acked, so with two clients on one session the
+   * fast one's acks let the producer run ahead and the slow one's own socket
+   * send buffer grew without bound, nothing applying backpressure on its
+   * behalf.
+   *
+   * A surface is seeded at the current head the first time it is seen for this
+   * channel, not at zero: a device attaching to a busy session was never sent
+   * the batches already outstanding, and gating on frames it will never
+   * acknowledge would stall the session outright.
+   */
+  acks: Map<SurfaceId, number>;
+
+  /**
    * Batches already sent, kept so a reconnecting socket can be given exactly
    * what it missed (HIVE-143).
    *
@@ -215,6 +271,7 @@ function emptyChannel(): Channel {
     outstanding: [],
     unacked: 0,
     paused: false,
+    acks: new Map(),
     replay: [],
     replayBytes: 0,
     exitEvent: null,
@@ -237,6 +294,7 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
     batchFlushBytes = BATCH_FLUSH_BYTES,
     highWaterBytes = HIGH_WATER_BYTES,
     lowWaterBytes = LOW_WATER_BYTES,
+    liveSurfaces = () => [SOLE_CONSUMER],
     resizeThrottleMs = RESIZE_THROTTLE_MS,
     replayBytes = REPLAY_BYTES,
   } = options;
@@ -245,6 +303,58 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
   /** Messages for a session main has never heard of. Not attributable. */
   let orphanDrops = 0;
 
+  /**
+   * Give every live surface a mark on this channel, seeded at the current head.
+   *
+   * Called **before** a batch is stamped, so a surface already watching is
+   * seeded below the batch about to be sent and does gate on it, while one
+   * that arrives later is seeded at a head it was never sent anything below.
+   */
+  function noteSurfaces(channel: Channel): void {
+    for (const surfaceId of liveSurfaces()) {
+      if (!channel.acks.has(surfaceId)) channel.acks.set(surfaceId, channel.seq);
+    }
+  }
+
+  /**
+   * The highest seq every live surface has acknowledged — the slowest of them.
+   *
+   * No live surface at all returns the head, releasing everything: nothing is
+   * watching, so there is no consumer to protect, and holding bytes for nobody
+   * would pause the channel for the life of the session. Marks belonging to
+   * surfaces that have gone are ignored here and dropped by
+   * {@link PtyIpc.releaseSurface}.
+   */
+  function releaseBound(channel: Channel): number {
+    let lowest: number | null = null;
+    for (const surfaceId of liveSurfaces()) {
+      const mark = channel.acks.get(surfaceId) ?? channel.seq;
+      if (lowest === null || mark < lowest) lowest = mark;
+    }
+    return lowest ?? channel.seq;
+  }
+
+  /** Release every outstanding batch the slowest surface has acknowledged. */
+  function drain(sessionId: string, channel: Channel): void {
+    const upTo = releaseBound(channel);
+
+    let released = 0;
+    while (channel.outstanding.length > 0 && channel.outstanding[0]!.seq <= upTo) {
+      released += channel.outstanding.shift()!.bytes;
+    }
+    if (released === 0) return;
+
+    channel.unacked -= released;
+    channel.bytesAcked += released;
+
+    // Below the low-water mark, let the producer run again. The gap between
+    // the marks is what stops pause/resume oscillating on every batch.
+    if (channel.paused && channel.unacked < lowWaterBytes) {
+      channel.paused = false;
+      supervisor.resume(sessionId);
+    }
+  }
+
   function flush(sessionId: string, channel: Channel): void {
     if (channel.timer !== null) {
       clearTimeout(channel.timer);
@@ -252,6 +362,10 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
     }
 
     if (channel.pending.length > 0) {
+      // Before the seq moves: a surface watching now must gate on the batch
+      // about to be stamped, and one that arrives later must not.
+      noteSurfaces(channel);
+
       const chunk = channel.pending.join('');
       channel.pending = [];
       const bytes = channel.pendingBytes;
@@ -282,6 +396,14 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
         // joined text — see `Channel.replay` for why those differ.
         channel.replayBytes -= dropped.bytes;
       }
+
+      /*
+        Released here too, not only on an ack, so a channel nobody is watching
+        never accumulates a window it will never be asked to release — the
+        pause below would otherwise stop a session for the life of the process
+        on behalf of a surface that does not exist.
+      */
+      drain(sessionId, channel);
 
       /**
        * Above the high-water mark, stop the producer.
@@ -508,24 +630,25 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
       supervisor.kill(sessionId);
     },
 
-    ack(sessionId, seq) {
+    ack(sessionId, seq, surfaceId = SOLE_CONSUMER) {
       const channel = channels.get(sessionId);
       if (!channel) return;
 
-      let released = 0;
-      while (channel.outstanding.length > 0 && channel.outstanding[0]!.seq <= seq) {
-        released += channel.outstanding.shift()!.bytes;
-      }
-      if (released === 0) return;
+      /*
+        Monotonic per surface. A late, lower ack must not reopen a window
+        already released — and `pty:ack` is graded `mutate` precisely because a
+        client can ack sequences it never received, so this is the bound on
+        what such a client can do: move its own mark, and nobody else's.
+      */
+      const current = channel.acks.get(surfaceId) ?? 0;
+      if (seq > current) channel.acks.set(surfaceId, seq);
 
-      channel.unacked -= released;
-      channel.bytesAcked += released;
+      drain(sessionId, channel);
+    },
 
-      // Below the low-water mark, let the producer run again. The gap between
-      // the marks is what stops pause/resume oscillating on every batch.
-      if (channel.paused && channel.unacked < lowWaterBytes) {
-        channel.paused = false;
-        supervisor.resume(sessionId);
+    releaseSurface(surfaceId) {
+      for (const [sessionId, channel] of channels) {
+        if (channel.acks.delete(surfaceId)) drain(sessionId, channel);
       }
     },
 

@@ -1789,6 +1789,14 @@ export function registerIpcHandlers(
   surfaces.onGone((surfaceId) => {
     deliver.onSurfaceGone(surfaceId);
     /*
+      Release whatever this surface was holding of every session's flow-control
+      window (HIVE-145). Without it a slow client could freeze a session for
+      everyone else simply by disconnecting: its mark would sit at the bottom
+      of the window forever, and nothing would ever release the bytes it was
+      never going to acknowledge.
+    */
+    sessions?.releaseSurface(surfaceId);
+    /*
       A surface that has gone is looking at nothing, so its stage must not go
       on suppressing notifications for the session it last had (HIVE-145).
       Announced, because the hub's re-arm is what re-raises a row this surface's
@@ -2670,6 +2678,13 @@ export function registerIpcHandlers(
     supervisor,
     config: getConfig,
     send,
+    /*
+      The flow-control window follows the slowest surface watching (HIVE-145).
+      Resolved per call rather than captured: a client attaches long after this
+      line has run, and a captured list would gate forever on a set that never
+      changes.
+    */
+    liveSurfaces: () => surfaces.all().map((surface) => surface.id),
     // Where the generated sets live (HIVE-133) — the same value `hooks`,
     // `skills` and `mcp` are each handed below, so a container project's
     // per-session directory and its host counterpart resolve against the
@@ -4630,9 +4645,9 @@ export function registerIpcHandlers(
    * acknowledged it — with a surface that goes away releasing whatever it was
    * holding, or a slow client would pause a session forever by disconnecting.
    */
-  on(CH.ptyAck, (_event, payload) => {
+  on(CH.ptyAck, (event, payload) => {
     const request = parseAckRequest(payload);
-    sessions?.ack(request.sessionId, request.seq);
+    sessions?.ack(request.sessionId, request.seq, surfaceFor(event.sender));
   });
 
   /**
