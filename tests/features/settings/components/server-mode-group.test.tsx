@@ -690,6 +690,58 @@ describe('ServerModeGroup', () => {
       expect(setRemoteConfig).toHaveBeenCalledWith({ host: 'mini.tail1234.ts.net' });
     });
 
+    /**
+     * The same blur, from the state it actually happens in (HIVE-144 review,
+     * I6). Ruling 19 leaves this machine's `remote.mode` at `'remote'` after a
+     * failed boot attach so the next launch retries — which is exactly when
+     * someone is in this field fixing the address. The payload must still name
+     * no mode: `applySetRemote` no longer merges one, so an omitted `mode` is
+     * what makes this a write rather than a dial. See
+     * `tests/electron/main/ipc/set-remote.test.ts` for the other half.
+     */
+    it('sends no mode from a blur even when the config already says remote', async () => {
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={ATTACHED_REMOTE}
+          attachedServer={{ name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' }}
+          attachedServerName={null}
+          serving={false}
+        />,
+      );
+
+      const field = screen.getByLabelText(/server address/i);
+      await userEvent.clear(field);
+      await userEvent.type(field, '100.64.1.9');
+      await userEvent.tab();
+
+      expect(setRemoteConfig).toHaveBeenCalledExactlyOnceWith({ host: '100.64.1.9' });
+    });
+
+    it('sends no mode from a port blur either', async () => {
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={ATTACHED_REMOTE}
+          attachedServer={{ name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' }}
+          attachedServerName={null}
+          serving={false}
+        />,
+      );
+
+      const field = screen.getAllByLabelText(/^port$/i).at(-1);
+      if (field === undefined) throw new Error('the attach port field is not rendered');
+      await userEvent.clear(field);
+      await userEvent.type(field, '9001');
+      await userEvent.tab();
+
+      expect(setRemoteConfig).toHaveBeenCalledExactlyOnceWith({ port: 9001 });
+    });
+
     it('names the live sessions when the switch is refused', async () => {
       vi.mocked(setRemoteConfig).mockResolvedValue({
         switched: {

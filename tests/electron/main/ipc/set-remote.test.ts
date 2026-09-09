@@ -51,19 +51,61 @@ describe('applySetRemote', () => {
 
   /*
     Settings commits one field at a time — the address field on blur, the
-    switch on a click — so a payload naming `host` alone must not reset `mode`
-    and `port` to whatever a default says. Each `??` in the function is one of
-    these three fields, and a partial payload is the only shape that can tell
-    a missing `??` apart from a present one.
+    switch on a click — so a payload naming `host` alone must not reset `port`
+    to whatever a default says. Each `??` under `target` is one of those
+    fields, and a partial payload is the only shape that can tell a missing
+    `??` apart from a present one.
   */
   it('merges a partial payload onto the stored block rather than replacing it', async () => {
     const switchMode = vi.fn().mockResolvedValue({ ok: true });
 
-    await applySetRemote({ host: '10.0.0.9' }, switchMode);
+    await applySetRemote({ mode: 'local', host: '10.0.0.9' }, switchMode);
 
     expect(switchMode).toHaveBeenCalledExactlyOnceWith('local', {
       target: { host: '10.0.0.9', port: 7433 },
     });
+  });
+
+  /**
+   * The blur that used to dial (HIVE-144 review, I6).
+   *
+   * `applySetRemote` read `request.mode ?? current.mode`, and Ruling 19
+   * deliberately leaves this machine's `remote.mode` at `'remote'` after a
+   * failed boot attach so the next launch retries — which is exactly when
+   * someone is in the address field fixing it. So a blur called
+   * `switchIpcMode('remote')`: local IPC unbound, a socket dialled, no
+   * "Attaching…" rendered, and the outcome `void`ed, so every refusal arm was
+   * invisible. On success the window attached on a blur, which is the live
+   * connection behind a toggle `handleAttach` exists to prevent.
+   *
+   * The assertion is on the switcher's argument — that it is never reached at
+   * all — because that is the only thing that distinguishes a write from a
+   * dial. A version that switched to `'local'` instead would still tear down
+   * a real attachment.
+   */
+  it('performs no switch at all when the payload names no mode, even with the file saying remote', async () => {
+    getConfig.mockReturnValue({
+      remote: { mode: 'remote', host: 'mini.tail.ts.net', port: 7433 },
+      marker: 'OLD_SNAPSHOT',
+    });
+    const switchMode = vi.fn().mockResolvedValue({ ok: true });
+
+    const result = await applySetRemote({ host: '10.0.0.9' }, switchMode);
+
+    expect(switchMode).not.toHaveBeenCalled();
+    // And it is still a write: the address the user typed reaches the file,
+    // which is what the blur was for.
+    expect(setRemote).toHaveBeenCalledExactlyOnceWith({ host: '10.0.0.9' });
+    expect(result.switched).toEqual({ ok: true });
+  });
+
+  it('performs no switch for a bare port commit either', async () => {
+    const switchMode = vi.fn().mockResolvedValue({ ok: true });
+
+    await applySetRemote({ port: 9000 }, switchMode);
+
+    expect(switchMode).not.toHaveBeenCalled();
+    expect(setRemote).toHaveBeenCalledExactlyOnceWith({ port: 9000 });
   });
 
   it('writes the request and answers the fresh snapshot when the switch succeeds', async () => {
@@ -164,9 +206,9 @@ describe('applySetRemote — what changed', () => {
   });
 
   /**
-   * The address field blurring: a payload naming no mode, on a window that was
-   * not attached and is not attached afterwards. A `mode`-derived answer would
-   * read `request.mode ?? current.mode` and report a switch on every commit.
+   * The address field blurring: a payload naming no mode, which now performs
+   * no switch at all (see the case above). The socket is the one it was, and
+   * a `mode`-derived answer would still have reported a change.
    */
   it('reports nothing when the socket did not move', async () => {
     const switchMode = vi.fn().mockResolvedValue({ ok: true });

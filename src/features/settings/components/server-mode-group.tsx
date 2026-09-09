@@ -496,9 +496,22 @@ export function ServerModeGroup({
     setRemoteHostInvalid(false);
     setRemoteHostDraft(next);
     if (next === remote.host) return;
-    // Same-mode commits are inert on the far side (`switchIpcMode`'s own
-    // "already local" guard) — this only ever writes the address, never
-    // dials, while `remote.mode` stays `'local'`.
+    /*
+      Write only, and now actually so (HIVE-144 review, I6).
+
+      The claim here used to be that a same-mode commit is inert on the far
+      side, "while `remote.mode` stays `'local'`" — false in the one state
+      this panel is rendered for. Ruling 19 leaves this machine's `remote.mode`
+      at `'remote'` after a failed boot attach so the next launch retries,
+      which is exactly when someone is in these fields fixing the address; and
+      `applySetRemote` read `request.mode ?? current.mode`, so a blur dialled.
+      A payload naming no mode now switches nothing, in `applySetRemote`
+      itself rather than by this call site being careful — see that function.
+
+      The outcome is still discarded, and that is now honest: with no switch
+      there is no `SwitchOutcome` worth rendering, only a config write, which
+      arrives as the fresh snapshot this component's props follow.
+    */
     void setRemoteConfig({ host: next });
   };
 

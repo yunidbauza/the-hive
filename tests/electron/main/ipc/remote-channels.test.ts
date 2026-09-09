@@ -294,7 +294,7 @@ describe('config:set-remote (HIVE-144, Ruling 19)', () => {
   });
 
   /**
-   * All three fields are optional and merged into the stored block, so the
+   * `host` and `port` are optional and merged into the stored block, so the
    * switch has to be told the *effective* target rather than whatever subset
    * this one call carried — and it cannot read it from the file, because
    * Ruling 19 forbids the file from carrying it yet.
@@ -306,12 +306,38 @@ describe('config:set-remote (HIVE-144, Ruling 19)', () => {
     registerIpcHandlers(undefined, switchMode);
     calls = [];
 
-    await setRemoteVerb({ port: 9001 });
+    await setRemoteVerb({ mode: 'remote', port: 9001 });
 
     expect(calls[0]).toMatchObject({
       mode: 'remote',
       target: { host: '100.64.0.1', port: 9001 },
     });
+  });
+
+  /**
+   * The blur, end to end (HIVE-144 review, I6).
+   *
+   * `mode` is **not** merged the way `host` and `port` are, and this is the
+   * file that shows why it must not be: the stored block here says `'remote'`,
+   * which is the state Ruling 19 leaves after a failed boot attach — and the
+   * settings pane's address and port fields commit on blur with no `mode` at
+   * all. Merged, that blur dialled: local IPC unbound, a socket opened, the
+   * outcome `void`ed so no refusal was ever rendered, and on success the window
+   * attached because a field lost focus.
+   *
+   * The address still reaches disk, which is the whole purpose of the commit.
+   */
+  it('writes a bare address commit without asking the switch for anything', async () => {
+    seed('{\n  "version": 2,\n  "remote": { "mode": "remote", "host": "100.64.0.1" }\n}\n');
+    resetIpcHandlers();
+    handlers.clear();
+    registerIpcHandlers(undefined, switchMode);
+    calls = [];
+
+    await setRemoteVerb({ host: '100.64.0.9' });
+
+    expect(calls).toHaveLength(0);
+    expect(onDisk()).toHaveProperty('remote', { mode: 'remote', host: '100.64.0.9' });
   });
 
   it('switching back to local writes the mode and nothing else', async () => {

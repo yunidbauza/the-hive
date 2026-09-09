@@ -69,10 +69,14 @@ export type AttachedSnapshot = () => Readonly<Record<string, unknown>> | null;
  *
  * Ruling 19: the file is written **only** on a successful switch. A refusal
  * answers the old snapshot, untouched, so `config.json` can never name a
- * target this app has just been told it cannot reach. `request.mode ?? current.mode`
- * and the two `??`s under `target` are what make a partial payload — the
- * address field committing on blur, say — mean "change this field, leave the
- * rest", rather than resetting the fields it did not carry.
+ * target this app has just been told it cannot reach. The two `??`s under
+ * `target` are what make a partial payload — the address field committing on
+ * blur, say — mean "change this field, leave the rest", rather than resetting
+ * the fields it did not carry.
+ *
+ * **A payload that names no `mode` performs no switch at all** (HIVE-144
+ * review, I6) — see the block around that branch for the blur that used to
+ * dial, and why `current.mode` was the wrong thing to fall back to.
  */
 export async function applySetRemote(
   payload: unknown,
@@ -90,12 +94,39 @@ export async function applySetRemote(
     `'remote'` on a window that is bound local.
   */
   const before = attachedSnapshot() !== null;
-  const switched = await switchMode(request.mode ?? current.mode, {
-    target: {
-      host: request.host ?? current.host,
-      port: request.port ?? current.port,
-    },
-  });
+  /*
+    **A payload naming no mode switches nothing (HIVE-144 review, I6).**
+
+    It used to read `request.mode ?? current.mode`, and the comment above
+    `commitRemoteHost` in `server-mode-group.tsx` claimed that "only ever
+    writes the address, never dials, while `remote.mode` stays `'local'`."
+    False in the one state that panel is rendered for: Ruling 19 deliberately
+    leaves this machine's `remote.mode` at `'remote'` after a failed boot
+    attach so the next launch retries — which is exactly when the user is
+    looking at these fields to fix the address. So an address or port **blur**
+    called `switchIpcMode('remote')`: local IPC unbound, a socket dialled, no
+    "Attaching…" anywhere, and the outcome `void`ed, so `plaintext-refused`,
+    `live-sessions` and `connect-failed` were all invisible. On success the
+    window attached on a blur — the live connection behind a toggle that
+    Ruling 27 put behind the Attach button precisely to prevent.
+
+    `undefined` is now "leave the mode alone", which is what a partial payload
+    means for every other field it omits. The two `??`s under `target` keep
+    that meaning for `host` and `port`; this restores it for `mode`.
+
+    Ruling 19 is untouched by this. Its guarantee is that a target the app was
+    *told* it cannot reach is never written, and nothing here is told anything:
+    no dial is attempted, so no refusal is ignored.
+  */
+  const switched: SwitchOutcome =
+    request.mode === undefined
+      ? { ok: true }
+      : await switchMode(request.mode, {
+          target: {
+            host: request.host ?? current.host,
+            port: request.port ?? current.port,
+          },
+        });
   // The old snapshot, unchanged, on every refusal — the file was never
   // opened. `getConfig()` rather than the `current` block above, because a
   // pane needs the whole snapshot back either way. Nothing switched, so there
