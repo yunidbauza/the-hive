@@ -15,7 +15,7 @@ import {
   type IpcMainInvokeEvent,
 } from 'electron';
 
-import { createRemoteListener } from '@remote-host/listener';
+import { SNAPSHOT_READ_BUDGET_MS, createRemoteListener } from '@remote-host/listener';
 import {
   AGENT_LIMIT_DEFAULTS,
   formatRunCost,
@@ -129,7 +129,7 @@ import type {
   JiraTransition,
 } from '@shared/jira-contract';
 import { LEDGER_DIR, OVERMIND } from '@shared/ledger-contract';
-import { SNAPSHOT_CHANNELS, SNAPSHOT_READ_BUDGET_MS } from '@shared/remote-contract';
+import { SNAPSHOT_CHANNELS } from '@shared/remote-contract';
 import { SESSION_NAME_DISPLAY_MAX } from '@shared/session-contract';
 import {
   SESSION_HISTORY_FILE,
@@ -428,6 +428,24 @@ function raceSnapshotRead(
   return new Promise((resolve) => {
     let settled = false;
     const timer = setTimeout(() => {
+      /*
+        Unreachable by contract, not merely unlikely (HIVE-144 review — three
+        guards examined for the shape Task 6's deleted `.catch()` check was:
+        argued as covered, actually exercised by nothing).
+
+        The only way `settled` could already be `true` here is the read
+        having settled first — and both branches below call `clearTimeout(timer)`
+        in the same synchronous turn they set `settled`, before this callback
+        could ever be dispatched. `clearTimeout` guarantees a cleared timer's
+        callback never runs at all, not merely that it early-returns if it
+        does — so by the time either branch below finishes, this callback has
+        already been prevented from firing, on this event loop or any other.
+        Kept rather than deleted: it is the one line standing between "provably
+        unreachable today" and "silently double-resolves if a future edit ever
+        reorders `clearTimeout` after `resolve`" — a correctness note a reader
+        can verify against the two branches below, not a test that can ever
+        exercise it.
+      */
       if (settled) return;
       settled = true;
       console.error(
@@ -442,12 +460,31 @@ function raceSnapshotRead(
       // both `github:prs` (genuinely asynchronous) and the five that are not.
       .then(() => (handler as CallHandler)(SNAPSHOT_PAYLOAD[channel]))
       .then((value) => {
+        /*
+          Reachable — the timeout can fire first on a genuinely slow read —
+          but with no observable effect once it does (HIVE-144 review): a
+          `Promise` settles at most once by spec, so the `resolve` three lines
+          down is silently ignored either way, and `clearTimeout` on a timer
+          that already fired is a documented no-op. Nothing this branch does
+          past this line can be told apart, by any test, from this branch not
+          running at all. Contrast the `.catch` branch below, which is the one
+          of these three where skipping it is actually visible.
+        */
         if (settled) return;
         settled = true;
         clearTimeout(timer);
         resolve([channel, value]);
       })
       .catch((cause: unknown) => {
+        /*
+          The one of these three guards with a real, tested effect (HIVE-144
+          review): without it, a read that times out and *later* rejects logs
+          twice for the same channel — the timeout's own "exceeded ...ms;
+          omitted" line, and this catch's "could not read" line for a failure
+          nobody is still waiting to hear about. `tests/electron/main/ipc/remote-composition.test.ts`
+          drives this exact ordering (a hung read that times out, then rejects
+          well after) and asserts the second log never happens.
+        */
         if (settled) return;
         settled = true;
         clearTimeout(timer);

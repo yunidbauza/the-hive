@@ -4,7 +4,11 @@ import { createServer as createNetServer, connect, type Socket } from 'node:net'
 import { WebSocket, WebSocketServer } from 'ws';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ATTACH_HANDSHAKE_TIMEOUT_MS, createRemoteListener } from '@remote-host/listener';
+import {
+  ATTACH_HANDSHAKE_TIMEOUT_MS,
+  SNAPSHOT_READ_BUDGET_MS,
+  createRemoteListener,
+} from '@remote-host/listener';
 import type { ServerDevice } from '@shared/config-contract';
 import { MAX_FILE_BYTES } from '@shared/fs-contract';
 import { CH, type Channel } from '@shared/ipc-contract';
@@ -15,7 +19,6 @@ import {
   POST_ATTACH_FRAME_MAX_BYTES,
   REMOTE_PROTOCOL_VERSION,
   SNAPSHOT_CHANNELS,
-  SNAPSHOT_READ_BUDGET_MS,
   type AttachRequest,
   type CallFrame,
   type ErrorFrame,
@@ -1605,10 +1608,11 @@ describe('the attach snapshot (HIVE-144)', () => {
 
 describe('the snapshot read budget (HIVE-144)', () => {
   /**
-   * `SNAPSHOT_READ_BUDGET_MS`'s own doc comment claims 3 000 ms of margin
-   * inside `ATTACH_HANDSHAKE_TIMEOUT_MS` — asserted here directly, against
-   * both real values, rather than trusted to stay true in two files that
-   * could drift independently of each other. A budget raised to or past the
+   * `SNAPSHOT_READ_BUDGET_MS`'s own doc comment (beside
+   * `ATTACH_HANDSHAKE_TIMEOUT_MS` in `listener.ts`, HIVE-144 review) claims
+   * 3 000 ms of margin — asserted here directly, against both real values,
+   * rather than trusted to stay true because the two constants merely sit
+   * next to each other in the source. A budget raised to or past the
    * handshake deadline is the same defect the deadline exists to prevent,
    * with a different constant at fault: `buildAttachSnapshot` would still be
    * waiting on a slow read when `ATTACH_HANDSHAKE_TIMEOUT_MS` fires and

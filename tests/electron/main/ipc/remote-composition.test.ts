@@ -4,14 +4,10 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { SNAPSHOT_READ_BUDGET_MS } from '@remote-host/listener';
 import { emptySnapshot } from '../../../../electron/shared/config-contract';
 import type { Channel } from '../../../../electron/shared/ipc-contract';
-import {
-  SNAPSHOT_CHANNELS,
-  SNAPSHOT_READ_BUDGET_MS,
-  WINDOW_BOUND,
-  type ResumePoint,
-} from '../../../../electron/shared/remote-contract';
+import { SNAPSHOT_CHANNELS, WINDOW_BOUND, type ResumePoint } from '../../../../electron/shared/remote-contract';
 import type { ResumeResult } from '../../../../electron/main/ipc/pty';
 import type { AttachedSocket } from '../../../../electron/main/ipc/socket-broadcaster';
 
@@ -251,22 +247,33 @@ const buildSnapshot = (): BuildSnapshot => {
   return capturedBuildSnapshot;
 };
 
-vi.mock('@remote-host/listener', () => ({
-  createRemoteListener: (options: { onAttach: OnAttach; buildSnapshot: BuildSnapshot }) => {
-    capturedOnAttach = options.onAttach;
-    capturedBuildSnapshot = options.buildSnapshot;
-    return {
-      start: async () => null,
-      stop: async () => {},
-      get boundHost() {
-        return null;
-      },
-      get lastBindError() {
-        return null;
-      },
-    };
-  },
-}));
+vi.mock('@remote-host/listener', async (importOriginal) => {
+  // `...actual` is not test convenience — `electron/main/ipc/index.ts` imports
+  // `SNAPSHOT_READ_BUDGET_MS` from this same module (HIVE-144 review, the
+  // constant's move beside `ATTACH_HANDSHAKE_TIMEOUT_MS`), and a factory that
+  // returned only `createRemoteListener` would silently hand it `undefined`
+  // for the race's own timeout delay — no type error, no lint error, just a
+  // `setTimeout` with `NaN` under it. Only the listener's *construction* is
+  // faked here; its real, un-mocked constants pass straight through.
+  const actual = await importOriginal<typeof import('@remote-host/listener')>();
+  return {
+    ...actual,
+    createRemoteListener: (options: { onAttach: OnAttach; buildSnapshot: BuildSnapshot }) => {
+      capturedOnAttach = options.onAttach;
+      capturedBuildSnapshot = options.buildSnapshot;
+      return {
+        start: async () => null,
+        stop: async () => {},
+        get boundHost() {
+          return null;
+        },
+        get lastBindError() {
+          return null;
+        },
+      };
+    },
+  };
+});
 
 /**
  * What `sessions.resume` answers next, per entity id — the three-way branch
@@ -666,6 +673,54 @@ describe('the attach snapshot (HIVE-144)', () => {
         if (channel === CH.ledgerList) continue;
         expect(snapshot).toHaveProperty(channel);
       }
+    },
+    SNAPSHOT_READ_BUDGET_MS + 5_000,
+  );
+
+  it(
+    'logs a timed-out read once, not twice, when it rejects after the budget already gave up on it (HIVE-144 review)',
+    async () => {
+      /*
+        `raceSnapshotRead` carries three `if (settled) return;` guards, and
+        this is the one of the three with an observable effect: without it, a
+        read that the budget has already timed out still logs a second,
+        spurious "could not read" line when it eventually rejects — for a
+        failure nobody is still waiting to hear about, since the snapshot
+        already answered without this channel. The other two guards settle a
+        `Promise`, which is a no-op the second time by spec regardless of
+        whether the guard runs; this one gates a `console.error` call, which
+        is not.
+      */
+      registerIpcHandlers();
+      let rejectLate: ((cause: Error) => void) | undefined;
+      ledgerReadImpl = () =>
+        new Promise((_resolve, reject) => {
+          rejectLate = reject;
+        });
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+      const snapshot = await buildSnapshot()();
+      expect(snapshot).not.toHaveProperty(CH.ledgerList);
+
+      const logsFor = (needle: string): number =>
+        logged.mock.calls.filter(
+          (call) => String(call[0]).includes(CH.ledgerList) && String(call[0]).includes(needle),
+        ).length;
+
+      // The budget's own log, from the timeout branch — exactly one, proving
+      // the read really was timed out before it ever rejected.
+      expect(logsFor('exceeded')).toBe(1);
+
+      // Now the read actually fails, well after `buildSnapshot()()` already
+      // resolved without it.
+      rejectLate?.(new Error('the ledger file is corrupt, eventually'));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      // The catch branch's guard swallowed it: no second, later log for this
+      // channel.
+      expect(logsFor('could not read')).toBe(0);
+
+      logged.mockRestore();
     },
     SNAPSHOT_READ_BUDGET_MS + 5_000,
   );

@@ -78,14 +78,59 @@ import { refuseProtocol } from './index';
  * open forever, which on a Tailscale-reachable listener is a standing
  * exhaustion path rather than a hypothetical one.
  *
- * **Exported for `SNAPSHOT_READ_BUDGET_MS`'s sake (HIVE-144 review).** That
- * constant (`electron/shared/remote-contract.ts`) has to stay comfortably
- * under this one — `buildAttachSnapshot` runs entirely inside this window,
- * between the upgrade and the accept — and `tests/electron/remote-host/listener.test.ts`
- * asserts the relationship directly against both real values rather than
- * trusting two comments in two files to stay in agreement.
+ * **Exported so `tests/electron/remote-host/listener.test.ts` can assert
+ * {@link SNAPSHOT_READ_BUDGET_MS} stays comfortably under it (HIVE-144
+ * review)**, reading both real values directly rather than trusting the two
+ * comments to stay in agreement on their own.
  */
 export const ATTACH_HANDSHAKE_TIMEOUT_MS = 5_000;
+
+/**
+ * How long a single `SNAPSHOT_CHANNELS` read may take before its key is
+ * dropped from the attach snapshot — exactly as a throwing read already is
+ * (Ruling 15, extended by HIVE-144 review: a slow read is dropped the same
+ * way a broken one is, because a client waiting on it cannot tell the two
+ * apart).
+ *
+ * **Beside `ATTACH_HANDSHAKE_TIMEOUT_MS` rather than in
+ * `electron/shared/remote-contract.ts` (HIVE-144 review, second correction).**
+ * `electron/shared/**` is for what *both halves of the link* have to agree
+ * on; this number governs only how long the server spends building a
+ * snapshot before the client ever sees a frame, exactly the same server-only
+ * shape `ATTACH_HANDSHAKE_TIMEOUT_MS` and `MAX_UNATTACHED_SOCKETS` already
+ * are (see `POST_ATTACH_FRAME_MAX_BYTES`'s own comment in `remote-contract.ts`
+ * for why *that* one, unlike these, had to move the other way). Having to
+ * export `ATTACH_HANDSHAKE_TIMEOUT_MS` out of this file for a constant that
+ * belonged next to it was the signal this one was living in the wrong file.
+ *
+ * **A sibling of `ATTACH_HANDSHAKE_TIMEOUT_MS`**, in the sense `CALL_DEADLINE_MS`
+ * and `CALL_GIVE_UP_MS` (`electron/shared/remote-contract.ts`) are siblings:
+ * the two numbers have to agree, or the server can time out a socket while a
+ * read it has not yet given up on is still running. `buildAttachSnapshot`
+ * (`electron/main/ipc/index.ts`) races every channel **concurrently** against
+ * this one budget rather than sequentially against six of them, so the whole
+ * snapshot's wall-clock cost is bounded by this single number regardless of
+ * how many of the six are slow at once — a sequential sum could exceed the
+ * handshake window on its own even with a "safe" per-channel value. 2 000 ms
+ * leaves 3 000 ms of margin inside the 5 000 ms deadline above for everything
+ * else the handshake still has to do before and after this read
+ * (`verifyDevice`, `fitSnapshot`, the `send` itself) — comfortable rather than
+ * exact, and the margin is asserted directly by
+ * `tests/electron/remote-host/listener.test.ts` rather than left to this
+ * comment staying true.
+ *
+ * **Why a per-channel try/catch alone was not enough (HIVE-144 review).**
+ * `CH.githubPrs`'s handler awaits `loginEnvStatus()` and shells out to `gh`,
+ * whose own runner timeout (`electron/main/integrations/github/run.ts`) is
+ * 20 000 ms — four times the whole handshake window on its own — and it
+ * *resolves* with an error result rather than rejecting, so nothing throws
+ * for a catch to see. Unbounded, that read alone holds the whole snapshot
+ * open past `ATTACH_HANDSHAKE_TIMEOUT_MS`, and the socket is closed with zero
+ * frames sent: no accept, no refusal, just the generic "closed before it
+ * attached" a version mismatch produces — the exact failure Ruling 15 exists
+ * to prevent, reached through latency instead of size.
+ */
+export const SNAPSHOT_READ_BUDGET_MS = 2_000;
 
 /**
  * How many sockets may be mid-handshake — upgraded, but not yet attached — at
