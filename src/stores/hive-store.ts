@@ -700,6 +700,13 @@ interface HiveState {
    * confidence. `entities` was the other id-keyed slice, and it is already
    * cleared above.
    *
+   * And `staleTitles` (module state, not a field here — see the action's own
+   * body): its keys name terminals in the mode being left, so once `entities`
+   * is cleared every one of them describes something gone, which is what
+   * makes clearing it correct rather than merely defensive. `reset()` clears
+   * the same map for the same reason, on the wider occasion of the whole app
+   * resetting.
+   *
    * Deliberately leaves `tickets` (Jira, not a snapshot channel — both modes
    * read the same query) and `orchLines` (the local console transcript, a
    * property of this window, not of either mode, and never keyed by a session
@@ -4862,6 +4869,21 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
   },
 
   clearModeEntities: () => {
+    /*
+      Module state, not `HiveState` — cleared beside the `set()` below rather
+      than inside it, the same split `reset()` uses for the same map.
+
+      Every key in `staleTitles` names a terminal in the mode being left, and
+      once `entities` is cleared that terminal no longer exists in this
+      store. This is not the `metrics` collision story repeated — it would
+      still be correct to clear even if a terminal id could never collide
+      across machines, because a dead key describes nothing once its entity
+      is gone. That the id *can* collide (`nextSpawnId` mints it the same way
+      everywhere) is why a leftover entry is not just inert but actively
+      wrong: a stale title meant for the departed terminal would suppress a
+      genuine rename on the newly attached one wearing the same id.
+    */
+    staleTitles.clear();
     set({
       // `entities` holds only sessions and agents (`Entity = Session |
       // Agent`), so clearing it and both order arrays drops exactly what

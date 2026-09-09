@@ -220,6 +220,45 @@ describe('clearModeEntities', () => {
     expect(state().prSource).toEqual({ kind: 'loading' });
   });
 
+  /**
+   * `staleTitles` is module state, not a `HiveState` field, but it is keyed
+   * by `terminalOf(entity)` — the same not-unique-across-machines id
+   * `metrics` is keyed by. `clearSession` stashes the retired row's name
+   * there so a repaint of the same title on the *successor* is not mistaken
+   * for a real rename; `renameSession` is the only reader, and it suppresses
+   * a title that matches the stashed one exactly. Left uncleared, a stashed
+   * title for the departed mode's terminal would suppress a genuine rename
+   * on the newly attached terminal wearing the same id.
+   */
+  it('clears staleTitles too, so a reused terminal id can be renamed instead of having a departed title silently suppressed', () => {
+    const nameOf = (id: string) => {
+      const entity = state().entities[id];
+      return entity && isSession(entity) ? entity.name : undefined;
+    };
+
+    // A named, live row — `clearSession` refuses an already-ended one.
+    state().hydrateSessions([sessionRecord({ id: 'sess-01', live: true })]);
+    state().renameSession('sess-01', 'db-migration', 'agent');
+    expect(nameOf('sess-01')).toBe('db-migration');
+
+    // Retiring the row stashes its name as `sess-01`'s stale title, for
+    // whichever successor terminal `sess-01` becomes.
+    state().clearSession('sess-01');
+
+    state().clearModeEntities();
+    // The joined mode mints the identical terminal id — the same collision
+    // `metrics` has, not a hypothetical.
+    state().applyAttachSnapshot({
+      [CH.sessionHistory]: [sessionRecord({ id: 'sess-01', live: true })],
+    });
+
+    // The exact same title arrives again, this time genuinely — the new
+    // session's own first-prompt name, which happens to coincide.
+    state().renameSession('sess-01', 'db-migration', 'agent');
+
+    expect(nameOf('sess-01')).toBe('db-migration');
+  });
+
   it('leaves a purely local concern untouched: tickets and the console transcript', () => {
     const ticketsBefore = state().tickets;
     const orchLinesBefore = state().orchLines;
