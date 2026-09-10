@@ -552,12 +552,54 @@ held for the rest of the process's life. A `gap` sends one empty `pty:data`
 stamped at the head seq, so the client's own discontinuity check fires on
 reconnect rather than whenever output next happens.
 
-**Before HIVE-144's client sends its first real `resumeFrom`, read the parked
-hazard on `Sessions.resume` (`electron/main/sessions/index.ts`).** A seq alone
-does not name a generation, so a session that restarted while a client was away
-can answer `replay` with a *new* process's output stitched contiguously onto the
-old one's transcript. Closing it is HIVE-144's, and the comment names both
-candidate fixes.
+**A resume point is `{gen, seq}`, never a bare seq.** A seq alone does not name
+a generation, so a session that restarted while a client was away could answer
+`replay` with a *new* process's output stitched contiguously onto the old one's
+transcript — data loss that rendered as success. HIVE-144 closed it by keying
+`ResumePoint` on the generation and bumping `REMOTE_PROTOCOL_VERSION` to 2, and
+`Sessions.resume` now compares generations *before* it touches the seq ring: a
+restart answers `gap`, never `replay`.
+
+That fix was preparatory until HIVE-150, because nothing populated `resumeFrom`
+in production — `router.ts` dialled without one.
+
+### Reconnecting an attached client (HIVE-150)
+
+A socket that dies after a successful attach is dialled again, on 1s, 2s, 4s,
+8s, 15s, 30s and then every 30s. It never gives up and never falls back to local
+on its own: the sessions are running on the far machine, so a local surface
+would show an empty fleet and read as data loss, and a budget that expires
+strands whoever's server took longer to come back than the budget allowed. What
+makes indefinite retrying honest is that it says so — the header chip goes amber,
+the attach pane names the attempt and the wait, and **Work locally** is the exit.
+Waking from sleep restarts the schedule and dials at once.
+
+A refusal another dial would reproduce is not retried at all: `unauthorized`,
+`revoked`, `protocol-mismatch`, a refused address, an oversized attach frame.
+Those go straight to a red chip naming the reason.
+
+Three things are worth knowing before touching this:
+
+- **A deliberate detach must not be heard as a drop.** `unbindEverything` closes
+  the client it dialled, and a real socket answers a close by announcing one, so
+  the close subscription is dropped *before* the socket is. Cancelling the loop
+  is not enough — a cancelled loop is idle, and `begin` on an idle loop is
+  exactly how a genuine drop starts one.
+- **`remote:link-status` carries `RemoteLinkStatus | null`,** and the `null` is
+  what a window is told when it goes local. Without it the last `attached`
+  status stands and every consumer keeps naming a machine nobody is driving.
+- **A reconnect is a new surface.** Surface ids are minted per socket object, so
+  the server released the old surface's fs watcher and foreground record when it
+  went away. The status carries a **reattach epoch**, and the renderer effects
+  that own that state depend on it. Terminals deliberately do not — their
+  continuity is what `resumeFrom` buys, and remounting one discards the
+  scrollback the resume just saved.
+
+Which resume points ride in the attach frame is bounded twice: watched sessions
+only — a session with no mounted terminal has no scrollback here to preserve —
+and a byte ceiling, because `ATTACH_FRAME_MAX_BYTES` is 8 KiB and the client
+throws rather than truncating. An evicted session takes a `gap` on its next
+batch, which the terminal already renders.
 
 ### Sessions: what actually runs (story 096)
 
