@@ -12,6 +12,7 @@ import {
   setServerConfig,
   type RemoteSwitch,
 } from '@lib/project-config';
+import type { RemoteLinkStatus } from '@shared/ipc-contract';
 import { useHiveStore } from '@stores/hive-store';
 import {
   DEFAULT_REMOTE,
@@ -1502,6 +1503,114 @@ describe('ServerModeGroup', () => {
       await userEvent.click(screen.getByRole('button', { name: /^attach$/i }));
 
       expect(fleetIds()).toEqual(['sess-01']);
+    });
+  });
+
+  /**
+   * What the pane says while the link is not working (HIVE-150).
+   *
+   * Before this, a dropped socket left the pane reading "Attached to mini.
+   * Everything this window shows comes from that machine" while every call
+   * behind it rejected. The status line is the honest signal, and the button is
+   * the exit — `config:set-remote` is `PROCESS_LOCAL`, so it is the one control
+   * here that still answers with the socket dead.
+   */
+  describe('a link that is not working', () => {
+    const link = (over: Partial<RemoteLinkStatus> = {}): RemoteLinkStatus => ({
+      state: 'attached',
+      serverName: 'mini',
+      attempt: 0,
+      nextAttemptAt: null,
+      reason: null,
+      epoch: 0,
+      ...over,
+    });
+
+    const renderAttached = (status: RemoteLinkStatus | null) =>
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={ATTACHED_REMOTE}
+          attachedServer={null}
+          attachedServerName="mini"
+          serving={false}
+          link={status}
+        />,
+      );
+
+    it('names the machine, the attempt and the wait while reconnecting', async () => {
+      renderAttached(
+        link({ state: 'reconnecting', attempt: 4, nextAttemptAt: Date.now() + 8_000 }),
+      );
+
+      expect(screen.getByText(/Reconnecting to/)).toBeInTheDocument();
+      /*
+        The attempt and the countdown together, because the question someone
+        watching this has is "is anything actually happening" — and a bare
+        "reconnecting…" answers that no better than a blank pane does.
+      */
+      expect(screen.getByText(/Attempt 4/)).toBeInTheDocument();
+      expect(screen.getByText(/next try in 8 seconds/)).toBeInTheDocument();
+      // The fear this state produces is that the work is gone.
+      expect(screen.getByText(/sessions are still running on that machine/)).toBeInTheDocument();
+    });
+
+    it('names the reason once it has given up', async () => {
+      renderAttached(
+        link({ state: 'disconnected', reason: 'That device was revoked.' }),
+      );
+
+      expect(screen.getByText(/Disconnected from/)).toBeInTheDocument();
+      expect(screen.getByText(/That device was revoked\./)).toBeInTheDocument();
+      /*
+        And that waiting will not help, which is the difference between this
+        state and the one above — the whole reason they are two states.
+      */
+      expect(screen.getByText(/will not fix this on its own/)).toBeInTheDocument();
+    });
+
+    it('offers the local exit in both, and it detaches', async () => {
+      for (const state of ['reconnecting', 'disconnected'] as const) {
+        vi.mocked(setRemoteConfig).mockClear();
+        const { unmount } = renderAttached(link({ state }));
+  
+        await userEvent.click(screen.getByRole('button', { name: /work locally/i }));
+
+        /*
+          The same call the switch makes. It is worth a button of its own here
+          because it is the only control on this pane that still works with the
+          socket dead — everything else is proxied and would simply hang.
+        */
+        expect(setRemoteConfig).toHaveBeenCalledWith({ mode: 'local' });
+        unmount();
+      }
+    });
+
+    it('keeps the ordinary sentence while the link is healthy', async () => {
+      renderAttached(link());
+
+      expect(screen.getByText(/Everything this window shows comes from that machine/))
+        .toBeInTheDocument();
+      expect(screen.queryByText(/Reconnecting to/)).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /work locally/i })).not.toBeInTheDocument();
+    });
+
+    it('keeps the address and pairing fields hidden in every remote state', async () => {
+      for (const state of ['attached', 'reconnecting', 'disconnected'] as const) {
+        const { unmount } = renderAttached(link({ state }));
+  
+        /*
+          The fields read `remote.host`/`remote.port`, which while attached come
+          off the *server's* snapshot — and during a reconnect come off a
+          snapshot nothing is refreshing. Showing them in the degraded states
+          would put stale values on screen at exactly the moment the user is
+          most likely to believe them.
+        */
+        expect(screen.getByText(/hidden while attached/)).toBeInTheDocument();
+        unmount();
+      }
     });
   });
 });

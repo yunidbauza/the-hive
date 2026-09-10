@@ -28,6 +28,7 @@ import {
 import { checkForUpdates, readUpdateStatus } from '@lib/updates';
 import type { AppInfo, PtyDiagnostics } from '@shared/ipc-contract';
 import type { UpdateStatus } from '@shared/update-contract';
+import { useRemoteLink } from '@stores/hive-store';
 
 /**
  * Advanced & diagnostics (story 107).
@@ -198,6 +199,13 @@ export function AdvancedSection() {
     value changes the moment a socket opens or closes.
   */
   const attachedServerName = useAttachedServer();
+  /*
+    What that attachment is doing, for the pane's status line (HIVE-150).
+    `attachedServerName` above answers *whether* this window drives another
+    machine; this answers whether that machine is reachable right now, which
+    only the status line asks.
+  */
+  const remoteLink = useRemoteLink();
   /*
     The third runtime-derived field the attach half needs (HIVE-144 review,
     I3) — whether *this* process was launched to serve. Not
@@ -393,6 +401,7 @@ export function AdvancedSection() {
         attachedServer={snapshot.attachedServer}
         attachedServerName={attachedServerName}
         serving={serving}
+        link={remoteLink}
       />
 
       <SettingsGroup
