@@ -1,9 +1,25 @@
 import { CH } from '@shared/ipc-contract';
-import type { ToastPayload } from '@shared/notification-contract';
+import type {
+  NotificationKind,
+  ToastPayload,
+} from '@shared/notification-contract';
 
 import type { Surface, SurfaceId } from '../ipc/surfaces';
 
 import type { NotificationPresenter } from './hub';
+
+/**
+ * The kinds whose subject is **this binary** rather than the fleet (HIVE-151).
+ *
+ * A set rather than a predicate on the action, because what makes these two
+ * special is the thing they are *about*, not the verb their click happens to
+ * carry. An `app.update_available` row whose action were later changed to a
+ * `url` would still be an announcement about one machine's release.
+ */
+const UPDATE_KINDS: ReadonlySet<NotificationKind> = new Set([
+  'app.update_available',
+  'app.update_ready',
+]);
 
 /**
  * Where a toast goes (HIVE-145).
@@ -127,6 +143,27 @@ export function createToastRoute(options: ToastRouteOptions): NotificationPresen
       */
       if (action.type === 'session' && isForegroundFor(surface.id, action.entityId)) continue;
       if (delivered.get(id)?.has(surface.id) === true) continue;
+
+      /*
+        An update announcement never leaves the machine it is about (HIVE-151).
+
+        Every other kind describes the *fleet* — a session, an agent, a PR — and
+        so is equally true wherever it is read. These two describe **this
+        binary**: which release this app found, and whether this app has it
+        downloaded. Since HIVE-151 the click is answered by the machine that
+        made it, so a toast carried to an attached client would drive that
+        client's updater about a version its own checker has not found — a
+        silent no-op from `download()`, or `install()` opening a release page
+        instead of installing. Before that routing it was worse rather than
+        better: the click quit and replaced the *server* the client was
+        attached to.
+
+        The **row** still crosses, as every row does. "The mini has an update"
+        is worth knowing from the laptop; it is only the interruption, whose
+        click promises an action this machine cannot honestly perform, that
+        stops here. Acting on it is done at the mini, or from its own row.
+      */
+      if (surface.kind !== 'window' && UPDATE_KINDS.has(kind)) continue;
 
       remember(id, surface.id);
 

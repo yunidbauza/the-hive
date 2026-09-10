@@ -291,3 +291,73 @@ describe('createToastRoute', () => {
     });
   });
 });
+
+/**
+ * An update announcement never leaves the machine it is about (HIVE-151).
+ *
+ * Every other kind describes the *fleet* and is equally true wherever it is
+ * read. These two describe **this binary**: which release this app found, and
+ * whether this app has it downloaded. Since HIVE-151 the click is answered by
+ * the machine that made it, so a toast carried to an attached client would
+ * drive that client's updater about a version its own checker has not found —
+ * `download()` returns silently when `availableVersion` is `null`, and
+ * `install()` opens a release page instead of installing.
+ *
+ * The row still crosses. Only the interruption, whose click promises something
+ * this machine cannot honestly do, stops here.
+ */
+describe('an update announcement and a socket surface', () => {
+  const update = (kind: 'app.update_available' | 'app.update_ready') => ({
+    id: `u-${kind}`,
+    kind,
+    title: 'A new version is available',
+    body: '0.11.0',
+    action: { type: 'update.download' as const },
+    onClick: () => undefined,
+  });
+
+  it.each(['app.update_available', 'app.update_ready'] as const)(
+    'does not send %s to a socket surface',
+    (kind) => {
+      live = [surface('sock-a', 'socket')];
+
+      route()(update(kind));
+
+      expect(sent).toEqual([]);
+      expect(present).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['app.update_available', 'app.update_ready'] as const)(
+    'still presents %s on this machine’s own window',
+    (kind) => {
+      live = [surface('win-a', 'window')];
+
+      route()(update(kind));
+
+      expect(present).toHaveBeenCalledTimes(1);
+      expect(sent).toEqual([]);
+    },
+  );
+
+  it('still sends every other kind to a socket surface', () => {
+    live = [surface('sock-a', 'socket')];
+
+    route()(toast);
+
+    expect(sent).toHaveLength(1);
+  });
+
+  /*
+    A mixed room: the window beside it is still interrupted. The rule is about
+    where the toast would *land*, not about suppressing the announcement.
+  */
+  it('interrupts the local window while sparing the socket', () => {
+    live = [surface('win-a', 'window'), surface('sock-a', 'socket')];
+
+    route()(update('app.update_available'));
+
+    expect(present).toHaveBeenCalledTimes(1);
+    expect(sent).toEqual([]);
+  });
+});

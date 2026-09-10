@@ -3717,6 +3717,143 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       const config = await renderer.evaluate<ConfigSnapshot>('window.hive.config.get()');
       expect(config.projects.map((project) => project.id)).toEqual([servedProjectId]);
     }, 300_000);
+
+    /**
+     * 21l. `notifications:act` is routed by the action it carries, not by its
+     * channel name (HIVE-151).
+     *
+     * ## What is being proved, and why it is proved this way
+     *
+     * Three of the seven verbs this channel carries reach *hardware*: `url`
+     * goes to `shell.openExternal` and `update.download`/`update.install` reach
+     * this process's own updater singleton. Proxied by name, an inbox row
+     * clicked on the laptop opened a browser on the mini and drove the mini's
+     * updater — a second door into the defect HIVE-144 closed by the front one
+     * when it made `updates:check` and `updates:status` `PROCESS_LOCAL`.
+     *
+     * A browser opening on the right machine cannot be observed from inside a
+     * test, and neither can the absence of one. What *can* be observed is
+     * whether the call needed the socket at all: **the server is killed, and
+     * then the two halves are asked for.** A machine-local action must still
+     * resolve with no server in existence; a fleet action must fail, because
+     * there is genuinely nowhere for it to go.
+     *
+     * That second half is the control, and it is what stops the first from
+     * passing for the wrong reason. Without it, "the `update.download` call
+     * resolved" would be equally true of a client that was still quietly
+     * attached to something.
+     *
+     * Red before the fix, which is the only reason it is worth running: with
+     * `notifications:act` proxied wholesale, the `update.download` call is a
+     * frame sent into a dead socket and rejects exactly like the `ask` does.
+     *
+     * ## Two deliberate choices
+     *
+     * `update.download` rather than `url`, because a `url` that routed
+     * correctly would open a real browser window on the machine running this
+     * suite. The update branch is fire-and-forget into an updater that this
+     * unsigned local build cannot use, so it is observable without being felt.
+     *
+     * The server is restarted at the end rather than left dead. This case is
+     * last today and `afterAll` would clean up either way, but a block whose
+     * final state depends on nothing being added after it is a trap for
+     * whoever adds 21m.
+     */
+    it('21l. a machine-local notification action needs no server at all (HIVE-151)', async () => {
+      assert(renderer !== undefined, 'the client app must have a renderer');
+
+      /*
+        The starting state is read from `appInfo`, not from a link-status
+        subscription. `onLinkStatus` pushes on *change* and replays nothing, so
+        a listener installed here would sit at `null` for as long as the
+        attachment held steady — which is exactly the state this case needs to
+        confirm. `attachedServerName` is the standing fact rather than the
+        transition, so it can be asked.
+      */
+      const before = await renderer.evaluate<AppInfo>('window.hive.appInfo()');
+      assert(
+        before.attachedServerName !== null,
+        'case 21k must leave this client attached for 21l to take the server away',
+      );
+
+      /*
+        The subscription is for the *drop*, which is a transition and so does
+        arrive. Installed before the kill, or it would miss the one push it
+        exists to see.
+      */
+      await renderer.evaluate(
+        'window.__link151 = null; window.hive.remote.onLinkStatus((status) => { window.__link151 = status; }); true',
+      );
+
+      await stopApp(serverApp);
+      serverApp = undefined;
+      /*
+        Asserted on a status that has actually *arrived*, not on the absence of
+        one. `window.__link151` starts `null`, and `(null)?.state !== 'attached'`
+        is true on the very first poll — so a negated predicate here would be
+        satisfied before any push had landed, and the two calls below would race
+        the client's own socket teardown rather than follow it.
+      */
+      await waitForAsync(
+        async () => {
+          const status = await renderer!.evaluate<RemoteLinkStatus | null>(
+            'window.__link151 ?? null',
+          );
+          return status !== null && status.state !== 'attached';
+        },
+        'the link to notice the server has gone',
+        120_000,
+      );
+
+      /*
+        The control first, so a green machine-local result below cannot be read
+        as "the socket was fine all along". Nothing is listening on that port;
+        an `ask` resolves against a ledger thread only the server holds, so it
+        has nowhere to go and must say so.
+      */
+      const fleet = await renderer.evaluate<string>(
+        "window.hive.notifications.act({ type: 'ask', thread: 'hive-151-control' })" +
+          ".then(() => 'resolved', () => 'rejected')",
+      );
+
+      const local = await renderer.evaluate<string>(
+        "window.hive.notifications.act({ type: 'update.download' })" +
+          ".then(() => 'resolved', () => 'rejected')",
+      );
+
+      measurements.push({
+        case: '21l. HIVE-151 payload-scoped routing',
+        withNoServer: { ask: fleet, 'update.download': local },
+      });
+
+      expect(
+        fleet,
+        `a fleet action reached something with no server running — the client's stderr so far:\n${clientRecord?.stderr || '(empty)'}`,
+      ).toBe('rejected');
+      expect(
+        local,
+        'a machine-local action was sent to the socket instead of being answered here',
+      ).toBe('resolved');
+
+      /*
+        Put back, and waited for properly. `waitForListener` returns when the
+        port opens, which is up to a backoff interval before the client is
+        attached again — so a case added after this one would inherit a
+        half-reattached client, which is the trap the reboot exists to avoid.
+      */
+      const rebooted = spawnApp(['--server'], serverConfigPath, serverUserDataDir);
+      serverApp = rebooted.child;
+      serverRecord = rebooted.record;
+      await waitForListener('127.0.0.1', serverPort, 60_000);
+      await waitForAsync(
+        async () =>
+          (await renderer!.evaluate<RemoteLinkStatus | null>(
+            'window.__link151 ?? null',
+          ))?.state === 'attached',
+        'the client to reattach after this case put the server back',
+        120_000,
+      );
+    }, 300_000);
   });
 
   describe('a call that never settles (HIVE-144)', () => {

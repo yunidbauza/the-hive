@@ -1,11 +1,15 @@
-import { BrowserWindow, Notification } from 'electron';
+import { Notification } from 'electron';
 
 import { CH, type Channel } from '@shared/ipc-contract';
 import {
   isNotificationKind,
-  type NotificationAction,
+  isThisMachineAction,
+  type ThisMachineAction,
   type ToastPayload,
 } from '@shared/notification-contract';
+
+import { focusThisMachine } from './activate-here';
+import { recordNotificationRefusal } from './delivery';
 
 /**
  * Raise an attached server's toasts on **this** machine (HIVE-145).
@@ -39,29 +43,6 @@ import {
  * the row and the fleet are on the server. The window focus is the one part
  * that stays here: it is this machine's window the user needs raised.
  */
-
-/**
- * Actions whose click is answered on the machine that *receives* the call
- * rather than the one that asked (HIVE-151).
- *
- * `url` reaches `shell.openExternal` and `update.*` reach this process's own
- * updater singleton, so sending either over the socket opens a browser on the
- * server or drives the wrong updater. They are unreachable from here today —
- * the toast queue holds only `session.blocked`, `session.input_needed`,
- * `agent.ask` and `agent.permission`, whose actions are `session`, `ask` and
- * `agent`, all legitimately fleet-scoped — but "unreachable by which kinds
- * happen to arrive" is a property of the caller, not of this code.
- *
- * So it is checked rather than assumed. HIVE-151 is what makes the routing
- * right by construction; until it lands, a toast carrying one of these is
- * dropped with a line saying so rather than acted on against the wrong machine.
- */
-const SERVER_SCOPED: readonly NotificationAction['type'][] = [
-  'session',
-  'ask',
-  'agent',
-  'none',
-];
 
 export interface RemoteToasts {
   /**
@@ -108,25 +89,18 @@ function asToast(payload: unknown): ToastPayload | null {
 export interface RemoteToastOptions {
   /** Call a channel on the attached server — `RemoteClient.call`. */
   call: (channel: Channel, payload: unknown) => Promise<unknown>;
-}
-
-/**
- * Any window of ours, restored and focused — the same thing the local
- * `activate` does, and for the same reason: a minimised window that is merely
- * focused does nothing visible.
- */
-function focusThisMachine(): void {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (window.isDestroyed()) continue;
-    if (window.isMinimized()) window.restore();
-    window.focus();
-  }
+  /**
+   * Carry out an action that belongs to **this** machine (HIVE-151).
+   *
+   * `activateOnThisMachine`, injected rather than imported, so this module
+   * keeps the one dependency it had and its test can prove which of the two
+   * paths a click took without mocking a browser.
+   */
+  activateHere: (action: ThisMachineAction) => void;
 }
 
 export function createRemoteToasts(options: RemoteToastOptions): RemoteToasts {
-  const { call } = options;
-  /** Logged once per distinct reason, as the local presenter does. */
-  let refusal: string | null = null;
+  const { call, activateHere } = options;
   let disposed = false;
 
   return {
@@ -148,14 +122,6 @@ export function createRemoteToasts(options: RemoteToastOptions): RemoteToasts {
       }
       const { id, title, body, action } = toast;
 
-      if (!SERVER_SCOPED.includes(action.type)) {
-        console.warn(
-          `[hive] dropped a remote toast whose ${action.type} action would act on the ` +
-            'wrong machine — see HIVE-151',
-        );
-        return;
-      }
-
       // False on a Linux box with no notification daemon, and checked per send
       // rather than once at boot: the daemon can come and go while the app runs,
       // and constructing one when unsupported throws.
@@ -164,6 +130,35 @@ export function createRemoteToasts(options: RemoteToastOptions): RemoteToasts {
       const notification = new Notification({ title, body });
 
       notification.on('click', () => {
+        /*
+          Routed by the action, not by the channel (HIVE-151).
+
+          This used to be an allowlist that *dropped* anything it did not
+          recognise, because a `url` sent back over the socket would open a
+          browser on the server and an `update.*` would drive the server's
+          updater. `ACTION_SCOPE` answers that now, and the answer is better
+          than a drop: a `url` clicked here opens a browser here, which is
+          what the person who clicked it wanted.
+
+          **The dismiss still crosses.** Only the *action* belongs to this
+          machine; the row belongs to the server's hub either way, and a click
+          is a click. The two other paths to the same notification both
+          dismiss — `hub.ts`'s local presenter, and the inbox row in
+          `notification-card.tsx` — so skipping it here would make one
+          notification mean two different things depending on where it was
+          clicked, which is exactly what `toast-route.ts`'s own contract
+          comment forbids. The row would sit unread for ever, and `seen` would
+          block any re-raise.
+
+          `activateHere` focuses this machine itself, so there is no focus call
+          on this arm.
+        */
+        if (isThisMachineAction(action)) {
+          void call(CH.notificationsDismiss, id).catch(() => undefined);
+          activateHere(action);
+          return;
+        }
+
         focusThisMachine();
         /*
           Fire-and-forget, and the rejection is swallowed on purpose: a socket
@@ -178,10 +173,25 @@ export function createRemoteToasts(options: RemoteToastOptions): RemoteToasts {
         void call(CH.notificationsAct, action).catch(() => undefined);
       });
 
+      /*
+        Recorded, not merely logged (HIVE-151).
+
+        This is the **only** presenter that runs while attached —
+        `registerIpcHandlers` is not registered in remote mode, so `hub.ts`'s
+        `presentLocally`, which used to be the sole writer, never runs. Now
+        that `notifications:delivery` is answered by this process rather than
+        proxied, a refusal that only reached a console line would leave
+        `refused` structurally `null` on every attached client: the settings
+        pane would report the right machine's `supported` and be blind about
+        the same machine's refusals, which is the dishonesty the move to
+        `PROCESS_LOCAL` was meant to end rather than relocate.
+
+        The shared recorder is also what keeps the log once-per-distinct-reason
+        without a second copy of that state to disagree with the first.
+      */
       notification.on('failed', (_event, error) => {
         const reason = String(error);
-        if (refusal === reason) return;
-        refusal = reason;
+        if (!recordNotificationRefusal(reason)) return;
         console.error(
           `[hive] the OS refused a desktop notification from the attached server (${reason})`,
         );
@@ -192,7 +202,6 @@ export function createRemoteToasts(options: RemoteToastOptions): RemoteToasts {
 
     dispose() {
       disposed = true;
-      refusal = null;
     },
   };
 }

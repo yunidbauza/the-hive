@@ -15,7 +15,9 @@
  * silently crosses the wire unclassified.
  */
 
+import { parseNotificationAction } from './guards';
 import { CH, type Channel } from './ipc-contract';
+import { isThisMachineAction } from './notification-contract';
 
 /**
  * Bumped whenever {@link CH} gains or loses an entry, or any payload type on an
@@ -731,6 +733,21 @@ export const PROCESS_LOCAL: readonly Channel[] = [
   CH.remotePair,
   CH.remoteForget,
   CH.configGetRemote,
+  /*
+    The eighth (HIVE-151), and the only one that is about neither identity nor
+    attachment. `supported` is `Notification.isSupported()` and `refused` is why
+    *this* OS turned the last notification down — two facts about the machine
+    that answers, on a channel the settings pane polls while it is open.
+
+    Merely odd before HIVE-145 and actively misleading after it: the toast is
+    now raised on the *client's* desktop, so a proxied answer made the switch
+    read "desktop notifications are unavailable" about a machine that is no
+    longer the one raising them. Its sibling `notifications:act` needed the
+    payload-aware shape below, because only some of what it carries belongs
+    here; this one needs nothing so subtle, because every answer it can give is
+    about the wrong machine.
+  */
+  CH.notificationsDelivery,
 ];
 
 /** Whether `channel` must be answered by this process itself, never proxied. */
@@ -759,6 +776,58 @@ export const LOCAL_ONLY_EVENTS: readonly Channel[] = [CH.remoteLinkStatus];
 /** Whether `channel` is a push this process raises about itself. */
 export function isLocalOnlyEvent(channel: string): boolean {
   return (LOCAL_ONLY_EVENTS as readonly string[]).includes(channel);
+}
+
+/**
+ * The fourth shape: proxied for some payloads, answered here for others
+ * (HIVE-151).
+ *
+ * The three shapes above decide by channel name, once, when the handler is
+ * bound. That is right for them and cannot express `notifications:act`, which
+ * is one channel carrying seven verbs — of which three reach this machine's
+ * hardware and four resolve against fleet state the client does not hold.
+ * Routing the whole channel either way is wrong for the other half of its
+ * traffic: proxied, a `url` click opened a browser on the server and an
+ * `update.install` drove the server's updater; process-local, an `ask` would
+ * answer against a ledger thread this machine has never seen.
+ *
+ * So this table is consulted **per call**, with the payload, and it is the only
+ * routing in the proxy that is. The predicate stays pure and total — it parses,
+ * classifies, and answers a boolean. It never throws, because a throw here
+ * would be an exception inside `ipcMain.handle` on a channel the user merely
+ * clicked.
+ *
+ * A payload that does not parse answers `false` and is proxied. That is not a
+ * shrug: {@link parseNotificationAction} returns `null` rather than throwing on
+ * the stated principle that the worst honest outcome of a click main does not
+ * understand is that nothing happens, and the far end runs the same parse and
+ * reaches the same conclusion. Answering `true` instead would let a malformed
+ * payload pick its own machine, which is the whole class of defect this closes.
+ *
+ * The **receiving** end does not refuse these, the same way it does not yet
+ * refuse `PROCESS_LOCAL`. A well-behaved client never sends one; refusing at
+ * both ends is HIVE-155's shape, and it should cover this table when it lands.
+ */
+export const PAYLOAD_SCOPED = {
+  [CH.notificationsAct]: (payload: unknown): boolean => {
+    const action = parseNotificationAction(payload);
+    return action !== null && isThisMachineAction(action);
+  },
+} as const satisfies Partial<Record<Channel, (payload: unknown) => boolean>>;
+
+/**
+ * The predicate for a channel routed by payload, or `null` when the channel is
+ * routed by name alone — which is every channel but one.
+ *
+ * `Object.hasOwn` rather than a truthiness check, matching
+ * {@link windowBoundReason}: a channel name colliding with something on
+ * `Object.prototype` must not resolve to a function off the prototype chain.
+ */
+export function payloadScopeFor(
+  channel: string,
+): ((payload: unknown) => boolean) | null {
+  if (!Object.hasOwn(PAYLOAD_SCOPED, channel)) return null;
+  return (PAYLOAD_SCOPED as Record<string, (payload: unknown) => boolean>)[channel];
 }
 
 /**

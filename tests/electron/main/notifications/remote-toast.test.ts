@@ -69,7 +69,34 @@ vi.mock('electron', () => {
   };
 });
 
+/**
+ * `activate-here` is mocked for the reason the proxy's own test mocks it: it
+ * reaches `shell.openExternal` and this process's real updater, and what those
+ * branches do is that module's own test's job. What this file proves is which
+ * of the two paths a click takes.
+ */
+const activateOnThisMachine = vi.fn();
+vi.mock('../../../../electron/main/notifications/activate-here', () => ({
+  activateOnThisMachine: (action: unknown) => activateOnThisMachine(action),
+  /*
+    Substituted rather than stubbed: this file's existing cases assert that a
+    fleet click restores and focuses this machine's window, so a `vi.fn()` here
+    would make four real assertions vacuous. The real one is four lines and
+    reads the same `windows` array the `electron` mock above serves.
+  */
+  focusThisMachine: () => {
+    for (const window of windows) {
+      if (window.isDestroyed()) continue;
+      if (window.isMinimized()) window.restore();
+      window.focus();
+    }
+  },
+}));
+
 const { CH } = await import('../../../../electron/shared/ipc-contract');
+const { notificationDelivery } = await import(
+  '../../../../electron/main/notifications/delivery'
+);
 const { createRemoteToasts } = await import(
   '../../../../electron/main/notifications/remote-toast'
 );
@@ -102,7 +129,8 @@ beforeEach(() => {
   supported = true;
   windows = [];
   call = vi.fn<(channel: string, payload: unknown) => Promise<unknown>>(async () => undefined);
-  toasts = createRemoteToasts({ call });
+  activateOnThisMachine.mockClear();
+  toasts = createRemoteToasts({ call, activateHere: activateOnThisMachine });
 });
 
 describe('createRemoteToasts', () => {
@@ -195,26 +223,84 @@ describe('createRemoteToasts', () => {
 
   /**
    * `notifications:act`'s `url` and `update.*` branches are answered on the
-   * machine that receives the call, not the one that asked (HIVE-151). They
-   * cannot arrive here today — the queue holds only kinds whose actions are
-   * fleet-scoped — but that is a property of the caller, not of this code.
+   * machine that receives the call (HIVE-151). A toast raised on this machine
+   * is clicked by the person sitting at it, so its click is answered *here* —
+   * the socket never sees it.
+   *
+   * This block used to assert those toasts were **dropped**, behind a
+   * hand-written `SERVER_SCOPED` allowlist whose own comment said it was
+   * standing in until the routing landed. It has landed, so the guard is gone
+   * and the toast is raised like any other: right by construction rather than
+   * by which kinds happen to arrive.
    */
-  describe('an action that would act on the wrong machine', () => {
-    it('drops a url action rather than opening a browser on the server', () => {
+  describe('an action that belongs to the machine that was clicked', () => {
+    it('raises a url toast and activates it here rather than over the socket', () => {
       toasts.receive({ ...toast, action: { type: 'url', url: 'https://example.com' } });
 
-      expect(raised).toHaveLength(0);
-      expect(call).not.toHaveBeenCalled();
+      expect(raised).toHaveLength(1);
+      raised[0]!.click();
+
+      expect(activateOnThisMachine).toHaveBeenCalledWith({
+        type: 'url',
+        url: 'https://example.com',
+      });
+      expect(call).not.toHaveBeenCalledWith(CH.notificationsAct, expect.anything());
     });
 
-    it('drops an update action rather than driving the server\'s updater', () => {
+    it('activates an update action here rather than driving the server\'s updater', () => {
       toasts.receive({ ...toast, action: { type: 'update.install' } });
 
-      expect(raised).toHaveLength(0);
-      expect(call).not.toHaveBeenCalled();
+      expect(raised).toHaveLength(1);
+      raised[0]!.click();
+
+      expect(activateOnThisMachine).toHaveBeenCalledWith({ type: 'update.install' });
+      expect(call).not.toHaveBeenCalledWith(CH.notificationsAct, expect.anything());
     });
 
-    it('allows the fleet-scoped actions the queue can actually carry', () => {
+    /*
+      Only the *action* is this machine's; the row is the server's hub's either
+      way. The local presenter and the inbox row both dismiss for these kinds,
+      so skipping it here would leave the row unread for ever — and `seen`
+      would block any re-raise — while the same click through the row cleared
+      it. One notification, two meanings.
+    */
+    it('still dismisses the row on the server, because the row is the server\'s', () => {
+      toasts.receive({ ...toast, action: { type: 'url', url: 'https://example.com' } });
+      raised[0]!.click();
+
+      expect(call).toHaveBeenCalledWith(CH.notificationsDismiss, 'n1');
+    });
+
+    /*
+      `activateOnThisMachine` focuses this machine itself, so the toast must
+      not focus a second time — the click would restore and raise every window
+      twice for no reason a user could see, and one of the two calls would be
+      a lie about which layer owns that decision.
+    */
+    it('leaves the focus to the activation rather than doing it twice', () => {
+      const window = fakeWindow({ minimized: true });
+      windows = [window];
+
+      toasts.receive({ ...toast, action: { type: 'url', url: 'https://example.com' } });
+      raised[0]!.click();
+
+      expect(window.calls.focus).not.toHaveBeenCalled();
+    });
+
+    it('still sends a fleet action back over the socket', () => {
+      toasts.receive({ ...toast, action: { type: 'agent', name: 'scout' } });
+
+      expect(raised).toHaveLength(1);
+      raised[0]!.click();
+
+      expect(call).toHaveBeenCalledWith(CH.notificationsAct, {
+        type: 'agent',
+        name: 'scout',
+      });
+      expect(activateOnThisMachine).not.toHaveBeenCalled();
+    });
+
+    it('still raises the fleet-scoped actions the queue can carry', () => {
       toasts.receive({ ...toast, action: { type: 'agent', name: 'scout' } });
       toasts.receive({ ...toast, id: 'n2', action: { type: 'none' } });
 
@@ -275,6 +361,35 @@ describe('createRemoteToasts', () => {
     raised[1]!.fail('UNErrorDomain error 1');
 
     expect(error).toHaveBeenCalledTimes(1);
+    error.mockRestore();
+  });
+
+  /**
+   * The refusal is *recorded*, not only logged (HIVE-151).
+   *
+   * This is the only presenter that runs while attached — `registerIpcHandlers`
+   * is not registered in remote mode, so `hub.ts`'s `presentLocally` never
+   * runs. Once `notifications:delivery` became `PROCESS_LOCAL`, a refusal that
+   * reached only a console line would leave `refused` structurally `null` on
+   * every attached client: the pane would report the right machine's
+   * `supported` and be blind about that same machine's refusals, which is the
+   * dishonesty the move was meant to end rather than relocate.
+   */
+  it('records the refusal where notifications:delivery will find it', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    /*
+      A reason unique to this case. `delivery.ts` holds its refusal in module
+      scope — deliberately, since a refusal outlives any one presenter — so it
+      carries across cases in this file, and asserting it starts `null` would
+      make this case depend on running before the log-once one above.
+    */
+    const reason = 'UNErrorDomain error 151 (recorded-by-remote-toast)';
+    expect(notificationDelivery().refused).not.toBe(reason);
+
+    toasts.receive(toast);
+    raised[0]!.fail(reason);
+
+    expect(notificationDelivery().refused).toBe(reason);
     error.mockRestore();
   });
 });

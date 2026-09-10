@@ -117,7 +117,6 @@ import {
   type IntegrationsStatus,
   type LoginEnvStatus,
   type NotificationActivateEvent,
-  type NotificationDeliveryStatus,
   type NotificationDismissedEvent,
   type NotificationReadEvent,
   type RemoteLinkStatus,
@@ -133,7 +132,10 @@ import type {
   JiraTransition,
 } from '@shared/jira-contract';
 import { LEDGER_DIR, OVERMIND } from '@shared/ledger-contract';
-import type { NotificationAction } from '@shared/notification-contract';
+import {
+  isThisMachineAction,
+  type NotificationAction,
+} from '@shared/notification-contract';
 import { SNAPSHOT_CHANNELS } from '@shared/remote-contract';
 import { SESSION_NAME_DISPLAY_MAX } from '@shared/session-contract';
 import {
@@ -198,7 +200,6 @@ import {
 import { diagnoseEnv } from '../config/env-diagnostic';
 import { loginEnvStatus } from '../config/login-env';
 import { diagnoseCommand, effectiveRuntime, receiverHostAliases } from '../config/runtime';
-import { isSafeExternalUrl } from '../external-links';
 import {
   browseHomeDirectory,
   createFsWatchLayer,
@@ -238,6 +239,14 @@ import {
   createToastQueue,
   createToastRoute,
 } from '../notifications';
+import {
+  activateOnThisMachine,
+  focusThisMachine,
+} from '../notifications/activate-here';
+import {
+  notificationDelivery,
+  recordNotificationRefusal,
+} from '../notifications/delivery';
 import { registerPtyHost } from '../pty-host';
 import {
   pairDevice,
@@ -257,8 +266,6 @@ import { createSkillsRuntime, type SkillsRuntime } from '../skills';
 import { PLUGIN_DIR } from '../skills/paths';
 import {
   checkForUpdatesInteractively,
-  downloadUpdate,
-  installUpdate,
   setUpdateNotificationSink,
   updateStatus,
 } from '../updates';
@@ -693,23 +700,6 @@ async function buildAttachSnapshot(
 }
 
 /**
- * Why the OS last refused a desktop notification, or `null`.
- *
- * Module scope rather than a field on the hub, because it is not a fact about
- * notifications — it is a fact about **this operating system's answer to this
- * process**, learned the only way it can be learned, by trying. The hub is
- * deliberately ignorant of how a notification is presented, and giving it
- * somewhere to store a macOS authorization error would be the first crack in
- * that.
- *
- * Never reset. A refusal is not transient in the case that produces it — an
- * unsigned bundle stays unsigned for the life of the process — and clearing it
- * on the next successful send would mean the settings pane flickered between
- * two accounts of the same system.
- */
-let systemNotificationRefusal: string | null = null;
-
-/**
  * The server-mode socket (HIVE-142), constructed unconditionally below but
  * only ever `start()`-ed by `index.ts`, and only in server mode. `null` here
  * means "not yet composed" (before `registerIpcHandlers` runs, or in a test
@@ -1034,10 +1024,10 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  * What each surface has on its centre stage, and whether that surface is
  * focused (HIVE-81, HIVE-145).
  *
- * Module scope for the reason `systemNotificationRefusal` is: it is a fact
- * about who is looking at this process, not about notifications, and the hub is
- * deliberately ignorant of what the user is looking at. The hub asks a
- * predicate; it never holds this.
+ * Module scope for the reason the refusal in `notifications/delivery.ts` is:
+ * it is a fact about who is looking at this process, not about notifications,
+ * and the hub is deliberately ignorant of what the user is looking at. The hub
+ * asks a predicate; it never holds this.
  *
  * **A map, because one value could not be true of two devices.** It was a
  * single `foregroundTerminalId`, and every attached socket sends
@@ -1480,8 +1470,7 @@ export function registerIpcHandlers(
        */
       notification.on('failed', (_event, error) => {
         const reason = String(error);
-        if (systemNotificationRefusal === reason) return;
-        systemNotificationRefusal = reason;
+        if (!recordNotificationRefusal(reason)) return;
         console.error(
           `[hive] the OS refused a desktop notification — the inbox still has it (${reason})`,
         );
@@ -1526,49 +1515,34 @@ export function registerIpcHandlers(
    */
   const activateNotification = (action: NotificationAction): void => {
       /**
+       * Split by machine before anything else (HIVE-151).
+       *
+       * The three actions that reach hardware — a browser, this process's
+       * updater — belong to `activate-here.ts`, which takes a type admitting
+       * only those. Everything past this point resolves against fleet state
+       * and reaches the renderer through `CH.notificationsActivate`.
+       *
+       * The same split is what `remote-proxy.ts` routes on, so a click made on
+       * an attached client runs its hardware half *there* rather than on the
+       * machine that happens to answer the socket. Keeping the branch here
+       * rather than at each call site is what makes the row and the desktop
+       * toast agree about what one notification means.
+       *
+       * A `none` action has nowhere to go and is satisfied by the focus below.
+       */
+      if (isThisMachineAction(action)) {
+        activateOnThisMachine(action);
+        return;
+      }
+
+      /**
        * Main focuses the window; the renderer opens the session.
        *
        * Split that way because only main can raise a window and only the
        * renderer knows what opening a session means — and a minimised window
        * has to be restored first, or focusing it does nothing visible.
        */
-      for (const window of BrowserWindow.getAllWindows()) {
-        if (window.isDestroyed()) continue;
-        if (window.isMinimized()) window.restore();
-        window.focus();
-      }
-
-      /**
-       * A `url` action goes to the user's browser, through the same allowlist
-       * every other outbound link uses (story 081).
-       *
-       * `isSafeExternalUrl` is not optional politeness here: `shell.openExternal`
-       * will happily launch a `file:` URL or a custom scheme registered by some
-       * other application, and a notification's URL is data rather than a
-       * constant. A `none` action has nowhere to go and is satisfied by the
-       * focus above.
-       */
-      if (action.type === 'url') {
-        if (isSafeExternalUrl(action.url)) void shell.openExternal(action.url);
-        return;
-      }
-
-      /**
-       * The update actions carry no data at all, which is what makes them safe
-       * to accept from a renderer without validating anything beyond the tag.
-       * The updater already holds the version it found; these say only "do the
-       * thing you offered", and a stale row clicked after the updater has moved
-       * on is answered by whatever the updater's state actually is now.
-       */
-      if (action.type === 'update.download') {
-        void downloadUpdate();
-        return;
-      }
-
-      if (action.type === 'update.install') {
-        void installUpdate();
-        return;
-      }
+      focusThisMachine();
 
       /**
        * An `ask` answers nothing from here (HIVE-118) — it *reveals* the card.
@@ -1750,18 +1724,16 @@ export function registerIpcHandlers(
    *
    * `integrationsStatus` carries the same two facts and **executes `gh`** to
    * build the rest of its answer. The Notifications pane has to re-ask this
-   * while it is open — `systemNotificationRefusal` is only knowable once a
-   * delivery has been attempted and turned down — and putting that on the
-   * integrations handler would spawn a process every few seconds to read a
-   * variable.
+   * while it is open — a refusal is only knowable once a delivery has been
+   * attempted and turned down — and putting that on the integrations handler
+   * would spawn a process every few seconds to read a variable.
+   *
+   * Answered by `notifications/delivery.ts` rather than from here, and named
+   * in `PROCESS_LOCAL` (HIVE-151): both facts describe the OS of whichever
+   * process answers, and since HIVE-145 the toast is raised on the *client's*
+   * desktop. Proxied, this told an attached user about the server's OS.
    */
-  handle(
-    CH.notificationsDelivery,
-    (): NotificationDeliveryStatus => ({
-      supported: Notification.isSupported(),
-      refused: systemNotificationRefusal,
-    }),
-  );
+  handle(CH.notificationsDelivery, () => notificationDelivery());
 
   handle(CH.notificationsList, () => hub.list());
   handle(CH.notificationsMarkRead, (_event, payload) =>

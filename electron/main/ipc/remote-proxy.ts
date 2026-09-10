@@ -1,14 +1,19 @@
 import { ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
 
+import { parseNotificationAction } from '@shared/guards';
 import { CH, type AppInfo, type Channel } from '@shared/ipc-contract';
+import { isThisMachineAction } from '@shared/notification-contract';
 import {
   FRAME_KIND,
   isLocalOnlyEvent,
   isProcessLocal,
+  payloadScopeFor,
   windowBoundReason,
 } from '@shared/remote-contract';
 
 import { RemoteCallError, type RemoteClient } from '../../remote-client/socket';
+import { activateOnThisMachine } from '../notifications/activate-here';
+import { notificationDelivery } from '../notifications/delivery';
 import { createRemoteToasts, type RemoteToasts } from '../notifications/remote-toast';
 import { checkForUpdatesInteractively, updateStatus } from '../updates';
 
@@ -100,9 +105,45 @@ function localAnswerFor(
     */
     case CH.configGetRemote:
       return () => readLocalRemote();
+    /*
+      The eighth (HIVE-151), and imported for `CH.configGetRemote`'s reason
+      rather than `CH.appInfo`'s: nothing about it is per-registration state,
+      and `notifications/delivery.ts` reaches only `electron` and
+      `@shared/ipc-contract` — nothing back into `ipc/`, so no cycle.
+    */
+    case CH.notificationsDelivery:
+      return () => notificationDelivery();
     default:
       return null;
   }
+}
+
+/**
+ * What a `PAYLOAD_SCOPED` channel is answered with, once its predicate has
+ * said this payload belongs to the machine that asked (HIVE-151).
+ *
+ * Imported rather than handed down, for `CH.updatesStatus`'s reason rather
+ * than `CH.appInfo`'s: `activateOnThisMachine` closes over no registration at
+ * all, and `notifications/activate-here.ts` reaches `electron`,
+ * `../external-links` and `../updates` — nothing back into `ipc/`, so no cycle.
+ *
+ * It parses again rather than trusting the predicate's own parse. The predicate
+ * answers a boolean and cannot hand back what it parsed without becoming two
+ * things at once, and `activateOnThisMachine` takes the narrow
+ * `ThisMachineAction` on purpose — so the second parse is what turns the
+ * table's `true` into a value the activation will accept.
+ *
+ * It is a **narrowing**, not a second opinion: both parses call the same
+ * `parseNotificationAction` and the same `isThisMachineAction`, so this one can
+ * only ever repeat the first, never disagree with it. What it buys is that the
+ * hardware call is reached through the narrow type rather than a cast.
+ */
+function payloadAnswerFor(channel: Channel): ((payload: unknown) => void) | null {
+  if (channel !== CH.notificationsAct) return null;
+  return (payload) => {
+    const action = parseNotificationAction(payload);
+    if (action !== null && isThisMachineAction(action)) activateOnThisMachine(action);
+  };
 }
 
 /**
@@ -309,6 +350,13 @@ export function registerRemoteProxy(deps: {
   bindings = createBindings(ipcMain);
   remoteToasts = createRemoteToasts({
     call: (channel, payload) => client.call(channel, payload),
+    /*
+      The same function the `notifications:act` payload route answers with
+      (HIVE-151), so a `url` reaches the same place whether the user clicked
+      the desktop toast or the inbox row. One notification cannot come to mean
+      two different things depending on where it was clicked.
+    */
+    activateHere: activateOnThisMachine,
   });
 
   foregroundStamp = createForegroundStamp((channel, payload) => {
@@ -350,6 +398,21 @@ export function registerRemoteProxy(deps: {
             localRemoteForget,
           })
         : null;
+      /*
+        The one routing decision in this proxy that is not settled here
+        (HIVE-151).
+
+        What *is* resolved once is the predicate and the answer it gates — the
+        table does not change while this process runs, exactly like the two
+        above. What cannot be resolved once is the outcome: `notifications:act`
+        carries seven verbs on one channel, and three of them reach this
+        machine's hardware while four resolve against fleet state the client
+        does not hold. So the pair is looked up here and consulted, with the
+        payload, inside the handler.
+      */
+      const payloadScope = payloadScopeFor(channel);
+      const payloadAnswer =
+        payloadScope !== null ? payloadAnswerFor(channel as Channel) : null;
 
       ipcMain.handle(channel, (event: IpcMainInvokeEvent, payload: unknown) => {
         assertSender(event);
@@ -391,6 +454,32 @@ export function registerRemoteProxy(deps: {
           is `null` by the time the await returns.
         */
         if (localAnswer !== null) return Promise.resolve(localAnswer(payload));
+        /*
+          Answered here for the payloads that belong here, forwarded for the
+          rest (HIVE-151).
+
+          Ordered after `WINDOW_BOUND` and `PROCESS_LOCAL` deliberately: those
+          two are facts about the *channel* and hold for every payload it can
+          carry, so a channel named by either must never reach a payload check
+          that could disagree with them.
+
+          The ordering is belt to the contract's braces, not the guarantee
+          itself. **Disjointness is the guarantee** — asserted in
+          `tests/shared/remote-contract.test.ts` — and it is what makes this
+          ordering unobservable today, since no channel is on two tables for
+          the order to decide between. What the order buys is that a future
+          overlap fails safe, towards the coarser already-proven answer rather
+          than towards a payload choosing its own machine.
+
+          A payload the predicate declines falls through to `client.call`
+          unchanged, including one that did not parse: the far end runs the
+          same parse and discards it identically, so nothing is lost by letting
+          it travel, and claiming it here would be this proxy guessing.
+        */
+        if (payloadScope !== null && payloadAnswer !== null && payloadScope(payload)) {
+          payloadAnswer(payload);
+          return Promise.resolve();
+        }
         return client.call(channel as Channel, payload);
       });
       bindings.record(channel);
