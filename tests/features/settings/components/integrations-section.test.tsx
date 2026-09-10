@@ -107,7 +107,6 @@ const loginEnv = (over: Partial<LoginEnvStatus> = {}): LoginEnvStatus => ({
 const status = (over: Partial<IntegrationsStatus> = {}): IntegrationsStatus => ({
   gh: gh(),
   loginEnv: loginEnv(),
-  notificationsSupported: true,
   ...over,
 });
 

@@ -236,7 +236,7 @@ export const CH = {
   /**
    * What the login-shell import did — and nothing about `gh`.
    *
-   * Its own verb for the same reason {@link CH.notificationsSupported} is one:
+   * Its own verb for the same reason {@link CH.notificationsDelivery} is one:
    * {@link CH.integrationsStatus} already carries this field, and that handler
    * **executes `gh`** through `spawnSync`. Settings → Runtime needs the
    * environment and not the binary, so reading it off the integrations verb
@@ -494,8 +494,8 @@ export const CH = {
    * A **push**, not a verb (HIVE-124).
    *
    * Deliberately not folded into {@link CH.integrationsStatus}, which carries
-   * `gh` / `loginEnv` / `notificationsSupported` and has no Slack field. The
-   * ticket named that channel; it is not the one Slack uses.
+   * `gh` / `loginEnv` and has no Slack field. The ticket named that channel;
+   * it is not the one Slack uses.
    *
    * A push because the socket changes state on its own — Slack drops a
    * connection, a token stops working, the last subscribing agent is paused —
@@ -1404,8 +1404,16 @@ export interface LoginEnvStatus {
 /**
  * Answer to {@link CH.integrationsStatus}.
  *
- * All three facts in one round trip because the section needs them together on
+ * Both facts in one round trip because the section needs them together on
  * open, and separate verbs would paint the pane in stages.
+ *
+ * Deliberately does **not** carry `Notification.isSupported()` (HIVE-157).
+ * That fact is about the OS of whichever process answers, and this channel is
+ * proxied to the server while attached — a client would get the server's
+ * machine's answer for a question about its own. {@link CH.notificationsDelivery}
+ * already carries it, is already `PROCESS_LOCAL`, and was already split out for
+ * the same reason, so the field had somewhere to go rather than needing a new
+ * verb.
  */
 export interface IntegrationsStatus {
   gh: GhStatus;
@@ -1415,12 +1423,6 @@ export interface IntegrationsStatus {
    * the two are read as one sentence or not at all.
    */
   loginEnv: LoginEnvStatus;
-  /**
-   * `Notification.isSupported()`. False on a Linux box with no notification
-   * daemon, where the switches must be replaced by an explanation rather than
-   * left as controls that quietly do nothing.
-   */
-  notificationsSupported: boolean;
 }
 
 /**
