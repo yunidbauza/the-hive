@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -7,9 +8,9 @@ export interface ServerLockIo {
   create: (path: string, contents: string) => void;
   read: (path: string) => string;
   remove: (path: string) => void;
-  createRecoveryGuard: (path: string) => void;
+  createRecoveryGuard: (path: string, contents: string) => void;
   removeRecoveryGuard: (path: string) => void;
-  isProcessAlive: (pid: number) => boolean;
+  processIdentity: (pid: number) => string | null;
 }
 
 export type ServerLockClaim =
@@ -17,9 +18,15 @@ export type ServerLockClaim =
   | { kind: 'active' };
 
 function errorCode(cause: unknown): string | undefined {
-  return typeof cause === 'object' && cause !== null && 'code' in cause
-    ? (cause as NodeJS.ErrnoException).code
-    : undefined;
+  if (typeof cause !== 'object' || cause === null) return undefined;
+  const code = Object.getOwnPropertyDescriptor(cause, 'code')?.value;
+  return typeof code === 'string' ? code : undefined;
+}
+
+function exitStatus(cause: unknown): number | undefined {
+  if (typeof cause !== 'object' || cause === null) return undefined;
+  const status = Object.getOwnPropertyDescriptor(cause, 'status')?.value;
+  return typeof status === 'number' ? status : undefined;
 }
 
 function defaultIo(): ServerLockIo {
@@ -35,25 +42,42 @@ function defaultIo(): ServerLockIo {
     },
     read: (path) => readFileSync(path, 'utf8'),
     remove: (path) => unlinkSync(path),
-    createRecoveryGuard(path) {
+    createRecoveryGuard(path, contents) {
       mkdirSync(dirname(path), { recursive: true });
       const descriptor = openSync(path, 'wx', 0o600);
-      closeSync(descriptor);
+      try {
+        writeFileSync(descriptor, contents, 'utf8');
+      } finally {
+        closeSync(descriptor);
+      }
     },
     removeRecoveryGuard: (path) => unlinkSync(path),
-    isProcessAlive(pid) {
+    processIdentity(pid) {
       try {
         process.kill(pid, 0);
-        return true;
       } catch (cause) {
-        if (errorCode(cause) === 'ESRCH') return false;
+        if (errorCode(cause) === 'ESRCH') return null;
+        throw cause;
+      }
+      try {
+        const started = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+          encoding: 'utf8',
+        }).trim();
+        return started === '' ? null : `${String(pid)}:${started}`;
+      } catch (cause) {
+        if (exitStatus(cause) === 1) return null;
         throw cause;
       }
     },
   };
 }
 
-function lockPid(contents: string): number | null {
+interface LockRecord {
+  pid: number;
+  identity: string;
+}
+
+function lockRecord(contents: string): LockRecord | null {
   try {
     const parsed: unknown = JSON.parse(contents);
     if (
@@ -62,9 +86,12 @@ function lockPid(contents: string): number | null {
       'pid' in parsed &&
       typeof parsed.pid === 'number' &&
       Number.isSafeInteger(parsed.pid) &&
-      parsed.pid > 0
+      parsed.pid > 0 &&
+      'identity' in parsed &&
+      typeof parsed.identity === 'string' &&
+      parsed.identity !== ''
     ) {
-      return parsed.pid;
+      return { pid: parsed.pid, identity: parsed.identity };
     }
   } catch {
     return null;
@@ -85,8 +112,8 @@ export function hasActiveServerLock(path: string, io: ServerLockIo = defaultIo()
     throw cause;
   }
 
-  const pid = lockPid(contents);
-  return pid === null || io.isProcessAlive(pid);
+  const record = lockRecord(contents);
+  return record === null || io.processIdentity(record.pid) === record.identity;
 }
 
 export function claimServerLock(
@@ -94,13 +121,23 @@ export function claimServerLock(
   pid: number = process.pid,
   io: ServerLockIo = defaultIo(),
 ): ServerLockClaim {
-  const contents = JSON.stringify({ pid });
+  const identity = io.processIdentity(pid);
+  if (identity === null) throw new Error(`could not identify server process ${String(pid)}`);
+  const contents = JSON.stringify({ pid, identity });
   const recoveryGuardPath = `${path}.recovery`;
 
   try {
-    io.createRecoveryGuard(recoveryGuardPath);
+    io.createRecoveryGuard(recoveryGuardPath, contents);
   } catch (cause) {
-    if (errorCode(cause) === 'EEXIST') return { kind: 'active' };
+    if (errorCode(cause) === 'EEXIST') {
+      if (hasActiveServerLock(recoveryGuardPath, io)) return { kind: 'active' };
+      try {
+        io.removeRecoveryGuard(recoveryGuardPath);
+      } catch (removeCause) {
+        if (errorCode(removeCause) !== 'ENOENT') throw removeCause;
+      }
+      return claimServerLock(path, pid, io);
+    }
     throw cause;
   }
 
