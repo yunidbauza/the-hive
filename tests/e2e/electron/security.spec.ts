@@ -695,6 +695,20 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
      */
     'diagnoseEnv',
     'get',
+    /**
+     * HIVE-149. The narrowest addition this list has taken: **no argument**,
+     * and a return of the three fields `setRemote` below already writes —
+     * `mode`, `host` and `port`. It names no path and no destination, and it
+     * cannot carry a credential, because `RemoteConfig` has never held one.
+     *
+     * Why it exists at all, with `get` sitting directly above it: `config:get`
+     * is proxied while attached, on purpose, so the `remote` block it answers
+     * with describes the *server*, whose own `mode` reads `local` because the
+     * server is the thing being attached to. This verb is on `PROCESS_LOCAL`
+     * and describes this window. The pair is the point — a renderer that needs
+     * to know where it would dial next cannot get that from `get`.
+     */
+    'getRemote',
     'onCloneDone',
     'reload',
     'removeProject',

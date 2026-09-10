@@ -9,6 +9,7 @@ import type {
   ModeChange,
   ProjectConfig,
   ProjectStatus,
+  RemoteConfig,
   RemotePairRequest,
   RemoveProjectRequest,
   RenameProjectRequest,
@@ -480,7 +481,29 @@ export async function setRemoteConfig(
 
   try {
     const result = await bridge.config.setRemote(request);
-    await install(result.config);
+    /*
+      **The returned snapshot is this machine's, so installing it while a socket
+      is still open would replace the whole app's view of the fleet (HIVE-149).**
+
+      `config:set-remote` is `PROCESS_LOCAL`, so main answers it here and hands
+      back *this* machine's `ConfigSnapshot`. That is right for the two calls
+      that switch mode — the window is becoming local, or has just become
+      remote and `applyModeChange` is about to run off `changed`.
+
+      It is wrong for a **write-only** commit, which is a thing only since
+      HIVE-149 un-hid the address fields while attached. There `changed` is
+      `null`, nothing switched, the socket is still open, and installing would
+      publish this Mac's projects, Jira and Slack values to every
+      `useProjectConfig()` consumer while their writes still proxy to the
+      server — and nothing would put the server's snapshot back until a manual
+      Reload, a detach or a relaunch.
+
+      So the install is gated on the two states where it is the point: a mode
+      actually changed, or this window is not attached (where the returned
+      snapshot is the only one there is). The commit still lands on disk either
+      way; what is withheld is republishing it as the app's current config.
+    */
+    if (result.changed !== null || attachment === null) await install(result.config);
     return { switched: result.switched, changed: result.changed };
   } catch (cause) {
     console.error('[hive] the attach switch did not complete:', cause);
@@ -671,6 +694,36 @@ export async function readAppInfo(): Promise<AppInfo | null> {
     return await bridge.appInfo();
   } catch (cause) {
     console.error('[hive] reading app info failed:', cause);
+    return null;
+  }
+}
+
+/**
+ * This machine's own `remote` block (HIVE-149).
+ *
+ * Deliberately *not* read off the snapshot this module installs, which is the
+ * whole reason the channel exists: while attached, `config:get` is answered by
+ * the server, so `ConfigSnapshot.remote` describes the far end — whose own
+ * `mode` reads `local`, because the server is the thing being attached to.
+ * `config:get-remote` is `PROCESS_LOCAL` and describes this window.
+ *
+ * Asked on demand rather than subscribed to, exactly as {@link readAppInfo} is
+ * and for the same reason: there is no push channel for it, and the two things
+ * that change it — a mode switch and a config reload — both already re-render
+ * whatever asked.
+ *
+ * `null` when there is no bridge (the browser demo) or the channel fails, so a
+ * caller shows what it already had rather than an address this machine never
+ * stated.
+ */
+export async function readLocalRemote(): Promise<RemoteConfig | null> {
+  const bridge = window.hive;
+  if (!bridge) return null;
+
+  try {
+    return await bridge.config.getRemote();
+  } catch (cause) {
+    console.error('[hive] reading the local remote block failed:', cause);
     return null;
   }
 }

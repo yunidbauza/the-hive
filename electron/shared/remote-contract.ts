@@ -53,11 +53,11 @@ export const REMOTE_PROTOCOL_VERSION = 2;
  * promote a `notify` to a `call` and the typing path acquires a round trip.
  *
  * - `call` — request/response. The client asks, the server answers with
- *   `result` or `error`. 99 channels.
+ *   `result` or `error`. 100 channels.
  * - `notify` — fire and forget, client to server, ordered per session. 6
  *   channels. Ordering between a `pty:write` and a `pty:resize` is observable,
  *   so a transport may not reorder them.
- * - `event` — server to client push. 25 channels, including `pty:data`, the
+ * - `event` — server to client push. 26 channels, including `pty:data`, the
  *   only hot path.
  * - `attach` — the handshake, and the only frame that may precede a version
  *   check. Exactly one per connection.
@@ -130,6 +130,7 @@ export const FRAME_KIND = {
   [CH.serverPair]: 'call',
   [CH.serverRevoke]: 'call',
   [CH.configSetRemote]: 'call',
+  [CH.configGetRemote]: 'call',
   [CH.remotePair]: 'call',
   [CH.remoteForget]: 'call',
   /*
@@ -388,6 +389,12 @@ export const CHANNEL_AUTHORIZATION = {
   [CH.serverPair]: 'execute',
   [CH.serverRevoke]: 'execute',
   [CH.configSetRemote]: 'mutate',
+  /*
+    HIVE-149. `read`, and the grade is not a judgement call: it returns three
+    fields of this process's own config and changes nothing. Its writer
+    directly above is `mutate` because it moves where this window attaches.
+  */
+  [CH.configGetRemote]: 'read',
   [CH.remotePair]: 'mutate',
   [CH.remoteForget]: 'mutate',
   // A push, and every push is `read`: a client observes an event, it never
@@ -697,6 +704,24 @@ export function windowBoundReason(channel: string): string | null {
  * `src/` had exactly one caller. The bodies now live in
  * `electron/main/ipc/remote-pairing.ts`, for the reason `config:set-remote`'s
  * live in `set-remote.ts`.
+ *
+ * **`CH.configGetRemote` joined as `CH.configSetRemote`'s read half
+ * (HIVE-149), and it is the first member the wording admits by its *first*
+ * clause rather than its second.** The test asks whether a channel "reads or
+ * changes this process's own identity or attachment"; every member before it
+ * changed something, and this one only reads. It is also the cleanest case for
+ * the three-shapes question above, which it answers without needing the third
+ * shape at all: it *returns a fact*, and the fact is about the process, so it
+ * is proxied by neither rule — it belongs here.
+ *
+ * Why a read verb had to be added at all, when `CH.configGet` exists: that
+ * channel is proxied on purpose, so while attached its `remote` block is the
+ * server's, whose `mode` reads `local` because the server is the thing being
+ * attached to. That left the attach half of Settings writing a config through
+ * `config:set-remote` it could not read back, and hiding the address and the
+ * port rather than showing the far end's values under a control that writes
+ * locally. The hide was the honest thing to do without this channel and is
+ * retired by it.
  */
 export const PROCESS_LOCAL: readonly Channel[] = [
   CH.appInfo,
@@ -705,6 +730,7 @@ export const PROCESS_LOCAL: readonly Channel[] = [
   CH.configSetRemote,
   CH.remotePair,
   CH.remoteForget,
+  CH.configGetRemote,
 ];
 
 /** Whether `channel` must be answered by this process itself, never proxied. */

@@ -33,6 +33,7 @@ import type {
   CommandDiagnostic,
   ConfigSnapshot,
   EnvDiagnostic,
+  RemoteConfig,
   SetRemoteResult,
 } from '@shared/config-contract';
 import type {
@@ -264,6 +265,7 @@ import {
 
 import { createBindings } from './bindings';
 import { createWindowBroadcaster, type Broadcaster } from './broadcaster';
+import { readLocalRemote } from './get-remote';
 import { createIpcRegistry, type CallHandler, type RemoteReporter } from './registry';
 import { createRemoteDispatch } from './remote-dispatch';
 import { applyRemoteForget, applyRemotePair } from './remote-pairing';
@@ -3808,6 +3810,14 @@ export function registerIpcHandlers(
   handle(CH.configSetRemote, (_event, payload): Promise<SetRemoteResult> =>
     applySetRemote(payload, switchMode, attachedSnapshot),
   );
+  /*
+    HIVE-149. `config:set-remote`'s read half, and registered here in local
+    mode for the reason every `PROCESS_LOCAL` channel is: that list decides who
+    answers while *attached*, and says nothing about the local binding, which
+    must still answer it. Both bindings call the one exported reader, so the two
+    modes cannot drift into answering the same question differently.
+  */
+  handle(CH.configGetRemote, (): RemoteConfig => readLocalRemote());
   /**
    * Store the device credential a `server:pair` mint on some *other* Hive
    * handed back (HIVE-144) — the opposite direction from `server:pair` above,

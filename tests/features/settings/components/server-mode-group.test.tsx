@@ -83,7 +83,7 @@ describe('ServerModeGroup', () => {
   });
 
   it('is off, and its fields hidden, on a default config', () => {
-    render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
+    render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -94,7 +94,7 @@ describe('ServerModeGroup', () => {
   });
 
   it('says plainly what a paired device can do', () => {
-    render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
+    render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -106,7 +106,7 @@ describe('ServerModeGroup', () => {
   });
 
   it('says the change takes effect at next launch', () => {
-    render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
+    render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -116,7 +116,7 @@ describe('ServerModeGroup', () => {
   });
 
   it('reveals the bind fields when turned on, and does not write them until committed', async () => {
-    render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
+    render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -132,7 +132,7 @@ describe('ServerModeGroup', () => {
   });
 
   it('writes enabled: false when turned off', async () => {
-    render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
+    render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -144,7 +144,7 @@ describe('ServerModeGroup', () => {
   });
 
   it('shows the address once server mode is on', () => {
-    render(<ServerModeGroup enabled bind={WIDE_BIND} devices={[]} remote={DEFAULT_REMOTE}
+    render(<ServerModeGroup enabled bind={WIDE_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -156,7 +156,7 @@ describe('ServerModeGroup', () => {
 
   describe('the bind fields', () => {
     it('commits a valid address on blur', async () => {
-      render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
+      render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -171,7 +171,7 @@ describe('ServerModeGroup', () => {
     });
 
     it('refuses an address the guard would reject, and shows why', async () => {
-      render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
+      render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -194,7 +194,7 @@ describe('ServerModeGroup', () => {
      * learn *why* this one specific value is refused.
      */
     it('refuses 0.0.0.0, naming why', async () => {
-      render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
+      render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -210,7 +210,7 @@ describe('ServerModeGroup', () => {
     });
 
     it('commits a port on blur', async () => {
-      render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
+      render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -225,7 +225,7 @@ describe('ServerModeGroup', () => {
     });
 
     it('refuses a port out of range', async () => {
-      render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
+      render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -247,7 +247,7 @@ describe('ServerModeGroup', () => {
      * rather than sending a request `config:set-server` would refuse anyway.
      */
     it('refuses port 0, unlike the receiver bind', async () => {
-      render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
+      render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -263,7 +263,7 @@ describe('ServerModeGroup', () => {
     });
 
     it('commits allowed origins split on commas', async () => {
-      render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
+      render(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -281,7 +281,7 @@ describe('ServerModeGroup', () => {
 
   describe('the device roster', () => {
     it('says nothing is paired on an empty roster', () => {
-      render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
+      render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -292,7 +292,7 @@ describe('ServerModeGroup', () => {
 
     it('lists a paired device with its date', () => {
       render(
-        <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[ACTIVE_DEVICE]} remote={DEFAULT_REMOTE}
+        <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[ACTIVE_DEVICE]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -305,7 +305,7 @@ describe('ServerModeGroup', () => {
 
     it('reads a revoked device as revoked, and offers no Revoke button for it', () => {
       render(
-        <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[REVOKED_DEVICE]} remote={DEFAULT_REMOTE}
+        <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[REVOKED_DEVICE]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -331,6 +331,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[ACTIVE_DEVICE, REVOKED_DEVICE]}
         remote={DEFAULT_REMOTE}
+        localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -343,7 +344,7 @@ describe('ServerModeGroup', () => {
 
     it('lists devices regardless of whether server mode is on', () => {
       render(
-        <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[ACTIVE_DEVICE]} remote={DEFAULT_REMOTE}
+        <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[ACTIVE_DEVICE]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -358,7 +359,7 @@ describe('ServerModeGroup', () => {
 
     it('calls revokeDevice with the device’s name when Revoke is clicked', async () => {
       render(
-        <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[ACTIVE_DEVICE]} remote={DEFAULT_REMOTE}
+        <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[ACTIVE_DEVICE]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -385,7 +386,7 @@ describe('ServerModeGroup', () => {
       });
 
       render(
-        <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[ACTIVE_DEVICE]} remote={DEFAULT_REMOTE}
+        <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[ACTIVE_DEVICE]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -417,7 +418,7 @@ describe('ServerModeGroup', () => {
       });
 
       const { rerender } = render(
-        <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
+        <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -436,7 +437,7 @@ describe('ServerModeGroup', () => {
 
       // An unrelated re-render — same props, a fresh `devices` reference,
       // exactly the shape a snapshot update elsewhere in the app takes.
-      rerender(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
+      rerender(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -453,7 +454,7 @@ describe('ServerModeGroup', () => {
         credential: { kind: 'sha256', digest: 'facefeed' },
       };
       rerender(
-        <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[paired]} remote={DEFAULT_REMOTE}
+        <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[paired]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -471,7 +472,7 @@ describe('ServerModeGroup', () => {
         error: 'A device named "New laptop" already exists.',
       });
 
-      render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
+      render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -495,7 +496,7 @@ describe('ServerModeGroup', () => {
         deviceId: 'd_ef56',
       });
 
-      render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
+      render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -516,7 +517,7 @@ describe('ServerModeGroup', () => {
     });
 
     it('does not pair on an empty name', async () => {
-      render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
+      render(<ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -537,7 +538,7 @@ describe('ServerModeGroup', () => {
   describe('when the snapshot changes underneath it', () => {
     it('follows enabled turning on elsewhere (e.g. another session)', () => {
       const { rerender } = render(
-        <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
+        <ServerModeGroup enabled={false} bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -545,7 +546,7 @@ describe('ServerModeGroup', () => {
       );
       expect(screen.getByRole('switch', { name: 'Serve this machine' })).not.toBeChecked();
 
-      rerender(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
+      rerender(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -556,14 +557,14 @@ describe('ServerModeGroup', () => {
 
     it('does not write a stale bind draft back after a reset', () => {
       const { rerender } = render(
-        <ServerModeGroup enabled bind={WIDE_BIND} devices={[]} remote={DEFAULT_REMOTE}
+        <ServerModeGroup enabled bind={WIDE_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
     />,
       );
 
-      rerender(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE}
+      rerender(<ServerModeGroup enabled bind={DEFAULT_BIND} devices={[]} remote={DEFAULT_REMOTE} localRemote={null}
       attachedServer={null}
       attachedServerName={null}
       serving={false}
@@ -590,6 +591,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={DEFAULT_REMOTE}
+          localRemote={null}
           attachedServer={null}
           attachedServerName={null}
           serving={false}
@@ -614,6 +616,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={DEFAULT_REMOTE}
+          localRemote={null}
           attachedServer={null}
           attachedServerName={null}
           serving={false}
@@ -635,6 +638,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={DEFAULT_REMOTE}
+          localRemote={null}
           attachedServer={null}
           attachedServerName={null}
           serving={false}
@@ -651,6 +655,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={DEFAULT_REMOTE}
+          localRemote={null}
           attachedServer={null}
           attachedServerName={null}
           serving={false}
@@ -676,6 +681,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={DEFAULT_REMOTE}
+          localRemote={null}
           attachedServer={null}
           attachedServerName={null}
           serving={false}
@@ -707,6 +713,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={ATTACHED_REMOTE}
+          localRemote={null}
           attachedServer={{ name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' }}
           attachedServerName={null}
           serving={false}
@@ -728,6 +735,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={ATTACHED_REMOTE}
+          localRemote={null}
           attachedServer={{ name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' }}
           attachedServerName={null}
           serving={false}
@@ -759,6 +767,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={REMOTE_TARGET}
+          localRemote={null}
           attachedServer={null}
           attachedServerName={null}
           serving={false}
@@ -793,6 +802,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={REMOTE_TARGET}
+          localRemote={null}
           attachedServer={null}
           attachedServerName={null}
           serving={false}
@@ -833,6 +843,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={ATTACHED_REMOTE}
+          localRemote={null}
           attachedServer={{ name: 'mini', host: 'mini.tail1234.ts.net' }}
           attachedServerName="mini"
           serving={false}
@@ -876,6 +887,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={ATTACHED_REMOTE}
+          localRemote={null}
           attachedServer={{ name: 'mini', host: 'mini.tail1234.ts.net' }}
           attachedServerName={null}
           serving={false}
@@ -912,6 +924,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={REMOTE_TARGET}
+          localRemote={null}
           attachedServer={null}
           attachedServerName={null}
           serving={false}
@@ -954,6 +967,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={REMOTE_TARGET}
+          localRemote={null}
           attachedServer={null}
           attachedServerName={null}
           serving={false}
@@ -978,6 +992,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={ATTACHED_REMOTE}
+          localRemote={null}
           attachedServer={{ name: 'mini', host: 'mini.tail1234.ts.net' }}
           attachedServerName="mini"
           serving={false}
@@ -1027,6 +1042,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={SERVER_ANSWERED_REMOTE}
+          localRemote={null}
           attachedServer={null}
           attachedServerName="mini"
           serving={false}
@@ -1045,6 +1061,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={SERVER_ANSWERED_REMOTE}
+          localRemote={null}
           attachedServer={null}
           attachedServerName="mini"
           serving={false}
@@ -1072,6 +1089,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={SERVER_ANSWERED_REMOTE}
+          localRemote={null}
           attachedServer={null}
           attachedServerName="mini"
           serving={false}
@@ -1106,6 +1124,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={ATTACHED_REMOTE}
+          localRemote={null}
           attachedServer={null}
           attachedServerName={null}
           serving={false}
@@ -1118,23 +1137,93 @@ describe('ServerModeGroup', () => {
     });
 
     /*
-      The address and the port describe `remote.host` and `remote.port` — the
-      *server's*, while attached. Hidden rather than disabled: disabling
-      leaves the wrong values on screen with an explanation beside them, and
-      `config:set-remote` writes locally (Ruling 28), so a commit would not
-      even write what the field showed. Attach goes with them: there is
-      nothing to dial from a window already attached.
+      HIVE-149 retired the hide this block used to assert.
 
-      HIVE-149 is what retires this case, by giving the pane a `PROCESS_LOCAL`
-      read of *this* machine's `remote` block.
+      The address and the port used to read `remote.host`/`remote.port` — the
+      *server's*, while attached — so they were hidden rather than disabled:
+      disabling leaves the wrong values on screen with an explanation beside
+      them, and `config:set-remote` writes locally (Ruling 28), so a commit
+      would not even have written what the field showed.
+
+      Both halves of that objection are answered by reading `localRemote`
+      instead, which is this machine's own block over `config:get-remote`. The
+      field now shows exactly what a commit would write.
+
+      Attach did *not* come back with them: there is still nothing to dial from
+      a window that already has a socket open.
     */
-    it('hides the address, port and attach controls while attached', () => {
+    it("shows this machine's own address and port while attached", () => {
       render(
         <ServerModeGroup
           enabled={false}
           bind={DEFAULT_BIND}
           devices={[]}
           remote={SERVER_ANSWERED_REMOTE}
+          localRemote={{ mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 }}
+          attachedServer={null}
+          attachedServerName="mini"
+          serving={false}
+        />,
+      );
+
+      expect(screen.getByLabelText(/server address/i)).toHaveValue('mini.tail1234.ts.net');
+      expect(screen.getByLabelText(/^port$/i)).toHaveValue('7433');
+      expect(screen.queryByRole('button', { name: /^attach$/i })).not.toBeInTheDocument();
+      // And it says whose config those two fields are, since the rest of the
+      // pane is showing the server's.
+      expect(screen.getByText(/read from this machine/i)).toBeInTheDocument();
+    });
+
+    /*
+      The assertion that actually discriminates a local read from a proxied one:
+      the two blocks are made to disagree. `SERVER_ANSWERED_REMOTE` is the far
+      end's, with an empty host — rendering *that* while attached is the defect
+      this story closes, and a pane still reading `remote` would show it.
+    */
+    it('prefers the local block over the proxied one for the address fields', () => {
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={SERVER_ANSWERED_REMOTE}
+          localRemote={{ mode: 'remote', host: '100.101.102.103', port: 7500 }}
+          attachedServer={null}
+          attachedServerName="mini"
+          serving={false}
+        />,
+      );
+
+      expect(screen.getByLabelText(/server address/i)).toHaveValue('100.101.102.103');
+      expect(screen.getByLabelText(/^port$/i)).toHaveValue('7500');
+    });
+
+    /*
+      `localRemote` is null until the read lands. Falling back to the proxied
+      block is what this pane already did on its first render before HIVE-149 —
+      `attachedServerName` arrives a tick late too, so `attached` is false until
+      it does — and the correction arrives with the read.
+    */
+    /*
+      **Absent, not fallen back, before the read lands.**
+
+      This case asserted the opposite for one review round, on the belief that an
+      attached window's first render has `attached === false` anyway because
+      `attachedServerName` arrived a tick late. That was true of the `app:info`
+      read it used to be, and false since HIVE-150 made `useAttachedServer` a
+      synchronous store read — so `attached` is true on the first render while
+      `localRemote` is still `null`, and a fallback painted the server's `''`
+      host and default port directly under copy claiming they came from this
+      machine. Settings unmounts, so that was every open, not once per launch.
+    */
+    it('shows no address fields, and says so, before the local read lands', () => {
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={{ mode: 'local', host: 'server-side.ts.net', port: 7433 }}
+          localRemote={null}
           attachedServer={null}
           attachedServerName="mini"
           serving={false}
@@ -1143,9 +1232,87 @@ describe('ServerModeGroup', () => {
 
       expect(screen.queryByLabelText(/server address/i)).not.toBeInTheDocument();
       expect(screen.queryByLabelText(/^port$/i)).not.toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: /^attach$/i })).not.toBeInTheDocument();
-      // And it says why, rather than silently offering less.
-      expect(screen.getByText(/hidden while attached/i)).toBeInTheDocument();
+      expect(screen.getByText(/reading this machine/i)).toBeInTheDocument();
+      // And never the server's value, which is the whole point of the absence.
+      expect(screen.queryByDisplayValue('server-side.ts.net')).not.toBeInTheDocument();
+    });
+
+    /*
+      Committing while attached — the behaviour this story newly enables, and
+      which nothing exercised until the whole-branch review pointed out that
+      both of its defects lived here.
+
+      The two blocks are made to disagree on the port in the way that actually
+      happens: this window dials 9000, the server's own `remote.port` is the
+      default 7433, and the user types 7433. Guarded against `remote` that
+      returned early and dropped the write, while the draft kept showing the
+      value the file did not hold.
+    */
+    it('commits a port that matches the server’s but not this machine’s', async () => {
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={{ mode: 'local', host: 'studio.tail1234.ts.net', port: 7433 }}
+          localRemote={{ mode: 'remote', host: 'mini.tail1234.ts.net', port: 9000 }}
+          attachedServer={null}
+          attachedServerName="mini"
+          serving={false}
+        />,
+      );
+
+      const port = screen.getByLabelText(/^port$/i);
+      await userEvent.clear(port);
+      await userEvent.type(port, '7433');
+      await userEvent.tab();
+
+      expect(setRemoteConfig).toHaveBeenCalledWith({ port: 7433 });
+    });
+
+    it('commits an address that matches the server’s but not this machine’s', async () => {
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={{ mode: 'local', host: 'studio.tail1234.ts.net', port: 7433 }}
+          localRemote={{ mode: 'remote', host: 'mini.tail1234.ts.net', port: 9000 }}
+          attachedServer={null}
+          attachedServerName="mini"
+          serving={false}
+        />,
+      );
+
+      const address = screen.getByLabelText(/server address/i);
+      await userEvent.clear(address);
+      await userEvent.type(address, 'studio.tail1234.ts.net');
+      await userEvent.tab();
+
+      expect(setRemoteConfig).toHaveBeenCalledWith({ host: 'studio.tail1234.ts.net' });
+    });
+
+    /* Unchanged against this machine's own block is still inert, as before. */
+    it('writes nothing when the value already matches this machine’s block', async () => {
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={{ mode: 'local', host: 'studio.tail1234.ts.net', port: 7433 }}
+          localRemote={{ mode: 'remote', host: 'mini.tail1234.ts.net', port: 9000 }}
+          attachedServer={null}
+          attachedServerName="mini"
+          serving={false}
+        />,
+      );
+
+      const port = screen.getByLabelText(/^port$/i);
+      await userEvent.clear(port);
+      await userEvent.type(port, '9000');
+      await userEvent.tab();
+
+      expect(setRemoteConfig).not.toHaveBeenCalled();
     });
 
     /**
@@ -1170,6 +1337,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={SERVER_ANSWERED_REMOTE}
+          localRemote={null}
           attachedServer={null}
           attachedServerName="mini"
           serving={false}
@@ -1197,6 +1365,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={SERVER_ANSWERED_REMOTE}
+          localRemote={null}
           attachedServer={null}
           attachedServerName="mini"
           serving={false}
@@ -1219,6 +1388,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={ATTACHED_REMOTE}
+          localRemote={null}
           attachedServer={{ name: 'mini', host: 'mini.tail1234.ts.net' }}
           attachedServerName={null}
           serving={false}
@@ -1249,6 +1419,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={DEFAULT_REMOTE}
+          localRemote={null}
           attachedServer={null}
           attachedServerName={null}
           serving={false}
@@ -1272,6 +1443,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={DEFAULT_REMOTE}
+          localRemote={null}
           attachedServer={null}
           attachedServerName={null}
           serving={false}
@@ -1313,6 +1485,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={DEFAULT_REMOTE}
+          localRemote={null}
           attachedServer={null}
           attachedServerName={null}
           serving={false}
@@ -1336,6 +1509,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={ATTACHED_REMOTE}
+          localRemote={null}
           attachedServer={{ name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' }}
           attachedServerName={null}
           serving={false}
@@ -1352,6 +1526,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={DEFAULT_REMOTE}
+          localRemote={null}
           attachedServer={null}
           attachedServerName={null}
           serving={false}
@@ -1378,6 +1553,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={DEFAULT_REMOTE}
+          localRemote={null}
           attachedServer={null}
           attachedServerName={null}
           serving
@@ -1400,6 +1576,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={ATTACHED_REMOTE}
+          localRemote={null}
           attachedServer={{ name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' }}
           attachedServerName={null}
           serving
@@ -1418,6 +1595,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={DEFAULT_REMOTE}
+          localRemote={null}
           attachedServer={null}
           attachedServerName="mini.tail1234.ts.net"
           serving={false}
@@ -1441,6 +1619,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={DEFAULT_REMOTE}
+          localRemote={null}
           attachedServer={null}
           attachedServerName={null}
           serving={false}
@@ -1490,6 +1669,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={REMOTE_TARGET}
+          localRemote={null}
           attachedServer={null}
           attachedServerName={null}
           serving={false}
@@ -1519,6 +1699,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={ATTACHED_REMOTE}
+          localRemote={null}
           attachedServer={{ name: 'mini.tail1234.ts.net', host: 'mini.tail1234.ts.net' }}
           attachedServerName="mini.tail1234.ts.net"
           serving={false}
@@ -1550,6 +1731,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={REMOTE_TARGET}
+          localRemote={null}
           attachedServer={null}
           attachedServerName={null}
           serving={false}
@@ -1583,13 +1765,17 @@ describe('ServerModeGroup', () => {
       ...over,
     });
 
-    const renderAttached = (status: RemoteLinkStatus | null) =>
+    const renderAttached = (
+      status: RemoteLinkStatus | null,
+      localRemote: RemoteConfig | null = null,
+    ) =>
       render(
         <ServerModeGroup
           enabled={false}
           bind={DEFAULT_BIND}
           devices={[]}
           remote={ATTACHED_REMOTE}
+          localRemote={localRemote}
           attachedServer={null}
           attachedServerName="mini"
           serving={false}
@@ -1654,18 +1840,38 @@ describe('ServerModeGroup', () => {
       expect(screen.queryByRole('button', { name: /work locally/i })).not.toBeInTheDocument();
     });
 
-    it('keeps the address and pairing fields hidden in every remote state', async () => {
+    /*
+      HIVE-150 asserted the opposite of this, and HIVE-149 is what changed the
+      answer rather than merely the assertion. Worth recording, because the
+      reasoning it retires was sound on the code it was written against.
+
+      That case kept the address fields hidden in every remote state, because
+      they read `remote.host`/`remote.port` — the *server's* block while
+      attached, and during a reconnect a block nothing is refreshing. Stale
+      values on screen at the moment the user most wants to trust them.
+
+      They read `localRemote` now: this machine's own config, over
+      `config:get-remote`, which is `PROCESS_LOCAL` and therefore answered by
+      this process whatever the socket is doing. So the objection is not
+      overridden, it is answered — a dead link cannot make this value stale,
+      because the link was never what produced it. In the degraded states these
+      two fields are the only thing on the pane that is still certainly true.
+
+      Attach stays hidden in all three, which is the part HIVE-150 and HIVE-149
+      agree on for the same reason: there is nothing to dial from a window that
+      already holds a socket, live or reconnecting.
+    */
+    it('shows this machine’s own address in every remote state, and never Attach', async () => {
       for (const state of ['attached', 'reconnecting', 'disconnected'] as const) {
-        const { unmount } = renderAttached(link({ state }));
-  
-        /*
-          The fields read `remote.host`/`remote.port`, which while attached come
-          off the *server's* snapshot — and during a reconnect come off a
-          snapshot nothing is refreshing. Showing them in the degraded states
-          would put stale values on screen at exactly the moment the user is
-          most likely to believe them.
-        */
-        expect(screen.getByText(/hidden while attached/)).toBeInTheDocument();
+        const { unmount } = renderAttached(link({ state }), {
+          mode: 'remote',
+          host: 'mini.tail1234.ts.net',
+          port: 7433,
+        });
+
+        expect(screen.getByLabelText(/server address/i)).toHaveValue('mini.tail1234.ts.net');
+        expect(screen.getByText(/read from this machine/i)).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /^attach$/i })).not.toBeInTheDocument();
         unmount();
       }
     });
