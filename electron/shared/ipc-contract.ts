@@ -54,6 +54,7 @@ import type {
   JiraIssueRequest,
   JiraSearchRequest,
   JiraTransitionsRequest,
+  RemoteConfig,
   RepointProjectRequest,
   SetJiraRequest,
   SetJiraTokenRequest,
@@ -348,6 +349,25 @@ export const CH = {
    * `remote:pair`'s job, stored in `safeStorage`, never in this file.
    */
   configSetRemote: 'config:set-remote',
+  /**
+   * This machine's own `remote` block, whichever mode it is bound in
+   * (HIVE-149) — {@link CH.configSetRemote}'s read half.
+   *
+   * {@link CH.configGet} cannot answer this. While attached it is proxied by
+   * design — Settings names the machine whose config it is editing, and that is
+   * the far end — so the `remote` block it returns describes the *server*,
+   * whose own `mode` reads `local` because the server is the thing being
+   * attached to. The attach half of Settings therefore wrote a config through
+   * `config:set-remote` (`PROCESS_LOCAL` since Ruling 28) that it could not
+   * read back, and hid the address and the port rather than show the far end's
+   * values under a control that writes locally.
+   *
+   * On `PROCESS_LOCAL` for the same reason its writer is: "where would this
+   * window dial next" is a question about this process, not about the fleet it
+   * may be driving. It carries no credential, because `RemoteConfig` holds
+   * none and never will.
+   */
+  configGetRemote: 'config:get-remote',
   /**
    * Store the device credential this machine was handed by someone else's
    * server (HIVE-144).
@@ -1900,6 +1920,21 @@ export interface HiveBridge {
      */
     setRemote(request: SetRemoteRequest): Promise<SetRemoteResult>;
     /**
+     * This machine's own `remote` block (HIVE-149) — {@link setRemote}'s read
+     * half.
+     *
+     * Takes no argument and carries no credential: `RemoteConfig` has never
+     * held the device token, so this returns the same three fields `setRemote`
+     * writes and nothing more. Whether a credential is *stored* is deliberately
+     * not here — see `readRemoteCredential`'s doc comment in
+     * `electron/main/ipc/index.ts`.
+     *
+     * Prefer this over {@link get}'s `remote` block anywhere the answer must
+     * describe *this* window: while attached, `config:get` is answered by the
+     * server, so its `remote` block is the far end's.
+     */
+    getRemote(): Promise<RemoteConfig>;
+    /**
      * Show the config file in the OS file manager (story 107).
      *
      * Takes no argument: main reveals its own `configPath()`. *Reveal* rather
@@ -3343,6 +3378,18 @@ export const BRIDGE_CONFIG_KEYS = [
    * {@link BRIDGE_REMOTE_KEYS}.
    */
   'setRemote',
+  /**
+   * HIVE-149. `setRemote`'s read half, and the narrowest kind of addition this
+   * list takes: **no argument**, and a return of the same three fields
+   * `setRemote` above already writes. It names no path, no destination and no
+   * credential — `RemoteConfig` holds none — so there is nothing here to guard
+   * that `setRemote` does not already guard on the way in.
+   *
+   * What it grants is being able to *read* the address this window would dial,
+   * which the renderer could otherwise only take from `get` — answered by the
+   * server while attached, and therefore describing the wrong machine.
+   */
+  'getRemote',
 ] as const;
 
 /**

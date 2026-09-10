@@ -81,7 +81,7 @@ const MAIN_ONLY: ReadonlyMap<string, FrameKind> = new Map([
 
 describe('remote contract: coverage', () => {
   it('classifies every channel exactly once for frame kind', () => {
-    expect(entries).toHaveLength(131);
+    expect(entries).toHaveLength(132);
     expect(Object.keys(FRAME_KIND).sort()).toEqual([...Object.values(CH)].sort());
   });
 
@@ -120,11 +120,11 @@ describe('remote contract: frame kinds match the preload bridge', () => {
     expect(frameKindOf(channel)).toBe(expected);
   });
 
-  it('splits 99 call, 6 notify and 26 event', () => {
+  it('splits 100 call, 6 notify and 26 event', () => {
     const tally = { call: 0, notify: 0, event: 0 };
     for (const kind of Object.values(FRAME_KIND)) tally[kind] += 1;
 
-    expect(tally).toEqual({ call: 99, notify: 6, event: 26 });
+    expect(tally).toEqual({ call: 100, notify: 6, event: 26 });
   });
 
   /**
@@ -197,11 +197,11 @@ describe('remote contract: authorization', () => {
     expect(authorizationOf(channel)).toBe('execute');
   });
 
-  it('grades the 131 as 56 read, 43 mutate and 32 execute', () => {
+  it('grades the 132 as 57 read, 43 mutate and 32 execute', () => {
     const tally = { read: 0, mutate: 0, execute: 0 };
     for (const authz of Object.values(CHANNEL_AUTHORIZATION)) tally[authz] += 1;
 
-    expect(tally).toEqual({ read: 56, mutate: 43, execute: 32 });
+    expect(tally).toEqual({ read: 57, mutate: 43, execute: 32 });
   });
 
   /**
@@ -587,7 +587,7 @@ describe('WINDOW_BOUND', () => {
  * admitted and nobody had applied it to.
  */
 describe('PROCESS_LOCAL', () => {
-  it('names exactly seven channels', () => {
+  it('names exactly eight channels', () => {
     expect([...PROCESS_LOCAL].sort()).toEqual(
       [
         CH.appInfo,
@@ -596,6 +596,7 @@ describe('PROCESS_LOCAL', () => {
         CH.configSetRemote,
         CH.remotePair,
         CH.remoteForget,
+        CH.configGetRemote,
         CH.notificationsDelivery,
       ].sort(),
     );

@@ -37,6 +37,7 @@ import type {
   JiraIssueRequest,
   JiraSearchRequest,
   JiraTransitionsRequest,
+  RemoteConfig,
   RepointProjectRequest,
   SetJiraRequest,
   SetJiraTokenRequest,
@@ -311,6 +312,16 @@ const bridge: HiveBridge = {
     // one this machine was handed.
     setRemote: (request: SetRemoteRequest): Promise<SetRemoteResult> =>
       ipcRenderer.invoke(CH.configSetRemote, request),
+    /*
+      HIVE-149. `setRemote`'s read half, and written with no parameter list at
+      all for the reason `revealConfig` below is: nothing arrives from the
+      renderer, so there is nothing a later careless edit could forward.
+
+      It answers the question `get` above cannot while attached — that channel
+      is proxied, so its `remote` block is the server's. The credential is not
+      in the answer, because `RemoteConfig` has never held one.
+    */
+    getRemote: (): Promise<RemoteConfig> => ipcRenderer.invoke(CH.configGetRemote),
     /*
       Story 107. Neither takes an argument — see the contract for why that is
       the security design and not an oversight. Written with no parameter list

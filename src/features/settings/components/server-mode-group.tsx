@@ -123,6 +123,26 @@ const ATTACH_HOST_INVALID =
   'Must be a loopback or tailnet address. A plaintext socket to anything else is refused.';
 const ATTACH_PORT_HINT = `The port the server is listening on (default ${DEFAULT_REMOTE.port}).`;
 const ATTACH_PORT_INVALID = 'A port from 1 to 65535.';
+/**
+ * What the address fields mean while attached (HIVE-149).
+ *
+ * Two facts, because the rest of this pane is showing the *server's* config
+ * while attached and nothing else on screen would tell the user that these two
+ * fields are the exception: whose config they are, and when a change to them
+ * applies. "The next time it attaches" rather than "immediately", because
+ * `config:set-remote` writes the address without moving a live socket —
+ * re-targeting still needs a detach, which is also why Attach stays hidden.
+ */
+const ATTACH_TARGET_HINT =
+  "Where this window dials, read from this machine's own config — not the server's. A change applies the next time it attaches.";
+/**
+ * The same two fields, before the read they depend on has answered (HIVE-149).
+ *
+ * Only ever seen while attached, and only for one IPC hop. It says *reading*
+ * rather than showing a value, because the only value available in that window
+ * is the server's, and stating it would contradict the sentence above.
+ */
+const ATTACH_TARGET_PENDING = "Reading this machine's own address…";
 
 /**
  * The interlock's two sentences (HIVE-144 review, I3).
@@ -220,6 +240,23 @@ interface ServerModeGroupProps {
    */
   remote: RemoteConfig;
   /**
+   * This machine's **own** `remote` block, read over `config:get-remote`, or
+   * `null` before that read lands (HIVE-149).
+   *
+   * The counterpart to {@link ServerModeGroupProps.remote} above, and the two
+   * disagree precisely where it matters: while attached, `remote` comes from
+   * `config:get` and therefore describes the *server*, whose own `mode` reads
+   * `local` because a server is not attached to anyone. This one is answered by
+   * this process in either mode.
+   *
+   * Only the address and the port read it. The serve half and the device roster
+   * deliberately keep reading the proxied snapshot, because while attached those
+   * genuinely are the far end's to show — that is the pane's whole doctrine, and
+   * this field is the one exception to it, for the two controls whose subject is
+   * this window rather than the fleet.
+   */
+  localRemote: RemoteConfig | null;
+  /**
    * The machine the stored config *names* as the attach target (HIVE-144) —
    * `ConfigSnapshot.attachedServer`.
    *
@@ -294,6 +331,7 @@ export function ServerModeGroup({
   bind,
   devices,
   remote,
+  localRemote,
   attachedServer,
   attachedServerName,
   serving,
@@ -503,9 +541,30 @@ export function ServerModeGroup({
     setAttachOpen(attached || remote.mode === 'remote');
   }
 
-  const [remoteHostDraft, setRemoteHostDraft] = useState(remote.host);
+  /*
+    Which block the address fields describe (HIVE-149), and `null` while
+    attached until the answer has arrived.
+
+    **Not `localRemote ?? remote`.** That fallback was written on the belief
+    that an attached window's first render has `attached === false` anyway,
+    because `attachedServerName` arrived a tick late — true when
+    `useAttachedServer` read `app:info`, and false since HIVE-150 rewrote it to
+    a synchronous store read of a link main pushed at attach time. So
+    `attached` is true on the *first* render, and a fallback would paint the
+    server's host and port — `''` and 7433 on a real client — directly under
+    `ATTACH_TARGET_HINT`'s claim that these came from this machine. Settings
+    unmounts, so that is every time the pane is opened, not once per launch.
+
+    While attached the local block is therefore the only authority, and its
+    absence is rendered as absence. Not attached, `remote` *is* this machine's
+    own file (`config:get` is answered here), so there is nothing to wait for
+    and no state where these fields are unavailable.
+  */
+  const target = attached ? localRemote : remote;
+
+  const [remoteHostDraft, setRemoteHostDraft] = useState(target?.host ?? '');
   const [remoteHostInvalid, setRemoteHostInvalid] = useState(false);
-  const [remotePortDraft, setRemotePortDraft] = useState(String(remote.port));
+  const [remotePortDraft, setRemotePortDraft] = useState(String(target?.port ?? DEFAULT_REMOTE.port));
   const [remotePortInvalid, setRemotePortInvalid] = useState(false);
   /** The last attach attempt's outcome, or `null` before one has been made. */
   const [switchResult, setSwitchResult] = useState<SwitchOutcome | null>(null);
@@ -515,15 +574,24 @@ export function ServerModeGroup({
     Follow-the-snapshot, the same reasoning `seenBind` states above: a Reload
     or Reset changes `remote` underneath this component, and a stale draft
     would otherwise show a value that no longer matches the file.
+
+    Watches `target` rather than `remote` since HIVE-149, which gives it a
+    second job: while attached, `target` starts `null` and becomes this
+    machine's block when the read lands, and this is what seeds the drafts from
+    it. A `null` on either side is not a value to seed from — it is the state
+    where the fields are not rendered at all — so it is tracked but never
+    written into a draft.
   */
-  const [seenRemote, setSeenRemote] = useState(remote);
-  const remoteChanged = seenRemote.host !== remote.host || seenRemote.port !== remote.port;
-  if (remoteChanged) {
-    setSeenRemote(remote);
-    setRemoteHostDraft(remote.host);
-    setRemoteHostInvalid(false);
-    setRemotePortDraft(String(remote.port));
-    setRemotePortInvalid(false);
+  const [seenTarget, setSeenTarget] = useState(target);
+  const targetChanged = seenTarget?.host !== target?.host || seenTarget?.port !== target?.port;
+  if (targetChanged) {
+    setSeenTarget(target);
+    if (target !== null) {
+      setRemoteHostDraft(target.host);
+      setRemoteHostInvalid(false);
+      setRemotePortDraft(String(target.port));
+      setRemotePortInvalid(false);
+    }
   }
 
   /**
@@ -544,7 +612,19 @@ export function ServerModeGroup({
     }
     setRemoteHostInvalid(false);
     setRemoteHostDraft(next);
-    if (next === remote.host) return;
+    /*
+      Against `target`, never `remote` (HIVE-149).
+
+      This is the "did anything actually change?" guard, so it has to compare
+      the typed value with the one the field was *showing*. While attached those
+      are different blocks: `remote` is the server's, so typing this machine's
+      real address — or, far more likely, typing the server's default 7433 into
+      the port — matched the wrong block and returned early. The write was
+      dropped, and because the draft had already been set the field went on
+      showing a value `config.json` did not hold, which is the exact defect this
+      story set out to remove.
+    */
+    if (target === null || next === target.host) return;
     /*
       Write only, and now actually so (HIVE-144 review, I6).
 
@@ -577,7 +657,9 @@ export function ServerModeGroup({
     }
     setRemotePortInvalid(false);
     setRemotePortDraft(String(next));
-    if (next === remote.port) return;
+    // Against `target` for the reason `commitRemoteHost` states above, and this
+    // is the field where it bites: the server's own port is the default 7433.
+    if (target === null || next === target.port) return;
     void setRemoteConfig({ port: next });
   };
 
@@ -633,6 +715,14 @@ export function ServerModeGroup({
       */
       if (changed) applyModeChange(changed);
       if (!switched.ok) {
+        /*
+          `remote` and not `target` here, and deliberately so (HIVE-149): this
+          handler is only reachable with `attached === false` — Attach is hidden
+          otherwise — and a refused switch leaves it that way, so `remote` is
+          this machine's own file, which is what a refusal should restore the
+          drafts to. `target` would be the same object; naming `remote` says
+          which fact is being relied on.
+        */
         setRemoteHostDraft(remote.host);
         setRemotePortDraft(String(remote.port));
       }
@@ -921,24 +1011,28 @@ export function ServerModeGroup({
           ) : null}
 
           {/*
-            **Hidden while attached, not disabled (Ruling 29.)**
+            **Shown in both modes since HIVE-149, and that is new.**
 
-            These fields read `remote.host`/`remote.port`, and while attached
-            that block comes off the *server's* snapshot — on a real attached
-            client, its defaults: an empty address and 7433. Rendering them at
-            all is the pane stating a target that is not this machine's and
-            that is not what a commit here would write, since `config:set-remote`
+            These fields used to be hidden while attached, and hiding was the
+            honest thing to do at the time: they read `remote.host`/`remote.port`,
+            and while attached that block comes off the *server's* snapshot — on
+            a real attached client, its defaults, an empty address and 7433. So
+            the pane would have stated a target that is not this machine's and is
+            not what a commit here would write either, since `config:set-remote`
             is `PROCESS_LOCAL` and writes locally (Ruling 28). Disabling them
-            would leave those wrong values on screen with an explanation
-            beside them; hiding them says the true thing, which is that
-            re-targeting is not available from here.
+            would have left those wrong values on screen with an explanation
+            beside them, which is worse than saying nothing.
 
-            It is a real fidelity gap and it is the smaller one: you cannot
-            re-target without detaching first anyway, so nothing is lost but
-            the ability to *read* the stored address while attached. Restoring
-            that needs a `PROCESS_LOCAL` read verb for this machine's own
-            `remote` block — `config:remote-get`, HIVE-149, which un-hides
-            these two and retires this conditional entirely.
+            What changed is that there is now something true to show:
+            `config:get-remote` is the `PROCESS_LOCAL` read half of that writer,
+            and `target` above is which block won — this machine's whenever the
+            read has landed. Both halves of the old objection are answered at
+            once, because the field now shows exactly what a commit would write.
+
+            Committing while attached is allowed and lands locally, which is
+            what `ATTACH_TARGET_HINT` tells the user. What is still refused is
+            re-targeting a *live* socket, which is why Attach below keeps its
+            own `attached` gate rather than rejoining this block.
 
             **The pairing fields no longer go with them (HIVE-153).** They used
             to, for a sharper reason than tidiness: `remote:pair` and
@@ -951,13 +1045,19 @@ export function ServerModeGroup({
             unconditionally — which is what the hide was standing in for.
           */}
           {attached ? (
-            <p className="text-[11.5px] text-subtle">
-              The address fields are hidden while attached — they would
-              describe the server&rsquo;s config, not this machine&rsquo;s — and
-              so is Attach, with a socket already open. Detach to change where
-              this window attaches.
+            <p className="text-[11.5px] text-muted">
+              {target === null ? ATTACH_TARGET_PENDING : ATTACH_TARGET_HINT}
             </p>
-          ) : (
+          ) : null}
+
+          {/*
+            Absent rather than fallen back, while attached and before the read
+            lands — see `target`'s own comment. The window is one IPC hop and
+            only exists while attached; not attached, `target` is `remote` and
+            is never `null`, so these render on the first frame as they always
+            did.
+          */}
+          {target === null ? null : (
           <div className="grid grid-cols-[1fr_96px] gap-2">
             <TextField
               label="Server address"
@@ -1061,7 +1161,8 @@ export function ServerModeGroup({
             button is what split one conditional into two, and keeping this one
             preserves both the reading order and the fact that Attach is
             meaningless on a window already attached — there is nothing to dial.
-            HIVE-149 retires the first of the two; this one outlives it.
+            HIVE-149 retired the first of the two; this one outlived it, as that
+            story's own note said it would.
           */}
           {attached ? null : (
           <Button

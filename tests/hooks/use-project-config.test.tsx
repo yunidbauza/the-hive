@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   LATE_BIND_RETRY_MS,
   useAttachedServer,
+  useLocalRemote,
   useReceiverExposure,
   useServerExposure,
   useServing,
@@ -23,6 +24,7 @@ import { useHiveStore } from '@stores/hive-store';
 const CONFIG_PATH = '/Users/dev/.hive/config.json';
 
 const readAppInfo = vi.fn();
+const readLocalRemote = vi.fn();
 
 /**
  * The bridge is mocked at the `@lib/project-config` seam, the same boundary
@@ -35,6 +37,7 @@ vi.mock('@/lib/project-config', async (importOriginal) => {
   return {
     ...actual,
     readAppInfo: () => readAppInfo(),
+    readLocalRemote: () => readLocalRemote(),
   };
 });
 
@@ -574,6 +577,80 @@ describe('useAttachedServer', () => {
     const { result } = renderHook(() => useAttachedServer());
 
     expect(readAppInfo).not.toHaveBeenCalled();
+    expect(result.current).toBeNull();
+  });
+});
+
+/**
+ * `useLocalRemote` (HIVE-149) — the attach pane's own address, read over
+ * `config:get-remote` rather than off the snapshot.
+ *
+ * The same shape as {@link useAttachedServer} above and for the same reason:
+ * "what is true of *this* process" cannot be answered from the snapshot while
+ * attached, because that snapshot comes from the server. The distinguishing
+ * case is the second one — the two sources made to disagree, which is the only
+ * arrangement that can tell a local read from a proxied one. A hook that read
+ * `snapshot.remote` would pass every other case in this block.
+ */
+describe('useLocalRemote', () => {
+  it("is this machine's own block once it has been read", async () => {
+    setProjectConfigForTest(snapshot({}));
+    readLocalRemote.mockResolvedValue({
+      mode: 'remote',
+      host: 'mini.tail1234.ts.net',
+      port: 7433,
+    });
+
+    const { result } = renderHook(() => useLocalRemote());
+
+    await waitFor(() => {
+      expect(result.current).toEqual({
+        mode: 'remote',
+        host: 'mini.tail1234.ts.net',
+        port: 7433,
+      });
+    });
+  });
+
+  /*
+    `snapshot({})` carries the default `remote` block, which is `mode: 'local'`
+    with an empty host — exactly what an attached client's proxied snapshot
+    holds, because a server is not attached to anyone. The hook must answer the
+    other thing.
+  */
+  it("answers 'remote' where the proxied snapshot says 'local'", async () => {
+    setProjectConfigForTest(snapshot({}));
+    readLocalRemote.mockResolvedValue({
+      mode: 'remote',
+      host: '100.101.102.103',
+      port: 7500,
+    });
+
+    const { result } = renderHook(() => useLocalRemote());
+
+    await waitFor(() => {
+      expect(result.current?.mode).toBe('remote');
+    });
+    expect(result.current?.host).toBe('100.101.102.103');
+  });
+
+  it('is null before the read lands', () => {
+    setProjectConfigForTest(snapshot({}));
+    readLocalRemote.mockResolvedValue({ mode: 'local', host: '', port: 7433 });
+
+    const { result } = renderHook(() => useLocalRemote());
+
+    expect(result.current).toBeNull();
+  });
+
+  /* The browser demo has no config and no bridge at all. */
+  it('is null with no snapshot, and never asks the bridge', () => {
+    setProjectConfigForTest(null);
+    readLocalRemote.mockResolvedValue({ mode: 'local', host: '', port: 7433 });
+
+    const { result } = renderHook(() => useLocalRemote());
+
+    expect(readLocalRemote).not.toHaveBeenCalled();
     expect(result.current).toBeNull();
   });
 });

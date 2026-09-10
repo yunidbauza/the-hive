@@ -7,10 +7,15 @@ import {
   projectContainerised,
   projectPath,
   readAppInfo,
+  readLocalRemote,
   subscribeProjectConfig,
   type ProjectAccess,
 } from '@lib/project-config';
-import { isLoopbackHost, type ConfigSnapshot } from '@shared/config-contract';
+import {
+  isLoopbackHost,
+  type ConfigSnapshot,
+  type RemoteConfig,
+} from '@shared/config-contract';
 import { useRemoteLink } from '@stores/hive-store';
 
 
@@ -435,4 +440,51 @@ export function useAttachedServer(): string | null {
     they read {@link useRemoteLink} for it.
   */
   return useRemoteLink()?.serverName ?? null;
+}
+
+/**
+ * This machine's own `remote` block, or `null` until it has been read
+ * (HIVE-149).
+ *
+ * It exists for the reason {@link useAttachedServer} and {@link useServing} do:
+ * the question "what is true of *this* process" cannot be answered from the
+ * snapshot while attached, because that snapshot comes from the server — whose
+ * own `remote.mode` reads `local`, since a server is not attached to anyone.
+ * `config:get-remote` is `PROCESS_LOCAL`, so it is answered here in either mode.
+ *
+ * **A read keyed on the snapshot, like {@link useServing}, not a pushed value
+ * like {@link useAttachedServer} became in HIVE-150.** The distinction is which
+ * thing the value follows. That one follows the *socket*, because a link can die
+ * without anything being written. This follows the *file*, because that is the
+ * only thing that moves it: `config:set-remote` is the sole writer, and it
+ * installs a fresh snapshot on the way through, so keying on the snapshot
+ * already covers both a mode switch and a reload. There is nothing here a push
+ * would tell us sooner.
+ */
+export function useLocalRemote(): RemoteConfig | null {
+  const snapshot = useProjectConfig();
+  const [local, setLocal] = useState<RemoteConfig | null>(null);
+
+  useEffect(() => {
+    if (snapshot === null) return;
+
+    let cancelled = false;
+    void readLocalRemote().then((block) => {
+      /*
+        A failed read keeps the last good block rather than nulling it, which is
+        what `readLocalRemote`'s own doc comment promises ("a caller shows what
+        it already had rather than an address this machine never stated"). This
+        effect re-fires on every new snapshot, so without the `??` one failed
+        *re*-read after a good one would drop the pane back to no answer — and
+        the address fields with it.
+      */
+      if (!cancelled) setLocal((previous) => block ?? previous);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [snapshot]);
+
+  return local;
 }
