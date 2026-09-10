@@ -1,7 +1,12 @@
 import { ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
 
 import { CH, type AppInfo, type Channel } from '@shared/ipc-contract';
-import { FRAME_KIND, isProcessLocal, windowBoundReason } from '@shared/remote-contract';
+import {
+  FRAME_KIND,
+  isLocalOnlyEvent,
+  isProcessLocal,
+  windowBoundReason,
+} from '@shared/remote-contract';
 
 import { RemoteCallError, type RemoteClient } from '../../remote-client/socket';
 import { createRemoteToasts, type RemoteToasts } from '../notifications/remote-toast';
@@ -319,6 +324,19 @@ export function registerRemoteProxy(deps: {
       remoteToasts?.receive(payload as Parameters<RemoteToasts['receive']>[0]);
       return;
     }
+    /*
+      Dropped rather than forwarded (HIVE-150). These pushes are about *this*
+      window's own attachment, so a server raising one is describing its own
+      socket, not this machine's — and forwarding it would let a server that is
+      itself attached somewhere repaint every client's header chip with a link
+      none of them has a part in. The same reasoning `PROCESS_LOCAL` applies to
+      calls, pointed at the other frame kind.
+
+      Refused here rather than by grading the channel something other than
+      `event`: it *is* an event, the renderer subscribes to it as one, and the
+      only question is which side may originate it.
+    */
+    if (isLocalOnlyEvent(channel)) return;
     broadcaster.emit(channel, payload);
   });
 }

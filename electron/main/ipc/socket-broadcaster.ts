@@ -1,4 +1,4 @@
-import type { ServerFrame } from '@shared/remote-contract';
+import { isLocalOnlyEvent, type ServerFrame } from '@shared/remote-contract';
 
 import type { Broadcaster } from './broadcaster';
 
@@ -21,16 +21,33 @@ export interface AttachedSocket {
  * after `registerIpcHandlers` has run, and a captured empty array would deliver
  * to nobody forever.
  *
- * What crosses is every channel the contract grades `event` — 22 of them, not
- * the 18 in `EVENT_CHANNELS`. Nothing here filters, deliberately: the fan-out
- * point receives exactly the pushes, and a filter here would be a second
- * taxonomy to keep in sync with `FRAME_KIND`.
+ * What crosses is every channel the contract grades `event`, not just the
+ * subset in `EVENT_CHANNELS`, minus `LOCAL_ONLY_EVENTS`. That subtraction is
+ * the only filter here and it is not a second taxonomy — it is a table in the
+ * contract beside `FRAME_KIND`, read rather than restated, for a question
+ * `FRAME_KIND` does not answer: not "is this a push" but "is this push about
+ * the machine sending it".
  */
 export function createSocketBroadcaster(
   sockets: () => Iterable<AttachedSocket>,
 ): Broadcaster {
   return {
     emit(channel, payload) {
+      /*
+        The one filter, and it is not a taxonomy (HIVE-150).
+
+        `LOCAL_ONLY_EVENTS` is a push this process raises **about itself**, and
+        a served machine that is also attached somewhere raises
+        `remote:link-status` about its own outward socket. Sent, every client
+        would paint its header chip from a link it has no part in — going amber
+        for a reconnect happening on someone else's machine.
+
+        This is the sending half; `remote-proxy.ts` refuses the same channel
+        arriving. Either alone would close the realistic case, and each closes
+        a different one: this stops a correct server leaking, that stops a
+        wrong one being believed.
+      */
+      if (isLocalOnlyEvent(channel)) return;
       /*
         `payload` is passed straight through, `undefined` included. That is not
         a hole: `agents:changed` genuinely carries nothing, and `JSON.stringify`

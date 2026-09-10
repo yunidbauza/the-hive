@@ -378,6 +378,24 @@ export const CH = {
    */
   remoteForget: 'remote:forget',
   /**
+   * What this window's attachment is doing right now (HIVE-150).
+   *
+   * A **push**, for the reason {@link CH.slackSocketStatus} is one: the socket
+   * changes state on its own, and until this existed nothing told a renderer
+   * that it had. `AppInfo.attachedServerName` is the runtime truth but it is
+   * read on demand, and `useAttachedServer` re-read it only when a
+   * `ConfigSnapshot` changed — so a socket that died without a config write
+   * left the header chip claiming an attachment indefinitely, which is the
+   * defect this story exists to close.
+   *
+   * **Emitted by this process, and never accepted from the socket.** The
+   * server's own link status is a fact about the server's attachments, not
+   * about this window's, and forwarding one would be the same class of defect
+   * `PROCESS_LOCAL` closed for `app:info` — where an attached client's About
+   * box reported the *server's* Electron version as its own.
+   */
+  remoteLinkStatus: 'remote:link-status',
+  /**
    * The Jira credential and the connection test (HIVE-67).
    *
    * Four verbs, and the count is the security design: the renderer may write a
@@ -1417,6 +1435,44 @@ export type NotificationActivateEvent =
   /** An ask was clicked (HIVE-118). Its card lives in the inbox. */
   | { type: 'ask' };
 
+/**
+ * What an attachment is doing, for {@link CH.remoteLinkStatus} (HIVE-150).
+ *
+ * Three states, because the user needs to tell "still trying" from "stopped
+ * trying" before deciding whether to work locally instead. `reconnecting` means
+ * the loop is running and the sessions on the far machine are still there;
+ * `disconnected` means it is not, and no amount of waiting will change that.
+ */
+export type RemoteLinkState = 'attached' | 'reconnecting' | 'disconnected';
+
+/** The payload {@link CH.remoteLinkStatus} pushes. */
+export interface RemoteLinkStatus {
+  state: RemoteLinkState;
+  /**
+   * The far machine's own name, kept in every state.
+   *
+   * A disconnected chip still has to say *which* machine it lost, and the
+   * client that could answer `serverName()` is gone by then.
+   */
+  serverName: string;
+  /** 0 while attached; which retry is in flight while reconnecting. */
+  attempt: number;
+  /** Epoch ms of the next retry, or `null` when no timer is pending. */
+  nextAttemptAt: number | null;
+  /** Why it stopped, set only when `state` is `'disconnected'`. */
+  reason: string | null;
+  /**
+   * Increments on every successful **re**attach, never on a first one.
+   *
+   * The renderer keys the effects that own per-surface state on it. A reconnect
+   * gets a new surface id on the server — ids come from a `WeakMap` on the
+   * socket object — and the old surface's fs watcher, foreground record and
+   * delivery focus were released when it went away. Nothing re-establishes them
+   * on its own, because the renderer never unmounted.
+   */
+  epoch: number;
+}
+
 /** Answer to {@link CH.appInfo} — proves the bridge round-trips. */
 export interface AppInfo {
   /** The app version, from `package.json` via Electron. */
@@ -1897,6 +1953,13 @@ export interface HiveBridge {
     pair(request: RemotePairRequest): Promise<{ paired: true } | { error: string }>;
     /** Discard the credential {@link HiveBridge.remote.pair} stored. Idempotent. */
     forget(): Promise<void>;
+    /**
+     * What this window's attachment is doing right now (HIVE-150).
+     *
+     * Fires on every transition — a drop, each retry, a reattach, and giving
+     * up. See {@link RemoteLinkStatus}.
+     */
+    onLinkStatus(callback: (status: RemoteLinkStatus) => void): () => void;
   };
   pty: {
     spawn(request: SpawnRequest): Promise<void>;
@@ -3263,8 +3326,14 @@ export const BRIDGE_SERVER_KEYS = ['pair', 'revoke'] as const;
  * entire IPC surface of the server it attaches to — the same register
  * `server.pair`'s own doc comment states — which is exactly why the two
  * verbs must not be confused for one feature pointing one direction.
+ *
+ * `onLinkStatus` (HIVE-150) is the third, and it is the one verb here that
+ * touches no credential at all: a read-only subscription to what the socket
+ * this credential opened is currently doing. Grouped here rather than in its
+ * own namespace because it is the same subject seen from the other end — the
+ * credential, the attachment it buys, and the state of that attachment.
  */
-export const BRIDGE_REMOTE_KEYS = ['pair', 'forget'] as const;
+export const BRIDGE_REMOTE_KEYS = ['pair', 'forget', 'onLinkStatus'] as const;
 
 /** The exact key set of `window.hive.pty`. */
 export const BRIDGE_PTY_KEYS = [

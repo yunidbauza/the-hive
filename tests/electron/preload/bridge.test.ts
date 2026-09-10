@@ -127,10 +127,13 @@ describe('exposed surface', () => {
      * HIVE-144's namespace. **Not** `server` above despite sharing a verb
      * name: `pair` here stores a credential this device was *given*, for
      * attaching outward as a client, rather than minting one for a device
-     * this machine admits. `pair` and `forget` are the two verbs; a third
-     * here is a change to what this window can do with the credential a
-     * remote server handed it, and this line is what stops it arriving
-     * quietly.
+     * this machine admits. `pair` and `forget` are the two credential verbs;
+     * a third of *those* is a change to what this window can do with the
+     * credential a remote server handed it, and this line is what stops it
+     * arriving quietly.
+     *
+     * `onLinkStatus` (HIVE-150) joined them as a read-only subscription — it
+     * touches no credential, only reports what the socket one opened is doing.
      */
     expect(Object.keys(remote()).sort()).toEqual([...BRIDGE_REMOTE_KEYS].sort());
     expect(Object.keys(integrations()).sort()).toEqual([

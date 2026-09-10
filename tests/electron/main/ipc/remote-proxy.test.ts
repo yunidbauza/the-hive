@@ -2,8 +2,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CloseCause } from '../../../../electron/remote-client/socket';
-import type { AppInfo } from '../../../../electron/shared/ipc-contract';
-import { FRAME_KIND, PROCESS_LOCAL, WINDOW_BOUND } from '../../../../electron/shared/remote-contract';
+import { CH, type AppInfo } from '../../../../electron/shared/ipc-contract';
+import {
+  FRAME_KIND,
+  PROCESS_LOCAL,
+  WINDOW_BOUND,
+  isLocalOnlyEvent,
+} from '../../../../electron/shared/remote-contract';
 
 /**
  * `../updates` (`electron/main/updates/index.ts`) is mocked here for the
@@ -31,7 +36,7 @@ vi.mock('../../../../electron/main/updates', () => ({ updateStatus, checkForUpda
  *
  * The three channel lists below are derived from `FRAME_KIND` — the same
  * table `registerRemoteProxy` itself walks — but the counts asserted against
- * them (99, 6, 25, 105) are literals, not read back off the derived lists.
+ * them (99, 6, 26, 105) are literals, not read back off the derived lists.
  * `tests/shared/remote-contract.test.ts:58,93` pins the same four numbers
  * independently. A channel added to the contract without a home in this file
  * fails a count here, which is the point: a self-referential assertion could
@@ -202,7 +207,7 @@ describe('registerRemoteProxy', () => {
   });
 
   it('binds no handler for an event channel', () => {
-    expect(eventChannels.length).toBe(25);
+    expect(eventChannels.length).toBe(26);
 
     registerRemoteProxy({ client: fakeClient(), broadcaster: fakeBroadcaster() });
 
@@ -308,18 +313,21 @@ describe('registerRemoteProxy', () => {
    * the very first one that isn't `pty:data`.
    */
   it('pumps a client event into the broadcaster on the same channel', () => {
-    expect(eventChannels.length).toBe(25);
+    expect(eventChannels.length).toBe(26);
 
     const client = fakeClient();
     const broadcaster = fakeBroadcaster();
     registerRemoteProxy({ client, broadcaster });
 
     /*
-      All but one (HIVE-145). `notifications:toast` is answered by this process
-      rather than forwarded: an Electron `Notification` is a main-process
+      All but two. `notifications:toast` is answered by this process rather
+      than forwarded (HIVE-145): an Electron `Notification` is a main-process
       object, which is also why that channel is absent from `EVENT_CHANNELS`.
+      `remote:link-status` is dropped outright (HIVE-150) — see the test below.
     */
-    const forwarded = eventChannels.filter((channel) => channel !== 'notifications:toast');
+    const forwarded = eventChannels.filter(
+      (channel) => channel !== 'notifications:toast' && !isLocalOnlyEvent(channel),
+    );
 
     for (const channel of forwarded) {
       const payload = { channel };
@@ -327,6 +335,34 @@ describe('registerRemoteProxy', () => {
       expect(broadcaster.emit).toHaveBeenCalledWith(channel, payload);
     }
     expect(broadcaster.emit).toHaveBeenCalledTimes(forwarded.length);
+  });
+
+  /**
+   * A server's own link status is not this window's (HIVE-150).
+   *
+   * The push counterpart of `PROCESS_LOCAL`. A served machine that is itself
+   * attached to a third Hive raises `remote:link-status` about *its* socket;
+   * forwarded, every client's header chip would start reporting a link it has
+   * no part in — and would go amber for a reconnect happening on someone else's
+   * machine. Exactly the defect `PROCESS_LOCAL` closed for `app:info`, where an
+   * attached client's About box reported the server's Electron version as its
+   * own.
+   */
+  it('drops a local-only event arriving from the socket', () => {
+    const client = fakeClient();
+    const broadcaster = fakeBroadcaster();
+    registerRemoteProxy({ client, broadcaster });
+
+    client.emit(CH.remoteLinkStatus, {
+      state: 'reconnecting',
+      serverName: 'somewhere-else',
+      attempt: 3,
+      nextAttemptAt: null,
+      reason: null,
+      epoch: 0,
+    });
+
+    expect(broadcaster.emit).not.toHaveBeenCalled();
   });
 
   it('raises a toast here rather than forwarding it to the window', () => {
