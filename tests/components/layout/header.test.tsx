@@ -547,6 +547,21 @@ describe('Header', () => {
         servingDeviceCount: 2,
         attachedServerName: 'mini',
       });
+      /*
+        The chip reads the pushed `remote:link-status` since HIVE-150, not an
+        `app:info` read. `useRemoteLinkStream` installs it, and that lives in
+        the app shell rather than the header — so this file states the link
+        directly, which is also the honest fixture: what the header composes is
+        a chip over a link, not over a bridge call.
+      */
+      useHiveStore.getState().setRemoteLink({
+        state: 'attached',
+        serverName: 'mini',
+        attempt: 0,
+        nextAttemptAt: null,
+        reason: null,
+        epoch: 0,
+      });
 
       render(<Header />);
 
@@ -580,6 +595,21 @@ describe('Header', () => {
         serverBoundHost: '100.101.102.103',
         servingDeviceCount: 2,
         attachedServerName: 'mini',
+      });
+      /*
+        The chip reads the pushed `remote:link-status` since HIVE-150, not an
+        `app:info` read. `useRemoteLinkStream` installs it, and that lives in
+        the app shell rather than the header — so this file states the link
+        directly, which is also the honest fixture: what the header composes is
+        a chip over a link, not over a bridge call.
+      */
+      useHiveStore.getState().setRemoteLink({
+        state: 'attached',
+        serverName: 'mini',
+        attempt: 0,
+        nextAttemptAt: null,
+        reason: null,
+        epoch: 0,
       });
 
       render(<Header />);

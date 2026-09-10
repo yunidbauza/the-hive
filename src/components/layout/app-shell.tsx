@@ -14,6 +14,7 @@ import { useLedgerSync } from '@features/shared/hooks/use-ledger-sync';
 import { useAppChords } from '@hooks/use-app-chords';
 import { useForegroundSession } from '@hooks/use-foreground-session';
 import { useNotificationStream } from '@hooks/use-notification-stream';
+import { useRemoteLinkStream } from '@hooks/use-remote-link';
 import { useSessionNames } from '@hooks/use-session-names';
 import { watchSystemTheme } from '@stores/appearance-store';
 import { useShowActivityRail } from '@stores/ui-store';
@@ -97,6 +98,14 @@ export function AppShell() {
     mounted would leave the count at zero until someone looked.
   */
   useNotificationStream();
+
+  /*
+    What this window's attachment is doing (HIVE-150). Mounted here for the
+    reason above it: the header chip and the attach pane both read it, and a
+    subscription that only lived while Settings was open would leave the chip
+    claiming an attachment for as long as nobody went looking.
+  */
+  useRemoteLinkStream();
 
   /*
     Which terminal is on the stage (HIVE-81). Here for the same reason as the

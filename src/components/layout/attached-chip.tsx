@@ -1,15 +1,16 @@
-import { PlugsConnected } from '@phosphor-icons/react';
+import { PlugsConnected, Plugs } from '@phosphor-icons/react';
+
+import type { Tone } from '@/types/notification';
 
 import { Chip } from '@components/ui/chip';
-import { useAttachedServer } from '@hooks/use-project-config';
-
+import { useRemoteLink } from '@stores/hive-store';
 
 /**
  * "This window is attached to another Hive's sessions over a socket"
- * (HIVE-144, Task 13).
+ * (HIVE-144, Task 13) — and, since HIVE-150, what that attachment is doing.
  *
  * The other end of {@link ServingChip}'s socket — read that component's own
- * doc comment first; this one repeats the same three rules for the opposite
+ * doc comment first; this one repeats the same rules for the opposite
  * direction rather than re-deriving them.
  *
  * **Sourced from the running attachment, not the config snapshot.** This is
@@ -22,12 +23,7 @@ import { useAttachedServer } from '@hooks/use-project-config';
  * `config.json` saying `remote` after an already-remote re-switch fails and
  * rebinds local, so a config-derived chip would keep claiming an attachment
  * that is no longer there; and, symmetrically, would deny one on the next
- * launch before the boot attach has even been attempted. `AppInfo.attachedServerName`
- * is sourced from `electron/main/ipc/router.ts`'s own `attached` variable —
- * the socket `switchIpcMode` actually holds open — for exactly that reason;
- * see that field's own doc comment, and `ConfigSnapshot.attachedServer`'s,
- * for the full split stated from both sides. `useAttachedServer` does the
- * reading.
+ * launch before the boot attach has even been attempted.
  *
  * **Renders nothing while not attached**, for the same reason `ServingChip`
  * renders nothing while unbound: there is no config flag this chip could read
@@ -36,33 +32,58 @@ import { useAttachedServer } from '@hooks/use-project-config';
  * matters is whether a socket is actually open right now, and a Hive that
  * has never attached to anything should see no new furniture in its header.
  *
- * **Brand, not amber.** Attaching is exactly as deliberate as serving —
- * nothing opens this socket by accident, there is no "forgot to detach"
- * story, and painting it amber would spend the same signal `ExposureChip`
- * (HIVE-134) earns on "wider than you may have meant" on a state that isn't
- * that. See `ServingChip`'s own doc comment for the fuller argument; the two
- * chips are deliberately the same colour so the row reads "these two are
- * facts about what this Hive is doing on purpose" against `ExposureChip`'s
- * amber "this one might not be."
+ * **Brand while it holds; amber while it is being rebuilt; red once it is
+ * given up (HIVE-150).** This overrules an earlier rule here, and the
+ * overruling is the point rather than an oversight. That rule said brand, not
+ * amber, because "attaching is exactly as deliberate as serving" and painting
+ * it amber would spend the signal `ExposureChip` (HIVE-134) earns on "wider
+ * than you may have meant". That argument is about a *healthy* attachment and
+ * it still holds for one — the `attached` state below is brand, beside
+ * `ServingChip`, exactly as it was. A link that has dropped is not that: it is
+ * the design system's "waiting", which is what amber means, and the two never
+ * compete for attention because a machine that serves does not attach.
+ *
+ * Red is reserved for the state after the loop has stopped — a refusal no
+ * retry can fix. That distinction is the one thing the user actually needs from
+ * this chip before deciding whether to wait or to work locally, and two shades
+ * of amber could not carry it.
  *
  * It carries the server's **name** — `RemoteClient.serverName()` (Task 7),
  * the far end's own `hostname()` handed over in the attach handshake — rather
  * than its address, because the name is what the user who just attached
- * actually recognizes ("mini", not an IP). The address is
- * `ConfigSnapshot.attachedServer.host`'s job, for the pane that dials it.
+ * actually recognizes ("mini", not an IP). The name rides on every status,
+ * including the terminal one, because a chip that has lost a link still has to
+ * say which machine it lost and the client that could answer is gone by then.
  */
 export function AttachedChip() {
-  const serverName = useAttachedServer();
-  if (serverName === null) return null;
+  const link = useRemoteLink();
+  if (link === null) return null;
+
+  const { state, serverName } = link;
+
+  const tone: Tone =
+    state === 'attached' ? 'brand' : state === 'reconnecting' ? 'amber' : 'red';
+
+  const label =
+    state === 'attached'
+      ? 'attached'
+      : state === 'reconnecting'
+        ? 'reconnecting'
+        : 'disconnected';
+
+  const title =
+    state === 'attached'
+      ? `This window is attached to ${serverName} over a socket — its sessions are what you are driving right now.`
+      : state === 'reconnecting'
+        ? `The connection to ${serverName} dropped and is being re-established. Your sessions are still running there.`
+        : `The connection to ${serverName} ended and is not being retried${
+            link.reason === null ? '' : `: ${link.reason}`
+          }`;
 
   return (
-    <Chip
-      tone="brand"
-      title={`This window is attached to ${serverName} over a socket — its sessions are what you are driving right now.`}
-      className="shrink-0"
-    >
-      <PlugsConnected size={12} />
-      attached · {serverName}
+    <Chip tone={tone} title={title} className="shrink-0">
+      {state === 'attached' ? <PlugsConnected size={12} /> : <Plugs size={12} />}
+      {label} · {serverName}
     </Chip>
   );
 }

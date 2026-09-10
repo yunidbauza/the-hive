@@ -72,7 +72,12 @@ import {
 import type { ModeChange } from '@shared/config-contract';
 import type { GhResult, PrRecord, PrsSnapshot } from '@shared/github-contract';
 import type { IdleDetail } from '@shared/hook-contract';
-import { CH, type Channel, type SessionNameReport } from '@shared/ipc-contract';
+import {
+  CH,
+  type Channel,
+  type RemoteLinkStatus,
+  type SessionNameReport,
+} from '@shared/ipc-contract';
 import type { JiraIssue } from '@shared/jira-contract';
 import {
   LEDGER_MEMORY_CAP,
@@ -337,6 +342,17 @@ interface HiveState {
   prSource: PrSource;
   notifs: HiveNotification[];
   /**
+   * What this window's attachment is doing, or `null` when it has none
+   * (HIVE-150).
+   *
+   * Domain rather than view state: it is something the system knows about
+   * itself, pushed by main on `remote:link-status`, and it is what the header
+   * chip and the attach pane both read. Never persisted — an attachment is a
+   * fact about right now, and a remembered one would be a lie on the next
+   * launch.
+   */
+  remoteLink: RemoteLinkStatus | null;
+  /**
    * The ledger's tail (HIVE-111).
    *
    * A mirror, not the source — main owns the log and this holds the newest
@@ -546,6 +562,8 @@ interface HiveState {
    */
   clearNotifs: () => void;
   pushNotif: (notif: HiveNotification) => void;
+  /** Install the link status main just pushed (HIVE-150). */
+  setRemoteLink: (status: RemoteLinkStatus) => void;
   /**
    * Merge main's buffer into what is already here, newest first (HIVE-75).
    *
@@ -1717,6 +1735,7 @@ const ATTACH_SNAPSHOT_HANDLERS: Partial<
 export const useHiveStore = create<HiveState>()((set, get) => ({
   ...emptySeeds(),
   notifs: [],
+  remoteLink: null,
   ledger: [],
   metrics: {},
   /**
@@ -3139,6 +3158,10 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         ? state
         : { notifs: [notif, ...state.notifs].slice(0, NOTIF_CAP) },
     ),
+
+  setRemoteLink: (status) => {
+    set({ remoteLink: status });
+  },
 
   applyRead: (id, unread) =>
     set((state) => ({
@@ -5251,6 +5274,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     set({
       ...emptySeeds(),
       notifs: [],
+      remoteLink: null,
       ledger: [],
       metrics: {},
       ticketSource: { kind: 'loading' },
@@ -7328,6 +7352,36 @@ export const useClearNotifs = () => useHiveStore((state) => state.clearNotifs);
 
 /** Push a notification — the stream's entry point (stories 051, 061, HIVE-75). */
 export const usePushNotif = () => useHiveStore((state) => state.pushNotif);
+
+/**
+ * What this window's attachment is doing, or `null` when it has none
+ * (HIVE-150).
+ *
+ * The header chip and the attach pane both read this rather than
+ * `AppInfo.attachedServerName`. That field is still the runtime truth, but it
+ * is read on demand: a socket that dies without a config write leaves it
+ * unread and the chip claiming an attachment that is gone. This is pushed.
+ */
+export const useRemoteLink = () => useHiveStore((state) => state.remoteLink);
+
+/** Install the link status main just pushed (HIVE-150). */
+export const useSetRemoteLink = () => useHiveStore((state) => state.setRemoteLink);
+
+/**
+ * How many times this attachment has come back (HIVE-150).
+ *
+ * The effects that own per-surface state depend on it, so that a reconnect
+ * re-establishes what the server released when the old socket went away: its
+ * `fs:watch`, its `ui:foreground` record. A reconnect mints a *new* surface id
+ * on the server — ids come from a `WeakMap` on the socket object — and the
+ * renderer never unmounted, so nothing else would ever ask again.
+ *
+ * Terminals deliberately do not depend on it. Their continuity is what
+ * `resumeFrom` buys, and remounting them would throw away the scrollback the
+ * resume just saved.
+ */
+export const useReattachEpoch = () =>
+  useHiveStore((state) => state.remoteLink?.epoch ?? 0);
 
 /** Install main's buffer on mount (HIVE-75). */
 export const useHydrateNotifs = () =>
