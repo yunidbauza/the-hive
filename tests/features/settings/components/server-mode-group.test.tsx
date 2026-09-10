@@ -277,6 +277,26 @@ describe('ServerModeGroup', () => {
         bind: { allowedOrigins: ['https://a.test', 'https://b.test'] },
       });
     });
+
+    it('names the server, not this window, while attached', () => {
+      render(
+        <ServerModeGroup
+          enabled
+          bind={WIDE_BIND}
+          devices={[]}
+          remote={DEFAULT_REMOTE}
+          localRemote={null}
+          attachedServer={null}
+          attachedServerName="mini"
+          serving={false}
+        />,
+      );
+
+      expect(screen.getByLabelText(/bind address/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/these are the server's bind settings, not this window's own/i),
+      ).toBeInTheDocument();
+    });
   });
 
   describe('the device roster', () => {
@@ -397,6 +417,25 @@ describe('ServerModeGroup', () => {
 
       expect(
         await screen.findByText(/could not revoke "yunid's macbook"/i),
+      ).toBeInTheDocument();
+    });
+
+    it('names the server, not this window, when Revoke would act while attached', () => {
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[ACTIVE_DEVICE]}
+          remote={DEFAULT_REMOTE}
+          localRemote={null}
+          attachedServer={null}
+          attachedServerName="mini"
+          serving={false}
+        />,
+      );
+
+      expect(
+        screen.getByText(/this is the server's device roster/i),
       ).toBeInTheDocument();
     });
   });
