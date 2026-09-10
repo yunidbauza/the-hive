@@ -47,6 +47,12 @@ vi.mock('electron', () => ({
     // processes and these registrations really write here (HIVE-139).
     getPath: () => '/tmp/hive-test-mode-switch-durability',
   },
+  /*
+    HIVE-150. The reconnect loop asks to be told when this machine wakes, so a
+    lid opening reattaches at once rather than waiting out the backoff step it
+    was parked on. Modelled here because `router.ts` really reads it.
+  */
+  powerMonitor: { on: vi.fn(), removeListener: vi.fn() },
   BrowserWindow: { fromWebContents: () => null, getAllWindows: () => [] },
   dialog: { showOpenDialog: vi.fn() },
   safeStorage: {
@@ -165,6 +171,9 @@ const fakeClient = () => ({
   onEvent: vi.fn(() => () => {}),
   snapshot: vi.fn(() => ({})),
   serverName: vi.fn(() => 'mini'),
+  // Never dropped in this file — durability across mode switches is its
+  // subject, and a reconnect is `remote-composition.test.ts`'s (HIVE-150).
+  onClose: vi.fn(() => () => undefined),
   close: vi.fn(),
 });
 

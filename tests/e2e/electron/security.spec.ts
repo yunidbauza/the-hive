@@ -372,16 +372,25 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    */
   expect(surface.server).toEqual(['pair', 'revoke']);
   /**
-   * HIVE-144. Two verbs, and **not** `server` above pointing the same way:
-   * `pair` here stores a `deviceId`/`token` pair this machine was *handed* by
-   * a `server.pair` mint on some other Hive, so it can attach outward as a
-   * client; `forget` discards it. Neither mints or destroys a credential that
-   * grants access *to* this machine — that register is `server`'s, above —
-   * which is why this pair is graded `mutate` rather than `execute`
-   * (`remote-contract.ts`). A third verb here is the same kind of widening
-   * this whole test exists to make impossible to add quietly.
+   * HIVE-144. Two credential verbs, and **not** `server` above pointing the
+   * same way: `pair` here stores a `deviceId`/`token` pair this machine was
+   * *handed* by a `server.pair` mint on some other Hive, so it can attach
+   * outward as a client; `forget` discards it. Neither mints or destroys a
+   * credential that grants access *to* this machine — that register is
+   * `server`'s, above — which is why the pair is graded `mutate` rather than
+   * `execute` (`remote-contract.ts`). A third *credential* verb here is the
+   * same kind of widening this whole test exists to make impossible to add
+   * quietly.
+   *
+   * `onLinkStatus` (HIVE-150) is the exception that proves what this list is
+   * for. It is a **subscription**, and it touches no credential at all: it
+   * reports what the socket one of those credentials opened is currently
+   * doing — attached, reconnecting, given up, or gone. A page that can watch a
+   * link change state gains nothing it could not already infer from the calls
+   * failing, which is why this addition is a widening of *what the window
+   * knows* rather than of what it can do.
    */
-  expect(surface.remote).toEqual(['forget', 'pair']);
+  expect(surface.remote).toEqual(['forget', 'onLinkStatus', 'pair']);
   expect(surface.skills).toEqual([
     'fileDrop',
     'fileImport',

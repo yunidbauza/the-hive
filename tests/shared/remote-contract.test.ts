@@ -9,6 +9,7 @@ import {
   CALL_GIVE_UP_MS,
   CHANNEL_AUTHORIZATION,
   FRAME_KIND,
+  LOCAL_ONLY_EVENTS,
   PROCESS_LOCAL,
   REMOTE_PROTOCOL_VERSION,
   REMOTE_REFUSED_CHANNELS,
@@ -19,6 +20,7 @@ import {
   type FrameKind,
   isAuthorized,
   isClientFrameAllowed,
+  isLocalOnlyEvent,
   isProcessLocal,
   remoteRefusedReason,
   windowBoundReason,
@@ -77,7 +79,7 @@ const MAIN_ONLY: ReadonlyMap<string, FrameKind> = new Map([
 
 describe('remote contract: coverage', () => {
   it('classifies every channel exactly once for frame kind', () => {
-    expect(entries).toHaveLength(130);
+    expect(entries).toHaveLength(131);
     expect(Object.keys(FRAME_KIND).sort()).toEqual([...Object.values(CH)].sort());
   });
 
@@ -116,24 +118,25 @@ describe('remote contract: frame kinds match the preload bridge', () => {
     expect(frameKindOf(channel)).toBe(expected);
   });
 
-  it('splits 99 call, 6 notify and 25 event', () => {
+  it('splits 99 call, 6 notify and 26 event', () => {
     const tally = { call: 0, notify: 0, event: 0 };
     for (const kind of Object.values(FRAME_KIND)) tally[kind] += 1;
 
-    expect(tally).toEqual({ call: 99, notify: 6, event: 25 });
+    expect(tally).toEqual({ call: 99, notify: 6, event: 26 });
   });
 
   /**
    * The correction that reading the bridge forced.
    *
-   * `EVENT_CHANNELS` is not the set of pushed channels — it is 20 of the 25.
+   * `EVENT_CHANNELS` is not the set of pushed channels — it is 20 of the 26.
    * `slack:socket-status` and the three `notifications:*` pushes are subscribed
-   * without being listed there, and `notifications:toast` is pushed to a main
-   * process rather than a renderer at all. A remote client that forwarded only
-   * `EVENT_CHANNELS` would show an empty inbox on a busy server, so the
-   * asymmetry is asserted rather than left to be rediscovered.
+   * without being listed there, `notifications:toast` is pushed to a main
+   * process rather than a renderer at all, and `remote:link-status` (HIVE-150)
+   * is raised by this process about itself and never carried. A remote client
+   * that forwarded only `EVENT_CHANNELS` would show an empty inbox on a busy
+   * server, so the asymmetry is asserted rather than left to be rediscovered.
    */
-  it('covers EVENT_CHANNELS and the five pushes it omits', () => {
+  it('covers EVENT_CHANNELS and the six pushes it omits', () => {
     for (const channel of EVENT_CHANNELS) expect(frameKindOf(channel)).toBe('event');
 
     const listed: ReadonlySet<string> = new Set(EVENT_CHANNELS);
@@ -146,8 +149,37 @@ describe('remote contract: frame kinds match the preload bridge', () => {
       'notifications:new',
       'notifications:read',
       'notifications:toast',
+      /*
+        HIVE-150, and it belongs on this list for a reason none of the others
+        share: the rest are simply not carried in `EVENT_CHANNELS`, while this
+        one must never cross a socket at all. `LOCAL_ONLY_EVENTS` is what
+        enforces that, and the test below is what pins it.
+      */
+      'remote:link-status',
       'slack:socket-status',
     ]);
+  });
+
+  /**
+   * A push about *this* window's own attachment, refused from a socket
+   * (HIVE-150).
+   *
+   * The counterpart to `PROCESS_LOCAL` for pushes. A server that is itself
+   * attached to a third machine would otherwise push its own reconnect state
+   * down to every client, and each client's header chip would start describing
+   * a socket it has no part in — the same defect `PROCESS_LOCAL` closed for
+   * `app:info`.
+   */
+  it('keeps every local-only event graded as a push, and refuses it from the wire', () => {
+    for (const channel of LOCAL_ONLY_EVENTS) {
+      expect(frameKindOf(channel)).toBe('event');
+      expect(isLocalOnlyEvent(channel)).toBe(true);
+    }
+
+    expect([...LOCAL_ONLY_EVENTS]).toEqual([CH.remoteLinkStatus]);
+    // The channels a server may genuinely push are not caught by it.
+    expect(isLocalOnlyEvent(CH.ptyData)).toBe(false);
+    expect(isLocalOnlyEvent(CH.notificationsNew)).toBe(false);
   });
 });
 
@@ -163,11 +195,11 @@ describe('remote contract: authorization', () => {
     expect(authorizationOf(channel)).toBe('execute');
   });
 
-  it('grades the 130 as 55 read, 43 mutate and 32 execute', () => {
+  it('grades the 131 as 56 read, 43 mutate and 32 execute', () => {
     const tally = { read: 0, mutate: 0, execute: 0 };
     for (const authz of Object.values(CHANNEL_AUTHORIZATION)) tally[authz] += 1;
 
-    expect(tally).toEqual({ read: 55, mutate: 43, execute: 32 });
+    expect(tally).toEqual({ read: 56, mutate: 43, execute: 32 });
   });
 
   /**

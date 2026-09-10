@@ -25,8 +25,10 @@ import {
   AttachFrameTooLargeError,
   AttachRefusedError,
   CLIENT_ATTACH_TIMEOUT_MS,
+  PRE_SUBSCRIBE_BUFFER,
   PlaintextRefusedError,
   RemoteCallError,
+  classifyCause,
   connectRemote,
   type RemoteClient,
 } from '../../../electron/remote-client/socket';
@@ -790,5 +792,265 @@ describe('connectRemote — events', () => {
     socket.emit('message', Buffer.from('{not json'));
 
     expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The replay that arrives in the accept's own tick (HIVE-150).
+ *
+ * The server sends `attach-accepted` and then, **synchronously, before its own
+ * turn ends**, runs the resume replay into the same socket
+ * (`remote-host/listener.ts`: `send(…'attach-accepted'…)` is followed directly
+ * by `onAttach(socketHandle, request.resumeFrom)`). `ws` parses a chunk in a
+ * synchronous loop and emits one `'message'` per frame with that stack still
+ * live, so those frames can reach this client before anything has had a chance
+ * to subscribe: `resolveConnection` only *queues a microtask*, and the caller
+ * that eventually calls `onEvent` runs in it.
+ *
+ * Dropped, that is the whole feature failing silently — the replayed scrollback
+ * never reaches the terminal, `recordArrival` never sees it so the tracker does
+ * not advance, and the next reconnect asks from the same stale point again.
+ *
+ * This shape was harmless until HIVE-150: nothing before it depended on frames
+ * arriving inside the accept's own tick.
+ */
+describe('frames that arrive before anyone has subscribed', () => {
+  it('delivers a replay sent in the accept’s own tick to the first subscriber', async () => {
+    const { promise, socket } = dial();
+    if (socket === null) throw new Error('expected a socket');
+
+    socket.emit('open');
+    /*
+      Both frames in one synchronous stretch, which is what the server does and
+      what `ws` can hand over in a single parse of a single TCP segment.
+    */
+    socket.deliver(accepted());
+    socket.deliver({
+      kind: 'event',
+      channel: CH.ptyData,
+      payload: { sessionId: 's1', chunk: 'REPLAYED', gen: 2, seq: 41 },
+    } satisfies EventFrame);
+
+    const client = await promise;
+    const seen: unknown[] = [];
+    client.onEvent((channel, payload) => {
+      seen.push({ channel, payload });
+    });
+
+    // Flushed to the first subscriber, not discarded for want of one.
+    await Promise.resolve();
+    expect(seen).toEqual([
+      {
+        channel: CH.ptyData,
+        payload: { sessionId: 's1', chunk: 'REPLAYED', gen: 2, seq: 41 },
+      },
+    ]);
+  });
+
+  it('does not replay the buffer to a second subscriber', async () => {
+    const { promise, socket } = dial();
+    if (socket === null) throw new Error('expected a socket');
+
+    socket.emit('open');
+    socket.deliver(accepted());
+    socket.deliver({
+      kind: 'event',
+      channel: CH.ptyData,
+      payload: 'once',
+    } satisfies EventFrame);
+
+    const client = await promise;
+    client.onEvent(() => undefined);
+    const later: unknown[] = [];
+    client.onEvent((_channel, payload) => {
+      later.push(payload);
+    });
+
+    /*
+      The buffer is a handover, not a log. A second subscriber joining later —
+      the remote proxy re-registering across a rebind, say — must not be handed
+      output the terminal has already rendered.
+    */
+    expect(later).toEqual([]);
+  });
+
+  it('bounds what it holds, so a server that never stops cannot grow it forever', async () => {
+    const { promise, socket } = dial();
+    if (socket === null) throw new Error('expected a socket');
+
+    socket.emit('open');
+    socket.deliver(accepted());
+    for (let i = 0; i < PRE_SUBSCRIBE_BUFFER + 50; i += 1) {
+      socket.deliver({ kind: 'event', channel: CH.ptyData, payload: i } satisfies EventFrame);
+    }
+
+    const client = await promise;
+    const seen: unknown[] = [];
+    client.onEvent((_channel, payload) => {
+      seen.push(payload);
+    });
+
+    /*
+      Bounded, and the *newest* kept: a client that has fallen this far behind
+      before it even subscribed is going to take a gap notice anyway, and the
+      recent frames are the ones its terminal still needs.
+    */
+    expect(seen).toHaveLength(PRE_SUBSCRIBE_BUFFER);
+    expect(seen.at(-1)).toBe(PRE_SUBSCRIBE_BUFFER + 49);
+  });
+});
+
+/**
+ * The close signal (HIVE-150).
+ *
+ * HIVE-144 bounded the dial and rejected every pending call on a drop, but
+ * nothing upstream could hear that a socket had died: `RemoteClient` exposed no
+ * lifecycle at all, so `router.ts` kept `attached` pointing at a dead client and
+ * the header chip kept naming a machine this window could no longer reach.
+ * These cover the signal the reconnect loop listens on.
+ */
+describe('onClose', () => {
+  it('fires once when an attached socket closes', async () => {
+    const { client, socket } = await attachedClient();
+    const heard = vi.fn();
+    client.onClose(heard);
+
+    socket.emit('close');
+
+    expect(heard).toHaveBeenCalledTimes(1);
+    expect(heard.mock.calls[0][0]).toMatchObject({ kind: 'transport' });
+  });
+
+  it('fires once on an error, and not again on the close that follows it', async () => {
+    const { client, socket } = await attachedClient();
+    const heard = vi.fn();
+    client.onClose(heard);
+
+    /*
+      `ws` emits both, in this order, for a connection that dies rather than one
+      closed politely. A listener that heard it twice would start two reconnect
+      loops against one drop, and the second would dial while the first was
+      already waiting on its backoff.
+    */
+    socket.emit('error', new Error('ECONNRESET'));
+    socket.emit('close');
+
+    expect(heard).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands its subscriber a client that is already fully shut', async () => {
+    const { client, socket } = await attachedClient();
+
+    const outstanding = client.call(CH.configGet, undefined);
+    let refusedFromInside: unknown = null;
+    client.onClose(() => {
+      /*
+        Started from inside the listener, so it can only be refused outright if
+        the teardown finished before the announcement. That is the property
+        worth pinning: the loop's first act on hearing a close is to dial again,
+        and it must never do that against a client still holding callers.
+
+        The rejection of `outstanding` cannot be observed *before* this listener
+        instead — `promise.catch` is a microtask by specification and a listener
+        is synchronous, so no correct implementation could make that ordering
+        visible. What is visible is that both are settled by the time anyone can
+        act, which is what this asserts from the two directions available.
+      */
+      client.call(CH.configGet, undefined).catch((cause: unknown) => {
+        refusedFromInside = cause;
+      });
+    });
+
+    socket.emit('close');
+
+    await expect(outstanding).rejects.toThrow(/closed/);
+    await Promise.resolve();
+    expect(refusedFromInside).toBeInstanceOf(Error);
+    expect(String(refusedFromInside)).toMatch(/is closed/);
+  });
+
+  it('stops delivering once unsubscribed', async () => {
+    const { client, socket } = await attachedClient();
+    const heard = vi.fn();
+    const stop = client.onClose(heard);
+
+    stop();
+    socket.emit('close');
+
+    expect(heard).not.toHaveBeenCalled();
+  });
+
+  it('refuses a notify on a dead socket instead of dropping it quietly', async () => {
+    const { client, socket } = await attachedClient();
+    socket.emit('close');
+
+    /*
+      The reconnect loop leaves this dead client bound for the whole backoff, so
+      the terminal stays mounted and focused while the chip is amber. `pty:write`
+      is `notify` kind, and this used to `return` — so every keystroke typed
+      during the gap vanished before reaching the wire, and the reattach then
+      replayed the server's transcript, which never contained them. Nothing
+      anywhere recorded that the input had existed.
+
+      The keystroke is lost either way; there is no socket. What this pins is
+      that it is not lost *silently* — `remote-proxy.ts`'s notify wrapper logs
+      what this throws.
+    */
+    expect(() => {
+      client.notify(CH.ptyWrite, { sessionId: 's1', data: 'x' });
+    }).toThrow(/is closed/);
+  });
+});
+
+/**
+ * What the reconnect loop branches on (HIVE-150).
+ *
+ * Exported rather than kept private because the loop classifies two different
+ * things with it: the `CloseCause` a live socket hands `onClose`, and the
+ * rejection a *failed dial* produces, which never reaches `onClose` at all
+ * because there was no attached client to hear it. One table, both paths.
+ */
+describe('classifyCause', () => {
+  it('names a refused resolution terminal rather than a transport drop', () => {
+    /*
+      Retrying this one would re-refuse on a timer forever while the pane
+      claimed it was reconnecting — the address is wrong, and no amount of
+      waiting changes an address.
+    */
+    expect(classifyCause(new PlaintextRefusedError('nope'))).toMatchObject({
+      kind: 'terminal',
+      code: 'plaintext-refused',
+    });
+  });
+
+  it('carries a server refusal through under its own code', () => {
+    expect(classifyCause(new AttachRefusedError('unauthorized', 'no'))).toMatchObject({
+      kind: 'terminal',
+      code: 'unauthorized',
+    });
+    expect(classifyCause(new AttachRefusedError('revoked', 'no'))).toMatchObject({
+      kind: 'terminal',
+      code: 'revoked',
+    });
+    expect(classifyCause(new AttachRefusedError('protocol-mismatch', 'no'))).toMatchObject({
+      kind: 'terminal',
+      code: 'protocol-mismatch',
+    });
+  });
+
+  it('names an oversized attach frame terminal', () => {
+    /*
+      The one terminal cause this side raises about itself. Dialling again sends
+      the same oversized frame, so a retry is a loop that cannot converge.
+    */
+    expect(classifyCause(new AttachFrameTooLargeError('too big'))).toMatchObject({
+      kind: 'terminal',
+      code: 'attach-frame-too-large',
+    });
+  });
+
+  it('treats anything else as worth retrying', () => {
+    expect(classifyCause(new Error('ECONNREFUSED'))).toMatchObject({ kind: 'transport' });
+    expect(classifyCause('not even an error')).toMatchObject({ kind: 'transport' });
   });
 });

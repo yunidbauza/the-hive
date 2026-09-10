@@ -71,10 +71,37 @@ describe('createSocketBroadcaster', () => {
 
     for (const channel of pushed) broadcaster.emit(channel, null);
 
+    // 26 graded `event`, less the one `LOCAL_ONLY_EVENTS` holds back (HIVE-150).
     expect(only.send).toHaveBeenCalledTimes(25);
     // The regression this guards: forwarding EVENT_CHANNELS would be 20, and
     // would silently drop every notification the remote inbox needs.
     expect(pushed.length).toBeGreaterThan(EVENT_CHANNELS.length);
+  });
+
+  /**
+   * A served machine does not tell its clients about its own attachment
+   * (HIVE-150).
+   *
+   * The sending half of the fence `remote-proxy.ts` also applies on receipt. A
+   * mini that serves this fleet and is itself attached to a third Hive raises
+   * `remote:link-status` about *its* outward socket; carried, every client
+   * would paint its header chip from a link it has no part in, and go amber for
+   * a reconnect happening on a machine none of them is looking at.
+   */
+  it('holds back a push about the sending machine itself', () => {
+    const only = socket();
+    const broadcaster = createSocketBroadcaster(() => [only]);
+
+    broadcaster.emit(CH.remoteLinkStatus, {
+      state: 'reconnecting',
+      serverName: 'a-third-hive',
+      attempt: 2,
+      nextAttemptAt: null,
+      reason: null,
+      epoch: 0,
+    });
+
+    expect(only.send).not.toHaveBeenCalled();
   });
 });
 

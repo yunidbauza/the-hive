@@ -1,7 +1,12 @@
 import { ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
 
 import { CH, type AppInfo, type Channel } from '@shared/ipc-contract';
-import { FRAME_KIND, isProcessLocal, windowBoundReason } from '@shared/remote-contract';
+import {
+  FRAME_KIND,
+  isLocalOnlyEvent,
+  isProcessLocal,
+  windowBoundReason,
+} from '@shared/remote-contract';
 
 import { RemoteCallError, type RemoteClient } from '../../remote-client/socket';
 import { createRemoteToasts, type RemoteToasts } from '../notifications/remote-toast';
@@ -11,6 +16,7 @@ import { checkForUpdatesInteractively, updateStatus } from '../updates';
 import { createBindings, type Bindings } from './bindings';
 import type { Broadcaster } from './broadcaster';
 import { createForegroundStamp, type ForegroundStamp } from './remote-foreground';
+import type { ResumeTracker } from './resume-tracker';
 import { assertSender } from './sender';
 
 /**
@@ -206,6 +212,48 @@ let remoteToasts: RemoteToasts | null = null;
  * than answering quietly wrong if a caller that skips `router.ts` ever does
  * exercise those channels without supplying them.
  */
+/**
+ * Reads `{sessionId, gen, seq}` off an arriving `pty:data` (HIVE-150).
+ *
+ * Shape-checked rather than cast. A server is not obliged to be well-behaved,
+ * and this runs inside `ws`'s own emit — a throw would abort the fan-out for
+ * every subscriber after it and surface as an uncaught exception in main. A
+ * frame that does not carry a usable point simply does not move the tracker;
+ * the worst that costs is a resume point one batch behind, which the server
+ * answers as a small replay.
+ */
+function recordArrival(tracker: ResumeTracker, payload: unknown): void {
+  if (typeof payload !== 'object' || payload === null) return;
+  const { sessionId, gen, seq } = payload as Record<string, unknown>;
+  /*
+    The server's own `isResumePointShaped` predicate, mirrored exactly
+    (`remote-host/listener.ts`). A looser check here is not merely permissive —
+    it is self-harming. `NaN`, `Infinity`, `-1` or `1.5` recorded here rides out
+    in the next dial's `resumeFrom`, fails the server's `isAttachShaped`, comes
+    back as `attach-refused`, and `classifyCause` grades that **terminal** — so
+    the loop stops for good and the pane says reconnecting will not help, about
+    a fleet that is perfectly healthy.
+  */
+  if (
+    typeof sessionId !== 'string' ||
+    !Number.isInteger(gen) ||
+    !Number.isInteger(seq) ||
+    (gen as number) < 0 ||
+    (seq as number) < 0
+  ) {
+    return;
+  }
+  tracker.record(sessionId, gen as number, seq as number);
+}
+
+/** Reads the `sessionId` off an outgoing `pty:ack`, with the same caution. */
+function recordWatched(tracker: ResumeTracker, payload: unknown): void {
+  if (typeof payload !== 'object' || payload === null) return;
+  const { sessionId } = payload as Record<string, unknown>;
+  if (typeof sessionId !== 'string') return;
+  tracker.markWatched(sessionId);
+}
+
 export function registerRemoteProxy(deps: {
   client: RemoteClient;
   broadcaster: Broadcaster;
@@ -213,6 +261,16 @@ export function registerRemoteProxy(deps: {
   localSetRemote?: (payload: unknown) => Promise<unknown>;
   localRemotePair?: (payload: unknown) => unknown;
   localRemoteForget?: () => void;
+  /**
+   * Where a reconnect's `resumeFrom` is built from (HIVE-150).
+   *
+   * Optional because a proxy without one is still a correct proxy — it simply
+   * cannot resume, which is what every caller before this story did. Fed from
+   * both directions here because this is the only place that sees both: the
+   * `{gen, seq}` on arriving `pty:data`, and the `pty:ack` leaving for the
+   * socket that says a terminal is mounted on this surface.
+   */
+  resumeTracker?: ResumeTracker;
 }): void {
   if (bindings !== null) {
     throw new Error(
@@ -229,6 +287,7 @@ export function registerRemoteProxy(deps: {
     localSetRemote = noLocalSetRemote,
     localRemotePair = noLocalRemotePair,
     localRemoteForget = noLocalRemoteForget,
+    resumeTracker,
   } = deps;
 
   bindings = createBindings(ipcMain);
@@ -347,6 +406,20 @@ export function registerRemoteProxy(deps: {
           */
           const outgoing =
             channel === CH.uiForeground ? (foregroundStamp?.stamp(payload) ?? payload) : payload;
+          /*
+            The other half of the resume tracker's diet (HIVE-150). An ack is
+            the honest signal that a terminal for this session is mounted on
+            this surface — HIVE-145 established that a surface only ever acks a
+            session it has open — and that is exactly the predicate deciding
+            which resume points are worth the attach frame's 8 KiB.
+
+            Before `notify`, so a frame the socket refuses still counts as
+            watched: the user has the terminal open either way, and the point
+            of this is what to resume, not what was delivered.
+          */
+          if (channel === CH.ptyAck && resumeTracker !== undefined) {
+            recordWatched(resumeTracker, payload);
+          }
           client.notify(channel as Channel, outgoing);
         } catch (cause) {
           console.error(`[hive] rejected ${channel}:`, cause);
@@ -378,6 +451,27 @@ export function registerRemoteProxy(deps: {
     if (channel === CH.notificationsToast) {
       remoteToasts?.receive(payload as Parameters<RemoteToasts['receive']>[0]);
       return;
+    }
+    /*
+      Dropped rather than forwarded (HIVE-150). These pushes are about *this*
+      window's own attachment, so a server raising one is describing its own
+      socket, not this machine's — and forwarding it would let a server that is
+      itself attached somewhere repaint every client's header chip with a link
+      none of them has a part in. The same reasoning `PROCESS_LOCAL` applies to
+      calls, pointed at the other frame kind.
+
+      Refused here rather than by grading the channel something other than
+      `event`: it *is* an event, the renderer subscribes to it as one, and the
+      only question is which side may originate it.
+    */
+    if (isLocalOnlyEvent(channel)) return;
+    /*
+      Observed on the way past, never intercepted (HIVE-150). A `pty:data` that
+      stopped reaching the window would be a black terminal, so this reads the
+      frame and then delivers it regardless of what it found.
+    */
+    if (channel === CH.ptyData && resumeTracker !== undefined) {
+      recordArrival(resumeTracker, payload);
     }
     broadcaster.emit(channel, payload);
   });

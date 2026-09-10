@@ -9,6 +9,7 @@ import {
   watchProject,
 } from '@lib/explorer/fs-client';
 import { useReconcileFiles } from '@stores/editor-store';
+import { useReattachEpoch } from '@stores/hive-store';
 import { useBumpFsRevision } from '@stores/ui-store';
 
 /**
@@ -58,6 +59,7 @@ export function useProjectWatcher(): void {
   const access = useProjectAccess(project?.id ?? '');
   const bumpFsRevision = useBumpFsRevision();
   const reconcile = useReconcileFiles();
+  const reattachEpoch = useReattachEpoch();
 
   const projectId = project?.id ?? null;
   /*
@@ -90,5 +92,17 @@ export function useProjectWatcher(): void {
       stop();
       void unwatchProject();
     };
-  }, [watchable, projectId, sessionId, root, bumpFsRevision, reconcile]);
+    /*
+      `reattachEpoch` re-arms the watcher after a reconnect (HIVE-150).
+
+      The watcher is per *surface* on the machine that answers it, and a
+      reconnect is a new surface: the server minted a fresh id for the returning
+      socket and released the old one's watcher when it went away. Nothing else
+      here would ask again — `projectId`, `sessionId` and `root` are all
+      unchanged, and the panel never unmounted — so the explorer would go on
+      showing a tree it had stopped listening to, with nothing on screen to say
+      so. That is precisely the defect HIVE-145 found when one client's
+      `fs:watch` stole another's.
+    */
+  }, [watchable, projectId, sessionId, root, bumpFsRevision, reconcile, reattachEpoch]);
 }

@@ -1,8 +1,14 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AppInfo } from '../../../../electron/shared/ipc-contract';
-import { FRAME_KIND, PROCESS_LOCAL, WINDOW_BOUND } from '../../../../electron/shared/remote-contract';
+import type { CloseCause } from '../../../../electron/remote-client/socket';
+import { CH, type AppInfo } from '../../../../electron/shared/ipc-contract';
+import {
+  FRAME_KIND,
+  PROCESS_LOCAL,
+  WINDOW_BOUND,
+  isLocalOnlyEvent,
+} from '../../../../electron/shared/remote-contract';
 
 /**
  * `../updates` (`electron/main/updates/index.ts`) is mocked here for the
@@ -30,7 +36,7 @@ vi.mock('../../../../electron/main/updates', () => ({ updateStatus, checkForUpda
  *
  * The three channel lists below are derived from `FRAME_KIND` — the same
  * table `registerRemoteProxy` itself walks — but the counts asserted against
- * them (99, 6, 25, 105) are literals, not read back off the derived lists.
+ * them (99, 6, 26, 105) are literals, not read back off the derived lists.
  * `tests/shared/remote-contract.test.ts:58,93` pins the same four numbers
  * independently. A channel added to the contract without a home in this file
  * fails a count here, which is the point: a self-referential assertion could
@@ -101,6 +107,7 @@ vi.mock('electron', () => ({
 const { registerRemoteProxy, remoteProxyBindingsSize, resetRemoteProxy } = await import(
   '../../../../electron/main/ipc/remote-proxy'
 );
+const { createResumeTracker } = await import('../../../../electron/main/ipc/resume-tracker');
 
 /** Matches `foreground.test.ts`'s trusted-sender fixture: identity, not shape. */
 const mainFrame = { url: 'file:///out/renderer/index.html' };
@@ -108,6 +115,7 @@ const trustedEvent = { senderFrame: mainFrame, sender: { mainFrame } } as never;
 
 function fakeClient() {
   const eventListeners = new Set<(channel: string, payload: unknown) => void>();
+  const closeListeners = new Set<(cause: CloseCause) => void>();
   return {
     call: vi.fn().mockResolvedValue('ok'),
     notify: vi.fn(),
@@ -117,10 +125,19 @@ function fakeClient() {
     }),
     snapshot: vi.fn(),
     serverName: vi.fn(),
+    onClose: vi.fn((listener: (cause: CloseCause) => void) => {
+      closeListeners.add(listener);
+      return () => closeListeners.delete(listener);
+    }),
     close: vi.fn(),
     /** Test-only: fire an event as the real socket's fan-out would. */
     emit(channel: string, payload: unknown) {
       for (const listener of eventListeners) listener(channel, payload);
+    },
+    /** Test-only: end the connection as the real socket's handlers would. */
+    drop(cause: CloseCause = { kind: 'transport', code: 'transport', message: 'closed' }) {
+      for (const listener of closeListeners) listener(cause);
+      closeListeners.clear();
     },
   };
 }
@@ -191,7 +208,7 @@ describe('registerRemoteProxy', () => {
   });
 
   it('binds no handler for an event channel', () => {
-    expect(eventChannels.length).toBe(25);
+    expect(eventChannels.length).toBe(26);
 
     registerRemoteProxy({ client: fakeClient(), broadcaster: fakeBroadcaster() });
 
@@ -297,18 +314,21 @@ describe('registerRemoteProxy', () => {
    * the very first one that isn't `pty:data`.
    */
   it('pumps a client event into the broadcaster on the same channel', () => {
-    expect(eventChannels.length).toBe(25);
+    expect(eventChannels.length).toBe(26);
 
     const client = fakeClient();
     const broadcaster = fakeBroadcaster();
     registerRemoteProxy({ client, broadcaster });
 
     /*
-      All but one (HIVE-145). `notifications:toast` is answered by this process
-      rather than forwarded: an Electron `Notification` is a main-process
+      All but two. `notifications:toast` is answered by this process rather
+      than forwarded (HIVE-145): an Electron `Notification` is a main-process
       object, which is also why that channel is absent from `EVENT_CHANNELS`.
+      `remote:link-status` is dropped outright (HIVE-150) — see the test below.
     */
-    const forwarded = eventChannels.filter((channel) => channel !== 'notifications:toast');
+    const forwarded = eventChannels.filter(
+      (channel) => channel !== 'notifications:toast' && !isLocalOnlyEvent(channel),
+    );
 
     for (const channel of forwarded) {
       const payload = { channel };
@@ -316,6 +336,127 @@ describe('registerRemoteProxy', () => {
       expect(broadcaster.emit).toHaveBeenCalledWith(channel, payload);
     }
     expect(broadcaster.emit).toHaveBeenCalledTimes(forwarded.length);
+  });
+
+  /**
+   * A server's own link status is not this window's (HIVE-150).
+   *
+   * The push counterpart of `PROCESS_LOCAL`. A served machine that is itself
+   * attached to a third Hive raises `remote:link-status` about *its* socket;
+   * forwarded, every client's header chip would start reporting a link it has
+   * no part in — and would go amber for a reconnect happening on someone else's
+   * machine. Exactly the defect `PROCESS_LOCAL` closed for `app:info`, where an
+   * attached client's About box reported the server's Electron version as its
+   * own.
+   */
+  it('drops a local-only event arriving from the socket', () => {
+    const client = fakeClient();
+    const broadcaster = fakeBroadcaster();
+    registerRemoteProxy({ client, broadcaster });
+
+    client.emit(CH.remoteLinkStatus, {
+      state: 'reconnecting',
+      serverName: 'somewhere-else',
+      attempt: 3,
+      nextAttemptAt: null,
+      reason: null,
+      epoch: 0,
+    });
+
+    expect(broadcaster.emit).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Feeding the resume tracker (HIVE-150).
+   *
+   * The two signals come from opposite directions and the proxy is the one
+   * place that sees both: `pty:data` arriving from the socket carries the
+   * `{gen, seq}` a reconnect resumes from, and `pty:ack` leaving for the socket
+   * is what says a terminal is actually mounted here — HIVE-145's ruling that
+   * being attached is not the same as watching.
+   */
+  describe('the resume tracker', () => {
+    it('records the generation and sequence of arriving output', () => {
+      const client = fakeClient();
+      const resumeTracker = createResumeTracker();
+      registerRemoteProxy({ client, broadcaster: fakeBroadcaster(), resumeTracker });
+
+      resumeTracker.markWatched('sess-a');
+      client.emit(CH.ptyData, { sessionId: 'sess-a', chunk: 'hi', gen: 2, seq: 17 });
+
+      expect(resumeTracker.points()).toEqual([
+        { sessionId: 'sess-a', point: { gen: 2, seq: 17 } },
+      ]);
+    });
+
+    it('marks a session watched when this surface acks it', () => {
+      const client = fakeClient();
+      const resumeTracker = createResumeTracker();
+      registerRemoteProxy({ client, broadcaster: fakeBroadcaster(), resumeTracker });
+
+      client.emit(CH.ptyData, { sessionId: 'sess-a', chunk: 'hi', gen: 2, seq: 17 });
+      // Nothing has mounted it yet, so it is not worth a slot in the frame.
+      expect(resumeTracker.points()).toEqual([]);
+
+      listeners.get(CH.ptyAck)?.(trustedEvent, { sessionId: 'sess-a', seq: 17 });
+
+      expect(resumeTracker.points()).toEqual([
+        { sessionId: 'sess-a', point: { gen: 2, seq: 17 } },
+      ]);
+    });
+
+    it('leaves delivery alone in both directions', () => {
+      const client = fakeClient();
+      const broadcaster = fakeBroadcaster();
+      const resumeTracker = createResumeTracker();
+      registerRemoteProxy({ client, broadcaster, resumeTracker });
+
+      const data = { sessionId: 'sess-a', chunk: 'hi', gen: 2, seq: 17 };
+      client.emit(CH.ptyData, data);
+      listeners.get(CH.ptyAck)?.(trustedEvent, { sessionId: 'sess-a', seq: 17 });
+
+      /*
+        The taps observe, they do not intercept. A `pty:data` that stopped
+        reaching the window would be a black terminal, and an ack that stopped
+        reaching the socket would stall the session behind its own flow control.
+      */
+      expect(broadcaster.emit).toHaveBeenCalledWith(CH.ptyData, data);
+      expect(client.notify).toHaveBeenCalledWith(CH.ptyAck, {
+        sessionId: 'sess-a',
+        seq: 17,
+      });
+    });
+
+    it('binds without one, so every existing caller keeps working', () => {
+      const client = fakeClient();
+      const broadcaster = fakeBroadcaster();
+
+      expect(() => {
+        registerRemoteProxy({ client, broadcaster });
+        client.emit(CH.ptyData, { sessionId: 'sess-a', chunk: 'hi', gen: 1, seq: 1 });
+        listeners.get(CH.ptyAck)?.(trustedEvent, { sessionId: 'sess-a', seq: 1 });
+      }).not.toThrow();
+    });
+
+    it('survives a malformed frame rather than taking the pump down with it', () => {
+      const client = fakeClient();
+      const broadcaster = fakeBroadcaster();
+      const resumeTracker = createResumeTracker();
+      registerRemoteProxy({ client, broadcaster, resumeTracker });
+
+      /*
+        A server is not required to be well-behaved, and this pump runs inside
+        `ws`'s own emit — a throw here would abort the fan-out for every other
+        subscriber and surface as an uncaught exception in main.
+      */
+      expect(() => {
+        client.emit(CH.ptyData, null);
+        client.emit(CH.ptyData, { sessionId: 'sess-a' });
+        client.emit(CH.ptyData, { sessionId: 42, gen: 'x', seq: {} });
+      }).not.toThrow();
+
+      expect(resumeTracker.points()).toEqual([]);
+    });
   });
 
   it('raises a toast here rather than forwarding it to the window', () => {

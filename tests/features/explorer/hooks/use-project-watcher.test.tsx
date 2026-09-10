@@ -215,4 +215,76 @@ describe('useProjectWatcher', () => {
 
     expect(watchProject).not.toHaveBeenCalled();
   });
+
+  /**
+   * Re-armed on every reattach (HIVE-150).
+   *
+   * The watcher is per *surface* on the machine that answers it, and a
+   * reconnect is a new surface: the server minted a fresh id for the returning
+   * socket and released the old surface's watcher when it went away. Nothing
+   * else here would ask again — the project, the session and the root are all
+   * unchanged, and the panel never unmounted — so the explorer would go on
+   * showing a tree it had stopped listening to, with nothing on screen to say
+   * so. That is the shape of the defect HIVE-145 found when one client's
+   * `fs:watch` silently stole another's.
+   */
+  describe('after a reattach', () => {
+    const link = (epoch: number) => {
+      act(() => {
+        useHiveStore.getState().setRemoteLink({
+          state: 'attached',
+          serverName: 'mini',
+          attempt: 0,
+          nextAttemptAt: null,
+          reason: null,
+          epoch,
+        });
+      });
+    };
+
+    it('watches again, and releases the old watcher first', async () => {
+      await renderWatcher();
+      expect(watchProject).toHaveBeenCalledTimes(1);
+
+      link(1);
+
+      expect(watchProject).toHaveBeenCalledTimes(2);
+      /*
+        The effect's own cleanup ran in between. That matters beyond tidiness:
+        the surface being released is the *old* one, and asking the new surface
+        to watch without dropping the local subscription would leave two
+        `onFsChanged` listeners reconciling the same burst twice.
+      */
+      expect(unwatchProject).toHaveBeenCalledTimes(1);
+    });
+
+    it('watches the same project and session it was watching', async () => {
+      await renderWatcher();
+      const first = watchProject.mock.calls[0];
+
+      link(1);
+
+      expect(watchProject.mock.calls[1]).toEqual(first);
+    });
+
+    it('does not re-arm while the link is merely reconnecting', async () => {
+      await renderWatcher();
+      expect(watchProject).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        useHiveStore.getState().setRemoteLink({
+          state: 'reconnecting',
+          serverName: 'mini',
+          attempt: 3,
+          nextAttemptAt: Date.now() + 4_000,
+          reason: null,
+          epoch: 0,
+        });
+      });
+
+      // There is no surface to watch on until there is a socket, and asking
+      // now would only reject into the same swallowed error the drop produced.
+      expect(watchProject).toHaveBeenCalledTimes(1);
+    });
+  });
 });

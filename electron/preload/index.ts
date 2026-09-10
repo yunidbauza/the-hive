@@ -83,6 +83,7 @@ import {
   type NotificationDismissedEvent,
   type NotificationReadEvent,
   type PromptReport,
+  type RemoteLinkStatus,
   type ResizeRequest,
   type SessionLostEvent,
   type SessionNameReport,
@@ -353,6 +354,14 @@ const bridge: HiveBridge = {
     ): Promise<{ paired: true } | { error: string }> =>
       ipcRenderer.invoke(CH.remotePair, request),
     forget: (): Promise<void> => ipcRenderer.invoke(CH.remoteForget),
+    /**
+     * What this window's attachment is doing (HIVE-150).
+     *
+     * A subscription rather than a read because the socket changes state on its
+     * own — the same reason `slack.onSocketStatus` beside it is one.
+     */
+    onLinkStatus: (callback: (status: RemoteLinkStatus | null) => void) =>
+      subscribe<RemoteLinkStatus | null>(CH.remoteLinkStatus, callback),
   },
   pty: {
     spawn: (request: SpawnRequest): Promise<void> =>

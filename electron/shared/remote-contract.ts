@@ -132,6 +132,16 @@ export const FRAME_KIND = {
   [CH.configSetRemote]: 'call',
   [CH.remotePair]: 'call',
   [CH.remoteForget]: 'call',
+  /*
+    HIVE-150. An `event` so it binds nothing in the proxy — pushes travel
+    server-to-client and have no `ipcMain.handle`/`ipcMain.on` of their own,
+    which is why this channel moves the total and the event tally without
+    moving `BOUND_CHANNELS`.
+
+    It is also in `LOCAL_ONLY_EVENTS` below: this one is graded `event` so a
+    *renderer* can subscribe to it, not so a socket can deliver one.
+  */
+  [CH.remoteLinkStatus]: 'event',
   [CH.jiraStatus]: 'call',
   [CH.jiraSetToken]: 'call',
   [CH.jiraClearToken]: 'call',
@@ -380,6 +390,9 @@ export const CHANNEL_AUTHORIZATION = {
   [CH.configSetRemote]: 'mutate',
   [CH.remotePair]: 'mutate',
   [CH.remoteForget]: 'mutate',
+  // A push, and every push is `read`: a client observes an event, it never
+  // causes one (HIVE-150).
+  [CH.remoteLinkStatus]: 'read',
   [CH.jiraStatus]: 'read',
   [CH.jiraSetToken]: 'mutate',
   [CH.jiraClearToken]: 'mutate',
@@ -697,6 +710,29 @@ export const PROCESS_LOCAL: readonly Channel[] = [
 /** Whether `channel` must be answered by this process itself, never proxied. */
 export function isProcessLocal(channel: string): boolean {
   return (PROCESS_LOCAL as readonly string[]).includes(channel);
+}
+
+/**
+ * Push events this process raises about **itself**, never accepted from a
+ * socket (HIVE-150).
+ *
+ * `PROCESS_LOCAL` is this list's counterpart for calls, and the reasoning is
+ * the same one pointed at the other frame kind. A channel belongs here when its
+ * subject is *this window's own attachment* rather than the fleet it is
+ * attached to, so a server pushing one would be reporting its own facts as this
+ * machine's — the defect `PROCESS_LOCAL` closed for `app:info`, where an
+ * attached client's About box showed the server's Electron version and a log
+ * path that does not exist locally.
+ *
+ * `remote:link-status` is the sharp case: a server that is itself attached
+ * somewhere would push its own reconnect state down to every client, and each
+ * client's header chip would start describing a socket it has no part in.
+ */
+export const LOCAL_ONLY_EVENTS: readonly Channel[] = [CH.remoteLinkStatus];
+
+/** Whether `channel` is a push this process raises about itself. */
+export function isLocalOnlyEvent(channel: string): boolean {
+  return (LOCAL_ONLY_EVENTS as readonly string[]).includes(channel);
 }
 
 /**

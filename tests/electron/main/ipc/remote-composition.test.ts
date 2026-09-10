@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SNAPSHOT_READ_BUDGET_MS } from '@remote-host/listener';
+import type { CloseCause } from '../../../../electron/remote-client/socket';
 import { emptySnapshot } from '../../../../electron/shared/config-contract';
 import { OVERMIND } from '../../../../electron/shared/ledger-contract';
 import type { Channel } from '../../../../electron/shared/ipc-contract';
@@ -79,6 +80,12 @@ vi.mock('electron', () => ({
     getPath: () => '/tmp/hive-test-remote-composition',
     dock: { bounce: vi.fn(), setBadge: vi.fn() },
   },
+  /*
+    HIVE-150. The reconnect loop asks to be told when this machine wakes, so a
+    lid opening reattaches at once rather than waiting out the backoff step it
+    was parked on. Modelled here because `router.ts` really reads it.
+  */
+  powerMonitor: { on: vi.fn(), removeListener: vi.fn() },
   BrowserWindow: { fromWebContents: () => null, getAllWindows: () => windows },
   dialog: { showOpenDialog: vi.fn() },
   Notification: Object.assign(vi.fn(), { isSupported: () => false }),
@@ -379,7 +386,10 @@ const { remoteProxyBindingsSize, resetRemoteProxy } = await import(
   '../../../../electron/main/ipc/remote-proxy'
 );
 const { PlaintextRefusedError } = await import('../../../../electron/remote-client/socket');
-const { registerIpc, switchIpcMode } = await import('../../../../electron/main/ipc/router');
+const { BACKOFF_MS } = await import('../../../../electron/main/ipc/reattach');
+const { attachedResumeTracker, attachedServerName, registerIpc, switchIpcMode } = await import(
+  '../../../../electron/main/ipc/router'
+);
 const { resetServerModeForTest, setServerMode } = await import(
   '../../../../electron/main/server-mode'
 );
@@ -1020,15 +1030,45 @@ describe('the mode switch (HIVE-144)', () => {
     return Promise.resolve(handler(trustedEvent, payload));
   };
 
-  /** A `RemoteClient` fake — fully implemented, so nothing is cast away. */
-  const fakeClient = () => ({
-    call: vi.fn(async () => undefined),
-    notify: vi.fn(),
-    onEvent: vi.fn(() => () => {}),
-    snapshot: vi.fn(() => ({})),
-    serverName: vi.fn(() => 'mini'),
-    close: vi.fn(),
-  });
+  /**
+   * A `RemoteClient` fake — fully implemented, so nothing is cast away.
+   *
+   * `drop()` is how a test ends this connection the way the real socket's
+   * handlers would (HIVE-150), which is what the reconnect path listens on.
+   */
+  const fakeClient = () => {
+    const closeListeners = new Set<(cause: CloseCause) => void>();
+    return {
+      call: vi.fn(async () => undefined),
+      notify: vi.fn(),
+      onEvent: vi.fn(() => () => {}),
+      snapshot: vi.fn(() => ({})),
+      serverName: vi.fn(() => 'mini'),
+      onClose: vi.fn((listener: (cause: CloseCause) => void) => {
+        closeListeners.add(listener);
+        return () => closeListeners.delete(listener);
+      }),
+      /*
+        **A real `close()` fires the close listeners**, because `ws` answers a
+        close with a `'close'` event and `socket.ts` announces from there. A
+        fake that stayed silent hid a real defect for a whole branch: a
+        deliberate detach closes this socket, the announcement lands, and the
+        reconnect loop takes it for a drop and starts dialling the server the
+        user has just left. The live two-app suite caught it; this fake is what
+        lets a unit test catch it next time (HIVE-150).
+      */
+      close: vi.fn(() => {
+        for (const listener of [...closeListeners]) {
+          listener({ kind: 'transport', code: 'transport', message: 'closed' });
+        }
+        closeListeners.clear();
+      }),
+      drop(cause: CloseCause = { kind: 'transport', code: 'transport', message: 'closed' }) {
+        for (const listener of [...closeListeners]) listener(cause);
+        closeListeners.clear();
+      },
+    };
+  };
 
   /**
    * A switch that would succeed: a loopback target, a stored credential, and a
@@ -1359,6 +1399,178 @@ describe('the mode switch (HIVE-144)', () => {
     expect(connect).not.toHaveBeenCalled();
     expect(ipcBindingsSize()).toBe(local);
     expect(remoteProxyBindingsSize()).toBe(0);
+  });
+
+  /**
+   * Reconnecting after a drop (HIVE-150).
+   *
+   * HIVE-144's delivery notes list "nothing re-attaches after a socket drops"
+   * as a deliberately deferred gap; this is where it closes. The loop's own
+   * schedule is `reattach.test.ts`'s subject — what these prove is the seam:
+   * that a drop is heard at all, that the surface is rebound to the new socket
+   * rather than left pointing at the dead one, and that the two teardown paths
+   * this module already had are not disturbed.
+   */
+  describe('a socket that drops after a successful attach', () => {
+    // The backoff is the subject of every case here, and waiting out even the
+    // first step for real would be a second of wall-clock per assertion.
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('rebinds the surface to the new client without unbinding local twice', async () => {
+      boundLocally();
+      const first = fakeClient();
+      const second = fakeClient();
+      let dials = 0;
+      const connect = vi.fn(() => {
+        dials += 1;
+        return Promise.resolve(dials === 1 ? first : second);
+      });
+
+      await switchIpcMode('remote', opts({ connect }));
+      expect(remoteProxyBindingsSize()).toBe(BOUND_CHANNELS);
+
+      first.drop();
+      await vi.advanceTimersByTimeAsync(BACKOFF_MS[0]);
+
+      /*
+        The count is the assertion that matters. `registerRemoteProxy` refuses
+        to bind over itself, so a reattach that forgot `resetRemoteProxy` would
+        throw; one that used `unbindEverything` instead would tear down the
+        sessions layer and stop the receiver, which is a different bug with the
+        same passing count. Both are excluded by binding exactly once more.
+      */
+      expect(remoteProxyBindingsSize()).toBe(BOUND_CHANNELS);
+      expect(attachedServerName()).toBe('mini');
+      expect(connect).toHaveBeenCalledTimes(2);
+    });
+
+    it('dials again naming where each watched terminal left off', async () => {
+      boundLocally();
+      const first = fakeClient();
+      let dialCount = 0;
+      const connect = vi.fn((deps: { resumeFrom?: Record<string, unknown> }) => {
+        dialCount += 1;
+        void deps;
+        return Promise.resolve(dialCount === 1 ? first : fakeClient());
+      });
+
+      await switchIpcMode('remote', opts({ connect }));
+
+      // What the proxy's two taps will do for real once a session is running.
+      const tracker = attachedResumeTracker();
+      tracker?.markWatched('sess-a');
+      tracker?.record('sess-a', 2, 44);
+
+      first.drop();
+      await vi.advanceTimersByTimeAsync(BACKOFF_MS[0]);
+
+      /*
+        The first dial cannot carry one — there was nothing to resume from — and
+        the second is the whole reason HIVE-144 built `ResumePoint` and bumped
+        the protocol. Until this, `router.ts` dialled without it and the machine
+        on the far side had no way to know a returning client had ever been
+        there.
+      */
+      expect(connect.mock.calls[0][0].resumeFrom).toBeUndefined();
+      expect(connect.mock.calls[1][0].resumeFrom).toEqual({
+        'sess-a': { gen: 2, seq: 44 },
+      });
+    });
+
+    it('does not reattach after the user has gone local', async () => {
+      boundLocally();
+      const first = fakeClient();
+      const connect = vi.fn(() => Promise.resolve(fakeClient()));
+      connect.mockResolvedValueOnce(first);
+
+      await switchIpcMode('remote', opts({ connect }));
+      first.drop();
+      // Mid-backoff, the user gives up and works locally.
+      await switchIpcMode('local');
+      await vi.advanceTimersByTimeAsync(600_000);
+
+      /*
+        The trap this closes: a live timer outliving the mode switch and
+        silently reattaching a user who explicitly asked to stop. `config:set-remote`
+        is PROCESS_LOCAL precisely so this exit still answers with the socket
+        dead, and it would be worth nothing if the loop ignored it.
+      */
+      expect(connect).toHaveBeenCalledTimes(1);
+      expect(attachedServerName()).toBeNull();
+      expect(remoteProxyBindingsSize()).toBe(0);
+    });
+
+    it('tells the window it has no link once it goes local', async () => {
+      boundLocally();
+      const first = fakeClient();
+      const broadcaster = { emit: vi.fn() };
+      const connect = vi.fn(() => Promise.resolve(first));
+
+      await switchIpcMode('remote', opts({ connect, broadcaster }));
+      broadcaster.emit.mockClear();
+
+      await switchIpcMode('local', { broadcaster });
+
+      /*
+        `null`, not a `disconnected` status: that state means a link ended for a
+        reason retrying cannot fix, and a deliberate detach is not that. Without
+        this push the last `attached` status stands, and the header chip and the
+        attach pane go on naming a machine the user has just stopped driving —
+        the same staleness this channel exists to end, arriving through the
+        other door.
+      */
+      expect(broadcaster.emit).toHaveBeenCalledWith(CH.remoteLinkStatus, null);
+    });
+
+    it('tells the window it has no link when an attach fails outright', async () => {
+      boundLocally();
+      const broadcaster = { emit: vi.fn() };
+      const connect = vi.fn(() => Promise.reject(new Error('ECONNREFUSED')));
+
+      const outcome = await switchIpcMode('remote', opts({ connect, broadcaster }));
+
+      expect(outcome).toMatchObject({ ok: false });
+      // A failed attach lands local too, and owes the window the same sentence.
+      expect(broadcaster.emit).toHaveBeenCalledWith(CH.remoteLinkStatus, null);
+    });
+
+    it('does not hear its own detach as a drop', async () => {
+      boundLocally();
+      const first = fakeClient();
+      const connect = vi.fn(() => Promise.resolve(first));
+
+      await switchIpcMode('remote', opts({ connect }));
+      await switchIpcMode('local');
+      await vi.advanceTimersByTimeAsync(600_000);
+
+      /*
+        `unbindEverything` closes the client it dialled, and a real socket
+        answers a close by announcing one — so without dropping the
+        subscription first, going local starts a reconnect loop against the
+        server the user has just left. `cancel()` alone does not stop it: a
+        cancelled loop is idle, and `begin` on an idle loop is exactly how a
+        genuine drop starts one.
+      */
+      expect(connect).toHaveBeenCalledTimes(1);
+      expect(attachedServerName()).toBeNull();
+    });
+
+    it('never dials for a refusal another dial would reproduce', async () => {
+      boundLocally();
+      const first = fakeClient();
+      const connect = vi.fn(() => Promise.resolve(first));
+
+      await switchIpcMode('remote', opts({ connect }));
+      first.drop({ kind: 'terminal', code: 'revoked', message: 'That device was revoked.' });
+      await vi.advanceTimersByTimeAsync(600_000);
+
+      expect(connect).toHaveBeenCalledTimes(1);
+    });
   });
 });
 

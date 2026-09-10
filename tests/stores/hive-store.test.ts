@@ -18,6 +18,7 @@ import type {
   AgentSummary,
   RunSummary,
 } from '@shared/agent-contract';
+import type { RemoteLinkStatus } from '@shared/ipc-contract';
 import { LEDGER_MEMORY_CAP, type LedgerEntry } from '@shared/ledger-contract';
 import { isDesktop } from '@config/runtime';
 import { peek, stamp } from '@lib/fake-clock';
@@ -57,6 +58,8 @@ import {
   useHiveStore,
   useProjectLiveCount,
   useProjectSessions,
+  useReattachEpoch,
+  useRemoteLink,
   useIsAgentId,
   useLedgerEntries,
   useNavOrder,
@@ -5913,6 +5916,81 @@ describe('the agent view selectors', () => {
       expect(list.current).toContain(live);
       expect(list.current).toContain(lost);
       expect(count.current).toBe(list.current.length - 1);
+    });
+  });
+
+  /**
+   * What this window's attachment is doing (HIVE-150).
+   *
+   * Domain state rather than view state: it is something the system knows
+   * about itself, and both the header chip and the attach pane read it. It
+   * replaces reading `AppInfo.attachedServerName` on demand, which a socket
+   * dying without a config write left stale indefinitely.
+   */
+  describe('the remote link', () => {
+    const status = (over: Partial<RemoteLinkStatus> = {}): RemoteLinkStatus => ({
+      state: 'attached',
+      serverName: 'mini',
+      attempt: 0,
+      nextAttemptAt: null,
+      reason: null,
+      epoch: 0,
+      ...over,
+    });
+
+    it('has none until main says otherwise', () => {
+      const { result } = renderHook(() => useRemoteLink());
+
+      expect(result.current).toBeNull();
+    });
+
+    it('installs what main pushed', () => {
+      act(() => {
+        useHiveStore.getState().setRemoteLink(status({ state: 'reconnecting', attempt: 3 }));
+      });
+      const { result } = renderHook(() => useRemoteLink());
+
+      expect(result.current).toMatchObject({ state: 'reconnecting', attempt: 3 });
+    });
+
+    it('keeps naming the machine after the link is given up for good', () => {
+      act(() => {
+        useHiveStore.getState().setRemoteLink(
+          status({ state: 'disconnected', reason: 'That device was revoked.' }),
+        );
+      });
+      const { result } = renderHook(() => useRemoteLink());
+
+      /*
+        The chip still has to say *which* machine it lost, and by then the
+        client that could answer `serverName()` is gone — so the name rides on
+        every status rather than being read back from a live socket.
+      */
+      expect(result.current?.serverName).toBe('mini');
+      expect(result.current?.reason).toBe('That device was revoked.');
+    });
+
+    it('reads the epoch off the link, and 0 when there is none', () => {
+      const { result } = renderHook(() => useReattachEpoch());
+      expect(result.current).toBe(0);
+
+      act(() => {
+        useHiveStore.getState().setRemoteLink(status({ epoch: 2 }));
+      });
+
+      expect(result.current).toBe(2);
+    });
+
+    it('forgets the link on reset, because an attachment is a fact about now', () => {
+      act(() => {
+        useHiveStore.getState().setRemoteLink(status());
+      });
+
+      act(() => {
+        useHiveStore.getState().reset();
+      });
+
+      expect(useHiveStore.getState().remoteLink).toBeNull();
     });
   });
 });

@@ -17,7 +17,8 @@ import {
   type ConfigSnapshot,
   type ReceiverBindConfig,
 } from '@shared/config-contract';
-import type { AppInfo } from '@shared/ipc-contract';
+import type { AppInfo, RemoteLinkStatus } from '@shared/ipc-contract';
+import { useHiveStore } from '@stores/hive-store';
 
 const CONFIG_PATH = '/Users/dev/.hive/config.json';
 
@@ -61,6 +62,7 @@ const info = (receiverBoundHost: string | null): AppInfo => ({
   serverBoundHost: null,
   servingDeviceCount: 0,
   attachedServerName: null,
+  remoteLink: null,
   serving: false,
 });
 
@@ -76,6 +78,7 @@ const serverInfo = (serverBoundHost: string | null): AppInfo => ({
   serverBoundHost,
   servingDeviceCount: 0,
   attachedServerName: null,
+  remoteLink: null,
   serving: false,
 });
 
@@ -91,11 +94,13 @@ const deviceCountInfo = (servingDeviceCount: number): AppInfo => ({
   serverBoundHost: null,
   servingDeviceCount,
   attachedServerName: null,
+  remoteLink: null,
   serving: false,
 });
 
 /** Same shape as {@link info}, but for `useAttachedServer`'s field. */
 const attachedInfo = (attachedServerName: string | null): AppInfo => ({
+  remoteLink: null,
   version: '0.1.0',
   electron: '38.0.0',
   chrome: '140.0.0',
@@ -143,6 +148,9 @@ async function renderServerValue(expected: string | null): Promise<string | null
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The store is `useAttachedServer`'s source since HIVE-150, so a link left
+  // installed by one case would answer for the next.
+  useHiveStore.getState().reset();
 });
 
 afterEach(() => {
@@ -480,47 +488,88 @@ describe('useServingDeviceCount', () => {
   });
 });
 
-/** Same shape as {@link renderValue}, but for `useAttachedServer`. */
-async function renderAttachedServer(expected: string | null): Promise<string | null> {
-  const { result } = renderHook(() => useAttachedServer());
-  await waitFor(() => {
-    expect(readAppInfo).toHaveBeenCalled();
-    expect(result.current).toBe(expected);
-  });
-  return result.current;
-}
-
 /**
- * `useAttachedServer` (HIVE-144, Task 13).
+ * `useAttachedServer` (HIVE-144 Ruling 29, resourced by HIVE-150).
  *
- * Sourced from `AppInfo.attachedServerName`, never from
- * `ConfigSnapshot.attachedServer` — see that field's own doc comment for the
- * full config-versus-runtime split this hook reads the runtime half of.
+ * It used to read `AppInfo.attachedServerName` in an effect keyed on the config
+ * snapshot. That followed *config writes*, and the drop this hook now has to
+ * survive writes no config at all — so a dead socket left it naming a machine
+ * the window could not reach. It reads the pushed `remote:link-status` instead,
+ * which `useRemoteLinkStream` installs in the store.
  *
- * No late-bind retry, unlike `useReceiverExposure` and `useServerExposure`:
- * those exist because a hostname bind resolves via DNS on a timeline a first
- * `readAppInfo` round trip can outrun, so a bare `null` there is ambiguous.
- * `readAppInfo()` itself does not resolve until whichever side is answering
- * it has already finished, so a `null` this hook sees is never a read that
- * merely landed early.
+ * It answers the name in **every** remote state rather than only while a socket
+ * is open, because every caller asks the same question with it: is this window
+ * driving another machine? While the link is being rebuilt the answer is still
+ * yes — the projects and sessions on screen are still that machine's.
  */
 describe('useAttachedServer', () => {
-  it('is null when not attached', async () => {
-    setProjectConfigForTest(snapshot({}));
-    readAppInfo.mockResolvedValue(attachedInfo(null));
-    expect(await renderAttachedServer(null)).toBeNull();
+  const link = (over: Partial<RemoteLinkStatus> = {}): RemoteLinkStatus => ({
+    state: 'attached',
+    serverName: 'mini',
+    attempt: 0,
+    nextAttemptAt: null,
+    reason: null,
+    epoch: 0,
+    ...over,
   });
 
-  it('is the server name once attached', async () => {
-    setProjectConfigForTest(snapshot({}));
-    readAppInfo.mockResolvedValue(attachedInfo('mini'));
-    expect(await renderAttachedServer('mini')).toBe('mini');
+  it('is null when this window has no link', () => {
+    const { result } = renderHook(() => useAttachedServer());
+
+    expect(result.current).toBeNull();
   });
 
-  /* The browser demo has no config and no bridge at all. */
-  it('is null with no snapshot, and never asks the bridge', () => {
+  it('is the server name once attached', () => {
+    act(() => {
+      useHiveStore.getState().setRemoteLink(link());
+    });
+
+    const { result } = renderHook(() => useAttachedServer());
+
+    expect(result.current).toBe('mini');
+  });
+
+  it('still names the machine while the link is being rebuilt', () => {
+    act(() => {
+      useHiveStore.getState().setRemoteLink(link({ state: 'reconnecting', attempt: 2 }));
+    });
+
+    const { result } = renderHook(() => useAttachedServer());
+
+    /*
+      The regression this pins. Answering `null` here would tell every caller
+      that this window had gone local — the project list would offer to add a
+      folder from this machine, and Settings would show an address the switch
+      is not pointing at — in the middle of a reconnect that is about to
+      succeed.
+    */
+    expect(result.current).toBe('mini');
+  });
+
+  it('follows a drop with no config write behind it', () => {
+    setProjectConfigForTest(snapshot({}));
+    act(() => {
+      useHiveStore.getState().setRemoteLink(link());
+    });
+    const { result } = renderHook(() => useAttachedServer());
+    expect(result.current).toBe('mini');
+
+    /*
+      The whole defect, in one act: no snapshot changes here, and the old
+      implementation was keyed on exactly that. It went on answering 'mini'
+      after the machine had stopped answering anything.
+    */
+    act(() => {
+      useHiveStore.getState().setRemoteLink(link({ state: 'disconnected', reason: 'gone' }));
+    });
+
+    expect(result.current).toBe('mini');
+    expect(useHiveStore.getState().remoteLink?.state).toBe('disconnected');
+  });
+
+  /* The browser demo has no bridge at all, so nothing ever pushes a link. */
+  it('is null in the browser demo, and never asks the bridge', () => {
     setProjectConfigForTest(null);
-    readAppInfo.mockResolvedValue(attachedInfo('mini'));
 
     const { result } = renderHook(() => useAttachedServer());
 

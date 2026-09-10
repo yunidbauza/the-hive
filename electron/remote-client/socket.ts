@@ -169,6 +169,78 @@ export class RemoteCallError extends Error {
   }
 }
 
+/**
+ * Whether a dead connection is worth dialling again (HIVE-150).
+ *
+ * `transport` is the connection itself failing — the far machine is rebooting,
+ * asleep, or off the tailnet — and another dial is exactly the right response.
+ * `terminal` is a refusal whose cause the next dial would reproduce: the same
+ * credential, the same protocol number, the same oversized frame. Retrying one
+ * of those is a loop that cannot converge, and worse, it would leave the pane
+ * saying "reconnecting" about something that is never going to reconnect.
+ */
+export type CloseKind = 'transport' | 'terminal';
+
+/** Why a connection ended, in the terms the reconnect loop branches on. */
+export interface CloseCause {
+  kind: CloseKind;
+  /**
+   * The server's own refusal code where there is one (`unauthorized`,
+   * `revoked`, `protocol-mismatch`), this side's where it refused first
+   * (`plaintext-refused`, `attach-frame-too-large`), or `transport`.
+   */
+  code: string;
+  message: string;
+}
+
+/**
+ * Classifies a dead connection for {@link CloseCause}.
+ *
+ * Exported because the reconnect loop classifies **two** things with it and
+ * only one of them is a close: a live socket's `onClose`, and the rejection a
+ * failed *dial* produces — which never reaches `onClose` at all, because there
+ * was no attached client to hear it. One table for both, so a refusal cannot be
+ * terminal on one path and retryable on the other.
+ *
+ * Takes `unknown` because a rejected promise carries whatever was thrown.
+ */
+export function classifyCause(cause: unknown): CloseCause {
+  if (cause instanceof AttachRefusedError) {
+    return { kind: 'terminal', code: cause.code, message: cause.message };
+  }
+  if (cause instanceof PlaintextRefusedError) {
+    return { kind: 'terminal', code: 'plaintext-refused', message: cause.message };
+  }
+  if (cause instanceof AttachFrameTooLargeError) {
+    return { kind: 'terminal', code: 'attach-frame-too-large', message: cause.message };
+  }
+  return {
+    kind: 'transport',
+    code: 'transport',
+    message: cause instanceof Error ? cause.message : String(cause),
+  };
+}
+
+/**
+ * How many `event` frames are held for a subscriber that has not arrived yet
+ * (HIVE-150).
+ *
+ * The server sends `attach-accepted` and then, **synchronously, before its own
+ * turn ends**, runs the resume replay into the same socket
+ * (`remote-host/listener.ts`). `ws` parses a chunk in a synchronous loop and
+ * emits one `'message'` per frame with that stack still live, so those frames
+ * reach this module before anything can subscribe: `resolveConnection` only
+ * queues a microtask, and the caller that eventually calls `onEvent` runs in
+ * it. Without a buffer they are fanned out to an empty listener set and
+ * silently lost — which is the resume feature failing while reporting success.
+ *
+ * Sized generously against what one attach can legitimately replay, and bounded
+ * because a server is not obliged to stop: a ring, keeping the **newest**. A
+ * client that fell this far behind before it even subscribed is taking a gap
+ * notice regardless, and the recent frames are the ones its terminal needs.
+ */
+export const PRE_SUBSCRIBE_BUFFER = 2_048;
+
 export interface RemoteClient {
   /** Invoke a call channel. Rejects on an error frame or the give-up deadline. */
   call(channel: Channel, payload: unknown): Promise<unknown>;
@@ -176,6 +248,19 @@ export interface RemoteClient {
   notify(channel: Channel, payload: unknown): void;
   /** Subscribe to every event frame. Returns an unsubscribe. */
   onEvent(listener: (channel: Channel, payload: unknown) => void): () => void;
+  /**
+   * Subscribe to this connection ending. Fires **once**, after every pending
+   * call has been rejected. Returns an unsubscribe (HIVE-150).
+   *
+   * Once, because `ws` emits `'error'` and then `'close'` for a connection that
+   * dies rather than one closed politely, and a listener that heard both would
+   * start two reconnect loops against one drop.
+   *
+   * After the rejections, because the listener's first act is to dial again:
+   * a caller still holding an unsettled promise at that moment would outlive
+   * the client that owed it an answer.
+   */
+  onClose(listener: (cause: CloseCause) => void): () => void;
   /** The snapshot the server sent with AttachAccepted. */
   snapshot(): Readonly<Partial<Record<Channel, unknown>>>;
   /** The name this client paired under, for the header chip. */
@@ -267,8 +352,19 @@ function fencedLookup(
   };
 }
 
-/** How many bytes a frame actually weighs on the wire — UTF-8, not UTF-16. */
-function frameBytes(text: string): number {
+/**
+ * How many bytes a frame actually weighs on the wire — UTF-8, not UTF-16.
+ *
+ * Exported since HIVE-150 so that whatever *builds* a `resumeFrom` measures it
+ * with the same function that later refuses it. Two measurements would be one
+ * defect waiting: a composer that fitted the map under the ceiling by its own
+ * arithmetic, and a client that then weighed the real frame and threw.
+ *
+ * It cannot live in `electron/shared/` beside `ATTACH_FRAME_MAX_BYTES`, where
+ * it otherwise belongs — that module may not reach a Node API, and `Buffer` is
+ * one.
+ */
+export function frameBytes(text: string): number {
   return Buffer.byteLength(text, 'utf8');
 }
 
@@ -337,8 +433,50 @@ export function connectRemote(deps: ConnectRemoteDeps): Promise<RemoteClient> {
       accepted: AttachAccepted;
       pending: Map<string, Pending>;
       listeners: Set<(channel: Channel, payload: unknown) => void>;
+      /**
+       * Events that arrived before anything subscribed — see
+       * {@link PRE_SUBSCRIBE_BUFFER}. `null` once the first subscriber has taken
+       * them, which is what keeps this a handover rather than a log: a later
+       * subscriber must not be handed output the terminal already rendered.
+       */
+      early: { channel: Channel; payload: unknown }[] | null;
     } | null = null;
     let closed = false;
+
+    /**
+     * Subscribers to this connection ending, and the guard that keeps the
+     * notification to one (HIVE-150).
+     *
+     * The guard is separate from `closed` on purpose: `closed` is also set by
+     * `close()`, and it answers "may this client still be used", which `call`
+     * reads on every invocation. This one answers "has the ending already been
+     * announced", which is asked exactly twice and only by the two handlers.
+     */
+    const closeListeners = new Set<(cause: CloseCause) => void>();
+    let closeAnnounced = false;
+
+    /** Announces the ending to {@link closeListeners}, once. */
+    const announceClose = (cause: unknown): void => {
+      if (closeAnnounced) return;
+      closeAnnounced = true;
+      const classified = classifyCause(cause);
+      for (const listener of closeListeners) {
+        /*
+          Guarded per listener for the reason the event fan-out is: this runs
+          inside `ws`'s own emit, so a subscriber that throws would propagate
+          out of the EventEmitter as an uncaught exception in the main process
+          — and the subscriber here is the reconnect loop, whose failure would
+          take the app down rather than merely lose a reconnect.
+        */
+        try {
+          listener(classified);
+        } catch {
+          // A subscriber's own failure is its own, and there is no channel back
+          // to one that has already failed.
+        }
+      }
+      closeListeners.clear();
+    };
 
     /**
      * The whole-handshake deadline (HIVE-144 review, I5).
@@ -446,7 +584,7 @@ export function connectRemote(deps: ConnectRemoteDeps): Promise<RemoteClient> {
           clearTimeout(deadline);
           const pending = new Map<string, Pending>();
           const listeners = new Set<(channel: Channel, payload: unknown) => void>();
-          attached = { accepted: server, pending, listeners };
+          attached = { accepted: server, pending, listeners, early: [] };
           resolveConnection(buildClient(server, pending, listeners));
           return;
         }
@@ -489,6 +627,16 @@ export function connectRemote(deps: ConnectRemoteDeps): Promise<RemoteClient> {
           drift from the table the server grades against.
         */
         if (frameKindOf(server.channel) !== 'event') return;
+        /*
+          Nobody is listening yet, and this frame is almost certainly the resume
+          replay the server pushed in the accept's own tick. Held rather than
+          dropped — see {@link PRE_SUBSCRIBE_BUFFER}.
+        */
+        if (attached.early !== null && attached.listeners.size === 0) {
+          attached.early.push({ channel: server.channel, payload: server.payload });
+          if (attached.early.length > PRE_SUBSCRIBE_BUFFER) attached.early.shift();
+          return;
+        }
         for (const listener of attached.listeners) {
           /*
             Guarded per listener (HIVE-144 review). This loop runs inside `ws`'s
@@ -519,6 +667,9 @@ export function connectRemote(deps: ConnectRemoteDeps): Promise<RemoteClient> {
       // generic connect failure.
       failHandshake(refusal ?? cause);
       failAllPending(refusal ?? cause);
+      // Last, so no subscriber is told the connection is over while a caller
+      // is still holding a promise against it — see `RemoteClient.onClose`.
+      announceClose(refusal ?? cause);
     });
 
     socket.on('close', () => {
@@ -527,7 +678,9 @@ export function connectRemote(deps: ConnectRemoteDeps): Promise<RemoteClient> {
         refusal ??
           new Error(`The connection to ${host}:${String(port)} closed before it attached.`),
       );
-      failAllPending(new Error(`The connection to ${host}:${String(port)} closed.`));
+      const ending = new Error(`The connection to ${host}:${String(port)} closed.`);
+      failAllPending(ending);
+      announceClose(refusal ?? ending);
     });
 
     /**
@@ -603,14 +756,70 @@ export function connectRemote(deps: ConnectRemoteDeps): Promise<RemoteClient> {
         },
 
         notify(channel, payload) {
-          if (closed) return;
+          /*
+            Throws rather than returning quietly (HIVE-150).
+
+            It used to `return`, which was defensible while a closed client only
+            ever existed for the instant between a detach and its teardown. The
+            reconnect loop makes that window a *policy*: the dead client stays
+            bound for the whole backoff — deliberately, so calls reject promptly
+            instead of hitting an unbound channel — and four channels are
+            `notify` kind. `pty:write` is the one that matters: the terminal
+            stays mounted and focused while the chip is amber, and every
+            keystroke typed into it returned here before reaching the wire. The
+            reattach then replays the *server's* transcript, which never
+            contained them, so nothing anywhere recorded that the input existed.
+
+            The same `RemoteCallError` `call` rejects with, so
+            `remote-proxy.ts`'s notify wrapper logs it exactly as it logs a
+            frame that was too large. Losing the keystroke is unavoidable — there
+            is no socket — but losing it silently is not.
+          */
+          if (closed) {
+            throw new RemoteCallError(
+              'connection-closed',
+              `Cannot send ${channel}: the connection to ${host} is closed.`,
+            );
+          }
           const tooLarge = sendBounded({ kind: 'notify', channel, payload });
           if (tooLarge !== null) throw new RemoteCallError('frame-too-large', tooLarge);
         },
 
         onEvent(listener) {
+          const first = listeners.size === 0;
           listeners.add(listener);
+          /*
+            Hand the first subscriber whatever arrived before it existed, then
+            drop the buffer for good. Delivered synchronously, in arrival order,
+            so the resume replay reaches the terminal ahead of the live output
+            that follows it — the ordering the seq numbers assume.
+          */
+          if (first && attached?.early != null) {
+            const held = attached.early;
+            attached.early = null;
+            for (const event of held) {
+              try {
+                listener(event.channel, event.payload);
+              } catch {
+                // A subscriber's own failure is its own, exactly as in the
+                // live fan-out below.
+              }
+            }
+          }
           return () => listeners.delete(listener);
+        },
+
+        onClose(listener) {
+          /*
+            A connection that is already over never calls its new subscriber.
+            The reconnect loop subscribes at the moment it takes ownership of a
+            fresh client, so this can only be reached by a caller subscribing to
+            a client it kept a reference to past its ending — for which the
+            answer it wants is the one it already had.
+          */
+          if (closeAnnounced) return () => undefined;
+          closeListeners.add(listener);
+          return () => closeListeners.delete(listener);
         },
 
         snapshot() {

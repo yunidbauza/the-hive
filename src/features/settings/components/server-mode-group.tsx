@@ -25,6 +25,7 @@ import {
   type ServerDevice,
   type SwitchOutcome,
 } from '@shared/config-contract';
+import type { RemoteLinkStatus } from '@shared/ipc-contract';
 import { useApplyModeChange } from '@stores/hive-store';
 
 /**
@@ -141,6 +142,40 @@ const NO_ATTACH_WHILE_SERVING =
 const NO_SERVE_WHILE_ATTACHED =
   'This window is driving another machine. An install is the server or the client, never both — detach first.';
 
+/**
+ * How long until the next reconnect attempt, in words (HIVE-150).
+ *
+ * Rounded up and floored at one second, so the line never reads "in 0 seconds"
+ * for the whole tick before the dial actually happens, and never reads a
+ * negative number for an attempt that is already in flight.
+ *
+ * Computed at render rather than ticked down. The status is pushed on every
+ * transition, so this text is replaced by the next one within the interval it
+ * describes; a second timer here would re-render the whole settings pane once a
+ * second to animate a number nobody is watching.
+ */
+function nextTryIn(at: number): string {
+  const seconds = Math.max(1, Math.ceil((at - Date.now()) / 1_000));
+  return `next try in ${String(seconds)} second${seconds === 1 ? '' : 's'}`;
+}
+
+/**
+ * The exit from a link that is not working (HIVE-150).
+ *
+ * It calls the same `handleDetach` the switch does, which is
+ * `config:set-remote` — `PROCESS_LOCAL`, so it is answered by *this* process
+ * and still works with the socket dead. That is the whole reason a button here
+ * is worth anything: every other control on this pane is proxied and would
+ * simply hang.
+ */
+function WorkLocallyButton({ onClick, busy }: { onClick: () => void; busy: boolean }) {
+  return (
+    <Button variant="secondary" size="sm" onClick={onClick} disabled={busy} className="self-start">
+      {busy ? 'Switching…' : 'Work locally'}
+    </Button>
+  );
+}
+
 /** One `ServerDevice`'s roster row. */
 function DeviceRow({
   device,
@@ -239,6 +274,19 @@ interface ServerModeGroupProps {
    * visible on the control instead of after a click.
    */
   serving: boolean;
+  /**
+   * What the attachment is doing, when there is one (HIVE-150).
+   *
+   * {@link ServerModeGroupProps.attachedServerName} answers *whether* this
+   * window is driving another machine; this answers whether that machine is
+   * currently reachable. The two are deliberately separate props rather than
+   * one: every other control on this pane branches on the first question, and
+   * only this pane's status line asks the second.
+   *
+   * Optional, defaulting to none — a pane rendered for a window that has never
+   * attached has no link to describe, which is also every local-mode test.
+   */
+  link?: RemoteLinkStatus | null;
 }
 
 export function ServerModeGroup({
@@ -249,6 +297,7 @@ export function ServerModeGroup({
   attachedServer,
   attachedServerName,
   serving,
+  link = null,
 }: ServerModeGroupProps) {
   /**
    * Whether a socket is open right now — the one question the attach half
@@ -806,7 +855,49 @@ export function ServerModeGroup({
             `AppInfo.attachedServerName`, the runtime-derived sibling this
             control deliberately does not read (see `ServerModeGroupProps`).
           */}
-          {attached ? (
+          {attached && link?.state === 'reconnecting' ? (
+            /*
+              The link dropped and is being rebuilt (HIVE-150).
+
+              It says which attempt and when the next one is, because the one
+              question a person has while watching this is "is anything
+              actually happening" — a spinner answers no better than a blank
+              pane. And it says the sessions are still running, because the
+              fear this state produces is that they are gone.
+            */
+            <div className="flex gap-2 rounded-md border border-amber/45 bg-amber/8 px-3 py-2.5">
+              <WarningCircle size={13} className="mt-0.5 shrink-0 text-amber" />
+              <div className="flex flex-col gap-2 text-[11.5px] text-subtle">
+                <span>
+                  Reconnecting to{' '}
+                  <span className="font-medium text-ink">{attachedServerName}</span>.
+                  The connection dropped. Attempt {link.attempt}
+                  {link.nextAttemptAt === null ? '' : `, ${nextTryIn(link.nextAttemptAt)}`}.
+                  Your sessions are still running on that machine.
+                </span>
+                <WorkLocallyButton onClick={handleDetach} busy={detaching} />
+              </div>
+            </div>
+          ) : attached && link?.state === 'disconnected' ? (
+            /*
+              Given up, for a reason another dial would reproduce. Red rather
+              than amber for the reason the header chip splits the two: the
+              user's next move is different, and "stopped trying" is the thing
+              they need to know to make it.
+            */
+            <div className="flex gap-2 rounded-md border border-red/45 bg-red/8 px-3 py-2.5">
+              <WarningCircle size={13} className="mt-0.5 shrink-0 text-red" />
+              <div className="flex flex-col gap-2 text-[11.5px] text-subtle">
+                <span>
+                  Disconnected from{' '}
+                  <span className="font-medium text-ink">{attachedServerName}</span>.
+                  {link.reason === null ? '' : ` ${link.reason}`} Reconnecting
+                  will not fix this on its own.
+                </span>
+                <WorkLocallyButton onClick={handleDetach} busy={detaching} />
+              </div>
+            </div>
+          ) : attached ? (
             /*
               Ruling 29. The runtime field, so this sentence names the machine
               a socket is genuinely open to — `RemoteClient.serverName()`, the

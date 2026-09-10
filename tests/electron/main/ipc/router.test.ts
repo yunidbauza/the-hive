@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { CloseCause } from '../../../../electron/remote-client/socket';
+
 /**
  * The mode switch in front of `registerIpcHandlers` and `registerRemoteProxy`
  * (HIVE-141, HIVE-144).
@@ -22,7 +24,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const registerIpcHandlers = vi.fn();
 const registerRemoteProxy = vi.fn();
 
-vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: vi.fn(() => []) } }));
+vi.mock('electron', () => ({
+  BrowserWindow: { getAllWindows: vi.fn(() => []) },
+  /*
+    HIVE-150. The reconnect loop asks to be told when this machine wakes, so a
+    lid opening reattaches at once rather than waiting out the backoff step it
+    was parked on. Modelled here because `router.ts` really reads it.
+  */
+  powerMonitor: { on: vi.fn(), removeListener: vi.fn() },
+}));
 vi.mock('../../../../electron/main/ipc/index', () => ({ registerIpcHandlers }));
 vi.mock('../../../../electron/main/ipc/remote-proxy', () => ({ registerRemoteProxy }));
 
@@ -31,13 +41,23 @@ const { registerIpc, switchIpcMode } = await import('../../../../electron/main/i
 /** A `RemoteClient` fake, fully implemented rather than cast away — the point
  * of this file is that `registerIpc` hands it through unchanged. */
 function fakeClient() {
+  const closeListeners = new Set<(cause: CloseCause) => void>();
   return {
     call: vi.fn(),
     notify: vi.fn(),
     onEvent: vi.fn(),
     snapshot: vi.fn(),
     serverName: vi.fn(),
+    onClose: vi.fn((listener: (cause: CloseCause) => void) => {
+      closeListeners.add(listener);
+      return () => closeListeners.delete(listener);
+    }),
     close: vi.fn(),
+    /** Test-only: end the connection as the real socket's handlers would. */
+    drop(cause: CloseCause = { kind: 'transport', code: 'transport', message: 'closed' }) {
+      for (const listener of closeListeners) listener(cause);
+      closeListeners.clear();
+    },
   };
 }
 
@@ -63,6 +83,7 @@ describe('registerIpc', () => {
       switchIpcMode,
       expect.any(Function),
       expect.any(Function),
+      expect.any(Function),
     );
   });
 
@@ -83,6 +104,7 @@ describe('registerIpc', () => {
       switchIpcMode,
       expect.any(Function),
       expect.any(Function),
+      expect.any(Function),
     );
   });
 
@@ -97,6 +119,7 @@ describe('registerIpc', () => {
 
     expect(registerIpcHandlers).toHaveBeenCalledWith(
       undefined,
+      expect.any(Function),
       expect.any(Function),
       expect.any(Function),
       expect.any(Function),
@@ -119,6 +142,7 @@ describe('registerIpc', () => {
       switchIpcMode,
       attachedServerName,
       expect.any(Function),
+      expect.any(Function),
     );
   });
 
@@ -138,6 +162,7 @@ describe('registerIpc', () => {
       switchIpcMode,
       expect.any(Function),
       attachedSnapshot,
+      expect.any(Function),
     );
   });
 

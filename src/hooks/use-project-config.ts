@@ -11,6 +11,7 @@ import {
   type ProjectAccess,
 } from '@lib/project-config';
 import { isLoopbackHost, type ConfigSnapshot } from '@shared/config-contract';
+import { useRemoteLink } from '@stores/hive-store';
 
 
 /**
@@ -408,21 +409,30 @@ export function useServing(): boolean {
 }
 
 export function useAttachedServer(): string | null {
-  const snapshot = useProjectConfig();
-  const [serverName, setServerName] = useState<string | null>(null);
+  /*
+    **Sourced from the pushed link, not from a read (HIVE-150).**
 
-  useEffect(() => {
-    if (snapshot === null) return;
+    The doc comment above describes what this was: an `app:info` read keyed on
+    the config snapshot. That was already the second attempt — Ruling 29 moved
+    it from a one-shot to a per-snapshot read, because attachment changes during
+    a session — and it was still wrong in the same way, one level down. It
+    followed *config writes*, and the drop this story exists for writes no
+    config at all. A socket that died left this naming a machine the window
+    could no longer reach, for as long as the window stayed open.
 
-    let cancelled = false;
-    void readAppInfo().then((info) => {
-      if (!cancelled) setServerName(info?.attachedServerName ?? null);
-    });
+    `remote:link-status` is pushed on every transition instead, so this now
+    follows the socket rather than the file. `useRemoteLinkStream` mounts the
+    subscription once in the app shell and hydrates it from the same `app:info`
+    read this used to make, which is what keeps a boot attach — whose push
+    happened before the window existed — from showing nothing.
 
-    return () => {
-      cancelled = true;
-    };
-  }, [snapshot]);
-
-  return serverName;
+    It answers the far machine's name in **every** remote state, not only while
+    a socket is open. Every caller asks the same question with it — "is this
+    window driving another machine?" — and the answer stays yes while the link
+    is being re-established: the projects, the sessions and the config on screen
+    are still that machine's. The three-way distinction between attached,
+    reconnecting and given up belongs to the two surfaces that render it, and
+    they read {@link useRemoteLink} for it.
+  */
+  return useRemoteLink()?.serverName ?? null;
 }

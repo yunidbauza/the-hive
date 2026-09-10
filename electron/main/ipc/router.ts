@@ -1,5 +1,7 @@
+import { powerMonitor } from 'electron';
+
 import { isRemoteTarget, type SwitchOutcome } from '@shared/config-contract';
-import type { AppInfo } from '@shared/ipc-contract';
+import { CH, type AppInfo, type RemoteLinkStatus } from '@shared/ipc-contract';
 
 import {
   PlaintextRefusedError,
@@ -12,8 +14,10 @@ import { getConfig } from '../config';
 import { isServerMode } from '../server-mode';
 
 import { createWindowBroadcaster, type Broadcaster } from './broadcaster';
+import { createReattachLoop, type ReattachLoop } from './reattach';
 import { applyRemoteForget, applyRemotePair } from './remote-pairing';
 import { registerRemoteProxy, remoteProxyBindingsSize, resetRemoteProxy } from './remote-proxy';
+import { composeResumeFrom, createResumeTracker, type ResumeTracker } from './resume-tracker';
 import { applySetRemote } from './set-remote';
 
 import {
@@ -51,6 +55,16 @@ export interface RegisterIpcOptions {
   broadcaster?: Broadcaster;
   /** The attached socket, required in `remote` mode and ignored in `local`. */
   client?: RemoteClient;
+  /**
+   * Where a reconnect's `resumeFrom` is built from, in `remote` mode
+   * (HIVE-150).
+   *
+   * Passed in rather than read off this module's own {@link resumeTracker} so
+   * that the value the proxy is fed and the value a reattach composes from are
+   * the same object by construction, rather than by two reads that could
+   * straddle a mode switch.
+   */
+  resumeTracker?: ResumeTracker;
 }
 
 /**
@@ -77,6 +91,7 @@ export function registerIpc(mode: IpcMode, options: RegisterIpcOptions = {}): vo
     registerRemoteProxy({
       client: options.client,
       broadcaster: options.broadcaster ?? createWindowBroadcaster(),
+      resumeTracker: options.resumeTracker,
       // See `localAppInfo`'s own doc comment: this is the closure the most
       // recent `registerIpc('local', ...)` produced, so `CH.appInfo` keeps
       // answering from *this* process even once it stops answering anything
@@ -139,6 +154,7 @@ export function registerIpc(mode: IpcMode, options: RegisterIpcOptions = {}): vo
     switchIpcMode,
     attachedServerName,
     attachedSnapshot,
+    attachedLinkStatus,
   );
 }
 
@@ -231,6 +247,85 @@ export function attachedServerName(): string | null {
 }
 
 /**
+ * The reconnect loop for the current attachment, or `null` when there is not
+ * one (HIVE-150).
+ *
+ * Module-scope beside {@link attached} and for the same reason: it is a
+ * resource one call acquires and an unrelated later one has to release. A
+ * timer that outlived its mode switch would reattach a user who explicitly
+ * asked to work locally, some seconds after they asked.
+ */
+let reattach: ReattachLoop | null = null;
+
+/**
+ * What this attachment has seen, so a reconnect can resume rather than
+ * re-hydrate (HIVE-150).
+ *
+ * Outlives any one socket — that is the whole point — and is discarded with the
+ * attachment itself. A tracker carried across a full detach and re-attach would
+ * offer the new server resume points minted by the old one.
+ */
+let resumeTracker: ResumeTracker | null = null;
+
+/**
+ * Stops the current client's close subscription (HIVE-150).
+ *
+ * Held at module scope beside {@link attached} because it must be dropped
+ * *before* that socket is closed on purpose. `unbindEverything` closes the
+ * client it dialled; `ws` answers with `'close'`; `onClose` fires; and without
+ * this the reconnect loop takes a deliberate detach for a dropped connection
+ * and starts dialling the server the user has just left. `cancel()` alone does
+ * not prevent it — a cancelled loop is idle, and `begin` on an idle loop is
+ * exactly how a real drop starts one.
+ *
+ * Found by the live two-app suite, which drives a real socket; every unit fake
+ * had a `close()` that fired no listeners, so nothing in-process could see it.
+ */
+let stopWatchingClose: (() => void) | null = null;
+
+/**
+ * The reattach epoch, monotonic for this **process**, not for one loop
+ * (HIVE-150).
+ *
+ * The renderer keys the effects that own per-surface state on it, and those
+ * effects re-run because the value *changed* — so it has to keep climbing
+ * across attachments, not just within one. A detach or a re-target builds a new
+ * loop, and a counter living inside the loop restarts at 0: re-attaching to the
+ * same server with the same project and session open would leave `projectId`,
+ * `sessionId`, `root` and the epoch all unchanged, and neither owner would
+ * re-arm against the surface the server has just minted.
+ */
+let reattachEpoch = 0;
+
+/**
+ * The last link status this process pushed, for {@link AppInfo.remoteLink}
+ * (HIVE-150).
+ *
+ * A window that has just opened has received no push, and
+ * `attachedServerName()` alone told it the wrong thing: that field stays
+ * non-null through a drop and through a terminal disconnect, so a window opened
+ * mid-outage painted a healthy chip over a link that was down — and after a
+ * terminal disconnect no further transition ever arrives to correct it.
+ */
+let lastLinkStatus: RemoteLinkStatus | null = null;
+
+/** What {@link AppInfo.remoteLink} answers — the last status pushed, or none. */
+export function attachedLinkStatus(): RemoteLinkStatus | null {
+  return lastLinkStatus;
+}
+
+/** Push a link status, recording it for whoever opens a window next. */
+function pushLink(broadcaster: Broadcaster, status: RemoteLinkStatus | null): void {
+  lastLinkStatus = status;
+  broadcaster.emit(CH.remoteLinkStatus, status);
+}
+
+/** Test-only: the tracker the proxy feeds, so a spec can drive it. */
+export function attachedResumeTracker(): ResumeTracker | null {
+  return resumeTracker;
+}
+
+/**
  * The fleet the server sent with its accept frame, or `null` when this
  * process is not attached (HIVE-144 review, I1).
  *
@@ -266,6 +361,24 @@ export function attachedSnapshot(): Readonly<Record<string, unknown>> | null {
  * throw where the caller expects an outcome.
  */
 function unbindEverything(): void {
+  /*
+    First, and before anything is unbound (HIVE-150). A live backoff timer
+    outliving this call is the sharpest failure in the reconnect design: the
+    user asks to work locally, `config:set-remote` answers — it is
+    `PROCESS_LOCAL` precisely so that it can, with the socket dead — and then a
+    timer fires seconds later and silently attaches them again. `cancel` also
+    invalidates any dial already in flight, which a `clearTimeout` alone could
+    not.
+  */
+  /*
+    Before the cancel, and long before the `close()` below: this is what stops
+    a deliberate detach being heard as a drop. See {@link stopWatchingClose}.
+  */
+  stopWatchingClose?.();
+  stopWatchingClose = null;
+  reattach?.cancel();
+  reattach = null;
+  resumeTracker = null;
   resetRemoteProxy();
   /*
     `{ flush: true }` is what makes this a switch rather than a teardown
@@ -401,6 +514,17 @@ export async function switchIpcMode(
     if (remoteProxyBindingsSize() === 0 && ipcBindingsSize() > 0) return { ok: true };
     unbindEverything();
     registerIpc('local', { broadcaster });
+    /*
+      This window has no link now, and it has to be told so (HIVE-150).
+
+      Without this the last `attached` status stands, and every consumer of it
+      goes on naming a machine the user has deliberately stopped driving — the
+      header chip, the attach pane, and `useAttachedServer`'s callers. That is
+      the same staleness this channel exists to end, arriving through the other
+      door: not a socket that died unannounced, but a socket this process closed
+      on purpose and never mentioned.
+    */
+    announceNoLink(broadcaster);
     return { ok: true };
   }
 
@@ -471,17 +595,42 @@ export async function switchIpcMode(
     hole: unbound local, nothing in its place.
   */
   let client: RemoteClient | null = null;
+  const dial = options.connect ?? connectRemote;
+  /*
+    Resolved once rather than per registration (HIVE-150). The reconnect loop
+    needs a concrete one to push `remote:link-status` through, and
+    `createWindowBroadcaster` resolves its windows per emit — so building it
+    here rather than inside each `registerIpc` costs nothing and gives both
+    halves the same target.
+  */
+  const pushes = broadcaster ?? createWindowBroadcaster();
   try {
-    client = await (options.connect ?? connectRemote)({
+    /*
+      Inside the `try`, because it throws for a machine that has never paired
+      and that has to surface as the `connect-failed` outcome a pane can render
+      — with local rebound, since the unbind has already happened by now —
+      rather than as an unhandled rejection in main.
+    */
+    const credential = requireCredential(options);
+    /*
+      Built before the dial so the very first client is registered with it
+      (HIVE-150). A tracker created afterwards would leave the first
+      connection's `pty:data` unrecorded, and the first drop — the one most
+      likely to happen while the user is actually watching a terminal — would
+      resume from nothing.
+    */
+    resumeTracker = createResumeTracker();
+    client = await dial({
       host: target.host,
       port: target.port,
-      credential: requireCredential(options),
+      credential,
     });
-    registerIpc('remote', { client, broadcaster });
+    registerIpc('remote', { client, broadcaster: pushes, resumeTracker });
     // Recorded only once the surface is up, so a registration that threw
     // leaves nothing behind for the next `unbindEverything` to close twice —
     // the catch below closes this attempt's own socket itself.
     attached = client;
+    armReattach(client, { host: target.host, port: target.port }, credential, dial, pushes);
   } catch (cause) {
     /*
       Whatever the failed attempt managed to bind, unbound again before local
@@ -493,9 +642,171 @@ export async function switchIpcMode(
     resetRemoteProxy();
     client?.close();
     registerIpc('local', { broadcaster });
+    // A failed attach lands local too, and owes the window the same sentence.
+    announceNoLink(broadcaster);
     return outcomeFor(cause);
   }
   return { ok: true };
+}
+
+/**
+ * Listen for this socket dying, and reconnect when it does (HIVE-150).
+ *
+ * **One loop per attachment, not one per socket.** The loop owns the reattach
+ * epoch, and the renderer keys the effects that own per-surface state on it —
+ * so a loop rebuilt for each replacement client would count 1, 1, 1 across
+ * successive drops instead of 1, 2, 3, and every reconnect after the first
+ * would leave the explorer's watcher and the foreground record stale with
+ * nothing on screen to say so. Only the `onClose` subscription is per socket,
+ * because `onClose` fires once per connection.
+ *
+ * **The rebind is the narrow pair, never `unbindEverything`.** That function
+ * also disposes the sessions layer and stops the receiver, and calling it here
+ * would tear down local machinery a reconnect has no quarrel with — and, on a
+ * serving machine, trip the serve-or-attach interlock. What actually needs
+ * replacing is the proxy's bindings, which close over the client: they point at
+ * the dead socket until they are rebuilt against the live one.
+ *
+ * The old bindings are deliberately left in place while the loop runs. A call
+ * during the gap then rejects promptly with "the connection is closed", which
+ * is a better answer than an unbound channel, and there is no window in which
+ * the surface is half-bound.
+ */
+function armReattach(
+  client: RemoteClient,
+  target: { host: string; port: number },
+  credential: StoredDeviceCredential,
+  dial: (deps: ConnectRemoteDeps) => Promise<RemoteClient>,
+  pushes: Broadcaster,
+): void {
+  const serverName = client.serverName();
+
+  const loop = createReattachLoop({
+    serverName,
+    connect: () => {
+      /*
+        The point of the whole story: a reconnect that names where each watched
+        terminal left off, so the server replays what was missed instead of the
+        client re-hydrating from nothing. Recomputed per dial rather than
+        captured, because which sessions are worth resuming changes while the
+        loop is running.
+
+        The key is omitted rather than set to `undefined` when there is nothing
+        to resume, for the reason `attachRequest` states: an absent map and an
+        empty one mean different things to a server deciding whether to replay.
+      */
+      const resumeFrom = resumeTracker === null ? undefined : composeResumeFrom(resumeTracker);
+      return dial({
+        host: target.host,
+        port: target.port,
+        credential,
+        ...(resumeFrom === undefined ? {} : { resumeFrom }),
+      });
+    },
+    onStatus: (status) => {
+      pushLink(pushes, status);
+    },
+    onAttached: (fresh) => {
+      resetRemoteProxy();
+      registerIpc('remote', { client: fresh, broadcaster: pushes, resumeTracker: resumeTracker ?? undefined });
+      attached = fresh;
+      // The replacement's own subscription, against the loop that already exists.
+      watchForClose(fresh, loop);
+      /*
+        Re-state the fleet from the accept frame this reattach just received
+        (HIVE-150). Everything the server pushed while the socket was down is
+        gone — a session that ended still renders as running, notifications
+        never reached the inbox, ledger entries and PR sweeps vanished. The
+        `attached` status the loop emitted a moment ago carries no snapshot,
+        because the loop has no access to one; this is the follow-up that does.
+      */
+      pushLink(pushes, {
+        state: 'attached',
+        serverName,
+        attempt: 0,
+        nextAttemptAt: null,
+        reason: null,
+        epoch: reattachEpoch,
+        snapshot: fresh.snapshot(),
+      });
+    },
+    onWake: subscribeToWake,
+    nextEpoch: () => {
+      reattachEpoch += 1;
+      return reattachEpoch;
+    },
+  });
+
+  reattach = loop;
+  watchForClose(client, loop);
+  pushLink(pushes, {
+    state: 'attached',
+    serverName,
+    attempt: 0,
+    nextAttemptAt: null,
+    reason: null,
+    /*
+      The epoch this process is currently on, unchanged by a *first* attach —
+      nothing needs re-establishing against a surface the renderer has never
+      talked to. It climbs only when a socket is replaced, which is exactly when
+      the old surface's watcher and focus record went away with it.
+    */
+    epoch: reattachEpoch,
+  } satisfies RemoteLinkStatus);
+}
+
+/**
+ * Tell the window it has no attachment (HIVE-150).
+ *
+ * `null` rather than a `disconnected` status: that state means "a link ended
+ * for a reason retrying cannot fix", which a deliberate detach is not. A window
+ * that went local has no link to describe at all, and the chip's answer to that
+ * is to render nothing.
+ */
+function announceNoLink(broadcaster: Broadcaster | undefined): void {
+  pushLink(broadcaster ?? createWindowBroadcaster(), null);
+}
+
+/**
+ * Hands one connection's ending to the loop that outlives it.
+ *
+ * The unsubscribe is kept so a *deliberate* close can drop it first — see
+ * {@link stopWatchingClose}.
+ */
+function watchForClose(client: RemoteClient, loop: ReattachLoop): void {
+  stopWatchingClose = client.onClose((cause) => {
+    loop.begin(cause);
+  });
+}
+
+/**
+ * Tell the loop when this machine wakes from sleep (HIVE-150).
+ *
+ * The only place in `electron/` that touches `powerMonitor`. It is imported at
+ * module scope, like `broadcaster.ts` imports `BrowserWindow`, but **read at
+ * call time** — see the body. The distinction matters: the import is harmless
+ * before the app is ready, dereferencing the object is not, and a unit test's
+ * `electron` mock supplies only the surface that test needs.
+ *
+ * Failing to subscribe is not an error worth propagating. The loop still
+ * reconnects on its own schedule — a wake only saves it from waiting out the
+ * thirty-second step it happened to be parked on.
+ */
+function subscribeToWake(listener: () => void): () => void {
+  /*
+    Read at call time rather than destructured at import. `electron` is imported
+    at module scope here the way `broadcaster.ts` imports it, but a unit test's
+    `electron` mock supplies only the surface that test needs — and a mock
+    without `powerMonitor` must leave the loop working rather than throw while
+    arming it.
+  */
+  const monitor: Electron.PowerMonitor | undefined = powerMonitor;
+  if (monitor === undefined) return () => undefined;
+
+  monitor.on('resume', listener);
+  return () => {
+    monitor.removeListener('resume', listener);
+  };
 }
 
 /**

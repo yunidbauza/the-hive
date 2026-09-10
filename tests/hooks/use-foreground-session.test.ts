@@ -2,6 +2,7 @@ import { renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { Agent, Session } from '@/types/entity';
+import type { RemoteLinkStatus } from '@shared/ipc-contract';
 
 import { useForegroundSession } from '@/hooks/use-foreground-session';
 import { useAppearanceStore } from '@stores/appearance-store';
@@ -102,6 +103,19 @@ function withBridge() {
   };
 }
 
+/** Installs a link status, the way `remote:link-status` would (HIVE-150). */
+function link(over: Partial<RemoteLinkStatus> = {}) {
+  useHiveStore.getState().setRemoteLink({
+    state: 'attached',
+    serverName: 'mini',
+    attempt: 0,
+    nextAttemptAt: null,
+    reason: null,
+    epoch: 0,
+    ...over,
+  });
+}
+
 function seed({ activeTab, picker, settings, editorFull, editorSplit }: Case['state']) {
   useUiStore.setState({
     activeTab,
@@ -167,5 +181,45 @@ describe('useForegroundSession', () => {
     rerender();
 
     expect(calls).toEqual(['term-3', null]);
+  });
+
+  /**
+   * Re-announced on every reattach (HIVE-150).
+   *
+   * The foreground record is per *surface* on the machine that answers it, and
+   * a reconnect is a new surface — ids are minted from a `WeakMap` on the
+   * socket object, and HIVE-145 wired the old surface's release to its socket
+   * going away. Nothing else here would ever say it again: the terminal on
+   * screen has not changed and the renderer never unmounted.
+   */
+  it('says it again after a reattach, with the same terminal on screen', () => {
+    withBridge();
+    seed({ activeTab: 'sess-03' });
+    const { rerender } = renderHook(() => useForegroundSession());
+    expect(calls).toEqual(['term-3']);
+
+    link({ epoch: 1 });
+    rerender();
+
+    /*
+      The same id twice, which is exactly the point: without the epoch this is
+      a no-op re-render, and notification suppression on the server would go on
+      naming a surface that no longer exists — silently toasting for the
+      session the user is watching and staying quiet for the ones they are not.
+    */
+    expect(calls).toEqual(['term-3', 'term-3']);
+  });
+
+  it('does not re-announce while the link is merely reconnecting', () => {
+    withBridge();
+    seed({ activeTab: 'sess-03' });
+    const { rerender } = renderHook(() => useForegroundSession());
+
+    // A drop raises statuses, but the epoch only moves on a successful
+    // reattach — there is no surface to announce to until there is a socket.
+    link({ state: 'reconnecting', attempt: 2, epoch: 0 });
+    rerender();
+
+    expect(calls).toEqual(['term-3']);
   });
 });
