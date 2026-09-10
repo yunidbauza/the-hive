@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { MAX_THEME_BYTES } from '@shared/theme-contract';
+
 import {
   PICK_FAILURE_TITLE,
   PickThemeFailure,
@@ -14,145 +16,81 @@ afterEach(() => {
 });
 
 /**
- * What the renderer actually receives, verbatim.
- *
- * `ipcRenderer.invoke` does not forward main's error — it constructs a new one
- * quoting the channel and then the original, class name included. The strip
- * used to be anchored (`/^theme:pick:/`) and so never matched a single real
- * rejection: the banner showed both wrappers *and* an absolute path.
+ * Captures the `<input type="file">` the picker builds for itself, so a test
+ * can dispatch `change` on the real one rather than a stand-in.
  */
-const ELECTRON_OVERSIZE_ERROR =
-  "Error invoking remote method 'theme:pick': IpcValidationError: theme:pick: /Users/me/themes/huge.json is 999999 bytes, over the 262144-byte limit";
+function captureInput(): { current: HTMLInputElement | undefined } {
+  const box: { current: HTMLInputElement | undefined } = { current: undefined };
+  const create = document.createElement.bind(document);
+  vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+    const el = create(tag);
+    if (tag === 'input') box.current = el as HTMLInputElement;
+    return el;
+  }) as typeof document.createElement);
+  return box;
+}
 
-describe('with the desktop bridge', () => {
-  it('uses the native dialog and returns the file name, not the path', async () => {
-    (window as never as { hive: unknown }).hive = {
-      theme: {
-        pick: vi.fn().mockResolvedValue({
-          path: '/Users/me/themes/nord.json',
-          contents: '{}',
-        }),
-      },
-    };
+function choose(input: HTMLInputElement | undefined, file: unknown): void {
+  Object.defineProperty(input!, 'files', { value: [file], configurable: true });
+  input?.dispatchEvent(new Event('change'));
+}
 
-    expect(await pickThemeFile()).toEqual({ name: 'nord.json', contents: '{}' });
+describe('the bridge is never consulted', () => {
+  /**
+   * A theme file lives on the machine the user is sitting at, so there is no
+   * mode in which asking main is right (HIVE-146). `window.hive` is always
+   * defined in the packaged app, so "a bridge exists" was never the question
+   * worth branching on — these two prove it is ignored when present.
+   */
+  it('reads the file in the renderer even when a bridge is present', async () => {
+    const pick = vi.fn();
+    (window as never as { hive: unknown }).hive = { theme: { pick } };
+    const input = captureInput();
+
+    const promise = pickThemeFile();
+    choose(input.current, new File(['{"hiveThemeVersion":1}'], 'nord.json'));
+
+    expect(await promise).toEqual({
+      name: 'nord.json',
+      contents: '{"hiveThemeVersion":1}',
+    });
+    expect(pick).not.toHaveBeenCalled();
   });
 
-  it('resolves null when the dialog is cancelled', async () => {
-    (window as never as { hive: unknown }).hive = {
-      theme: { pick: vi.fn().mockResolvedValue(null) },
-    };
-    expect(await pickThemeFile()).toBeNull();
-  });
+  it('downloads on save even when a bridge is present', async () => {
+    const save = vi.fn();
+    (window as never as { hive: unknown }).hive = { theme: { save } };
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:x');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
 
-  it('rejects, not resolving null, when main refuses an oversize file', async () => {
-    (window as never as { hive: unknown }).hive = {
-      theme: { pick: vi.fn().mockRejectedValue(new Error(ELECTRON_OVERSIZE_ERROR)) },
-    };
-
-    // Not null: cancelling and being refused are different facts, and
-    // collapsing them would report "cancelled" for a file the user really
-    // did choose.
-    await expect(pickThemeFile()).rejects.toThrow();
-  });
-
-  it('cleans the rejection message for display — no channel name, no path noise', async () => {
-    (window as never as { hive: unknown }).hive = {
-      theme: { pick: vi.fn().mockRejectedValue(new Error(ELECTRON_OVERSIZE_ERROR)) },
-    };
-
-    /**
-     * Asserted on `.detail` in full, not with `not.toThrow(/^theme:pick:/)`.
-     *
-     * That guard could never fail: `PickThemeFailure.message` is
-     * `` `${title} — ${detail}` ``, so it always starts with the title and
-     * never with the channel name, whatever the strip did or did not remove.
-     * The exact string is what actually catches a regression — either wrapper
-     * surviving, or the directory coming back.
-     */
-    const failure = await pickThemeFile().catch((error: unknown) => error);
-    expect(failure).toBeInstanceOf(PickThemeFailure);
-    if (!(failure instanceof PickThemeFailure)) return;
-    expect(failure.detail).toBe(
-      'huge.json is 999999 bytes, over the 262144-byte limit',
-    );
-  });
-
-  it('still surfaces a rejection that carries no useful message', async () => {
-    (window as never as { hive: unknown }).hive = {
-      theme: { pick: vi.fn().mockRejectedValue('boom') },
-    };
-
-    await expect(pickThemeFile()).rejects.toThrow("Couldn't import that file");
+    expect(await saveThemeFile('nord.json', '{}')).toBe(true);
+    expect(save).not.toHaveBeenCalled();
   });
 
   /**
-   * The seam a caller (Task 11's gallery) actually relies on: `.title` and
-   * `.detail` come back as their own fields, not just baked into `.message`
-   * — so a banner can render each once, rather than re-deriving a title and
-   * duplicating what `.message` already prefixed onto the detail.
+   * `electron/main/theme/index.ts` used to `stat` before it read, so an
+   * oversize file was refused without ever being buffered. `validate.ts` still
+   * caps the contents, but only once the whole file is in renderer memory;
+   * this keeps the cheaper refusal that deleting main's copy would have lost.
    */
-  it('rejects with a PickThemeFailure carrying title and detail as their own fields', async () => {
-    (window as never as { hive: unknown }).hive = {
-      theme: { pick: vi.fn().mockRejectedValue(new Error(ELECTRON_OVERSIZE_ERROR)) },
-    };
+  it('refuses an oversize file before reading it', async () => {
+    const input = captureInput();
+    const text = vi.fn(() => Promise.resolve('{}'));
 
-    await expect(pickThemeFile()).rejects.toBeInstanceOf(PickThemeFailure);
-    try {
-      await pickThemeFile();
-      expect.unreachable('pickThemeFile should have rejected');
-    } catch (error) {
-      if (!(error instanceof PickThemeFailure)) throw error;
-      expect(error.title).toBe(PICK_FAILURE_TITLE);
-      /**
-       * The file's *name* survives and its directory does not — a deliberate
-       * choice, not an accident of the pattern. `huge.json is 999999 bytes` is
-       * the whole of what the message has to say; `/Users/somebody/…` is a home
-       * directory in a settings banner and in every screenshot of one.
-       */
-      expect(error.detail).toBe(
-        'huge.json is 999999 bytes, over the 262144-byte limit',
-      );
-    }
-  });
+    const promise = pickThemeFile();
+    choose(input.current, {
+      name: 'huge.json',
+      size: MAX_THEME_BYTES + 1,
+      text,
+    });
 
-  it('strips main’s prefix even without the Electron wrapper around it', async () => {
-    // The shape a direct caller (or a future non-`invoke` bridge) would send.
-    (window as never as { hive: unknown }).hive = {
-      theme: {
-        pick: vi
-          .fn()
-          .mockRejectedValue(new Error('theme:pick: /tmp/huge.json is too big')),
-      },
-    };
-
-    const failure = await pickThemeFile().catch((error: unknown) => error);
+    const failure = await promise.catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(PickThemeFailure);
     if (!(failure instanceof PickThemeFailure)) throw failure;
-    expect(failure.detail).toBe('huge.json is too big');
-  });
-
-  it('saves through the bridge and reports true when a path came back', async () => {
-    const save = vi.fn().mockResolvedValue('/Users/me/themes/nord.json');
-    (window as never as { hive: unknown }).hive = { theme: { save } };
-
-    expect(await saveThemeFile('nord.json', '{}')).toBe(true);
-    expect(save).toHaveBeenCalledWith({ suggestedName: 'nord.json', contents: '{}' });
-  });
-
-  it('reports false when the save dialog is cancelled', async () => {
-    const save = vi.fn().mockResolvedValue(null);
-    (window as never as { hive: unknown }).hive = { theme: { save } };
-
-    expect(await saveThemeFile('nord.json', '{}')).toBe(false);
-  });
-
-  it('sanitises the suggested name before it ever reaches the bridge', async () => {
-    const save = vi.fn().mockResolvedValue('/Users/me/themes/cafe.json');
-    (window as never as { hive: unknown }).hive = { theme: { save } };
-
-    await saveThemeFile('Café.json', '{}');
-
-    expect(save).toHaveBeenCalledWith({ suggestedName: 'Cafe.json', contents: '{}' });
+    expect(failure.detail).toBe(
+      `huge.json is ${MAX_THEME_BYTES + 1} bytes, over the ${MAX_THEME_BYTES}-byte limit`,
+    );
+    expect(text).not.toHaveBeenCalled();
   });
 });
 
