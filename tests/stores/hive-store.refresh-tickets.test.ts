@@ -324,8 +324,16 @@ describe('a repeated sweep', () => {
   /**
    * A sweep from the previous state must not install its answer into the new
    * one — the same reason `reset` drops `inFlightPrSweep`.
+   *
+   * Both counts are the assertion, and they say different things (HIVE-152).
+   * `readJiraStatus` twice is the original claim: the handle really was
+   * dropped, so the second call started a sweep of its own instead of joining
+   * the retired one. `searchJiraIssues` **once** is what the epoch added — the
+   * retired sweep now stops at the first guard rather than spending a second
+   * round trip on an answer it is no longer allowed to install. Before the
+   * epoch this read `2`, counting that wasted call as evidence.
    */
-  it('drops the in-flight handle on reset', async () => {
+  it('drops the in-flight handle on reset, and retires the sweep it dropped', async () => {
     const first = state().refreshTickets();
     state().reset();
     await first;
@@ -333,6 +341,7 @@ describe('a repeated sweep', () => {
     asDesktop();
     await state().refreshTickets();
 
-    expect(searchJiraIssues).toHaveBeenCalledTimes(2);
+    expect(readJiraStatus).toHaveBeenCalledTimes(2);
+    expect(searchJiraIssues).toHaveBeenCalledTimes(1);
   });
 });

@@ -449,10 +449,17 @@ describe('remote composition (HIVE-143)', () => {
     registerIpcHandlers();
 
     /*
-      100 call + 6 notify (HIVE-144 added `config:set-remote`, `remote:pair`
-      and `remote:forget`, all three `call`). Asserted as the total so a
-      channel added to the contract without a handler — or a `handle`/`on`
-      call that stopped recording — fails here rather than at a socket.
+      99 call + 6 notify. HIVE-144 added `config:set-remote`, `remote:pair`
+      and `remote:forget`, all three `call`, taking calls to 100; HIVE-146
+      then removed two and added one, which is where the 99 comes from. The
+      arithmetic in this note read 100 + 6 against an asserted 105 until
+      HIVE-153 re-derived it — the literal was right and the note was stale,
+      which is the wrong way round for a number three files pin.
+
+      Asserted as the total so a channel added to the contract without a
+      handler — or a `handle`/`on` call that stopped recording — fails here
+      rather than at a socket. Adding a channel to `PROCESS_LOCAL` does not
+      move it: a locally-answered channel is still bound, just not to a proxy.
 
       It does **not** catch a channel registered twice: `recordCall` and
       `recordNotify` are `Map.set`, so a second registration overwrites the

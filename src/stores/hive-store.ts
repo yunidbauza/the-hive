@@ -254,6 +254,14 @@ const NO_TICKET_SEARCH: TicketSearchState = {
   tooShort: false,
 };
 
+/** The same rest state for PR search, which had been spelled out at each of its four sites. */
+const NO_PR_SEARCH: PrSearchState = {
+  term: '',
+  results: null,
+  searching: false,
+  error: null,
+};
+
 export type PrSource =
   /** A read is in flight and there is nothing yet. The boot state. */
   | { kind: 'loading' }
@@ -936,6 +944,39 @@ let ticketSearchTicket = 0;
  * PR side had already solved. See `refreshTickets` for the specific harm.
  */
 let inFlightTicketSweep: Promise<void> | null = null;
+
+/**
+ * Which machine this store is currently describing, as a monotonic counter.
+ *
+ * A sweep reads it before its first `await` and again before it writes; a
+ * mismatch means the mode changed underneath it and the answer it is holding
+ * is about a machine this window is no longer showing.
+ *
+ * **Why a counter and not a cancelled request.** Nulling `inFlightPrSweep` on
+ * a switch cannot help: the request is already out, dropping the handle
+ * neither cancels it nor stops its late write, and on its own it would merely
+ * let a second sweep start concurrently — the race the dedupe exists to
+ * prevent. Considered and rejected in HIVE-144. What works is comparing a
+ * generation **before** the data is applied rather than trying to stop the
+ * data arriving, which is the shape HIVE-144's pty resume fix settled on and
+ * the shape `prSearchTicket` above already uses for the narrower race between
+ * two searches.
+ *
+ * Module scope for the reason every counter around it is: nothing renders a
+ * generation number, and putting it in the store would wake every subscriber
+ * to announce that a request had been stamped.
+ *
+ * **It counts mode changes, not machines**, and the two come apart in one
+ * place: `modeChange` in `set-remote.ts` compares only *attached vs not*
+ * (`(after !== null) === before`), so re-attaching straight from one server to
+ * another reports no change and never reaches `clearModeEntities` — leaving
+ * this counter where it was. That is currently unreachable rather than
+ * unhandled: the address fields are hidden while attached, so a detach always
+ * sits in between. Widening `modeChange` to compare the address is what would
+ * make the name literally true, and it belongs with whatever first allows a
+ * direct hand-off.
+ */
+let modeEpoch = 0;
 
 function currentSessionIn(state: HiveState, terminalId: string): string {
   const direct = state.entities[terminalId];
@@ -1751,7 +1792,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 
   /** Loading until the first sweep answers, for the same reason as above. */
   prSource: { kind: 'loading' } as PrSource,
-  prSearch: { term: '', results: null, searching: false, error: null } as PrSearchState,
+  prSearch: NO_PR_SEARCH,
   ticketSearch: NO_TICKET_SEARCH,
 
   /**
@@ -4761,7 +4802,18 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
      * Wraps the status read as well as the search, because both hops cost a
      * round trip and neither is worth doing twice concurrently.
      */
-    inFlightTicketSweep ??= (async () => {
+    if (inFlightTicketSweep !== null) return inFlightTicketSweep;
+
+    /**
+     * Which machine this sweep is asking about, read before the first `await`.
+     *
+     * Compared again after every suspension point below, because both hops can
+     * outlive a mode switch and there is no write in this closure that happens
+     * before one of them. See {@link modeEpoch}.
+     */
+    const epoch = modeEpoch;
+
+    const sweep: Promise<void> = (async () => {
       /**
        * **Nothing here sets `loading`.** That is the boot state, left to the
        * first answer to clear, permanently — `refreshPrs`'s rule, and tickets
@@ -4779,6 +4831,11 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
        * settled `live` list is never blanked, because nothing blanks anything.
        */
       const status = await readJiraStatus();
+      // The mode switched while the status read was out. Everything below this
+      // line writes about a machine this window is no longer showing —
+      // including the two failure reports, which would put "may be out of
+      // date" or "no Jira configured" over the attached machine's own list.
+      if (epoch !== modeEpoch) return;
       if (status === null) {
         get().reportTicketFailure(
           'The app could not reach its own main process.',
@@ -4804,6 +4861,8 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
        * a value main has in front of it anyway.
        */
       const result = await searchJiraIssues();
+      // And again after the search itself, the longer of the two hops.
+      if (epoch !== modeEpoch) return;
       if (result === null) {
         get().reportTicketFailure(
           'The app could not reach its own main process.',
@@ -4816,10 +4875,22 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       }
       get().hydrateTickets(result.value.issues, result.value.capped);
     })().finally(() => {
-      inFlightTicketSweep = null;
+      /*
+        Only if the handle is still this sweep's own.
+
+        `clearModeEntities` drops the handle on a mode switch so the newly
+        attached view can start a sweep of its own immediately. That sweep is
+        already installed here by the time this one settles, and an
+        unconditional `= null` would erase it — leaving a live sweep with no
+        handle, so the *next* caller starts a third one concurrently. That is
+        precisely the double-sweep this dedupe exists to prevent, arriving by
+        the back door.
+      */
+      if (inFlightTicketSweep === sweep) inFlightTicketSweep = null;
     });
 
-    return inFlightTicketSweep;
+    inFlightTicketSweep = sweep;
+    return sweep;
   },
 
   /**
@@ -4969,8 +5040,27 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
      * over data a second old. Sharing the promise makes the retry *join* the
      * sweep instead of racing it.
      */
-    inFlightPrSweep ??= (async () => {
+    if (inFlightPrSweep !== null) return inFlightPrSweep;
+
+    /**
+     * Which machine this sweep is asking about, read before the first `await`.
+     *
+     * The stakes are higher here than on the ticket side, and not only because
+     * PRs are the panel a user is most likely to act on: `hydratePrs` also
+     * fires `noteSessionPr` for every change it learns. A late sweep does not
+     * merely *display* the departed fleet's PRs, it **writes** them onto the
+     * attached machine's sessions over IPC — the one harm in this story that
+     * the next sweep does not quietly undo. See {@link modeEpoch}.
+     */
+    const epoch = modeEpoch;
+
+    const sweep: Promise<void> = (async () => {
       const result = await readPullRequests();
+
+      // Everything below writes about the machine this sweep asked, which is
+      // no longer the machine on screen. Guards all four exits at once —
+      // `hydratePrs` and the three failure/unconfigured reports.
+      if (epoch !== modeEpoch) return;
 
       if (result === null) {
         get().reportPrFailure('The app could not reach its own main process.');
@@ -5002,10 +5092,13 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 
       get().hydratePrs(result.value.prs, result.value.repos);
     })().finally(() => {
-      inFlightPrSweep = null;
+      // Only if the handle is still this sweep's own — see the same guard on
+      // `refreshTickets` for what an unconditional null would let through.
+      if (inFlightPrSweep === sweep) inFlightPrSweep = null;
     });
 
-    return inFlightPrSweep;
+    inFlightPrSweep = sweep;
+    return sweep;
   },
 
   searchPrs: async (term, projectId) => {
@@ -5078,7 +5171,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     // Retires anything in flight, so a search cancelled mid-request cannot
     // land its results into an empty box.
     prSearchTicket += 1;
-    set({ prSearch: { term: '', results: null, searching: false, error: null } });
+    set({ prSearch: NO_PR_SEARCH });
   },
 
   searchTickets: async (term, mineOnly) => {
@@ -5209,6 +5302,54 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       genuine rename on the newly attached one wearing the same id.
     */
     staleTitles.clear();
+
+    /*
+      Everything already in flight is now about the departed machine.
+
+      The epoch retires the six writes a running sweep can still make —
+      `hydratePrs`/`hydrateTickets` and the four failure and unconfigured
+      reports beside them — and the two search tickets retire a search out at
+      the same moment, which is the identical race one layer down.
+
+      Dropping the two sweep handles is not what makes any of that safe; the
+      epoch is. It is here so the newly attached view does not sit on empty
+      panels waiting out the rest of a poll interval for a sweep whose answer
+      is already condemned: the next caller starts a fresh one instead of
+      joining that one. Safe only because the epoch is doing the real work —
+      the second concurrent sweep this would otherwise allow is a sweep whose
+      writes have already been disarmed.
+    */
+    modeEpoch += 1;
+    prSearchTicket += 1;
+    ticketSearchTicket += 1;
+    inFlightPrSweep = null;
+    inFlightTicketSweep = null;
+
+    /*
+      **The term lives in the other store, and clearing only half strands the
+      panel.**
+
+      A search is split deliberately: the results are here, the term the user
+      typed is `ui-store`'s (`prSearchTerm`, `workSearchTerm`), because a
+      keystroke must not re-render thirteen live terminals. Both panels then
+      derive `searching` from the *term* — `work-panel.tsx` and its PR twin
+      each compute `term !== ''` — and render the search branch on it.
+
+      So emptying `prSearch`/`ticketSearch` below without emptying the term
+      leaves `searching` true over `results === null`, `error === null`,
+      `tooShort === false`: the skeleton branch, pulsing forever. Nothing
+      re-issues the search — the debounce's deps did not change and the panel
+      never unmounts — and there is no way out, because `prSource` is
+      `loading` after a switch, which is exactly the state that hides "Try
+      again" and disables pull-to-refresh.
+
+      Cross-store by calling the other store's action, never by subscribing to
+      it, which is this codebase's rule for exactly this direction.
+    */
+    const ui = useUiStore.getState();
+    ui.clearPrSearch();
+    ui.clearWorkSearch();
+
     set({
       // `entities` holds only sessions and agents (`Entity = Session |
       // Agent`), so clearing it and both order arrays drops exactly what
@@ -5226,6 +5367,25 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       // this store's own initial state use for "nothing read yet".
       prSource: { kind: 'loading' },
       /*
+        **Tickets are the remote machine's too, and this used to be wrong in
+        the other direction.**
+
+        There is a test asserting these two survive a switch, written on the
+        premise that both modes read the same Jira query — and that premise is
+        false: `CH.jiraStatus` and `CH.jiraSearch` are `'call'` channels and
+        neither is in `PROCESS_LOCAL`, so while attached, the site, the account
+        and the JQL are all the *served* machine's. The list under the WORK
+        badge belongs to whichever machine answered, exactly as `prs` does.
+
+        Left standing it was survivable only by accident: the in-flight sweep
+        replaced it within seconds. The epoch above now discards that answer,
+        which would have left the departed machine's issues sitting under a
+        `live` label for a whole poll interval — so the guard that fixes the
+        race is precisely what makes clearing these two necessary.
+      */
+      tickets: [],
+      ticketSource: { kind: 'loading' },
+      /*
         Not "an orphan quietly wasting memory" the way it first read — session
         ids are **not unique across machines**. `nextSpawnId`/`rememberSpawnId`
         mint them from the same base-36 counter everywhere, so the mode being
@@ -5240,6 +5400,22 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         it is already cleared above).
       */
       metrics: {},
+      /*
+        Results, not just the request behind them.
+
+        Bumping the two search tickets above only stops an answer still in
+        flight from landing. An answer that already landed is sitting on
+        screen, and it is a list of the departed machine's PRs or issues under
+        a term the user typed about that machine. Ruling 22's argument for
+        `metrics` applies unchanged: wrong data shown with confidence, and PR
+        rows are the ones a user is most likely to act on.
+
+        `applyAttachSnapshot` seeds nothing back here, and should not — an
+        empty search box is the right state for a machine just attached to,
+        not the previous machine's question asked again on its behalf.
+      */
+      prSearch: NO_PR_SEARCH,
+      ticketSearch: NO_TICKET_SEARCH,
     });
   },
 
@@ -5249,6 +5425,33 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     // declaration's own doc comment.
     store.clearModeEntities();
     if (change.to === 'remote') store.applyAttachSnapshot(change.snapshot);
+
+    /*
+      **Ask the new machine, now — the dropped handles are useless without
+      this.**
+
+      `clearModeEntities` retires both in-flight sweeps so a caller arriving
+      after the switch starts a fresh one rather than joining an answer the
+      epoch has already condemned. On its own that changes nothing a user can
+      see, because nothing calls: `createPoller` holds its *own* `inFlight`
+      over the condemned promise and skips every tick until it settles — and a
+      tick skipped that way does not set `missed`, which is hidden-document
+      only, so the read waits for the next interval boundary. Up to two
+      intervals of an empty panel.
+
+      There is no manual way out of it either. After a switch `prSource` and
+      `ticketSource` are both `loading`, and that is exactly the state that
+      renders no "Try again" and disables pull-to-refresh. So the panels would
+      sit empty with no affordance at all, which is the thing the drop was
+      supposed to prevent.
+
+      Fire-and-forget for the reason `hydratePrs` fires `noteSessionPr` that
+      way: a switch must not block on two network round trips, and both verbs
+      already own their failure reporting. `void` rather than `await` is the
+      whole difference.
+    */
+    void store.refreshPrs();
+    void store.refreshTickets();
   },
 
   reset: () => {
@@ -5256,7 +5459,9 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     terminalCounter = 0;
     staleTitles.clear();
     // A sweep from the previous state must not install its answer into the new
-    // one — dropping the handle makes the next caller start fresh.
+    // one. Bumping the epoch is what retires it — dropping the handle only
+    // means the next caller starts fresh rather than joining it.
+    modeEpoch += 1;
     inFlightPrSweep = null;
     inFlightTicketSweep = null;
     // Same rule for a search in flight: bumping the ticket retires it, so its
@@ -5279,7 +5484,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       metrics: {},
       ticketSource: { kind: 'loading' },
       prSource: { kind: 'loading' },
-      prSearch: { term: '', results: null, searching: false, error: null },
+      prSearch: NO_PR_SEARCH,
       ticketSearch: NO_TICKET_SEARCH,
     });
   },

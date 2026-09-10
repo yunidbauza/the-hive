@@ -1118,16 +1118,17 @@ describe('ServerModeGroup', () => {
     });
 
     /*
-      The address, the port and the pairing controls describe `remote.host`
-      and `remote.port` — the *server's*, while attached. Hidden rather than
-      disabled: disabling leaves the wrong values on screen with an
-      explanation beside them, and `config:set-remote` writes locally
-      (Ruling 28), so a commit would not even write what the field showed.
-      Forget is hidden for a sharper reason still — `remote:forget` is not on
-      `PROCESS_LOCAL`, so while attached it would clear the *server's*
-      credential.
+      The address and the port describe `remote.host` and `remote.port` — the
+      *server's*, while attached. Hidden rather than disabled: disabling
+      leaves the wrong values on screen with an explanation beside them, and
+      `config:set-remote` writes locally (Ruling 28), so a commit would not
+      even write what the field showed. Attach goes with them: there is
+      nothing to dial from a window already attached.
+
+      HIVE-149 is what retires this case, by giving the pane a `PROCESS_LOCAL`
+      read of *this* machine's `remote` block.
     */
-    it('hides the address, port and pairing controls while attached', () => {
+    it('hides the address, port and attach controls while attached', () => {
       render(
         <ServerModeGroup
           enabled={false}
@@ -1142,11 +1143,67 @@ describe('ServerModeGroup', () => {
 
       expect(screen.queryByLabelText(/server address/i)).not.toBeInTheDocument();
       expect(screen.queryByLabelText(/^port$/i)).not.toBeInTheDocument();
-      expect(screen.queryByLabelText(/pairing token/i)).not.toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: /^forget$/i })).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /^attach$/i })).not.toBeInTheDocument();
       // And it says why, rather than silently offering less.
       expect(screen.getByText(/hidden while attached/i)).toBeInTheDocument();
+    });
+
+    /**
+     * HIVE-153, and the case that fails on the code this story replaces.
+     *
+     * The pairing controls used to be hidden alongside the address fields,
+     * for an unrelated reason: `remote:pair` and `remote:forget` were proxied,
+     * so a Forget click on an attached client cleared the *server's*
+     * credential rather than this machine's. Hiding the button was a UI
+     * mitigation for an IPC defect, and it held only for as long as this file
+     * stayed `remote:forget`'s single caller anywhere.
+     *
+     * Both channels are on `PROCESS_LOCAL` now, answered by whichever process
+     * the user is sitting at, so the controls describe this machine in either
+     * mode and there is nothing left to hide them from. What this asserts is
+     * that end state; `remote-proxy.test.ts` owns the routing that earns it.
+     */
+    it('offers the pairing controls and Forget while attached', () => {
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={SERVER_ANSWERED_REMOTE}
+          attachedServer={null}
+          attachedServerName="mini"
+          serving={false}
+        />,
+      );
+
+      expect(screen.getByLabelText(/pairing token/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/device id/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^forget$/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /pair device/i })).toBeInTheDocument();
+    });
+
+    /*
+      The consequence stated rather than guarded against (HIVE-153). A server
+      authenticates a client at the handshake and never again, so forgetting
+      while attached leaves the current attachment live and costs the *next*
+      dial. Refusing the verb would put back the unreachability HIVE-144
+      settled for; detaching on the user's behalf would make Forget mean two
+      things. So the pane says what it does.
+    */
+    it('says that Forget does not end a live attachment', () => {
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={SERVER_ANSWERED_REMOTE}
+          attachedServer={null}
+          attachedServerName="mini"
+          serving={false}
+        />,
+      );
+
+      expect(screen.getByText(/without ending a live attachment/i)).toBeInTheDocument();
     });
 
     /*

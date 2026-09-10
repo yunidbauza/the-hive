@@ -15,6 +15,7 @@ import { isServerMode } from '../server-mode';
 
 import { createWindowBroadcaster, type Broadcaster } from './broadcaster';
 import { createReattachLoop, type ReattachLoop } from './reattach';
+import { applyRemoteForget, applyRemotePair } from './remote-pairing';
 import { registerRemoteProxy, remoteProxyBindingsSize, resetRemoteProxy } from './remote-proxy';
 import { composeResumeFrom, createResumeTracker, type ResumeTracker } from './resume-tracker';
 import { applySetRemote } from './set-remote';
@@ -23,6 +24,7 @@ import {
   ipcBindingsSize,
   readRemoteCredential,
   registerIpcHandlers,
+  remoteCredentialStore,
   resetIpcHandlers,
   sessionsLayer,
 } from './index';
@@ -112,6 +114,27 @@ export function registerIpc(mode: IpcMode, options: RegisterIpcOptions = {}): vo
         proxy a function whose job is to tear the proxy down.
       */
       localSetRemote: (payload) => applySetRemote(payload, switchIpcMode, attachedSnapshot),
+      /*
+        `CH.remotePair` and `CH.remoteForget`, answered here rather than over
+        the socket (HIVE-153). While they were proxied, a Forget click on an
+        attached client cleared the *server's* credential — the far machine's
+        own pairing revoked from the near machine's UI, and the clicking
+        user's credential untouched.
+
+        Built fresh at each registration for `localSetRemote`'s reason. The
+        store is finer-grained still — one per *invocation*, constructed inside
+        the arrow bodies rather than closed over — which `readRemoteCredential`
+        already does and which `createTokenStore` is written for: it caches
+        nothing and holds no handle, so a per-call store and a hoisted one
+        behave identically. Constructing it here keeps the
+        `app.getPath('userData')` read inside a function that only ever runs
+        after the app is ready, and it goes through `remoteCredentialStore()`
+        because that is the one function allowed to spell the filename —
+        precisely so a credential paired from the local handler is looked for
+        by the proxy at the same path.
+      */
+      localRemotePair: (payload) => applyRemotePair(payload, remoteCredentialStore()),
+      localRemoteForget: () => applyRemoteForget(remoteCredentialStore()),
     });
     return;
   }

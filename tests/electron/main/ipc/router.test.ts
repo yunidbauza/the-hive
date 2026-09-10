@@ -189,6 +189,12 @@ describe('registerIpc', () => {
       // leave the proxy on its rejecting default — a detach that fails loudly
       // instead of one that works.
       localSetRemote: expect.any(Function),
+      // HIVE-153, and the same reasoning one channel over: a router that
+      // stopped passing these would leave `remote:pair` and `remote:forget`
+      // on their throwing defaults. Which is still better than what they did
+      // before the story — forwarded, clearing the *server's* credential.
+      localRemotePair: expect.any(Function),
+      localRemoteForget: expect.any(Function),
     });
   });
 
@@ -208,6 +214,8 @@ describe('registerIpc', () => {
       client,
       broadcaster,
       localSetRemote: expect.any(Function),
+      localRemotePair: expect.any(Function),
+      localRemoteForget: expect.any(Function),
     });
   });
 
