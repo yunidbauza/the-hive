@@ -180,6 +180,70 @@ export type NotificationAction =
   /** Quit and swap in the update that has finished downloading. */
   | { type: 'update.install' };
 
+/**
+ * Which machine answers a notification's click (HIVE-151).
+ *
+ * `notifications:act` is one channel carrying seven different verbs, and the
+ * remote proxy routes by channel name alone. Three of those verbs reach
+ * *hardware* — a browser, an updater — so they are carried out by whichever
+ * process receives the call. While attached that is the server, and the click
+ * happened on the client: a `url` opened a browser on a Mac mini in another
+ * room, and an `update.install` quit the wrong app.
+ *
+ * The other four resolve against fleet state the client does not hold — a
+ * ledger thread, a session's terminal id — so they are correct to proxy and
+ * would break if they were answered locally.
+ */
+export type ActionScope = 'this-machine' | 'fleet';
+
+/**
+ * The one place an action's scope is written down.
+ *
+ * `as const satisfies Record<NotificationAction['type'], ActionScope>` is
+ * load-bearing rather than decoration: it makes an unclassified new member of
+ * the union a **compile error** here, and {@link ThisMachineAction} is derived
+ * from this table rather than restated, so the type and the runtime check
+ * cannot drift apart.
+ *
+ * What this replaced was a hand-written allowlist in
+ * `electron/main/notifications/remote-toast.ts`, which had to be remembered by
+ * anyone adding a member and whose own comment said as much: "unreachable by
+ * which kinds happen to arrive is a property of the caller, not of this code".
+ */
+export const ACTION_SCOPE = {
+  none: 'fleet',
+  session: 'fleet',
+  url: 'this-machine',
+  ask: 'fleet',
+  agent: 'fleet',
+  'update.download': 'this-machine',
+  'update.install': 'this-machine',
+} as const satisfies Record<NotificationAction['type'], ActionScope>;
+
+/** The action types {@link ACTION_SCOPE} marks `this-machine`. */
+type ThisMachineType = {
+  [K in keyof typeof ACTION_SCOPE]: (typeof ACTION_SCOPE)[K] extends 'this-machine'
+    ? K
+    : never;
+}[keyof typeof ACTION_SCOPE];
+
+/**
+ * An action that must be carried out by the machine whose user clicked it.
+ *
+ * Narrow on purpose: `activateOnThisMachine` takes this rather than the whole
+ * union, so a fleet action cannot be handed to it even by a caller that forgot
+ * to check first. The routing table and the activation cannot come to disagree
+ * about which machine a click belongs to, because one of them will not compile.
+ */
+export type ThisMachineAction = Extract<NotificationAction, { type: ThisMachineType }>;
+
+/** Whether this action is answered here rather than over the socket. */
+export function isThisMachineAction(
+  action: NotificationAction,
+): action is ThisMachineAction {
+  return ACTION_SCOPE[action.type] === 'this-machine';
+}
+
 /** One thing that wants the user's attention. */
 export interface HiveNotification {
   /**
