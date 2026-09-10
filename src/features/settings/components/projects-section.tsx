@@ -7,8 +7,9 @@ import { SwarmCreature } from '@components/ui/swarm-creature';
 import { CloneRepoView } from '@features/settings/components/clone-repo-view';
 import { ProjectsList } from '@features/settings/components/projects-list';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
+import { DirectoryPicker } from '@features/shared/components/directory-picker';
 import { useAddProject } from '@hooks/use-add-project';
-import { useProjectConfig } from '@hooks/use-project-config';
+import { useAttachedServer, useProjectConfig } from '@hooks/use-project-config';
 
 /**
  * The Projects section of settings (story 101).
@@ -42,7 +43,9 @@ export function ProjectsSection() {
    * guarantees worth stating once rather than twice: one dialog per click, a
    * write of exactly the path it returned, nothing at all when it is closed.
    */
-  const { addProject, choosing, disabledReason } = useAddProject();
+  const { addProject, choosing, picking, cancelPicking, onPicked } =
+    useAddProject();
+  const attachedServer = useAttachedServer();
 
   /**
    * Which pane this section is showing (story 102).
@@ -99,8 +102,7 @@ export function ProjectsSection() {
         <button
           type="button"
           onClick={addProject}
-          disabled={choosing || disabledReason !== null}
-          title={disabledReason ?? undefined}
+          disabled={choosing}
           className="flex w-fit items-center gap-1.5 rounded-md bg-brand-fill px-3 py-1.5 text-[12.5px] text-on-brand hover:bg-brand-fill-hover disabled:opacity-60"
         >
           <Plus size={12} weight="bold" />
@@ -126,6 +128,17 @@ export function ProjectsSection() {
           Config file: {snapshot.configPath}
         </p>
       ) : null}
+
+      <DirectoryPicker
+        open={picking}
+        onOpenChange={(next) => {
+          if (!next) cancelPicking();
+        }}
+        onChoose={onPicked}
+        serverName={attachedServer ?? 'the server'}
+        title="Choose a project folder"
+        confirmLabel="Add project"
+      />
     </div>
   );
 }

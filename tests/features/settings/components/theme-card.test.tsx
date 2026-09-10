@@ -9,8 +9,6 @@ const base = {
   theme: BUILT_IN_THEME,
   onActivate: vi.fn(),
   onExport: vi.fn(),
-  exportDisabled: false,
-  exportDisabledReason: null,
   onRemove: vi.fn(),
 };
 
@@ -83,35 +81,26 @@ describe('ThemeCard', () => {
   });
 
   /**
-   * `theme:save` while attached to someone else's Hive (HIVE-144) — see
-   * `WINDOW_BOUND` (`electron/shared/remote-contract.ts`). The caller
-   * (`theme-gallery.tsx`) computes `exportDisabled` from `can.saveTheme()`;
-   * this only proves the card disables Export… on the prop and never fires
-   * its handler when it does.
+   * The inverse of a test HIVE-144 added and HIVE-146 deleted.
+   *
+   * Export used to be disabled whenever this window was attached, because
+   * `theme:save` opened a dialog on the server. That channel is gone: the
+   * renderer writes the file itself, on the machine the user is sitting at, in
+   * both modes. So there is no attached state in which Export should refuse,
+   * and this asserts the item is always live — which is what would break if
+   * someone reintroduced a capability gate here.
    */
-  it('disables Export… and carries the reason, and never calls onExport', async () => {
+  it('leaves Export… enabled and calls onExport', async () => {
     const onExport = vi.fn();
     render(
-      <ThemeCard
-        {...base}
-        id="hive"
-        isActive
-        isBuiltIn
-        onExport={onExport}
-        exportDisabled
-        exportDisabledReason="Exporting a theme writes a file on the machine the user is sitting at."
-      />,
+      <ThemeCard {...base} id="hive" isActive isBuiltIn onExport={onExport} />,
     );
     await userEvent.click(screen.getByRole('button', { name: /actions$/ }));
 
     const item = screen.getByRole('menuitem', { name: 'Export…' });
-    expect(item).toHaveAttribute('aria-disabled', 'true');
-    expect(item).toHaveAttribute(
-      'title',
-      'Exporting a theme writes a file on the machine the user is sitting at.',
-    );
+    expect(item).not.toHaveAttribute('aria-disabled', 'true');
 
     await userEvent.click(item);
-    expect(onExport).not.toHaveBeenCalled();
+    expect(onExport).toHaveBeenCalledWith('hive');
   });
 });

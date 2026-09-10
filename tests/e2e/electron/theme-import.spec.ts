@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 import { launchHive, startSession } from './fixtures/hive-app';
 
@@ -34,32 +34,6 @@ const NORD_TERMINAL_BG_DARK = '#2e3440';
 
 const EMPTY_CONFIG = JSON.stringify({ version: 2, projects: [] }, null, 2);
 
-/**
- * Replace the native "open file" sheet with one that answers immediately —
- * the same mechanism `settings.spec.ts` and `manage-projects.spec.ts` use for
- * `chooseDirectory`, applied to `theme:pick` (`electron/main/theme/index.ts`),
- * which calls the identical `dialog.showOpenDialog`.
- *
- * `theme:pick`'s real round trip still runs unmodified after this: main still
- * calls the (now-stubbed) dialog, still `stat`s the path, still reads the file
- * and returns it over IPC exactly as it would for a path the user actually
- * chose. Only the native sheet — which Playwright cannot drive — is replaced,
- * and it is replaced **in the main process**, from the test harness, using a
- * path this test process already has on disk. No renderer-supplied path is
- * ever involved, so there is nothing here for a compromised renderer to reach:
- * this is a test-harness monkeypatch of a Node module in a process the
- * renderer has no way to call into, not a seam shipped in the app.
- */
-async function stubThemePick(app: ElectronApplication, path: string): Promise<void> {
-  await app.evaluate(({ dialog }, filePath) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (dialog as any).showOpenDialog = async () => ({
-      canceled: false,
-      filePaths: [filePath],
-    });
-  }, path);
-}
-
 const openSettings = async (page: Page): Promise<void> => {
   await page.getByRole('button', { name: 'Settings' }).click();
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
@@ -69,9 +43,27 @@ const goToAppearance = async (page: Page): Promise<void> => {
   await page.getByRole('button', { name: 'Appearance' }).click();
 };
 
+/**
+ * Import the fixture through the real file chooser.
+ *
+ * This used to monkeypatch `dialog.showOpenDialog` in the **main** process,
+ * because `theme:pick` opened a native sheet Playwright cannot drive. HIVE-146
+ * deleted that channel: the renderer reads the file itself with
+ * `<input type="file">`, because a theme file is on the machine the user is
+ * sitting at and main is not reliably that machine.
+ *
+ * So the stub is gone and this drives the actual chooser. That is a strictly
+ * better test — the path under assertion is now the one that ships, with no
+ * harness-substituted seam anywhere in it — and it is why this spec is worth
+ * keeping rather than folding into the unit tests: `happy-dom` has no file
+ * chooser to intercept, and a real one is the only place `input.click()`
+ * without an attached node can be shown to work.
+ */
 const importNordTheme = async (page: Page): Promise<void> => {
   await goToAppearance(page);
+  const chooser = page.waitForEvent('filechooser');
   await page.getByRole('button', { name: 'Import theme…' }).click();
+  await (await chooser).setFiles(NORD_FIXTURE);
   // The clean-import banner, not the "imported with N notes" one — the
   // fixture is asserted elsewhere to import with zero inherited colours and
   // zero contrast notes, so this is the only banner it can produce.
@@ -100,7 +92,6 @@ test('an imported theme survives a reload, on the first painted frame', async ({
     await page.waitForLoadState('domcontentloaded');
     await page.waitForSelector('header');
 
-    await stubThemePick(app, NORD_FIXTURE);
     await openSettings(page);
     await importNordTheme(page);
 
@@ -348,7 +339,6 @@ test('activating a theme recolours a live terminal without clearing scrollback',
     const nodeBefore = await scrollable.elementHandle();
     const before = await scrollable.evaluate((el) => getComputedStyle(el).backgroundColor);
 
-    await stubThemePick(app, NORD_FIXTURE);
     await openSettings(page);
     await importNordTheme(page);
     await page.getByRole('button', { name: 'Close settings' }).click();

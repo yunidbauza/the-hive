@@ -97,7 +97,7 @@ describe('createRemoteDispatch call', () => {
     expect(frame).toMatchObject({ kind: 'error', code: 'wrong-frame-kind' });
   });
 
-  it('refuses a window-bound channel with the ticket in the message', async () => {
+  it('refuses a window-bound channel, naming what to do instead', async () => {
     const registry = createIpcRegistry();
     registry.recordCall(CH.configChooseDirectory, () => '/never/reached');
     const dispatch = createRemoteDispatch(registry);
@@ -105,16 +105,18 @@ describe('createRemoteDispatch call', () => {
     const frame = await dispatch.call(callFrame(CH.configChooseDirectory), reporter);
 
     expect(frame).toMatchObject({ kind: 'error', code: 'window-bound' });
-    expect((frame as { message: string }).message).toMatch(/HIVE-146/);
+    expect((frame as { message: string }).message).toMatch(
+      /config:browse-directory/,
+    );
   });
 
   it('does not invoke the handler behind a window-bound channel', async () => {
     const registry = createIpcRegistry();
     const handler = vi.fn(() => '/never/reached');
-    registry.recordCall(CH.themePick, handler);
+    registry.recordCall(CH.skillsFileImport, handler);
     const dispatch = createRemoteDispatch(registry);
 
-    await dispatch.call(callFrame(CH.themePick), reporter);
+    await dispatch.call(callFrame(CH.skillsFileImport), reporter);
 
     expect(handler).not.toHaveBeenCalled();
   });

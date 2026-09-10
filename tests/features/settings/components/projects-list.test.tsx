@@ -2,7 +2,6 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { REMOTE_DISABLED_REASON } from '@config/runtime';
 import { emptySnapshot, type ProjectConfig } from '@shared/config-contract';
 
 import { ProjectsList } from '@features/settings/components/projects-list';
@@ -296,7 +295,13 @@ describe('ProjectsList', () => {
         resetProjectConfig();
       });
 
-      it('disables Change folder… and carries the refusal as its title', async () => {
+      /**
+       * A project mapped on the server lives on the server, so the folder it
+       * gets repointed at is a folder there. HIVE-144 disabled this because
+       * only a native dialog could answer it; HIVE-146 gave it the picker,
+       * which asks the machine that actually holds the files.
+       */
+      it('opens the picker rather than disabling Change folder…', async () => {
         setProjectConfigForTest({
           ...emptySnapshot('/tmp/hive/config.json'),
         });
@@ -309,8 +314,13 @@ describe('ProjectsList', () => {
         await openMenu('a');
 
         const item = screen.getByRole('menuitem', { name: /change folder/i });
-        expect(item).toHaveAttribute('aria-disabled', 'true');
-        expect(item).toHaveAttribute('title', REMOTE_DISABLED_REASON.chooseDirectory);
+        expect(item).not.toHaveAttribute('aria-disabled', 'true');
+
+        await userEvent.click(item);
+
+        expect(
+          await screen.findByRole("dialog", { name: /Choose the project.s new folder/i }),
+        ).toBeInTheDocument();
       });
 
       it('never opens the dialog', async () => {

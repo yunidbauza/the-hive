@@ -1804,6 +1804,64 @@ export interface AddProjectRequest {
   name?: string;
 }
 
+/**
+ * Payload of `config:browse-directory` (HIVE-146).
+ *
+ * An absolute path, or `''`/`'~'` for the answering machine's home directory.
+ *
+ * ## The one verb that takes a path, and why
+ *
+ * `fs-contract.ts` opens by stating that no verb takes a path: every request
+ * there names a `projectId` and a project-relative path, and main resolves
+ * against config it wrote itself. That works because the caller is always
+ * reading inside a project that has already been mapped.
+ *
+ * This verb is for the moment before that is true. The user is choosing a
+ * folder to *become* a project, so there is no id to name it by, and a browser
+ * that could only walk mapped projects would be useless for its one job. So
+ * the path comes from the renderer and the fence moves: from "which project"
+ * to "inside home, proven after `realpath`". See
+ * `electron/main/fs/home-browse.ts` for what that fence is and, just as
+ * importantly, what it is not.
+ */
+export interface BrowseDirRequest {
+  path: string;
+}
+
+/** One directory offered by `config:browse-directory`. Files are never listed. */
+export interface BrowseEntry {
+  name: string;
+  /** Absolute, and inside the answering machine's home directory. */
+  path: string;
+  kind: 'directory';
+  /**
+   * How many visible children it has, or `null` when it could not be read.
+   *
+   * `null` is a directory this user may not open — the picker renders it as a
+   * folder you can see but not descend into. It is deliberately not `0`: an
+   * empty folder and an unreadable one are different facts, and collapsing
+   * them would have the picker offer a dead click.
+   */
+  childCount: number | null;
+}
+
+/**
+ * What `config:browse-directory` answers.
+ *
+ * Two paths and the entries, and nothing derived from them. A `parent` field
+ * was here and came out unread: the picker builds its whole breadcrumb from
+ * `path` and `home`, so "am I at the root" is `path === home` and "one level
+ * up" is the crumb before the last. A contract field no consumer reads is a
+ * thing later code starts believing in.
+ */
+export interface BrowseListing {
+  /** The directory that was listed, absolute and `realpath`'d. */
+  path: string;
+  /** The answering machine's home directory, so the picker can render `~`. */
+  home: string;
+  entries: BrowseEntry[];
+}
+
 /** Payload of `config:remove-project` (story 101). */
 export interface RemoveProjectRequest {
   id: string;

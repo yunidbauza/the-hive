@@ -6,6 +6,7 @@ import { CLONE_ENTITY_ID } from '../../../electron/shared/config-contract';
 import {
   IpcValidationError,
   parseAddProjectRequest,
+  parseBrowseDirRequest,
   parseCloneRequest,
   parseKillRequest,
   parseLedgerAnswerRequest,
@@ -439,6 +440,80 @@ describe('parseKillRequest', () => {
     expect(() => parseKillRequest({ toString: () => 'sess-1' })).toThrow(
       /expected a string/,
     );
+  });
+});
+
+describe('parseBrowseDirRequest', () => {
+  it('accepts an absolute path', () => {
+    expect(parseBrowseDirRequest({ path: '/Users/me/Projects' })).toEqual({
+      path: '/Users/me/Projects',
+    });
+  });
+
+  /**
+   * The one place this guard deliberately differs from
+   * `parseAddProjectRequest`: an empty string is how the picker asks for home
+   * on its first call, where for `addProject` it would mean the caller named
+   * nowhere.
+   */
+  it('accepts an empty path and a bare tilde, both meaning home', () => {
+    expect(parseBrowseDirRequest({ path: '' })).toEqual({ path: '' });
+    expect(parseBrowseDirRequest({ path: '~' })).toEqual({ path: '~' });
+  });
+
+  it('rejects __proto__', () => {
+    expect(() =>
+      parseBrowseDirRequest(JSON.parse('{"path":"/x","__proto__":{}}')),
+    ).toThrow(/forbidden key/);
+  });
+
+  it('rejects a non-object, a missing path, a non-string path and an extra key', () => {
+    expect(() => parseBrowseDirRequest(42)).toThrow(/expected an object/);
+    expect(() => parseBrowseDirRequest(null)).toThrow(/expected an object/);
+    expect(() => parseBrowseDirRequest([])).toThrow(/expected an object/);
+    expect(() => parseBrowseDirRequest({})).toThrow(/missing key "path"/);
+    expect(() => parseBrowseDirRequest({ path: 7 })).toThrow(/expected a string/);
+    expect(() => parseBrowseDirRequest({ path: '/x', depth: 3 })).toThrow(
+      /unexpected key/,
+    );
+  });
+
+  it('rejects a path past the length bound', () => {
+    expect(() => parseBrowseDirRequest({ path: `/${'x'.repeat(4096)}` })).toThrow(
+      /too long/,
+    );
+  });
+
+  /**
+   * Neither is a containment hole — `browseHomeDirectory` refuses both once it
+   * resolves them — but a NUL only reaches the caller as a flattened
+   * `EUNKNOWN`, and a newline reaches the syscall layer intact and forges a
+   * second line in anything that logs the path. Refused before either happens.
+   */
+  it.each([
+    ['a NUL', '/Users/me\u0000/etc'],
+    ['a newline', '/Users/me\nProjects'],
+    ['a carriage return', '/Users/me\rProjects'],
+    ['a DEL', '/Users/me\u007fProjects'],
+  ])('rejects %s in the path', (_label, path) => {
+    expect(() => parseBrowseDirRequest({ path })).toThrow(/control character/);
+  });
+
+  it('allows the characters a real path actually contains', () => {
+    const path = '/Users/me/Projects/my app (2) — copy.d/ünïcode';
+    expect(parseBrowseDirRequest({ path })).toEqual({ path });
+  });
+
+  /**
+   * Traversal is not this guard's job and must not become it. `..` is
+   * syntactically a fine path; what refuses it is `browseHomeDirectory`
+   * resolving and containing the result. Two validators with different ideas
+   * about what a path may contain is how a rule gets quietly relaxed.
+   */
+  it('passes traversal through untouched, for main to resolve and refuse', () => {
+    expect(parseBrowseDirRequest({ path: '/Users/me/../../etc' })).toEqual({
+      path: '/Users/me/../../etc',
+    });
   });
 });
 

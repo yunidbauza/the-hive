@@ -112,42 +112,41 @@ describe('can', () => {
   });
 
   /**
-   * The five `WINDOW_BOUND` predicates (HIVE-144, fifth added by Ruling 25).
+   * The three `WINDOW_BOUND` predicates (HIVE-144, narrowed by HIVE-146).
    *
-   * Each of the five is asserted on its own field, in both directions across
+   * Each of the three is asserted on its own field, in both directions across
    * the two tests below — never as one `toEqual` against a canned object,
    * which a hard-coded implementation could satisfy just as well as a real
    * one. `canFor` is exercised directly, with no bridge and no snapshot, so
    * these are pure-function tests before they are anything else.
    */
   describe('canFor', () => {
-    it('permits all five capabilities in local mode', () => {
+    it('permits all three capabilities in local mode', () => {
       const c = canFor({ mode: 'local' });
       expect(c.chooseDirectory).toBe(true);
-      expect(c.pickTheme).toBe(true);
-      expect(c.saveTheme).toBe(true);
       expect(c.importSkillFiles).toBe(true);
       expect(c.revealConfig).toBe(true);
     });
 
-    it('withholds exactly the WINDOW_BOUND five while attached', () => {
+    it('withholds exactly the WINDOW_BOUND three while attached', () => {
       const c = canFor({ mode: 'remote' });
       expect(c.chooseDirectory).toBe(false);
-      expect(c.pickTheme).toBe(false);
-      expect(c.saveTheme).toBe(false);
       expect(c.importSkillFiles).toBe(false);
       expect(c.revealConfig).toBe(false);
     });
 
     /**
      * The guard rail. Ties `RemoteCapabilities`'s own key count to
-     * `WINDOW_BOUND`'s rather than to a bare literal `5`, so this fails in
-     * *both* directions a hand-picked number could only catch one of: a
-     * sixth channel added to the table with no matching predicate here, and
-     * a predicate quietly dropped from here while the table still names
-     * five.
+     * `WINDOW_BOUND`'s rather than to a bare literal, so this fails in *both*
+     * directions a hand-picked number could only catch one of: a new channel
+     * added to the table with no matching predicate here, and a predicate
+     * quietly dropped from here while the table still names it.
+     *
+     * Deriving it is what made HIVE-146 cheap. That story deleted two entries
+     * and two predicates, and this assertion needed no edit — which is the
+     * whole argument for not writing the number down.
      */
-    it('has one predicate per WINDOW_BOUND entry, so a sixth cannot be forgotten and one cannot be silently dropped', () => {
+    it('has one predicate per WINDOW_BOUND entry, so a new one cannot be forgotten and one cannot be silently dropped', () => {
       const capabilities = canFor({ mode: 'remote' });
       expect(Object.keys(capabilities)).toHaveLength(
         Object.keys(WINDOW_BOUND).length,
@@ -156,7 +155,7 @@ describe('can', () => {
   });
 
   /**
-   * The five capabilities as `can` actually exposes them — **the wiring, not
+   * The three capabilities as `can` actually exposes them — **the wiring, not
    * the pure rule beside it** (HIVE-144 review, C1).
    *
    * The block this replaces drove them by installing a snapshot whose
@@ -172,13 +171,13 @@ describe('can', () => {
    * renderer's own boot calls it, and the predicates read afterwards. Nothing
    * here hands `can` a mode — it has to go and find one.
    */
-  describe('can — the five WINDOW_BOUND predicates', () => {
+  describe('can — the three WINDOW_BOUND predicates', () => {
     afterEach(() => {
       resetProjectConfig();
     });
 
     /**
-     * The whole bridge these five consult: `config.get` for the snapshot that
+     * The whole bridge these three consult: `config.get` for the snapshot that
      * triggers the read, and `appInfo` for the answer itself.
      *
      * `attachedServer` and `remote` on the snapshot are set to the values a
@@ -200,8 +199,6 @@ describe('can', () => {
 
     it('permits every capability with nothing read yet', () => {
       expect(can.chooseDirectory()).toBe(true);
-      expect(can.pickTheme()).toBe(true);
-      expect(can.saveTheme()).toBe(true);
       expect(can.importSkillFiles()).toBe(true);
       expect(can.revealConfig()).toBe(true);
     });
@@ -212,8 +209,6 @@ describe('can', () => {
       await loadProjectConfig();
 
       expect(can.chooseDirectory()).toBe(true);
-      expect(can.pickTheme()).toBe(true);
-      expect(can.saveTheme()).toBe(true);
       expect(can.importSkillFiles()).toBe(true);
       expect(can.revealConfig()).toBe(true);
     });
@@ -225,11 +220,9 @@ describe('can', () => {
 
       // The state the gates exist for, and the one the old test could not
       // reach: the snapshot in hand says `'local'` because it is the
-      // server's, and all five must still refuse.
+      // server's, and all three must still refuse.
       expect(projectConfigSnapshot()?.remote.mode).toBe('local');
       expect(can.chooseDirectory()).toBe(false);
-      expect(can.pickTheme()).toBe(false);
-      expect(can.saveTheme()).toBe(false);
       expect(can.importSkillFiles()).toBe(false);
       expect(can.revealConfig()).toBe(false);
     });
@@ -237,7 +230,7 @@ describe('can', () => {
     /**
      * Ruling 19 leaves this machine's own `remote.mode` at `'remote'` after a
      * failed boot attach, so the next launch retries — and that window is
-     * bound **local**, with every one of these five working. A config-keyed
+     * bound **local**, with every one of these three working. A config-keyed
      * gate refuses them all; the runtime-keyed one does not.
      */
     it('permits every capability when the file says remote but no socket is open', async () => {
@@ -259,8 +252,6 @@ describe('can', () => {
       await loadProjectConfig();
 
       expect(can.chooseDirectory()).toBe(true);
-      expect(can.pickTheme()).toBe(true);
-      expect(can.saveTheme()).toBe(true);
       expect(can.importSkillFiles()).toBe(true);
       expect(can.revealConfig()).toBe(true);
     });
@@ -268,7 +259,7 @@ describe('can', () => {
     /**
      * The re-render half. `useRemoteCapabilities` subscribes to this module
      * and reads `can.*` fresh, so an attachment that moves has to notify the
-     * same subscribers a snapshot change does — otherwise the five gates are
+     * same subscribers a snapshot change does — otherwise the three gates are
      * correct and the buttons on screen are not.
      */
     it('notifies subscribers when the attachment moves', async () => {

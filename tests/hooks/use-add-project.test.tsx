@@ -1,7 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { REMOTE_DISABLED_REASON } from '@config/runtime';
 import { useAddProject } from '@hooks/use-add-project';
 import {
   resetProjectConfig,
@@ -139,15 +138,15 @@ describe('useAddProject', () => {
 });
 
 /**
- * While attached to someone else's Hive (HIVE-144).
+ * While attached to someone else's Hive (HIVE-144, reworked by HIVE-146).
  *
- * `config:choose-directory` opens a dialog on the server, which has no
- * window — `WINDOW_BOUND` (`electron/shared/remote-contract.ts`) refuses it
- * by name. `disabledReason` is what both buttons (`projects-section.tsx`,
- * `new-project-link.tsx`) render as the control's `title`; `addProject`
- * itself must never reach the bridge, since a disabled control that still
- * fired its handler would be exactly the "button that fails silently" this
- * task exists to prevent.
+ * `config:choose-directory` opens a dialog on the server, which has no window,
+ * so `WINDOW_BOUND` refuses it by name and the hook must never reach it in
+ * this state. What changed is what happens instead: the control used to be
+ * disabled with that table's reason as its `title`, and now it opens the
+ * server-side picker. So the assertions below are about `picking` rather than
+ * a `disabledReason` that no longer exists — the negative half, that the
+ * dialog is never reached, is unchanged and is still the important one.
  */
 describe('useAddProject — attached to a remote server', () => {
   beforeEach(() => {
@@ -159,23 +158,20 @@ describe('useAddProject — attached to a remote server', () => {
     resetProjectConfig();
   });
 
-  it('reports no reason in local mode', () => {
+  it('opens the native dialog and not the picker in local mode', async () => {
     attachedTo(null);
+    chooseProjectDirectory.mockResolvedValue(null);
 
     const { result } = renderHook(() => useAddProject());
+    await act(async () => {
+      result.current.addProject();
+    });
 
-    expect(result.current.disabledReason).toBeNull();
+    expect(chooseProjectDirectory).toHaveBeenCalled();
+    expect(result.current.picking).toBe(false);
   });
 
-  it("carries WINDOW_BOUND's own reason once attached", () => {
-    attachedTo('mini.tail1234.ts.net');
-
-    const { result } = renderHook(() => useAddProject());
-
-    expect(result.current.disabledReason).toBe(REMOTE_DISABLED_REASON.chooseDirectory);
-  });
-
-  it('never opens the dialog while attached', async () => {
+  it('opens the picker and never the dialog while attached', async () => {
     attachedTo('mini.tail1234.ts.net');
 
     const { result } = renderHook(() => useAddProject());
@@ -183,7 +179,43 @@ describe('useAddProject — attached to a remote server', () => {
       result.current.addProject();
     });
 
+    expect(result.current.picking).toBe(true);
     expect(chooseProjectDirectory).not.toHaveBeenCalled();
+    expect(addProjectToConfig).not.toHaveBeenCalled();
+  });
+
+  it('writes the path the picker returned, then closes it', async () => {
+    attachedTo('mini.tail1234.ts.net');
+    addProjectToConfig.mockResolvedValue(undefined);
+
+    const { result } = renderHook(() => useAddProject());
+    await act(async () => {
+      result.current.addProject();
+    });
+    await act(async () => {
+      result.current.onPicked('/Users/me/Projects/app');
+    });
+
+    expect(addProjectToConfig).toHaveBeenCalledWith({
+      path: '/Users/me/Projects/app',
+    });
+    expect(result.current.picking).toBe(false);
+    // The picker is the only chooser in this state; the dialog stays untouched.
+    expect(chooseProjectDirectory).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing when the picker is cancelled', async () => {
+    attachedTo('mini.tail1234.ts.net');
+
+    const { result } = renderHook(() => useAddProject());
+    await act(async () => {
+      result.current.addProject();
+    });
+    await act(async () => {
+      result.current.cancelPicking();
+    });
+
+    expect(result.current.picking).toBe(false);
     expect(addProjectToConfig).not.toHaveBeenCalled();
   });
 });

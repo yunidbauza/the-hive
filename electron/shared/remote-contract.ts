@@ -53,11 +53,11 @@ export const REMOTE_PROTOCOL_VERSION = 2;
  * promote a `notify` to a `call` and the typing path acquires a round trip.
  *
  * - `call` — request/response. The client asks, the server answers with
- *   `result` or `error`. 100 channels.
+ *   `result` or `error`. 99 channels.
  * - `notify` — fire and forget, client to server, ordered per session. 6
  *   channels. Ordering between a `pty:write` and a `pty:resize` is observable,
  *   so a transport may not reorder them.
- * - `event` — server to client push. 24 channels, including `pty:data`, the
+ * - `event` — server to client push. 25 channels, including `pty:data`, the
  *   only hot path.
  * - `attach` — the handshake, and the only frame that may precede a version
  *   check. Exactly one per connection.
@@ -104,9 +104,10 @@ export type Authorization = 'read' | 'mutate' | 'execute';
  * forwarded `EVENT_CHANNELS` would lose every notification.
  */
 export const FRAME_KIND = {
-[CH.configGet]: 'call',
+  [CH.configGet]: 'call',
   [CH.configReload]: 'call',
   [CH.configChooseDirectory]: 'call',
+  [CH.configBrowseDirectory]: 'call',
   [CH.configAddProject]: 'call',
   [CH.configRemoveProject]: 'call',
   [CH.configRenameProject]: 'call',
@@ -236,8 +237,6 @@ export const FRAME_KIND = {
   [CH.agentsStatus]: 'event',
   [CH.agentsLines]: 'event',
   [CH.appInfo]: 'call',
-  [CH.themePick]: 'call',
-  [CH.themeSave]: 'call',
   [CH.uiForeground]: 'notify',
   [CH.uiSessionName]: 'notify',
 } as const satisfies Record<Channel, Exclude<FrameKind, 'attach'>>;
@@ -347,9 +346,16 @@ export const FRAME_KIND = {
  * (`sessions/index.ts`), so a client can ack sequences it never received.
  */
 export const CHANNEL_AUTHORIZATION = {
-[CH.configGet]: 'read',
+  [CH.configGet]: 'read',
   [CH.configReload]: 'mutate',
   [CH.configChooseDirectory]: 'read',
+  /*
+    The caller learns which directories exist under the answering machine's
+    home and nothing outlives the call, so `read` by this table's own
+    definition. It is not `mutate`: nothing is written, and the path it hands
+    back is only a suggestion `config:add-project` re-validates from scratch.
+  */
+  [CH.configBrowseDirectory]: 'read',
   [CH.configAddProject]: 'mutate',
   [CH.configRemoveProject]: 'mutate',
   [CH.configRenameProject]: 'mutate',
@@ -474,8 +480,6 @@ export const CHANNEL_AUTHORIZATION = {
   [CH.agentsStatus]: 'read',
   [CH.agentsLines]: 'read',
   [CH.appInfo]: 'read',
-  [CH.themePick]: 'read',
-  [CH.themeSave]: 'mutate',
   [CH.uiForeground]: 'mutate',
   [CH.uiSessionName]: 'mutate',
 } as const satisfies Record<Channel, Authorization>;
@@ -500,9 +504,23 @@ export const CHANNEL_AUTHORIZATION = {
  * silent failure rather than a loud one, which is worse.
  *
  * Refused by name instead, so a remote client gets a code it can act on and a
- * message naming the work. HIVE-146 deletes three of the event-dereferencing
- * ones as it lands each replacement — a server-side browser for the first, a
- * client-side import and export for the two theme ones.
+ * message naming the work.
+ *
+ * ## What HIVE-146 did, and why the table did not shrink by three
+ *
+ * It was written expecting to delete three entries. It deleted two.
+ *
+ * `theme:pick` and `theme:save` are gone outright, channels and all: a theme
+ * file lives on the machine the user is sitting at, so the renderer reads and
+ * writes it directly and there is nothing left for main to be asked.
+ *
+ * `config:choose-directory` **stays**, because nothing about it became
+ * answerable. A server still has no window to parent a dialog to. What changed
+ * is on the other side of the seam: the renderer now asks
+ * `config:browse-directory` instead while attached, and only opens the native
+ * dialog when it is local. So this entry is no longer a dead button's excuse —
+ * it is the reason a channel that would silently return `null` is refused by
+ * name if anything ever does call it from a socket.
  *
  * `skills:file:import` is the fourth of those and is **not** HIVE-146's, so
  * this table does not go away with it (HIVE-148). There is nothing to move to
@@ -529,13 +547,9 @@ export const CHANNEL_AUTHORIZATION = {
  */
 export const WINDOW_BOUND = {
   [CH.configChooseDirectory]:
-    'Choosing a directory opens a dialog on the server, which has no window. HIVE-146 replaces it with a server-side browser.',
+    'Choosing a directory opens a dialog on the server, which has no window. Browse the server’s folders with config:browse-directory instead.',
   [CH.skillsFileImport]:
     'Adding files to a skill opens a dialog on the server, which has no window — and would copy the server’s files, not yours. Drag them onto the skill instead.',
-  [CH.themePick]:
-    'Importing a theme reads a file on the machine the user is sitting at. HIVE-146 keeps it on the client.',
-  [CH.themeSave]:
-    'Exporting a theme writes a file on the machine the user is sitting at. HIVE-146 keeps it on the client.',
   [CH.configReveal]:
     'Revealing the config file opens Finder on the server, which nobody is sitting at — and while attached, Settings is already showing the server’s config, not this machine’s.',
 } as const satisfies Partial<Record<Channel, string>>;

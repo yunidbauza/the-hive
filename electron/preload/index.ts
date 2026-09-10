@@ -16,6 +16,8 @@ import type {
 } from '@shared/agent-contract';
 import type {
   AddProjectRequest,
+  BrowseDirRequest,
+  BrowseListing,
   CloneDoneEvent,
   CloneRequest,
   CloneStartResult,
@@ -147,7 +149,6 @@ import type {
   SlackStatus,
   SlackTokensState,
 } from '@shared/slack-contract';
-import type { PickedTheme, SaveThemeRequest } from '@shared/theme-contract';
 import type { UpdateStatus } from '@shared/update-contract';
 
 /**
@@ -242,6 +243,12 @@ const bridge: HiveBridge = {
     // follow a write with a reload.
     chooseDirectory: (): Promise<string | null> =>
       ipcRenderer.invoke(CH.configChooseDirectory),
+    // HIVE-146. Directories only, never a file's contents, and every path it
+    // returns has been contained under home by main before it leaves.
+    browseDirectory: (
+      request: BrowseDirRequest,
+    ): Promise<FsResult<BrowseListing>> =>
+      ipcRenderer.invoke(CH.configBrowseDirectory, request),
     addProject: (request: AddProjectRequest): Promise<ConfigSnapshot> =>
       ipcRenderer.invoke(CH.configAddProject, request),
     removeProject: (request: RemoveProjectRequest): Promise<ConfigSnapshot> =>
@@ -732,13 +739,6 @@ const bridge: HiveBridge = {
       ipcRenderer.invoke(CH.sessionNote, request),
     pr: (request: SessionPrRequest): Promise<void> =>
       ipcRenderer.invoke(CH.sessionPr, request),
-  },
-  // HIVE-80. Neither verb takes a destination path — the dialog chooses it —
-  // so this does not widen the bridge into a general file picker.
-  theme: {
-    pick: (): Promise<PickedTheme | null> => ipcRenderer.invoke(CH.themePick),
-    save: (request: SaveThemeRequest): Promise<string | null> =>
-      ipcRenderer.invoke(CH.themeSave, request),
   },
   // HIVE-81. `send`, not `invoke`: it fires on every tab switch and overlay
   // toggle and has no answer worth waiting for.

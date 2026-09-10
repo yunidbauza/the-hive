@@ -24,6 +24,7 @@ import { mintDevice, type MintedDevice } from '../../electron/main/server/device
 import {
   CONFIG_PATH_ENV,
   CONFIG_VERSION,
+  type BrowseListing,
   type ConfigSnapshot,
   type SetRemoteResult,
 } from '../../electron/shared/config-contract';
@@ -125,7 +126,12 @@ import {
  * 12. `fs:read-file` through a symlink out of the project carries `EOUTSIDE`
  *     **as a `result`**, not as an `error` frame.
  * 13. The same for `ENOENT`, which is the code the editor branches on.
- * 14. `config:choose-directory` is refused `window-bound`, naming HIVE-146.
+ * 14. `config:choose-directory` is refused `window-bound`, naming the browse
+ *     channel that replaced it.
+ * 26. `config:browse-directory` answers a real listing of the answering
+ *     machine’s home, contained, over the socket (HIVE-146).
+ * 27. A path outside that home is refused `EOUTSIDE` as a `result` frame, not
+ *     an `error` — the shape cases 12 and 13 established for the fs verbs.
  * 15. `ledger:changed` and `agents:changed` reach the attached client.
  * 16. A socket killed mid-output resumes contiguously, transcript whole.
  * 17. A gap forced past `REPLAY_BYTES` is marked on attach by one empty
@@ -1944,7 +1950,63 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       const result = await client.call(CH.configChooseDirectory, undefined);
 
       expect(result).toMatchObject({ kind: 'error', code: 'window-bound' });
-      expect((result as ErrorFrame).message).toMatch(/HIVE-146/);
+      // The refusal names the route forward rather than a ticket (HIVE-146).
+      expect((result as ErrorFrame).message).toMatch(/config:browse-directory/);
+    }, 30_000);
+
+    /**
+     * 26. The replacement for the channel case 14 refuses (HIVE-146).
+     *
+     * What this adds over `home-browse.test.ts` is the wire: a real listing,
+     * resolved by the process that answered, arriving as a `result` frame with
+     * its shape intact.
+     *
+     * What it deliberately does **not** claim is that the home is the
+     * *server's* rather than the client's. Both apps in this suite run on one
+     * machine and inherit one `HOME`, so the two are the same directory here
+     * and no assertion could tell them apart. That half is the unit test's,
+     * where `HOME` is moved to a temporary directory and the resolution is
+     * observed directly.
+     */
+    it('26. answers a real listing of the answering machine’s home', async () => {
+      const client = await attached();
+
+      const result = await client.call(CH.configBrowseDirectory, { path: '' });
+
+      expect(result).toMatchObject({ kind: 'result', payload: { ok: true } });
+      const listing = (result as { payload: { value: BrowseListing } }).payload
+        .value;
+
+      expect(listing.home).toBe(realpathSync(homedir()));
+      expect(listing.path).toBe(listing.home);
+      // Every offered path is a directory inside that root — the containment
+      // the fence promises, observed on what actually crossed the socket.
+      for (const entry of listing.entries) {
+        expect(entry.kind).toBe('directory');
+        expect(entry.path.startsWith(`${listing.home}/`)).toBe(true);
+      }
+    }, 30_000);
+
+    /**
+     * 27. The fence, over a real socket.
+     *
+     * `home-browse.test.ts` proves containment against a temporary home in
+     * process. This proves the same refusal survives the wire: an `FsResult`
+     * failure arrives as a **`result`** frame carrying `EOUTSIDE`, the way
+     * cases 12 and 13 established for the fs verbs, rather than as an `error`
+     * frame the renderer's wrappers would swallow.
+     */
+    it('27. refuses a path outside the server’s home, as a result not an error', async () => {
+      const client = await attached();
+
+      const result = await client.call(CH.configBrowseDirectory, {
+        path: '/etc',
+      });
+
+      expect(result).toMatchObject({
+        kind: 'result',
+        payload: { ok: false, error: { code: 'EOUTSIDE' } },
+      });
     }, 30_000);
 
     it('15. delivers ledger:changed and agents:changed to the attached client', async () => {

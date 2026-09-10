@@ -25,8 +25,6 @@ function setup(overrides: Partial<Props> = {}) {
     onRename: vi.fn(),
     onChangeKey: vi.fn(),
     onRepoint: vi.fn(),
-    canRepoint: true,
-    repointDisabledReason: null,
     onRemove: vi.fn(),
     ...overrides,
   };
@@ -171,39 +169,34 @@ describe('ProjectRowMenu · Change key…', () => {
 });
 
 /**
- * *Change folder…* while attached (HIVE-144).
+ * *Change folder…* has no attached state left (HIVE-144, undone by HIVE-146).
  *
- * `config:choose-directory` opens a dialog on the server, which has no
- * window — see `WINDOW_BOUND` (`electron/shared/remote-contract.ts`). The
- * caller (`projects-list.tsx`) computes `canRepoint` from `can.chooseDirectory()`
- * and passes it straight through; this only proves the menu item itself
- * disables on the prop and never fires its handler when it does.
+ * It used to take `canRepoint` and `repointDisabledReason`, computed by
+ * `projects-list.tsx` from `can.chooseDirectory()`, because
+ * `config:choose-directory` opens a dialog on the server and a server has no
+ * window. Repointing now opens the server-side picker instead, and a folder on
+ * the server is the *right* answer for a project that lives there — so the two
+ * props are gone and the item is unconditional.
+ *
+ * Kept as a test rather than deleted: an unconditional menu item is a claim
+ * worth holding, and this is what fails if a capability gate is reintroduced.
  */
-describe('Change folder… while attached', () => {
-  it('disables the item and carries the server refusal as its title', async () => {
-    const props = setup({
-      canRepoint: false,
-      repointDisabledReason: 'Choosing a directory opens a dialog on the server.',
-    });
-    await open();
-
-    const item = screen.getByRole('menuitem', { name: /change folder/i });
-    expect(item).toHaveAttribute('aria-disabled', 'true');
-    expect(item).toHaveAttribute(
-      'title',
-      'Choosing a directory opens a dialog on the server.',
-    );
-
-    await userEvent.click(item);
-    expect(props.onRepoint).not.toHaveBeenCalled();
-  });
-
-  it('stays enabled with no reason when the dialog is available', async () => {
-    setup({ canRepoint: true, repointDisabledReason: null });
+describe('Change folder…', () => {
+  it('is always enabled, with no refusal to carry', async () => {
+    setup();
     await open();
 
     const item = screen.getByRole('menuitem', { name: /change folder/i });
     expect(item).not.toHaveAttribute('aria-disabled', 'true');
     expect(item).not.toHaveAttribute('title');
+  });
+
+  it('fires its handler', async () => {
+    const props = setup();
+    await open();
+
+    await userEvent.click(screen.getByRole('menuitem', { name: /change folder/i }));
+
+    expect(props.onRepoint).toHaveBeenCalled();
   });
 });
