@@ -3136,9 +3136,9 @@ export function registerIpcHandlers(
     `router.ts` can hand the *exact same* closure to `registerRemoteProxy` as
     `localAppInfo` — the answer `CH.appInfo` gets while attached, computed
     locally rather than proxied to the far end. See `isProcessLocal`'s own doc
-    comment (`@shared/remote-contract`) for why this channel, alone among the
-    ones this file answers, must never be forwarded: every field below
-    describes *this* process, not the fleet it may be attached to.
+    comment (`@shared/remote-contract`) for why this channel is one of the six
+    this file answers that must never be forwarded: every field below describes
+    *this* process, not the fleet it may be attached to.
   */
   function buildAppInfo(): AppInfo {
     const { electron, chrome, node } = process.versions;

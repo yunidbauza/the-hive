@@ -106,13 +106,17 @@ export function registerIpc(mode: IpcMode, options: RegisterIpcOptions = {}): vo
         own pairing revoked from the near machine's UI, and the clicking
         user's credential untouched.
 
-        Built fresh at each registration for `localSetRemote`'s reason, and
-        the store with them: `remoteCredentialStore()` is the one function
-        allowed to spell that filename, precisely so a credential paired from
-        the local handler is looked for by the proxy at the same path. Calling
-        it here rather than hoisting a module-scope store also keeps the
+        Built fresh at each registration for `localSetRemote`'s reason. The
+        store is finer-grained still — one per *invocation*, constructed inside
+        the arrow bodies rather than closed over — which `readRemoteCredential`
+        already does and which `createTokenStore` is written for: it caches
+        nothing and holds no handle, so a per-call store and a hoisted one
+        behave identically. Constructing it here keeps the
         `app.getPath('userData')` read inside a function that only ever runs
-        after the app is ready.
+        after the app is ready, and it goes through `remoteCredentialStore()`
+        because that is the one function allowed to spell the filename —
+        precisely so a credential paired from the local handler is looked for
+        by the proxy at the same path.
       */
       localRemotePair: (payload) => applyRemotePair(payload, remoteCredentialStore()),
       localRemoteForget: () => applyRemoteForget(remoteCredentialStore()),

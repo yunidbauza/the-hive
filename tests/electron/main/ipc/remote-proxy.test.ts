@@ -388,6 +388,37 @@ describe('registerRemoteProxy', () => {
       );
     });
 
+    /*
+      Structural, rather than mediated by the count above (self review, item
+      7). `localAnswerFor`'s `default` arm returns `null`, and a `null` local
+      answer falls straight through to `client.call` — so a seventh channel
+      added to `PROCESS_LOCAL` and forgotten in that switch would be proxied
+      again, silently, which is the exact defect the list exists to prevent.
+
+      The length assertion makes someone look; this makes the compiler's job
+      the test's job. Every member must resolve to something, and nothing on
+      the list may reach the socket. Deliberately driven through `invoke`
+      rather than by reading the switch, because what is being pinned is the
+      binding's behaviour, not the helper's shape.
+    */
+    it('answers every PROCESS_LOCAL channel locally, with the socket untouched', async () => {
+      const client = fakeClient();
+      registerRemoteProxy({
+        client,
+        broadcaster: fakeBroadcaster(),
+        localAppInfo: fakeAppInfo,
+        localSetRemote: vi.fn().mockResolvedValue(undefined),
+        localRemotePair: vi.fn().mockReturnValue({ paired: true }),
+        localRemoteForget: vi.fn(),
+      });
+
+      for (const channel of PROCESS_LOCAL) {
+        await invoke(channel, trustedEvent, { deviceId: 'laptop', token: 'sekret' });
+      }
+
+      expect(client.call).not.toHaveBeenCalled();
+    });
+
     it('answers app:info from localAppInfo, never client.call', async () => {
       const client = fakeClient();
       registerRemoteProxy({ client, broadcaster: fakeBroadcaster(), localAppInfo: fakeAppInfo });

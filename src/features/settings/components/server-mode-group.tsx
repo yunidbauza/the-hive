@@ -862,8 +862,9 @@ export function ServerModeGroup({
           {attached ? (
             <p className="text-[11.5px] text-subtle">
               The address fields are hidden while attached — they would
-              describe the server&rsquo;s config, not this machine&rsquo;s.
-              Detach to change where this window attaches.
+              describe the server&rsquo;s config, not this machine&rsquo;s — and
+              so is Attach, with a socket already open. Detach to change where
+              this window attaches.
             </p>
           ) : (
           <div className="grid grid-cols-[1fr_96px] gap-2">
