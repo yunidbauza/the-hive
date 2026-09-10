@@ -26,6 +26,19 @@ const checkForUpdatesInteractively = vi.fn(() => Promise.resolve('FAKE_UPDATE_CH
 vi.mock('../../../../electron/main/updates', () => ({ updateStatus, checkForUpdatesInteractively }));
 
 /**
+ * `readLocalRemote` (HIVE-149), mocked for the reason the two above are: the
+ * `PROCESS_LOCAL` arm imports it directly, so the spec controls what it answers
+ * and can prove the arm reached *it* rather than `client.call`.
+ */
+const readLocalRemote = vi.fn(() => ({
+  mode: 'remote',
+  host: 'mini.tail1234.ts.net',
+  port: 7433,
+}));
+vi.mock('../../../../electron/main/ipc/get-remote', () => ({ readLocalRemote }));
+
+
+/**
  * `registerRemoteProxy`, the other end of `registerIpcHandlers` (HIVE-144).
  *
  * `electron`'s `ipcMain` is mocked the way `bindings.test.ts` mocks its own
@@ -36,8 +49,8 @@ vi.mock('../../../../electron/main/updates', () => ({ updateStatus, checkForUpda
  *
  * The three channel lists below are derived from `FRAME_KIND` — the same
  * table `registerRemoteProxy` itself walks — but the counts asserted against
- * them (99, 6, 26, 105) are literals, not read back off the derived lists.
- * `tests/shared/remote-contract.test.ts:58,93` pins the same four numbers
+ * them (100, 6, 26, 106) are literals, not read back off the derived lists.
+ * `tests/shared/remote-contract.test.ts:82,125` pins the same four numbers
  * independently. A channel added to the contract without a home in this file
  * fails a count here, which is the point: a self-referential assertion could
  * never catch that, only a literal one can.
@@ -191,7 +204,7 @@ afterEach(() => {
 
 describe('registerRemoteProxy', () => {
   it('binds every call channel to the client', () => {
-    expect(callChannels.length).toBe(99);
+    expect(callChannels.length).toBe(100);
 
     registerRemoteProxy({ client: fakeClient(), broadcaster: fakeBroadcaster() });
 
@@ -501,7 +514,7 @@ describe('registerRemoteProxy', () => {
   it('records every binding, so the mode can be switched back', () => {
     registerRemoteProxy({ client: fakeClient(), broadcaster: fakeBroadcaster() });
 
-    expect(remoteProxyBindingsSize()).toBe(105);
+    expect(remoteProxyBindingsSize()).toBe(106);
   });
 
   /**
@@ -514,12 +527,13 @@ describe('registerRemoteProxy', () => {
    * on `config:set-remote` (Ruling 28), then on `remote:pair` and
    * `remote:forget` (HIVE-153).
    */
-  describe('PROCESS_LOCAL channels (HIVE-144 Rulings 24 and 28, HIVE-153)', () => {
-    it('names exactly six channels', () => {
-      expect(PROCESS_LOCAL.length).toBe(6);
+  describe('PROCESS_LOCAL channels (HIVE-144 Rulings 24 and 28, HIVE-153, HIVE-149)', () => {
+    it('names exactly seven channels', () => {
+      expect(PROCESS_LOCAL.length).toBe(7);
       expect([...PROCESS_LOCAL].sort()).toEqual(
         [
           'app:info',
+          'config:get-remote',
           'config:set-remote',
           'remote:forget',
           'remote:pair',
@@ -567,6 +581,26 @@ describe('registerRemoteProxy', () => {
       await expect(invoke('app:info', trustedEvent, undefined)).resolves.toBe('FAKE_APP_INFO');
 
       expect(fakeAppInfo).toHaveBeenCalledTimes(1);
+      expect(client.call).not.toHaveBeenCalled();
+    });
+
+    /*
+      HIVE-149. The defect in one assertion: while attached, asking for this
+      machine's own `remote` block must not reach the socket, because what comes
+      back over it describes the *server* — whose own `mode` reads `local`,
+      because the server is the thing being attached to.
+    */
+    it('answers config:get-remote from this process, never client.call', async () => {
+      const client = fakeClient();
+      registerRemoteProxy({ client, broadcaster: fakeBroadcaster(), localAppInfo: fakeAppInfo });
+
+      await expect(invoke('config:get-remote', trustedEvent, undefined)).resolves.toEqual({
+        mode: 'remote',
+        host: 'mini.tail1234.ts.net',
+        port: 7433,
+      });
+
+      expect(readLocalRemote).toHaveBeenCalledTimes(1);
       expect(client.call).not.toHaveBeenCalled();
     });
 
@@ -800,8 +834,8 @@ describe('registerRemoteProxy', () => {
     // pins — not `callChannels.length + notifyChannels.length`, which would
     // recompute its own expectation from the same source the code under test
     // reads and could never catch a channel silently lost between the two.
-    expect(removeHandler).toHaveBeenCalledTimes(105);
-    expect(removeAllListeners).toHaveBeenCalledTimes(105);
+    expect(removeHandler).toHaveBeenCalledTimes(106);
+    expect(removeAllListeners).toHaveBeenCalledTimes(106);
     expect(remoteProxyBindingsSize()).toBe(0);
 
     client.emit('pty:data', { seq: 2 });

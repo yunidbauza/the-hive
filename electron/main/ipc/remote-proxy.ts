@@ -13,8 +13,10 @@ import { createRemoteToasts, type RemoteToasts } from '../notifications/remote-t
 import { checkForUpdatesInteractively, updateStatus } from '../updates';
 
 
+
 import { createBindings, type Bindings } from './bindings';
 import type { Broadcaster } from './broadcaster';
+import { readLocalRemote } from './get-remote';
 import { createForegroundStamp, type ForegroundStamp } from './remote-foreground';
 import type { ResumeTracker } from './resume-tracker';
 import { assertSender } from './sender';
@@ -36,6 +38,13 @@ import { assertSender } from './sender';
  * inside one call to `registerIpcHandlers`), so it cannot be imported the
  * same way — `localAppInfo` is handed down instead, the same seam
  * `switchMode` already crosses for the identical reason.
+ *
+ * `CH.configGetRemote` is the seventh (HIVE-149), and it goes back to
+ * `updateStatus`'s shape rather than `localSetRemote`'s: a read verb the
+ * renderer calls with nothing, whose answerer is a module function this file
+ * may import outright. `electron/main/ipc/get-remote.ts` exists so that this
+ * arm and `ipc/index.ts`'s local handler answer the channel with the same
+ * expression rather than with two copies of it that can drift.
  *
  * `CH.configSetRemote` is the fourth, added by Ruling 28, and it is the one
  * that made this table take a **payload**. The other three are read verbs a
@@ -84,6 +93,14 @@ function localAnswerFor(
       return (payload) => deps.localRemotePair(payload);
     case CH.remoteForget:
       return () => deps.localRemoteForget();
+    /*
+      HIVE-149. Imported rather than handed down, like `updateStatus` above and
+      unlike `localSetRemote` below it: `readLocalRemote` closes over no
+      registration state, and `electron/main/config/index.ts` reaches nothing
+      under `ipc/`, so there is no cycle to route around.
+    */
+    case CH.configGetRemote:
+      return () => readLocalRemote();
     default:
       return null;
   }
