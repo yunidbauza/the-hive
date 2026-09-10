@@ -17,6 +17,11 @@ describe('parseInvocation', () => {
     expect(parseInvocation(devArgv('--server'), false)).toEqual({ kind: 'app', server: true });
   });
 
+  it('reads --update in both packaged and dev argv', () => {
+    expect(parseInvocation(packagedArgv('--update'), true)).toEqual({ kind: 'update' });
+    expect(parseInvocation(devArgv('--update'), false)).toEqual({ kind: 'update' });
+  });
+
   it('does not mistake a path containing --server for the flag', () => {
     expect(parseInvocation(['/opt/--server/The Hive'], true)).toEqual({ kind: 'app', server: false });
   });
@@ -72,6 +77,13 @@ describe('parseInvocation', () => {
 
   it('prefers --pair over --devices when both are present, regardless of order', () => {
     expect(parseInvocation(packagedArgv('--devices', '--pair', 'MacBook'), true)).toEqual({
+      kind: 'pair',
+      name: 'MacBook',
+    });
+  });
+
+  it('prefers pairing over updating when both are present', () => {
+    expect(parseInvocation(packagedArgv('--update', '--pair', 'MacBook'), true)).toEqual({
       kind: 'pair',
       name: 'MacBook',
     });

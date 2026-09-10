@@ -19,10 +19,11 @@ import {
 } from './server/devices';
 import { fileBackedIo, serverDeviceStore } from './server/file-backed-io';
 import { runOneShot } from './server/one-shot';
+import { claimServerLock } from './server/server-lock';
 import { setServerMode } from './server-mode';
 import { onShutdown } from './shutdown';
 import { createServerTray } from './tray';
-import { startUpdateChecks } from './updates';
+import { runHeadlessUpdate, startUpdateChecks } from './updates';
 import { createWindow } from './window';
 
 /**
@@ -91,9 +92,17 @@ if (!app.isPackaged && !app.commandLine.hasSwitch('user-data-dir')) {
   server stores a digest rather than a secret.
 */
 const invocation = parseInvocation(process.argv, app.isPackaged);
-if (invocation.kind !== 'app') {
+if (invocation.kind === 'update') {
+  void app
+    .whenReady()
+    .then(() => runHeadlessUpdate())
+    .catch((cause: unknown) => {
+      console.log(`[hive] could not update: ${cause instanceof Error ? cause.message : String(cause)}`);
+      app.exit(1);
+    });
+} else if (invocation.kind !== 'app') {
   process.exit(runOneShot(invocation, fileBackedIo()));
-}
+} else {
 
 /**
  * The single-instance lock, before anything else is wired — everything below
@@ -180,6 +189,15 @@ if (!app.requestSingleInstanceLock()) {
    */
   const serverMode = invocation.server || getConfig().server.enabled;
   setServerMode(serverMode);
+
+  if (serverMode) {
+    const serverLock = claimServerLock();
+    if (serverLock.kind === 'active') {
+      console.error('[hive] cannot start server: another server is already running for this config.');
+      process.exit(1);
+    }
+    onShutdown(serverLock.release);
+  }
 
   registerIpc('local');
   /*
@@ -348,4 +366,5 @@ if (!app.requestSingleInstanceLock()) {
   onShutdown(() => serverTray?.destroy());
 
   registerLifecycle({ createWindow, serverMode });
+}
 }

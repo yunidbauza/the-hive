@@ -1,11 +1,18 @@
 import { app, type BrowserWindow, dialog, shell } from 'electron';
 
-import { idleUpdateStatus, type UpdateStatus } from '@shared/update-contract';
+import {
+  idleUpdateStatus,
+  RELEASES_URL,
+  releaseUrlFor,
+  type UpdateStatus,
+} from '@shared/update-contract';
 
 import { primaryWindow } from '../aux-windows';
+import { claimServerLock, serverLockPath } from '../server/server-lock';
 
 import { probeUpdateCapability } from './capability';
 import { createElectronUpdaterEngine } from './engine';
+import { runUpdateOneShot } from './one-shot';
 import { createUpdater, type Updater } from './updater';
 
 /**
@@ -197,6 +204,28 @@ export async function downloadUpdate(): Promise<void> {
 export async function installUpdate(): Promise<void> {
   const instance = await ensureUpdater();
   await instance.install();
+}
+
+/**
+ * Run the no-UI update command after Electron is ready.
+ *
+ * The updater engine needs Electron's initialized app object, but no normal
+ * boot service does: this path intentionally does not call `ensureUpdater()`,
+ * whose interactive collaborators include dialogs and opening a browser.
+ */
+export async function runHeadlessUpdate(): Promise<void> {
+  const currentVersion = app.getVersion();
+  const code = await runUpdateOneShot({
+    capability: await probeUpdateCapability(),
+    currentVersion,
+    engine: createElectronUpdaterEngine(currentVersion),
+    acquireLock: () => claimServerLock(serverLockPath()),
+    releaseUrlFor,
+    releasesUrl: RELEASES_URL,
+    print: (line) => console.log(line),
+    onInstallFailure: () => app.exit(1),
+  });
+  if (code !== null) app.exit(code);
 }
 
 export function updateStatus(): UpdateStatus {

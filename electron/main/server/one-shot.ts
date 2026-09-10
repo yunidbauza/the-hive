@@ -51,6 +51,9 @@ export function runOneShot(
       return runRevoke(invocation.name, io);
     case 'devices':
       return runDevices(io);
+    case 'update':
+      // `index.ts` routes this asynchronous command through `runHeadlessUpdate`.
+      return 1;
     case 'usage':
       io.print(invocation.message);
       return 1;
