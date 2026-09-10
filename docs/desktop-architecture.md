@@ -593,7 +593,13 @@ Three things are worth knowing before touching this:
   went away. The status carries a **reattach epoch**, and the renderer effects
   that own that state depend on it. Terminals deliberately do not — their
   continuity is what `resumeFrom` buys, and remounting one discards the
-  scrollback the resume just saved.
+  scrollback the resume just saved. The foreground report is the one with
+  fleet-wide stakes: since HIVE-154 a row is read only when *every* surface is
+  watching, so a returning client that never re-reported would make every
+  block arrive unread for every device. `useForegroundSession` re-sends on the
+  epoch, and live case 21m proves it across a real cut (HIVE-160). The main
+  process's foreground stamp is reset with the proxy and does not re-send on
+  its own — the renderer's report is the only one.
 
 Which resume points ride in the attach frame is bounded twice: watched sessions
 only — a session with no mounted terminal has no scrollback here to preserve —
