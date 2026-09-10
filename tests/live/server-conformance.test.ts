@@ -3356,11 +3356,28 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       expect(attachedText).toContain(hostname());
       expect(attachedText).toMatch(/hidden while attached/i);
       expect(await ui.evaluate<boolean>(addressField)).toBe(false);
+      /*
+        **Forget is present while attached, and that is HIVE-153's fix rather
+        than a regression in this one.**
+
+        This asserted `false` when the pairing block sat inside the
+        `attached ?` branch and `remote:forget` was *proxied* — a click then
+        cleared the **server's** stored credential, so hiding the control was
+        the only safe thing to do. HIVE-153 made both pairing verbs answer on
+        this machine, which is what makes the control correct to offer here:
+        it forgets what *this* window was handed, and, as its own hint says,
+        does not end a live attachment.
+
+        Corrected on this branch because this is the branch that runs the live
+        suite. HIVE-153 shipped without it — `pnpm test:server` is not part of
+        the routine gate — so `origin/main` fails this case on its own, and the
+        merge is simply where it became visible.
+      */
       expect(
         await ui.evaluate<boolean>(
           `[...document.querySelectorAll('button')].some((b) => /^Forget$/.test(b.textContent.trim()))`,
         ),
-      ).toBe(false);
+      ).toBe(true);
       // Confirmed against the runtime, not only the pixels: the pane is
       // describing a socket that is genuinely open.
       expect((await ui.evaluate<AppInfo>('window.hive.appInfo()')).attachedServerName).toBe(hostname());
