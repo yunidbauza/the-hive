@@ -141,6 +141,16 @@ beforeEach(() => {
   state().reset();
   asDesktop();
   readJiraStatus.mockResolvedValue(jiraStatus());
+  /*
+    `applyModeChange` kicks *both* sweeps, so a case about one side still
+    starts the other. Parked here rather than per case: the PR cases used to
+    park only `gh`, and the kicked ticket sweep reached a bare `vi.fn()` whose
+    `undefined` threw in `refreshTickets` as four unhandled rejections — which
+    fail `pnpm test` outright. `vi.clearAllMocks` keeps a `mockReturnValue`,
+    so only cases that ran after a ticket case happened to be covered.
+  */
+  readPullRequests.mockReturnValue(never());
+  searchJiraIssues.mockReturnValue(never());
 });
 
 // `asDesktop` is a global flag, and leaving it set leaks into every file that
