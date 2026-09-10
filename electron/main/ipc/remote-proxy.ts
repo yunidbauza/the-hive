@@ -332,6 +332,13 @@ export function registerRemoteProxy(deps: {
   bindings = createBindings(ipcMain);
   remoteToasts = createRemoteToasts({
     call: (channel, payload) => client.call(channel, payload),
+    /*
+      The same function the `notifications:act` payload route answers with
+      (HIVE-151), so a `url` reaches the same place whether the user clicked
+      the desktop toast or the inbox row. One notification cannot come to mean
+      two different things depending on where it was clicked.
+    */
+    activateHere: activateOnThisMachine,
   });
 
   foregroundStamp = createForegroundStamp((channel, payload) => {

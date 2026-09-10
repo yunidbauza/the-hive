@@ -3,7 +3,8 @@ import { Notification } from 'electron';
 import { CH, type Channel } from '@shared/ipc-contract';
 import {
   isNotificationKind,
-  type NotificationAction,
+  isThisMachineAction,
+  type ThisMachineAction,
   type ToastPayload,
 } from '@shared/notification-contract';
 
@@ -41,29 +42,6 @@ import { focusThisMachine } from './activate-here';
  * the row and the fleet are on the server. The window focus is the one part
  * that stays here: it is this machine's window the user needs raised.
  */
-
-/**
- * Actions whose click is answered on the machine that *receives* the call
- * rather than the one that asked (HIVE-151).
- *
- * `url` reaches `shell.openExternal` and `update.*` reach this process's own
- * updater singleton, so sending either over the socket opens a browser on the
- * server or drives the wrong updater. They are unreachable from here today —
- * the toast queue holds only `session.blocked`, `session.input_needed`,
- * `agent.ask` and `agent.permission`, whose actions are `session`, `ask` and
- * `agent`, all legitimately fleet-scoped — but "unreachable by which kinds
- * happen to arrive" is a property of the caller, not of this code.
- *
- * So it is checked rather than assumed. HIVE-151 is what makes the routing
- * right by construction; until it lands, a toast carrying one of these is
- * dropped with a line saying so rather than acted on against the wrong machine.
- */
-const SERVER_SCOPED: readonly NotificationAction['type'][] = [
-  'session',
-  'ask',
-  'agent',
-  'none',
-];
 
 export interface RemoteToasts {
   /**
@@ -110,10 +88,18 @@ function asToast(payload: unknown): ToastPayload | null {
 export interface RemoteToastOptions {
   /** Call a channel on the attached server — `RemoteClient.call`. */
   call: (channel: Channel, payload: unknown) => Promise<unknown>;
+  /**
+   * Carry out an action that belongs to **this** machine (HIVE-151).
+   *
+   * `activateOnThisMachine`, injected rather than imported, so this module
+   * keeps the one dependency it had and its test can prove which of the two
+   * paths a click took without mocking a browser.
+   */
+  activateHere: (action: ThisMachineAction) => void;
 }
 
 export function createRemoteToasts(options: RemoteToastOptions): RemoteToasts {
-  const { call } = options;
+  const { call, activateHere } = options;
   /** Logged once per distinct reason, as the local presenter does. */
   let refusal: string | null = null;
   let disposed = false;
@@ -137,14 +123,6 @@ export function createRemoteToasts(options: RemoteToastOptions): RemoteToasts {
       }
       const { id, title, body, action } = toast;
 
-      if (!SERVER_SCOPED.includes(action.type)) {
-        console.warn(
-          `[hive] dropped a remote toast whose ${action.type} action would act on the ` +
-            'wrong machine — see HIVE-151',
-        );
-        return;
-      }
-
       // False on a Linux box with no notification daemon, and checked per send
       // rather than once at boot: the daemon can come and go while the app runs,
       // and constructing one when unsupported throws.
@@ -153,6 +131,28 @@ export function createRemoteToasts(options: RemoteToastOptions): RemoteToasts {
       const notification = new Notification({ title, body });
 
       notification.on('click', () => {
+        /*
+          Routed by the action, not by the channel (HIVE-151).
+
+          This used to be an allowlist that *dropped* anything it did not
+          recognise, because a `url` sent back over the socket would open a
+          browser on the server and an `update.*` would drive the server's
+          updater. `ACTION_SCOPE` answers that now, and the answer is better
+          than a drop: a `url` clicked here opens a browser here, which is
+          what the person who clicked it wanted.
+
+          No dismiss on this path, and that is not an omission. The row lives
+          on the server and a machine-local action does not resolve it — the
+          update is still available, the link still worth keeping — so the
+          toast is the interruption and the row stays until the user says
+          otherwise. `activateHere` focuses this machine itself, so there is
+          no focus call here either.
+        */
+        if (isThisMachineAction(action)) {
+          activateHere(action);
+          return;
+        }
+
         focusThisMachine();
         /*
           Fire-and-forget, and the rejection is swallowed on purpose: a socket
