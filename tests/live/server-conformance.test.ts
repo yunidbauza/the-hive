@@ -34,6 +34,7 @@ import {
   type AppInfo,
   type Channel,
   type DataEvent,
+  type RemoteLinkStatus,
 } from '../../electron/shared/ipc-contract';
 import {
   CALL_DEADLINE_MS,
@@ -665,6 +666,37 @@ async function waitFor(predicate: () => boolean, what: string, timeoutMs = 30_00
     await delay(25);
   }
   throw new Error(`timed out after ${String(timeoutMs)}ms waiting for ${what}`);
+}
+
+/**
+ * {@link waitFor} for a condition that has to be *asked for* (HIVE-150).
+ *
+ * Its own function rather than a widened `waitFor`: every existing caller polls
+ * a value this process already holds, at 25ms, and each of those polls is free.
+ * This one is a CDP round trip into another process's renderer, so it polls
+ * far more slowly and tolerates a throw — a window mid-reload answers by
+ * failing, and that is a "not yet", not a fault.
+ */
+async function waitForAsync(
+  predicate: () => Promise<boolean>,
+  what: string,
+  timeoutMs = 60_000,
+): Promise<void> {
+  const start = Date.now();
+  let lastError: unknown;
+  while (Date.now() - start < timeoutMs) {
+    try {
+      if (await predicate()) return;
+      lastError = undefined;
+    } catch (cause) {
+      lastError = cause;
+    }
+    await delay(250);
+  }
+  throw new Error(
+    `timed out after ${String(timeoutMs)}ms waiting for ${what}` +
+      (lastError === undefined ? '' : ` (last attempt threw: ${String(lastError)})`),
+  );
 }
 
 /**
@@ -3430,6 +3462,159 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       });
       await onServer.collectPtyUntil(watchedSessionId, /STILL-ALIVE/);
     }, 120_000);
+
+    /**
+     * The reconnect, against two real apps (HIVE-150).
+     *
+     * HIVE-144's own delivery notes list "nothing re-attaches after a socket
+     * drops" as a deliberately deferred gap, and every case above it left the
+     * client attached to a server that stayed up. This is the case where the
+     * server goes away underneath a real attached window.
+     *
+     * It has to be here rather than in the raw-`ws` block, for this block's own
+     * stated reason: the reconnect lives on `ipcMain`. `router.ts` holds the
+     * client, `remote-proxy.ts` holds bindings that close over it, and the loop
+     * rebinds them — none of which a socket on the *server* can see. The
+     * renderer is the only caller that can.
+     */
+    it('21k. reattaches on its own after the server disappears, and resumes the transcript', async () => {
+      assert(renderer !== undefined, 'the client app must have a renderer');
+      assert(credential !== null, 'case 21b must have paired this client');
+
+      /*
+        The window records every link status it is pushed. Installed *before*
+        the attach, so the `attached` this case starts from is captured too —
+        and because a subscription installed after a drop would miss the very
+        transition it exists to observe.
+      */
+      await renderer.evaluate(
+        'window.__link = null; window.hive.remote.onLinkStatus((status) => { window.__link = status; }); true',
+      );
+
+      /*
+        Attach again. Case 21i left this window local on purpose, and a case
+        that inherited an attachment would be resting on its predecessor's
+        teardown rather than on its own fixture.
+
+        Polled rather than asserted once, because HIVE-144's interlock is real
+        and this case has to clear it rather than pretend it is not there:
+        local → remote is refused while a local session is live, 21i spawned
+        one and killed it, and a pty takes a moment to actually die. A
+        `live-sessions` refusal here is "not yet"; anything else is a failure,
+        and the last one seen is what the timeout reports.
+      */
+      let lastRefusal: SetRemoteResult['switched'] | undefined;
+      await waitForAsync(
+        async () => {
+          const result = await renderer!.evaluate<SetRemoteResult>(
+            `window.hive.config.setRemote({ mode: 'remote', host: '127.0.0.1', port: ${String(serverPort)} })`,
+          );
+          lastRefusal = result.switched;
+          if (result.switched.ok) return true;
+          if (result.switched.reason !== 'live-sessions') {
+            throw new Error(`the re-attach was refused: ${JSON.stringify(result.switched)}`);
+          }
+          return false;
+        },
+        `the re-attach this case starts from (last refusal: ${JSON.stringify(lastRefusal)})`,
+        90_000,
+      );
+
+      // Watch the server's live session, so this window is a surface that acks
+      // it — which is what puts it in `resumeFrom` at all (HIVE-145's ruling).
+      await renderer.evaluate(
+        'window.__reattach = []; window.hive.pty.onData((event) => window.__reattach.push(event)); true',
+      );
+      onServer!.notify(CH.ptyWrite, {
+        sessionId: watchedSessionId,
+        data: "printf 'BEFORE-%s\\n' DROP\r",
+      });
+      await waitForAsync(
+        async () =>
+          (
+            await renderer!.evaluate<{ chunk: string }[]>('window.__reattach')
+          ).some((event) => event.chunk.includes('BEFORE-DROP')),
+        'the client window to render the server’s output before the drop',
+        30_000,
+      );
+
+      const linkWhileUp = await renderer.evaluate<AppInfo>('window.hive.appInfo()');
+      expect(linkWhileUp.attachedServerName).not.toBeNull();
+
+      /*
+        The drop itself: the server process is killed outright. No close frame,
+        no detach — the shape a rebooting mini or a tailnet going down actually
+        has, and the one HIVE-144 left unhandled.
+      */
+      await stopApp(serverApp);
+      serverApp = undefined;
+      onServer?.close();
+      onServer = undefined;
+
+      /*
+        The client says so, rather than going on claiming an attachment. This
+        is the whole defect in one assertion: before this story `attached`
+        stayed pointed at the dead client for the life of the window, so
+        `attachedServerName` answered a machine that no longer existed and the
+        header chip kept naming it.
+      */
+      await waitForAsync(
+        async () =>
+          (await renderer!.evaluate<RemoteLinkStatus | null>(
+            'window.__link ?? null',
+          ))?.state === 'reconnecting',
+        'the client to report it is reconnecting, not attached',
+        60_000,
+      );
+
+      /*
+        The server comes back on the same port, from the same config — which by
+        now carries the device case 21b paired, so the returning client's
+        credential is still good. Rebooted rather than re-created for the reason
+        the transcript claim needs: `pty:restart` would be a *new* generation
+        and prove the opposite of what this case is about.
+      */
+      const rebooted = spawnApp(['--server'], serverConfigPath, serverUserDataDir);
+      serverApp = rebooted.child;
+      serverRecord = rebooted.record;
+      await waitForListener('127.0.0.1', serverPort, 60_000);
+
+      /*
+        And it comes back on its own. Nothing in this case dials — no switch is
+        flipped, no button clicked. The bound is the backoff's own ceiling plus
+        room for the app to finish booting; a client that needed a human would
+        simply never satisfy this.
+      */
+      await waitForAsync(
+        async () =>
+          (await renderer!.evaluate<RemoteLinkStatus | null>(
+            'window.__link ?? null',
+          ))?.state === 'attached',
+        'the client to reattach with nobody asking it to',
+        120_000,
+      );
+
+      const linkAfter = await renderer.evaluate<RemoteLinkStatus | null>('window.__link ?? null');
+      /*
+        The epoch moved, which is what the renderer keys its per-surface effects
+        on. A reattach that came back without moving it would leave the
+        explorer's watcher and the foreground record pointing at a surface the
+        server released when the old socket died.
+      */
+      expect(linkAfter?.epoch ?? 0).toBeGreaterThan(0);
+
+      const infoAfter = await renderer.evaluate<AppInfo>('window.hive.appInfo()');
+      expect(infoAfter.attachedServerName).toBe(linkWhileUp.attachedServerName);
+
+      /*
+        And the surface is genuinely rebound rather than merely reported: a call
+        answered by the far process, on the server's own seeded project, which
+        the client's own config cannot produce. Before the rebind these
+        bindings closed over the dead client and every one of them rejected.
+      */
+      const config = await renderer.evaluate<ConfigSnapshot>('window.hive.config.get()');
+      expect(config.projects.map((project) => project.id)).toEqual([servedProjectId]);
+    }, 300_000);
   });
 
   describe('a call that never settles (HIVE-144)', () => {

@@ -393,6 +393,12 @@ export const CH = {
    * about this window's, and forwarding one would be the same class of defect
    * `PROCESS_LOCAL` closed for `app:info` — where an attached client's About
    * box reported the *server's* Electron version as its own.
+   *
+   * The payload is `RemoteLinkStatus | null`, and the `null` is load-bearing:
+   * it is what a window is told when it goes **local**. Without it a detach
+   * left the last `attached` status standing, so every consumer went on naming
+   * a machine this window had deliberately stopped driving — the same staleness
+   * this channel exists to end, arriving through the other door.
    */
   remoteLinkStatus: 'remote:link-status',
   /**
@@ -1956,10 +1962,10 @@ export interface HiveBridge {
     /**
      * What this window's attachment is doing right now (HIVE-150).
      *
-     * Fires on every transition — a drop, each retry, a reattach, and giving
-     * up. See {@link RemoteLinkStatus}.
+     * Fires on every transition — a drop, each retry, a reattach, giving up,
+     * and `null` when this window goes local. See {@link RemoteLinkStatus}.
      */
-    onLinkStatus(callback: (status: RemoteLinkStatus) => void): () => void;
+    onLinkStatus(callback: (status: RemoteLinkStatus | null) => void): () => void;
   };
   pty: {
     spawn(request: SpawnRequest): Promise<void>;

@@ -360,8 +360,8 @@ const bridge: HiveBridge = {
      * A subscription rather than a read because the socket changes state on its
      * own — the same reason `slack.onSocketStatus` beside it is one.
      */
-    onLinkStatus: (callback: (status: RemoteLinkStatus) => void) =>
-      subscribe<RemoteLinkStatus>(CH.remoteLinkStatus, callback),
+    onLinkStatus: (callback: (status: RemoteLinkStatus | null) => void) =>
+      subscribe<RemoteLinkStatus | null>(CH.remoteLinkStatus, callback),
   },
   pty: {
     spawn: (request: SpawnRequest): Promise<void> =>

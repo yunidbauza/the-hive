@@ -243,6 +243,22 @@ let reattach: ReattachLoop | null = null;
  */
 let resumeTracker: ResumeTracker | null = null;
 
+/**
+ * Stops the current client's close subscription (HIVE-150).
+ *
+ * Held at module scope beside {@link attached} because it must be dropped
+ * *before* that socket is closed on purpose. `unbindEverything` closes the
+ * client it dialled; `ws` answers with `'close'`; `onClose` fires; and without
+ * this the reconnect loop takes a deliberate detach for a dropped connection
+ * and starts dialling the server the user has just left. `cancel()` alone does
+ * not prevent it — a cancelled loop is idle, and `begin` on an idle loop is
+ * exactly how a real drop starts one.
+ *
+ * Found by the live two-app suite, which drives a real socket; every unit fake
+ * had a `close()` that fired no listeners, so nothing in-process could see it.
+ */
+let stopWatchingClose: (() => void) | null = null;
+
 /** Test-only: the tracker the proxy feeds, so a spec can drive it. */
 export function attachedResumeTracker(): ResumeTracker | null {
   return resumeTracker;
@@ -293,6 +309,12 @@ function unbindEverything(): void {
     invalidates any dial already in flight, which a `clearTimeout` alone could
     not.
   */
+  /*
+    Before the cancel, and long before the `close()` below: this is what stops
+    a deliberate detach being heard as a drop. See {@link stopWatchingClose}.
+  */
+  stopWatchingClose?.();
+  stopWatchingClose = null;
   reattach?.cancel();
   reattach = null;
   resumeTracker = null;
@@ -431,6 +453,17 @@ export async function switchIpcMode(
     if (remoteProxyBindingsSize() === 0 && ipcBindingsSize() > 0) return { ok: true };
     unbindEverything();
     registerIpc('local', { broadcaster });
+    /*
+      This window has no link now, and it has to be told so (HIVE-150).
+
+      Without this the last `attached` status stands, and every consumer of it
+      goes on naming a machine the user has deliberately stopped driving — the
+      header chip, the attach pane, and `useAttachedServer`'s callers. That is
+      the same staleness this channel exists to end, arriving through the other
+      door: not a socket that died unannounced, but a socket this process closed
+      on purpose and never mentioned.
+    */
+    announceNoLink(broadcaster);
     return { ok: true };
   }
 
@@ -548,6 +581,8 @@ export async function switchIpcMode(
     resetRemoteProxy();
     client?.close();
     registerIpc('local', { broadcaster });
+    // A failed attach lands local too, and owes the window the same sentence.
+    announceNoLink(broadcaster);
     return outcomeFor(cause);
   }
   return { ok: true };
@@ -637,9 +672,26 @@ function armReattach(
   } satisfies RemoteLinkStatus);
 }
 
-/** Hands one connection's ending to the loop that outlives it. */
+/**
+ * Tell the window it has no attachment (HIVE-150).
+ *
+ * `null` rather than a `disconnected` status: that state means "a link ended
+ * for a reason retrying cannot fix", which a deliberate detach is not. A window
+ * that went local has no link to describe at all, and the chip's answer to that
+ * is to render nothing.
+ */
+function announceNoLink(broadcaster: Broadcaster | undefined): void {
+  (broadcaster ?? createWindowBroadcaster()).emit(CH.remoteLinkStatus, null);
+}
+
+/**
+ * Hands one connection's ending to the loop that outlives it.
+ *
+ * The unsubscribe is kept so a *deliberate* close can drop it first — see
+ * {@link stopWatchingClose}.
+ */
 function watchForClose(client: RemoteClient, loop: ReattachLoop): void {
-  client.onClose((cause) => {
+  stopWatchingClose = client.onClose((cause) => {
     loop.begin(cause);
   });
 }

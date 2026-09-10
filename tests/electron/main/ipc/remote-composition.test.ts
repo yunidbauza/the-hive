@@ -1041,9 +1041,23 @@ describe('the mode switch (HIVE-144)', () => {
         closeListeners.add(listener);
         return () => closeListeners.delete(listener);
       }),
-      close: vi.fn(),
+      /*
+        **A real `close()` fires the close listeners**, because `ws` answers a
+        close with a `'close'` event and `socket.ts` announces from there. A
+        fake that stayed silent hid a real defect for a whole branch: a
+        deliberate detach closes this socket, the announcement lands, and the
+        reconnect loop takes it for a drop and starts dialling the server the
+        user has just left. The live two-app suite caught it; this fake is what
+        lets a unit test catch it next time (HIVE-150).
+      */
+      close: vi.fn(() => {
+        for (const listener of [...closeListeners]) {
+          listener({ kind: 'transport', code: 'transport', message: 'closed' });
+        }
+        closeListeners.clear();
+      }),
       drop(cause: CloseCause = { kind: 'transport', code: 'transport', message: 'closed' }) {
-        for (const listener of closeListeners) listener(cause);
+        for (const listener of [...closeListeners]) listener(cause);
         closeListeners.clear();
       },
     };
@@ -1482,6 +1496,61 @@ describe('the mode switch (HIVE-144)', () => {
       expect(connect).toHaveBeenCalledTimes(1);
       expect(attachedServerName()).toBeNull();
       expect(remoteProxyBindingsSize()).toBe(0);
+    });
+
+    it('tells the window it has no link once it goes local', async () => {
+      boundLocally();
+      const first = fakeClient();
+      const broadcaster = { emit: vi.fn() };
+      const connect = vi.fn(() => Promise.resolve(first));
+
+      await switchIpcMode('remote', opts({ connect, broadcaster }));
+      broadcaster.emit.mockClear();
+
+      await switchIpcMode('local', { broadcaster });
+
+      /*
+        `null`, not a `disconnected` status: that state means a link ended for a
+        reason retrying cannot fix, and a deliberate detach is not that. Without
+        this push the last `attached` status stands, and the header chip and the
+        attach pane go on naming a machine the user has just stopped driving —
+        the same staleness this channel exists to end, arriving through the
+        other door.
+      */
+      expect(broadcaster.emit).toHaveBeenCalledWith(CH.remoteLinkStatus, null);
+    });
+
+    it('tells the window it has no link when an attach fails outright', async () => {
+      boundLocally();
+      const broadcaster = { emit: vi.fn() };
+      const connect = vi.fn(() => Promise.reject(new Error('ECONNREFUSED')));
+
+      const outcome = await switchIpcMode('remote', opts({ connect, broadcaster }));
+
+      expect(outcome).toMatchObject({ ok: false });
+      // A failed attach lands local too, and owes the window the same sentence.
+      expect(broadcaster.emit).toHaveBeenCalledWith(CH.remoteLinkStatus, null);
+    });
+
+    it('does not hear its own detach as a drop', async () => {
+      boundLocally();
+      const first = fakeClient();
+      const connect = vi.fn(() => Promise.resolve(first));
+
+      await switchIpcMode('remote', opts({ connect }));
+      await switchIpcMode('local');
+      await vi.advanceTimersByTimeAsync(600_000);
+
+      /*
+        `unbindEverything` closes the client it dialled, and a real socket
+        answers a close by announcing one — so without dropping the
+        subscription first, going local starts a reconnect loop against the
+        server the user has just left. `cancel()` alone does not stop it: a
+        cancelled loop is idle, and `begin` on an idle loop is exactly how a
+        genuine drop starts one.
+      */
+      expect(connect).toHaveBeenCalledTimes(1);
+      expect(attachedServerName()).toBeNull();
     });
 
     it('never dials for a refusal another dial would reproduce', async () => {

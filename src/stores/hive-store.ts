@@ -562,8 +562,8 @@ interface HiveState {
    */
   clearNotifs: () => void;
   pushNotif: (notif: HiveNotification) => void;
-  /** Install the link status main just pushed (HIVE-150). */
-  setRemoteLink: (status: RemoteLinkStatus) => void;
+  /** Install the link status main just pushed, or `null` for none (HIVE-150). */
+  setRemoteLink: (status: RemoteLinkStatus | null) => void;
   /**
    * Merge main's buffer into what is already here, newest first (HIVE-75).
    *

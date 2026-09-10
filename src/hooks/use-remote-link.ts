@@ -36,6 +36,11 @@ export function useRemoteLinkStream(): void {
 
     let pushed = false;
     const unsubscribe = bridge.remote.onLinkStatus((status) => {
+      /*
+        `null` is a real answer, not an absent one: it is what main pushes when
+        this window goes local, and installing it is what stops the last
+        `attached` status standing after a deliberate detach.
+      */
       pushed = true;
       setRemoteLink(status);
     });
