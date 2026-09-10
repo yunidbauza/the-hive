@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -137,6 +138,9 @@ import {
  *     machine’s home, contained, over the socket (HIVE-146).
  * 27. A path outside that home is refused `EOUTSIDE` as a `result` frame, not
  *     an `error` — the shape cases 12 and 13 established for the fs verbs.
+ * 29. A hand-built `remote:forget` is refused `remote-refused`, and the
+ *     server's own credential file survives it byte for byte (HIVE-155): the
+ *     receiving half of the fence `PROCESS_LOCAL` puts on the sender.
  * 15. `ledger:changed` and `agents:changed` reach the attached client.
  * 16. A socket killed mid-output resumes contiguously, transcript whole.
  * 17. A gap forced past `REPLAY_BYTES` is marked on attach by one empty
@@ -2043,6 +2047,37 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
         kind: 'result',
         payload: { ok: false, error: { code: 'EOUTSIDE' } },
       });
+    }, 30_000);
+
+    /**
+     * 29. A process-local channel, refused where it lands (HIVE-155).
+     *
+     * `client.call` builds the frame by hand and writes it to the socket, which
+     * is the one sender `PROCESS_LOCAL`'s fence cannot see: the proxy answers
+     * `remote:forget` on the machine that asked, so no shipped client sends it.
+     *
+     * The server's credential file is seeded first, with known bytes. A server
+     * that only serves has no credential of its own, and "absent before and
+     * after" passes with the defect present. `applyRemoteForget` is an
+     * `rmSync`, so the file surviving byte for byte is the observation that
+     * tells the fix from the bug.
+     */
+    it('29. refuses a hand-built remote:forget and leaves the server’s credential alone', async () => {
+      const credentialFile = join(userDataDir, 'remote-credential.bin');
+      const seeded = Buffer.from('live proof: the server’s own credential\n', 'utf8');
+      writeFileSync(credentialFile, seeded);
+
+      try {
+        const client = await attached();
+        const result = await client.call(CH.remoteForget, undefined);
+
+        expect(result).toMatchObject({ kind: 'error', code: 'remote-refused' });
+        expect((result as ErrorFrame).message).toMatch(/own credential/);
+        expect(existsSync(credentialFile)).toBe(true);
+        expect(readFileSync(credentialFile).equals(seeded)).toBe(true);
+      } finally {
+        rmSync(credentialFile, { force: true });
+      }
     }, 30_000);
 
     it('15. delivers ledger:changed and agents:changed to the attached client', async () => {
