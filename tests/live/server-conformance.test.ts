@@ -4239,7 +4239,14 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       const owner = clientMain;
 
       const relay = await openRelay(serverPort);
-      const a = await openClient(`ws://127.0.0.1:${String(serverPort)}`, credential);
+      // The relay closed if the attach itself fails, since the `finally` below
+      // is only reached once both are open.
+      const a = await openClient(`ws://127.0.0.1:${String(serverPort)}`, credential).catch(
+        async (cause: unknown) => {
+          await relay.close();
+          throw cause;
+        },
+      );
       const sessionId = `reattach-foreground-${String(Date.now())}`;
       try {
         const events = a.collectEvents();
@@ -4286,13 +4293,10 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
           `remote-foreground.ts`'s own unit spec, and pinning that one input
           leaves everything this case asserts on real.
         */
-        const pinFocus = (pinned: boolean): Promise<boolean> =>
+        const pinFocus = (): Promise<boolean> =>
           owner.evaluate<boolean>(`(() => {
             const { BrowserWindow } = require('electron');
-            for (const window of BrowserWindow.getAllWindows()) {
-              if (${String(pinned)}) window.isFocused = () => true;
-              else delete window.isFocused;
-            }
+            for (const window of BrowserWindow.getAllWindows()) window.isFocused = () => true;
             return BrowserWindow.getAllWindows().some((window) => window.isFocused());
           })()`);
 
@@ -4336,15 +4340,16 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
           row. Clicked until the row says it is current, because the row only
           exists once the snapshot has hydrated.
 
-          Settings first, closed if open. Case 21h opens it for real and leaves
-          it open, and an open Settings is a stage with no terminal on it
-          (`resolveView`) — this window would report `null` whatever row was
-          current behind it.
+          Settings first, closed if open. Case 21h opens it for real, and its
+          own close is best-effort — the first button whose label mentions
+          "close", which need not be Settings' own. An open Settings is a stage
+          with no terminal on it (`resolveView`), so this window would report
+          `null` whatever row was current behind it.
         */
         await view.evaluate(
           `document.querySelector('button[aria-label="Close settings"]')?.click(); true`,
         );
-        expect(await pinFocus(true), 'B’s window pinned as in front').toBe(true);
+        expect(await pinFocus(), 'B’s window pinned as in front').toBe(true);
         const staged = waitForAsync(
           () =>
             view.evaluate<boolean>(`(() => {
@@ -4380,13 +4385,9 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
 
         // Leg 1, the control: both surfaces watching, so the fleet is quiet.
         const control = await nextRow('toolu_live_160_1', 'the control row');
-        const focused = await owner.evaluate<boolean>(
-          "require('electron').BrowserWindow.getAllWindows().some((window) => window.isFocused())",
+        expect(control.unread, 'with both surfaces watching, the control row arrived unread').toBe(
+          false,
         );
-        expect(
-          control.unread,
-          `with both surfaces watching, the control row arrived unread (the attaching app's window focused: ${String(focused)})`,
-        ).toBe(false);
 
         // Leg 2: the relay drops B, and B comes back on its own.
         await cutAndReattach('the second cut');
@@ -4403,7 +4404,6 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
         const afterReattach = await nextRow('toolu_live_160_2', 'the row raised after the reattach');
         measurements.push({
           case: '21m. HIVE-160 foreground after reattach',
-          focused,
           control: control.unread,
           afterReattach: afterReattach.unread,
         });
@@ -4412,23 +4412,40 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
           'a block on a session both surfaces are watching arrived unread after B reattached — B never re-stated its foreground',
         ).toBe(false);
       } finally {
-        await owner.evaluate(
-          "(() => { for (const window of require('electron').BrowserWindow.getAllWindows()) delete window.isFocused; return true; })()",
+        /*
+          Every step guarded, and the relay closed last whatever happened
+          above it. An unguarded step that threw here — B's inspector gone
+          with the app, say — would replace the failure the case actually hit
+          with its own, and skip every step after it.
+        */
+        const quietly = async (step: () => unknown): Promise<void> => {
+          try {
+            await step();
+          } catch {
+            // Cleanup only; the case's own outcome is the one worth reporting.
+          }
+        };
+        await quietly(() =>
+          owner.evaluate(
+            "(() => { for (const window of require('electron').BrowserWindow.getAllWindows()) delete window.isFocused; return true; })()",
+          ),
         );
-        a.notify(CH.ptyWrite, { sessionId, data: 'exit\n' });
-        a.close();
+        await quietly(() => a.notify(CH.ptyWrite, { sessionId, data: 'exit\n' }));
+        await quietly(() => a.close());
         /*
           Back on the direct port, so a case added after this one inherits the
           attachment 21l left rather than one through a relay that no longer
           exists.
         */
-        await view.evaluate("window.hive.config.setRemote({ mode: 'local' })");
-        await bounded(
-          view.evaluate(
-            `window.hive.config.setRemote({ mode: 'remote', host: '127.0.0.1', port: ${String(serverPort)} })`,
+        await quietly(() => view.evaluate("window.hive.config.setRemote({ mode: 'local' })"));
+        await quietly(() =>
+          bounded(
+            view.evaluate(
+              `window.hive.config.setRemote({ mode: 'remote', host: '127.0.0.1', port: ${String(serverPort)} })`,
+            ),
+            60_000,
+            'setRemote back to the direct port',
           ),
-          60_000,
-          'setRemote back to the direct port',
         );
         await relay.close();
       }
