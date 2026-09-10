@@ -53,7 +53,7 @@ export const REMOTE_PROTOCOL_VERSION = 2;
  * promote a `notify` to a `call` and the typing path acquires a round trip.
  *
  * - `call` — request/response. The client asks, the server answers with
- *   `result` or `error`. 98 channels.
+ *   `result` or `error`. 99 channels.
  * - `notify` — fire and forget, client to server, ordered per session. 6
  *   channels. Ordering between a `pty:write` and a `pty:resize` is observable,
  *   so a transport may not reorder them.
@@ -107,6 +107,7 @@ export const FRAME_KIND = {
   [CH.configGet]: 'call',
   [CH.configReload]: 'call',
   [CH.configChooseDirectory]: 'call',
+  [CH.configBrowseDirectory]: 'call',
   [CH.configAddProject]: 'call',
   [CH.configRemoveProject]: 'call',
   [CH.configRenameProject]: 'call',
@@ -345,9 +346,16 @@ export const FRAME_KIND = {
  * (`sessions/index.ts`), so a client can ack sequences it never received.
  */
 export const CHANNEL_AUTHORIZATION = {
-[CH.configGet]: 'read',
+  [CH.configGet]: 'read',
   [CH.configReload]: 'mutate',
   [CH.configChooseDirectory]: 'read',
+  /*
+    The caller learns which directories exist under the answering machine's
+    home and nothing outlives the call, so `read` by this table's own
+    definition. It is not `mutate`: nothing is written, and the path it hands
+    back is only a suggestion `config:add-project` re-validates from scratch.
+  */
+  [CH.configBrowseDirectory]: 'read',
   [CH.configAddProject]: 'mutate',
   [CH.configRemoveProject]: 'mutate',
   [CH.configRenameProject]: 'mutate',

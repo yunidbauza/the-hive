@@ -1,5 +1,6 @@
 import type {
   AddProjectRequest,
+  BrowseListing,
   CommandDiagnostic,
   ConfigSnapshot,
   DiagnoseCommandRequest,
@@ -23,6 +24,7 @@ import type {
   SetServerRequest,
   SwitchOutcome,
 } from '@shared/config-contract';
+import type { FsResult } from '@shared/fs-contract';
 import type {
   AppInfo,
   IntegrationsStatus,
@@ -774,6 +776,30 @@ export const chooseProjectDirectory = async (): Promise<string | null> => {
   const bridge = window.hive;
   if (!bridge) return null;
   return bridge.config.chooseDirectory();
+};
+
+/**
+ * List one directory on the machine that answers config calls (HIVE-146).
+ *
+ * While attached that is the **server**, which is the whole reason this exists
+ * beside {@link chooseProjectDirectory}: a native dialog opened on a machine
+ * nobody is sitting at helps no one, so the renderer asks for a listing and
+ * draws the picker itself.
+ *
+ * `null` with no bridge, the same answer {@link chooseProjectDirectory} gives
+ * and for the same reason — the browser target has no filesystem to offer, and
+ * the picker is never reachable there.
+ *
+ * Note what is *not* here: no try/catch. An `FsResult` already carries a
+ * refusal as a value, so the only way this rejects is a broken channel, and the
+ * picker renders that as the failure it is rather than an empty folder.
+ */
+export const browseServerDirectory = async (
+  path: string,
+): Promise<FsResult<BrowseListing> | null> => {
+  const bridge = window.hive;
+  if (!bridge) return null;
+  return bridge.config.browseDirectory({ path });
 };
 
 /**

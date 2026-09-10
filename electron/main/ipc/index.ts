@@ -28,6 +28,7 @@ import {
 } from '@shared/agent-contract';
 import { AUTH_ENV_KEYS } from '@shared/config-contract';
 import type {
+  BrowseListing,
   CloneStartResult,
   CommandDiagnostic,
   ConfigSnapshot,
@@ -53,6 +54,7 @@ import {
   parseAgentRunRequest,
   parseAgentWriteRequest,
   parseAddProjectRequest,
+  parseBrowseDirRequest,
   parseCloneRequest,
   parseDiagnoseCommandRequest,
   parseReadDirRequest,
@@ -198,6 +200,7 @@ import { loginEnvStatus } from '../config/login-env';
 import { diagnoseCommand, effectiveRuntime, receiverHostAliases } from '../config/runtime';
 import { isSafeExternalUrl } from '../external-links';
 import {
+  browseHomeDirectory,
   createFsWatchLayer,
   forgetProbedRoots,
   readDirectory,
@@ -3247,6 +3250,23 @@ export function registerIpcHandlers(
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0] ?? null;
   });
+
+  /**
+   * The server-side counterpart to the dialog above (HIVE-146).
+   *
+   * `_event`, and it has to stay that way. `remote-composition.test.ts` scans
+   * this file as source text for handlers that bind a *used* `event`, and
+   * asserts the set is exactly `WINDOW_BOUND` minus `configReveal`, plus
+   * `pty:prompt`. A browse handler that touched the event would fail it, and
+   * rightly: a remotely-dispatched call is handed a synthetic empty event
+   * object, so anything read off it would be silently wrong rather than loudly
+   * refused.
+   */
+  handle(
+    CH.configBrowseDirectory,
+    (_event, payload): Promise<FsResult<BrowseListing>> =>
+      browseHomeDirectory(parseBrowseDirRequest(payload)),
+  );
 
   handle(
     CH.configAddProject,

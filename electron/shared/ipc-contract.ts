@@ -32,6 +32,8 @@ import type {
 } from './agent-contract';
 import type {
   AddProjectRequest,
+  BrowseDirRequest,
+  BrowseListing,
   CloneDoneEvent,
   CloneRequest,
   CloneStartResult,
@@ -150,6 +152,17 @@ export const CH = {
   configReload: 'config:reload',
   /** Story 101's three mutating channels. All `invoke` — each needs a result. */
   configChooseDirectory: 'config:choose-directory',
+  /**
+   * HIVE-146's server-side browser. `invoke` — it answers with a listing.
+   *
+   * Answered by whichever machine holds the filesystem, which while attached
+   * is the server. That is the whole point of it existing beside
+   * `configChooseDirectory` rather than replacing it: the dialog cannot be
+   * answered there at all, so it stays in `WINDOW_BOUND` and the renderer asks
+   * this instead. Locally the dialog is still the better experience and is
+   * still what runs.
+   */
+  configBrowseDirectory: 'config:browse-directory',
   configAddProject: 'config:add-project',
   configRemoveProject: 'config:remove-project',
   /**
@@ -1650,6 +1663,21 @@ export interface HiveBridge {
     reload(): Promise<ConfigSnapshot>;
     /** Native directory dialog, owned by main. Resolves null when cancelled. */
     chooseDirectory(): Promise<string | null>;
+    /**
+     * List one directory under the answering machine's home directory
+     * (HIVE-146).
+     *
+     * The only verb on this bridge that takes a path, and the exception is
+     * argued where it is enforced: `electron/main/fs/home-browse.ts`. The short
+     * version is that a folder which is not a project yet has no `projectId`
+     * to be named by, so the fence moves from "inside this project" to "inside
+     * home, proven after `realpath`" rather than disappearing.
+     *
+     * It does not widen the bridge into a general file reader: only
+     * directories are ever listed, never a file's contents, and every path it
+     * returns has already been contained.
+     */
+    browseDirectory(request: BrowseDirRequest): Promise<FsResult<BrowseListing>>;
     addProject(request: AddProjectRequest): Promise<ConfigSnapshot>;
     removeProject(request: RemoveProjectRequest): Promise<ConfigSnapshot>;
     /** Change a project's display name (story 103). The id is never touched. */
@@ -3125,6 +3153,8 @@ export const BRIDGE_CONFIG_KEYS = [
   'get',
   'reload',
   'chooseDirectory',
+  // HIVE-146.
+  'browseDirectory',
   'addProject',
   'removeProject',
   // Story 103.

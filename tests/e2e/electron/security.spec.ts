@@ -647,6 +647,25 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    */
   expect(surface.config).toEqual([
     'addProject',
+    /**
+     * HIVE-146 adds `browseDirectory`, and it is the first verb on this bridge
+     * that takes a path — so it is the one addition here that genuinely needs
+     * an argument rather than a note.
+     *
+     * The bound it appears to break is "no verb names a destination". It does
+     * not: nothing is written, and the path it takes is a *source* to list, not
+     * a place to put anything. The one file this bridge can write is still the
+     * config, and `addProject` still re-validates from scratch whatever path
+     * reaches it, from this verb or from anywhere else.
+     *
+     * What it does take is a path to *read*, which the fs verbs deliberately
+     * never do — they name a `projectId`. The exception is argued where it is
+     * enforced, in `electron/main/fs/home-browse.ts`: a folder that is not a
+     * project yet has no id, and main contains every path against the home
+     * directory after `realpath`, on the request and on every entry returned.
+     * Directories only; a file's contents never cross this verb.
+     */
+    'browseDirectory',
     'cancelClone',
     'chooseDirectory',
     /**

@@ -16,6 +16,8 @@ import type {
 } from '@shared/agent-contract';
 import type {
   AddProjectRequest,
+  BrowseDirRequest,
+  BrowseListing,
   CloneDoneEvent,
   CloneRequest,
   CloneStartResult,
@@ -241,6 +243,12 @@ const bridge: HiveBridge = {
     // follow a write with a reload.
     chooseDirectory: (): Promise<string | null> =>
       ipcRenderer.invoke(CH.configChooseDirectory),
+    // HIVE-146. Directories only, never a file's contents, and every path it
+    // returns has been contained under home by main before it leaves.
+    browseDirectory: (
+      request: BrowseDirRequest,
+    ): Promise<FsResult<BrowseListing>> =>
+      ipcRenderer.invoke(CH.configBrowseDirectory, request),
     addProject: (request: AddProjectRequest): Promise<ConfigSnapshot> =>
       ipcRenderer.invoke(CH.configAddProject, request),
     removeProject: (request: RemoveProjectRequest): Promise<ConfigSnapshot> =>

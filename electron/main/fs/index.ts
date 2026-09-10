@@ -8,6 +8,7 @@
  * a lifetime that `resetIpcHandlers` can end.
  */
 export { readDirectory, readFileContent, readRoot } from './read';
+export { browseHomeDirectory } from './home-browse';
 export { searchProject } from './search';
 export { writeFileContent } from './write';
 export { createFsWatchLayer, type FsWatchLayer } from './watcher';

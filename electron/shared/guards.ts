@@ -23,6 +23,7 @@ import {
 } from './config-contract';
 import type {
   AddProjectRequest,
+  BrowseDirRequest,
   CloneRequest,
   ContainerConfig,
   DeviceNameRequest,
@@ -638,6 +639,36 @@ export function parseAddProjectRequest(input: unknown): AddProjectRequest {
     path: assertPath(raw.path, 'addProject.path'),
     ...(name !== undefined ? { name } : {}),
   };
+}
+
+/**
+ * Longer than any real path — macOS caps a component at 255 bytes and a full
+ * path at 1024 — and short enough that nothing pathological gets as far as a
+ * syscall.
+ */
+const MAX_BROWSE_PATH = 4096;
+
+/**
+ * Payload guard for `config:browse-directory` (HIVE-146).
+ *
+ * The path is **not** trusted here, and is not meant to be. It goes on to
+ * `browseHomeDirectory`, which resolves it, `realpath`s it and proves
+ * containment against the answering machine's home directory. What this bounds
+ * is shape and size, so a malformed or enormous payload is refused before it
+ * becomes syscalls.
+ *
+ * `assertPath` is deliberately not reused: it rejects an empty string, and an
+ * empty string is this verb's way of asking for home. That is the difference
+ * between "the caller named nowhere", which is an error for `addProject`, and
+ * "the caller named the default", which is the ordinary first call here.
+ */
+export function parseBrowseDirRequest(input: unknown): BrowseDirRequest {
+  const raw = assertShape(input, ['path'], 'browseDirectory');
+  const path = assertString(raw.path, 'browseDirectory.path');
+  if (path.length > MAX_BROWSE_PATH) {
+    return fail(`browseDirectory.path: too long`);
+  }
+  return { path };
 }
 
 export function parseRemoveProjectRequest(input: unknown): RemoveProjectRequest {

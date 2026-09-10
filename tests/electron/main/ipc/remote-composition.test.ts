@@ -450,7 +450,7 @@ describe('remote composition (HIVE-143)', () => {
       elsewhere, by the real `ipcMain.handle` refusing a second handler for a
       channel — not by this number.
     */
-    expect(remoteRegistrySize()).toBe(104);
+    expect(remoteRegistrySize()).toBe(105);
   });
 
   it('re-registers every channel after a reset without throwing (HIVE-144)', () => {
@@ -992,12 +992,12 @@ describe('handlers that dereference the Electron event', () => {
 describe('the mode switch (HIVE-144)', () => {
   /**
    * Both modes bind the same channels: every `call` and every `notify` in the
-   * contract, and no `event` — 104 of them. Written once here because the two
+   * contract, and no `event` — 105 of them. Written once here because the two
    * surfaces agreeing on this number is itself the invariant. `remote-proxy
-   * .test.ts` and the registry case above own the question of whether 104 is
+   * .test.ts` and the registry case above own the question of whether 105 is
    * still the right number; this file only asks whether the two agree.
    */
-  const BOUND_CHANNELS = 104;
+  const BOUND_CHANNELS = 105;
 
   /**
    * `assertSender` compares `senderFrame` to `sender.mainFrame` by identity,
