@@ -271,7 +271,7 @@ let remoteToasts: RemoteToasts | null = null;
  * `localAppInfo` answers `CH.appInfo` (HIVE-144, Ruling 24), `localSetRemote`
  * answers `CH.configSetRemote` (Ruling 28), and `localRemotePair` /
  * `localRemoteForget` answer their own two (HIVE-153) — see `isProcessLocal`'s
- * own doc comment for the six channels this bypasses the socket for entirely,
+ * own doc comment for the nine channels this bypasses the socket for entirely,
  * and why. Both optional only so the many call sites in
  * this module's own test file that never touch those channels do not all need
  * one; every production caller (`ipc/router.ts`'s `registerIpc`) passes the

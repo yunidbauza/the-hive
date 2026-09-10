@@ -86,6 +86,24 @@ describe('useDockBadge', () => {
     expect(badge).toHaveBeenCalledWith(1);
   });
 
+  /*
+    Ship's self review. A switch from one server straight to another clears the
+    badge on teardown while `remoteLink` stays non-null and the rows stay put
+    (`set-remote.ts` answers `changed: null` for a like-for-like switch), so a
+    key on "is linked" never moves. The fresh status object does.
+  */
+  it('reports again on a switch between servers, with the link non-null throughout', () => {
+    useHiveStore.setState({ notifs: [notif('a', true)], remoteLink: link(0) });
+    renderHook(() => useDockBadge());
+    badge.mockClear();
+
+    act(() => {
+      useHiveStore.setState({ remoteLink: { ...link(0), serverName: 'studio' } });
+    });
+
+    expect(badge).toHaveBeenCalledWith(1);
+  });
+
   it('reports again when this window detaches, even with the count unchanged', () => {
     useHiveStore.setState({ notifs: [notif('a', true)], remoteLink: link(0) });
     renderHook(() => useDockBadge());

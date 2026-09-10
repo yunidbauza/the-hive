@@ -15,10 +15,15 @@ import { useRemoteLink, useUnreadCount } from '@stores/hive-store';
  * writes the badge itself — so this hook does not need to know which mode it
  * is in. Main does, structurally: the two modes bind different handlers.
  *
- * **Why the link is a dependency, not only the count.** Attaching tears down
- * the local hub, and the teardown clears the badge it wrote. If the server's
- * inbox happens to hold the same number of unread rows, the count never moves
- * and nothing would say it again.
+ * **Why the link status is a dependency, not only the count.** Every mode
+ * switch tears down the handlers, and the teardown clears the badge. If the
+ * inbox on the far side of the switch holds the same number of unread rows,
+ * the count never moves and nothing would say it again. A switch always ends
+ * in a fresh status push — `null` going local, a new `attached` status going
+ * remote, including a switch from one server straight to another, where
+ * `remoteLink` is non-null on both sides and only the object is new — so the
+ * status object itself is the key. A reconnect's status pushes re-report too;
+ * that is one idempotent write each, and cheaper than a key that misses a case.
  *
  * **Why the reattach epoch is not.** A reattach rebinds only the proxy, never
  * the handlers (`router.ts`, `armReattach`), so nothing clears the badge and
@@ -32,7 +37,7 @@ import { useRemoteLink, useUnreadCount } from '@stores/hive-store';
  */
 export function useDockBadge(): void {
   const unread = useUnreadCount();
-  const linked = useRemoteLink() !== null;
+  const link = useRemoteLink();
 
   useEffect(() => {
     // No bridge is the browser demo, which has no dock to badge.
@@ -41,5 +46,5 @@ export function useDockBadge(): void {
       to a window torn down mid-call is replaced by the next one.
     */
     void window.hive?.notifications.badge(unread).catch(() => undefined);
-  }, [unread, linked]);
+  }, [unread, link]);
 }

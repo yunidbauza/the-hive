@@ -620,7 +620,7 @@ export function windowBoundReason(channel: string): string | null {
  * and is not wrong, only irrelevant — the same plausible-but-wrong shape a
  * server's own Electron version has when it stands in for the client's.
  *
- * Six channels pass on this branch. `AppInfo` (`CH.appInfo`) and
+ * Nine channels pass on this branch; the first four are these. `AppInfo` (`CH.appInfo`) and
  * `UpdateStatus` (`CH.updatesStatus`, `CH.updatesCheck`) *read* this process's
  * identity — its own Electron/Chrome/Node build, its own log path, its own
  * receiver and server-mode binds, whether it is itself attached, its own
