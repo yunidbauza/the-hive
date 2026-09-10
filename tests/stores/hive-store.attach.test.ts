@@ -259,14 +259,52 @@ describe('clearModeEntities', () => {
     expect(nameOf('sess-01')).toBe('db-migration');
   });
 
-  it('leaves a purely local concern untouched: tickets and the console transcript', () => {
-    const ticketsBefore = state().tickets;
+  /**
+   * This used to assert `tickets` survived a switch too, alongside the
+   * transcript, on the premise that both modes read the same Jira query.
+   *
+   * That premise was wrong (HIVE-152). `CH.jiraStatus` and `CH.jiraSearch` are
+   * `'call'` channels and neither appears in `PROCESS_LOCAL`, so while
+   * attached, the site, the account and the JQL are all the **served**
+   * machine's. The list under the WORK badge belongs to whichever machine
+   * answered, exactly as `prs` does — and it survived only by accident, because
+   * the in-flight sweep replaced it within seconds. The epoch now discards that
+   * answer, so leaving it would strand the departed machine's issues under a
+   * `live` label for a whole poll interval.
+   *
+   * The console transcript really is purely local, and still is.
+   */
+  it('leaves the console transcript untouched, which really is purely local', () => {
     const orchLinesBefore = state().orchLines;
 
     state().clearModeEntities();
 
-    expect(state().tickets).toBe(ticketsBefore);
     expect(state().orchLines).toBe(orchLinesBefore);
+  });
+
+  it('drops the tickets and their source, which belong to whichever machine answered', () => {
+    state().hydrateTickets(
+      [
+        {
+          key: 'OLD-1',
+          summary: 'from the departed machine',
+          status: 'In Progress',
+          statusCategory: 'in-progress',
+          issueType: 'Story',
+          priority: null,
+          assignee: null,
+          updated: '2026-09-09T00:00:00.000-0400',
+          url: 'https://behiques.atlassian.net/browse/OLD-1',
+        },
+      ],
+      false,
+    );
+    expect(state().ticketSource).toEqual({ kind: 'live', stale: false, capped: false });
+
+    state().clearModeEntities();
+
+    expect(state().tickets).toEqual([]);
+    expect(state().ticketSource).toEqual({ kind: 'loading' });
   });
 });
 

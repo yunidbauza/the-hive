@@ -63,11 +63,6 @@ afterEach(() => {
  */
 describe('a mode switch while a search is on screen', () => {
   it('does not strand the panel on a skeleton that never resolves', async () => {
-    // A settled list underneath, so the only thing that can put a skeleton on
-    // screen after the switch is the stranded search branch — not the boot
-    // `loading` state, which legitimately renders one.
-    state().hydrateTickets([issue({ key: 'HIVE-9' })], false);
-
     useUiStore.getState().setWorkSearchTerm('hero');
     useHiveStore.setState({
       ticketSearch: {
@@ -92,16 +87,34 @@ describe('a mode switch while a search is on screen', () => {
     render(<WorkPanel />);
     expect(screen.getByText('OLD-1')).toBeInTheDocument();
 
+    // The panel's own mount effect has already swept once, so the assertion
+    // below has to be about a *new* call — without this clear it passes on the
+    // mount's, and the kick could be deleted with the test still green.
+    refreshTickets.mockClear();
+
     await act(async () => {
       state().applyModeChange({ to: 'local' });
       await Promise.resolve();
     });
 
-    // The departed machine's hit is gone, and the panel has left the search
-    // branch entirely rather than pulsing over a question nobody will answer.
+    // The departed machine's hit is gone and the search branch is exited, so
+    // the term no longer holds the panel hostage.
     expect(screen.queryByText('OLD-1')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('work-skeleton')).not.toBeInTheDocument();
     expect(useUiStore.getState().workSearchTerm).toBe('');
+
+    /*
+      A skeleton is still on screen, and that is the correct state now — but
+      only because a read is genuinely on its way. `applyModeChange` kicks one
+      for the machine just joined, which is the whole reason it drops the
+      in-flight handles.
+
+      The distinction is the entire finding: before the fix the same three
+      pulsing cards meant a search whose answer would never arrive, with no
+      "Try again" and no pull-to-refresh to escape it. Asserting the refresh
+      was requested is what separates "loading" from "stranded" — they are
+      pixel-identical and only one of them ends.
+    */
+    expect(refreshTickets).toHaveBeenCalled();
   });
 });
 

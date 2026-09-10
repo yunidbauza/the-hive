@@ -5334,6 +5334,25 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       // this store's own initial state use for "nothing read yet".
       prSource: { kind: 'loading' },
       /*
+        **Tickets are the remote machine's too, and this used to be wrong in
+        the other direction.**
+
+        There is a test asserting these two survive a switch, written on the
+        premise that both modes read the same Jira query — and that premise is
+        false: `CH.jiraStatus` and `CH.jiraSearch` are `'call'` channels and
+        neither is in `PROCESS_LOCAL`, so while attached, the site, the account
+        and the JQL are all the *served* machine's. The list under the WORK
+        badge belongs to whichever machine answered, exactly as `prs` does.
+
+        Left standing it was survivable only by accident: the in-flight sweep
+        replaced it within seconds. The epoch above now discards that answer,
+        which would have left the departed machine's issues sitting under a
+        `live` label for a whole poll interval — so the guard that fixes the
+        race is precisely what makes clearing these two necessary.
+      */
+      tickets: [],
+      ticketSource: { kind: 'loading' },
+      /*
         Not "an orphan quietly wasting memory" the way it first read — session
         ids are **not unique across machines**. `nextSpawnId`/`rememberSpawnId`
         mint them from the same base-36 counter everywhere, so the mode being
@@ -5373,6 +5392,33 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     // declaration's own doc comment.
     store.clearModeEntities();
     if (change.to === 'remote') store.applyAttachSnapshot(change.snapshot);
+
+    /*
+      **Ask the new machine, now — the dropped handles are useless without
+      this.**
+
+      `clearModeEntities` retires both in-flight sweeps so a caller arriving
+      after the switch starts a fresh one rather than joining an answer the
+      epoch has already condemned. On its own that changes nothing a user can
+      see, because nothing calls: `createPoller` holds its *own* `inFlight`
+      over the condemned promise and skips every tick until it settles — and a
+      tick skipped that way does not set `missed`, which is hidden-document
+      only, so the read waits for the next interval boundary. Up to two
+      intervals of an empty panel.
+
+      There is no manual way out of it either. After a switch `prSource` and
+      `ticketSource` are both `loading`, and that is exactly the state that
+      renders no "Try again" and disables pull-to-refresh. So the panels would
+      sit empty with no affordance at all, which is the thing the drop was
+      supposed to prevent.
+
+      Fire-and-forget for the reason `hydratePrs` fires `noteSessionPr` that
+      way: a switch must not block on two network round trips, and both verbs
+      already own their failure reporting. `void` rather than `await` is the
+      whole difference.
+    */
+    void store.refreshPrs();
+    void store.refreshTickets();
   },
 
   reset: () => {

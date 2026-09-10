@@ -69,6 +69,19 @@ const deferred = <T>() => {
   return { promise, settle };
 };
 
+/**
+ * The answer to the sweep `applyModeChange` kicks off for the machine just
+ * joined, parked forever.
+ *
+ * That kick is real behaviour — the drop of the in-flight handles exists to
+ * let it start — but it is not what any case below is about, and letting it
+ * answer would decide the assertions instead of the condemned sweep. Parking
+ * it leaves each test asking only its own question: whether the *departed*
+ * machine's answer can still land. Every mock here is therefore
+ * `mockReturnValueOnce(<the condemned answer>).mockReturnValue(never())`.
+ */
+const never = <T>(): Promise<T> => new Promise<T>(() => {});
+
 const prsOk = (prs: PrsSnapshot['prs'], repos: number): GhResult<PrsSnapshot> => ({
   ok: true,
   value: { prs, repos },
@@ -140,7 +153,7 @@ afterEach(() => {
 describe('a PR sweep that outlives the mode switch it started under', () => {
   it('cannot replace the attached machine’s PRs with the departed one’s', async () => {
     const gh = deferred<GhResult<PrsSnapshot>>();
-    readPullRequests.mockReturnValue(gh.promise);
+    readPullRequests.mockReturnValueOnce(gh.promise).mockReturnValue(never());
 
     // Out over the local machine.
     const sweep = state().refreshPrs();
@@ -164,7 +177,7 @@ describe('a PR sweep that outlives the mode switch it started under', () => {
    */
   it('cannot write the departed machine’s PR onto an attached session', async () => {
     const gh = deferred<GhResult<PrsSnapshot>>();
-    readPullRequests.mockReturnValue(gh.promise);
+    readPullRequests.mockReturnValueOnce(gh.promise).mockReturnValue(never());
 
     const sweep = state().refreshPrs();
 
@@ -214,7 +227,7 @@ describe('a PR sweep that outlives the mode switch it started under', () => {
    */
   it('cannot mark the attached machine’s fresh list stale', async () => {
     const gh = deferred<GhResult<PrsSnapshot>>();
-    readPullRequests.mockReturnValue(gh.promise);
+    readPullRequests.mockReturnValueOnce(gh.promise).mockReturnValue(never());
 
     const sweep = state().refreshPrs();
     attachWithPrs([prRecord({ number: 2, repo: 'attached-repo' })]);
@@ -231,7 +244,7 @@ describe('a PR sweep that outlives the mode switch it started under', () => {
    */
   it('cannot claim the attached machine is unconfigured', async () => {
     const gh = deferred<GhResult<PrsSnapshot>>();
-    readPullRequests.mockReturnValue(gh.promise);
+    readPullRequests.mockReturnValueOnce(gh.promise).mockReturnValue(never());
 
     const sweep = state().refreshPrs();
     attachWithPrs([prRecord({ number: 2, repo: 'attached-repo' })]);
@@ -260,7 +273,7 @@ describe('a ticket sweep that outlives the mode switch it started under', () => 
 
   it('cannot replace the attached machine’s tickets with the departed one’s', async () => {
     const jira = deferred<unknown>();
-    searchJiraIssues.mockReturnValue(jira.promise);
+    searchJiraIssues.mockReturnValueOnce(jira.promise).mockReturnValue(never());
 
     const sweep = state().refreshTickets();
     await startedSearching();
@@ -274,7 +287,7 @@ describe('a ticket sweep that outlives the mode switch it started under', () => 
 
   it('cannot mark the attached machine’s tickets stale', async () => {
     const jira = deferred<unknown>();
-    searchJiraIssues.mockReturnValue(jira.promise);
+    searchJiraIssues.mockReturnValueOnce(jira.promise).mockReturnValue(never());
 
     const sweep = state().refreshTickets();
     await startedSearching();
@@ -293,7 +306,7 @@ describe('a ticket sweep that outlives the mode switch it started under', () => 
    */
   it('is retired at the first hop, not just the last', async () => {
     const jira = deferred<JiraStatus | null>();
-    readJiraStatus.mockReturnValue(jira.promise);
+    readJiraStatus.mockReturnValueOnce(jira.promise).mockReturnValue(never());
 
     const sweep = state().refreshTickets();
     state().applyModeChange({ to: 'local' });
@@ -447,6 +460,52 @@ describe('the in-flight ticket handle across a switch', () => {
 });
 
 /**
+ * The switch asks the machine it just joined, which is what the dropped
+ * handles are *for*.
+ *
+ * Without this the drop is inert: `createPoller` holds its own `inFlight` over
+ * the condemned promise and skips every tick until it settles, and a tick
+ * skipped that way does not set `missed` — that flag is hidden-document only —
+ * so the next read waits for the following interval boundary. Meanwhile both
+ * sources are `loading`, which is exactly the state that renders no "Try
+ * again" and disables pull-to-refresh, so there is no manual way out either.
+ */
+describe('the refresh a switch kicks off', () => {
+  it('asks the joined machine for PRs and issues at once, without waiting for a poll tick', async () => {
+    readPullRequests.mockReturnValue(never());
+    searchJiraIssues.mockReturnValue(never());
+
+    state().applyModeChange({ to: 'local' });
+    await searchIssued(1);
+
+    expect(readPullRequests).toHaveBeenCalledTimes(1);
+    expect(searchJiraIssues).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * And it is the *kicked* sweep that fills the panel, not the condemned one
+   * whose answer the epoch throws away — the end-to-end shape of the fix.
+   */
+  it('installs the joined machine’s answer while discarding the departed one’s', async () => {
+    const condemnedGh = deferred<GhResult<PrsSnapshot>>();
+    const kickedGh = deferred<GhResult<PrsSnapshot>>();
+    readPullRequests.mockReturnValueOnce(condemnedGh.promise).mockReturnValueOnce(kickedGh.promise);
+    searchJiraIssues.mockReturnValue(never());
+
+    const condemned = state().refreshPrs();
+    state().applyModeChange({ to: 'local' });
+
+    condemnedGh.settle(prsOk([prRecord({ repo: 'departed-repo' })], 9));
+    kickedGh.settle(prsOk([prRecord({ number: 7, repo: 'joined-repo' })], 3));
+    await condemned;
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
+
+    expect(state().prs.map((pr) => pr.repo)).toEqual(['joined-repo']);
+    expect(state().prSource).toEqual({ kind: 'live', stale: false, repos: 3 });
+  });
+});
+
+/**
  * `reset()` drops both handles too, and the test named for that in
  * `hive-store.refresh-tickets.test.ts` cannot actually observe it: it `await`s
  * the condemned sweep first, by which point that sweep's own `finally` has
@@ -510,7 +569,7 @@ describe('reset drops the handles while a sweep is still in flight', () => {
 describe('a search across the mode switch', () => {
   it('cannot land the departed machine’s results in the attached view', async () => {
     const hits = deferred<unknown>();
-    searchPullRequests.mockReturnValue(hits.promise);
+    searchPullRequests.mockReturnValueOnce(hits.promise).mockReturnValue(never());
 
     const search = state().searchPrs('hero', undefined);
     state().applyModeChange({ to: 'local' });
@@ -548,7 +607,7 @@ describe('a search across the mode switch', () => {
   // deleted with the whole suite still green.
   it('cannot land the departed machine’s issues in the attached view', async () => {
     const hits = deferred<unknown>();
-    searchJiraIssues.mockReturnValue(hits.promise);
+    searchJiraIssues.mockReturnValueOnce(hits.promise).mockReturnValue(never());
 
     const search = state().searchTickets('hero', false);
     state().applyModeChange({ to: 'local' });
