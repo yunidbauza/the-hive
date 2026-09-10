@@ -1965,8 +1965,15 @@ export function registerIpcHandlers(
       on suppressing notifications for the session it last had (HIVE-145).
       Announced, because the hub's re-arm is what re-raises a row this surface's
       presence was holding down.
+
+      Announced even when it never reported a foreground at all (HIVE-154).
+      Under the every-surface reading a silent surface is enough to hold
+      `isForegroundEverywhere` false for the whole fleet, so its departure can
+      be the moment everyone left is watching, and the arrival sweep must run
+      then rather than at the next tab switch.
     */
-    if (foreground.delete(surfaceId)) notifyForegroundChange();
+    foreground.delete(surfaceId);
+    notifyForegroundChange();
   });
 
   /**

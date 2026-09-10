@@ -817,9 +817,7 @@ export function createNotificationHub(
         /*
           No `!foreground` gate here since HIVE-145: suppression is the
           router's, per surface. One device watching a session must not silence
-          the interruption for another device that is not — and the router
-          remembers who it has told, so the promotion that follows when the
-          watching surface looks away reaches only that surface.
+          the interruption for another device that is not.
 
           `foreground` above is the every-surface reading (HIVE-154): the row
           is written already-read only when *every* attended surface is
@@ -829,6 +827,11 @@ export function createNotificationHub(
           `notifications:read` push, one badge count — and the toast owns the
           per-surface question. "Seen by the fleet" is the row's one honest
           answer.
+
+          The two meet at the re-arm. A row is held for promotion only when it
+          was written already-read, which since HIVE-154 means every surface
+          was looking and the router told nobody; the promotion, which waits
+          until no surface is watching, therefore reaches every surface.
         */
         if (delivery === 'both') {
           present({

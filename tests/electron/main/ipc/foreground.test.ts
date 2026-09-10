@@ -585,6 +585,56 @@ describe('window focus drives the re-arm', () => {
   });
 });
 
+/**
+ * A surface leaving is a foreground change even when it never reported one
+ * (HIVE-154 self review).
+ *
+ * Under the any-surface reading, removing a surface that was watching nothing
+ * could never change an answer, so the release only announced a surface that
+ * had held a foreground entry. Under every-surface it can: one silent surface
+ * is enough to hold `isForegroundEverywhere` false for everybody, and its
+ * departure is the moment the fleet becomes all-watching. The sweep must run
+ * then, not at the next tab switch.
+ */
+describe('a surface that never reported leaving', () => {
+  let onForegroundChange: (listener: () => void) => unknown;
+
+  beforeEach(async () => {
+    ({ onForegroundChange } = await import('../../../../electron/main/ipc'));
+  });
+
+  it('announces a foreground change, since it was holding the fleet answer down', () => {
+    /*
+      A renderer that has sent an input-box report but never a foreground:
+      tracked, with a lifetime the registry watches, and no `foreground`
+      entry to delete.
+    */
+    const lifetime = new Map<string, () => void>();
+    const silentFrame = { url: 'file:///out/renderer/index.html' };
+    const silentEvent = {
+      senderFrame: silentFrame,
+      sender: {
+        mainFrame: silentFrame,
+        on: (event: string, listener: () => void) => {
+          lifetime.set(event, listener);
+        },
+      },
+    } as never;
+    onHandlers.get(CH.ptyPrompt)!(silentEvent, { sessionId: 'term-1', input: 'empty' });
+
+    report({ terminalId: 'term-1' });
+    expect(isForegroundEverywhere('term-1')).toBe(false);
+
+    const listener = vi.fn();
+    onForegroundChange(listener);
+
+    lifetime.get('destroyed')!();
+
+    expect(isForegroundEverywhere('term-1')).toBe(true);
+    expect(listener).toHaveBeenCalled();
+  });
+});
+
 describe('the isForegroundEverywhere predicate composed for the notification hub (HIVE-81, HIVE-154)', () => {
   const session = (entityId: string) => ({ type: 'session' as const, entityId });
 

@@ -2813,6 +2813,12 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
 
           The settle waits on real time because it asserts an *absence*, which
           no poll can hurry — case 22's precedent.
+
+          A `session.blocked` row, which the arrival sweep never takes, so this
+          proves the any-surface hold for that kind only. The drain's other
+          change — an idle or input-needed row released only once *every*
+          surface was watching — is the notifier unit spec's ("releases a held
+          arrival-kind row only once every surface is watching").
         */
         b.notify(CH.uiForeground, { terminalId: null, focused: true });
         await landed(b);
