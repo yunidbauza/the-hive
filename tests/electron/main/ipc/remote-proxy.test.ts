@@ -26,6 +26,20 @@ const checkForUpdatesInteractively = vi.fn(() => Promise.resolve('FAKE_UPDATE_CH
 vi.mock('../../../../electron/main/updates', () => ({ updateStatus, checkForUpdatesInteractively }));
 
 /**
+ * `../notifications/activate-here` is mocked for `../updates`' reason exactly
+ * (HIVE-151): it reaches `shell.openExternal` and this process's real updater,
+ * and what those branches *do* is that module's own test's job. What this file
+ * proves is narrower and is the whole of the routing question — that a
+ * `notifications:act` payload reaches this function rather than `client.call`,
+ * or the other way round, depending on the action it carries.
+ */
+const activateOnThisMachine = vi.fn();
+vi.mock('../../../../electron/main/notifications/activate-here', () => ({
+  activateOnThisMachine: (action: unknown) => activateOnThisMachine(action),
+  focusThisMachine: vi.fn(),
+}));
+
+/**
  * `registerRemoteProxy`, the other end of `registerIpcHandlers` (HIVE-144).
  *
  * `electron`'s `ipcMain` is mocked the way `bindings.test.ts` mocks its own
@@ -724,6 +738,103 @@ describe('registerRemoteProxy', () => {
         /no localRemoteForget supplied/,
       );
       expect(client.call).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * The fourth routing shape, and the only per-call one (HIVE-151).
+   *
+   * `WINDOW_BOUND` and `PROCESS_LOCAL` are facts about a *channel* and are
+   * resolved once, at registration. `notifications:act` cannot be either: it
+   * carries seven verbs, three of which reach this machine's hardware and four
+   * of which resolve against fleet state the client does not hold. Proxied
+   * wholesale — which is what it was — a `url` click opened a browser on the
+   * server and `update.install` drove the server's updater.
+   *
+   * Driven through `invoke` rather than by reading the table, for the reason
+   * the `PROCESS_LOCAL` block above gives: what is pinned is the binding's
+   * behaviour, not the helper's shape.
+   */
+  describe('PAYLOAD_SCOPED: notifications:act routes per action (HIVE-151)', () => {
+    const proxy = () => {
+      const client = fakeClient();
+      registerRemoteProxy({ client, broadcaster: fakeBroadcaster() });
+      return client;
+    };
+
+    it.each([
+      ['url', { type: 'url', url: 'https://example.com' }],
+      ['update.download', { type: 'update.download' }],
+      ['update.install', { type: 'update.install' }],
+    ])('answers a %s action here, with the socket untouched', async (_name, action) => {
+      const client = proxy();
+
+      await invoke('notifications:act', trustedEvent, action);
+
+      expect(activateOnThisMachine).toHaveBeenCalledWith(action);
+      expect(client.call).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['ask', { type: 'ask', thread: 't1' }],
+      ['session', { type: 'session', entityId: 's1' }],
+      ['agent', { type: 'agent', name: 'scout' }],
+      ['none', { type: 'none' }],
+    ])('forwards a %s action to the socket unchanged', async (_name, action) => {
+      const client = proxy();
+
+      await invoke('notifications:act', trustedEvent, action);
+
+      expect(client.call).toHaveBeenCalledWith('notifications:act', action);
+      expect(activateOnThisMachine).not.toHaveBeenCalled();
+    });
+
+    /*
+      Proxied rather than claimed. The far end runs the same parse and reaches
+      the same conclusion, so nothing happens either way — but answering it
+      here would let a malformed payload pick its own machine, which is the
+      class of defect this table closes rather than one it should open.
+    */
+    it.each([
+      ['a url with no url', { type: 'url' }],
+      ['a url whose url is not a string', { type: 'url', url: 42 }],
+      ['a verb this build does not know', { type: 'not-a-verb' }],
+      ['an empty object', {}],
+      ['null', null],
+    ])('forwards %s rather than acting on it here', async (_name, payload) => {
+      const client = proxy();
+
+      await invoke('notifications:act', trustedEvent, payload);
+
+      expect(activateOnThisMachine).not.toHaveBeenCalled();
+      expect(client.call).toHaveBeenCalledWith('notifications:act', payload);
+    });
+
+    /*
+      Ordering, not merely membership. `WINDOW_BOUND` and `PROCESS_LOCAL` hold
+      for every payload their channel can carry, so a channel on either must
+      never reach a payload check that could disagree with them.
+    */
+    it('refuses a WINDOW_BOUND channel ahead of any payload check', async () => {
+      const client = proxy();
+
+      await expect(
+        invoke('config:choose-directory', trustedEvent, { type: 'url', url: 'https://x.com' }),
+      ).rejects.toMatchObject({ code: 'window-bound' });
+      expect(activateOnThisMachine).not.toHaveBeenCalled();
+      expect(client.call).not.toHaveBeenCalled();
+    });
+
+    it('leaves every other call channel routed by name alone', async () => {
+      const client = proxy();
+
+      await invoke('config:get', trustedEvent, { type: 'url', url: 'https://example.com' });
+
+      expect(activateOnThisMachine).not.toHaveBeenCalled();
+      expect(client.call).toHaveBeenCalledWith('config:get', {
+        type: 'url',
+        url: 'https://example.com',
+      });
     });
   });
 
