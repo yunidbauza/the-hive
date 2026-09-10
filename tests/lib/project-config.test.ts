@@ -15,6 +15,7 @@ import {
   projectAccess,
   projectContainerised,
   readAppInfo,
+  readLocalRemote,
   projectConfigSnapshot,
   reloadProjectConfig,
   renameProjectInConfig,
@@ -711,6 +712,30 @@ describe('story 107 verbs', () => {
       appInfo: vi.fn().mockRejectedValue(new Error('channel gone')),
     };
     await expect(readAppInfo()).resolves.toBeNull();
+  });
+
+  /*
+    HIVE-149. Read over its own channel rather than off the installed snapshot,
+    and that is the whole point of the function: while attached, `config:get` is
+    answered by the server, so `ConfigSnapshot.remote` describes the far end.
+  */
+  it("readLocalRemote returns this machine's own remote block", async () => {
+    const block = { mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 };
+    (window as { hive?: unknown }).hive = {
+      config: { getRemote: vi.fn().mockResolvedValue(block) },
+    };
+
+    await expect(readLocalRemote()).resolves.toBe(block);
+  });
+
+  it('readLocalRemote answers null rather than inventing an address', async () => {
+    // No bridge: the browser demo.
+    await expect(readLocalRemote()).resolves.toBeNull();
+
+    (window as { hive?: unknown }).hive = {
+      config: { getRemote: vi.fn().mockRejectedValue(new Error('channel gone')) },
+    };
+    await expect(readLocalRemote()).resolves.toBeNull();
   });
 });
 

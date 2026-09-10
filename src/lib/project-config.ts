@@ -9,6 +9,7 @@ import type {
   ModeChange,
   ProjectConfig,
   ProjectStatus,
+  RemoteConfig,
   RemotePairRequest,
   RemoveProjectRequest,
   RenameProjectRequest,
@@ -671,6 +672,36 @@ export async function readAppInfo(): Promise<AppInfo | null> {
     return await bridge.appInfo();
   } catch (cause) {
     console.error('[hive] reading app info failed:', cause);
+    return null;
+  }
+}
+
+/**
+ * This machine's own `remote` block (HIVE-149).
+ *
+ * Deliberately *not* read off the snapshot this module installs, which is the
+ * whole reason the channel exists: while attached, `config:get` is answered by
+ * the server, so `ConfigSnapshot.remote` describes the far end — whose own
+ * `mode` reads `local`, because the server is the thing being attached to.
+ * `config:get-remote` is `PROCESS_LOCAL` and describes this window.
+ *
+ * Asked on demand rather than subscribed to, exactly as {@link readAppInfo} is
+ * and for the same reason: there is no push channel for it, and the two things
+ * that change it — a mode switch and a config reload — both already re-render
+ * whatever asked.
+ *
+ * `null` when there is no bridge (the browser demo) or the channel fails, so a
+ * caller shows what it already had rather than an address this machine never
+ * stated.
+ */
+export async function readLocalRemote(): Promise<RemoteConfig | null> {
+  const bridge = window.hive;
+  if (!bridge) return null;
+
+  try {
+    return await bridge.config.getRemote();
+  } catch (cause) {
+    console.error('[hive] reading the local remote block failed:', cause);
     return null;
   }
 }
