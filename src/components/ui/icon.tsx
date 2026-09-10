@@ -10,6 +10,7 @@ import {
   Bug,
   CalendarCheck,
   CaretDown,
+  CaretLeft,
   CaretRight,
   ChartLine,
   ChatCircleDots,
@@ -93,6 +94,8 @@ const GLYPHS: Record<string, PhosphorIcon> = {
   // Disclosure — the projects panel's caret (031).
   'ph-caret-down': CaretDown,
   'ph-caret-right': CaretRight,
+  // Settings › Skills' way back out of a skill's files (HIVE-148).
+  'ph-caret-left': CaretLeft,
 
   // Projects (031).
   'ph-globe-hemisphere-west': GlobeHemisphereWest,

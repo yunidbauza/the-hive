@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+
 import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
@@ -107,6 +110,32 @@ describe('every notification kind has a real glyph', () => {
 
     expect(svg(named)?.innerHTML).not.toBe(svg(fallback)?.innerHTML);
   });
+});
+
+/**
+ * Every icon name spelled as a literal anywhere in `src/`, checked against the
+ * registry.
+ *
+ * The two guards above cover fixtures and notification kinds, and neither saw
+ * HIVE-148's back button: `skill-bundle.tsx` asked for `ph-caret-left`, nothing
+ * registered it, and Settings › Skills shipped a question mark beside "Skills".
+ * A component literal is the third place a name comes from, so this reads them
+ * off the source instead of trusting a list someone has to remember to extend.
+ */
+it('every icon name written in src/ is one the registry has', () => {
+  const root = resolve(process.cwd(), 'src');
+  const names = new Set<string>();
+
+  for (const file of readdirSync(root, { recursive: true, encoding: 'utf8' })) {
+    if (!/\.tsx?$/.test(file)) continue;
+    const source = readFileSync(join(root, file), 'utf8');
+    for (const match of source.matchAll(/['"](ph-[a-z0-9-]+)['"]/g)) {
+      names.add(match[1]);
+    }
+  }
+
+  expect(names.size).toBeGreaterThan(0);
+  expect([...names].filter((name) => !ICON_NAMES.includes(name))).toEqual([]);
 });
 
 it('every notification kind names an icon the registry has (HIVE-114 regression)', () => {
