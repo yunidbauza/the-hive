@@ -3168,31 +3168,37 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
         not exist on this machine, and the amber exposure chip reported the
         server's exposure as this one's.
 
-        The fields compared here are chosen because they *provably* differ
-        between these two processes rather than because they might: one app is
-        serving on a real port with a paired device and is attached to nothing,
-        the other is attached and serving nothing. Both halves are read live —
-        the server's over a raw socket, the client's through its own renderer —
-        so neither side is a value this file made up.
+        The fields checked are chosen because they *provably* differ between
+        these two processes rather than because they might: one app is serving
+        on a real port with a paired device and is attached to nothing, the
+        other is attached and serving nothing.
+
+        The server's half used to be read over a raw socket, as a measured value
+        to compare against. HIVE-155 closed that route: the server refuses
+        `app:info` to every remote caller, so the raw read now asserts the
+        refusal instead. That is a stronger proof of Ruling 24 than the
+        comparison was. A proxy that forwarded the renderer's call would get the
+        same `remote-refused` error back, so a `result` in the renderer can only
+        have been answered by the client's own process.
       */
       assert(renderer !== undefined, 'the client app must have a renderer');
       assert(credential !== null, 'case 21b must have run and paired a device');
 
+      // Opened here because 21f onwards drive the server's fleet through it.
       onServer = await openClient(`ws://127.0.0.1:${String(serverPort)}`, credential, {
         unmanaged: true,
       });
       const answer = await onServer.call(CH.appInfo, undefined);
-      assert(answer.kind === 'result', `the server refused app:info: ${JSON.stringify(answer)}`);
-      const serverInfo = answer.payload as AppInfo;
+      expect(
+        answer,
+        `the served app's stderr so far:\n${serverRecord?.stderr || '(empty)'}`,
+      ).toMatchObject({ kind: 'error', code: 'remote-refused' });
+      expect((answer as ErrorFrame).message).toMatch(/app:info/);
+
       const clientInfo = await renderer.evaluate<AppInfo>('window.hive.appInfo()');
       measurements.push({
         case: '21e. Ruling 24',
-        server: {
-          serverBoundHost: serverInfo.serverBoundHost,
-          servingDeviceCount: serverInfo.servingDeviceCount,
-          attachedServerName: serverInfo.attachedServerName,
-          remoteLink: null,
-        },
+        server: { appInfo: (answer as ErrorFrame).code },
         client: {
           serverBoundHost: clientInfo.serverBoundHost,
           servingDeviceCount: clientInfo.servingDeviceCount,
@@ -3201,23 +3207,12 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
         },
       });
 
-      // The server's own answer, so the comparison below is against a measured
-      // value rather than an assumed one.
-      expect(
-        serverInfo.serverBoundHost,
-        `the served app's stderr so far:\n${serverRecord?.stderr || '(empty)'}`,
-      ).toBe('127.0.0.1');
-      expect(serverInfo.servingDeviceCount).toBeGreaterThanOrEqual(1);
-      expect(serverInfo.attachedServerName).toBeNull();
-
-      // And the client's, which is the assertion: three fields, each the
-      // opposite of the server's, read from a window whose every other channel
-      // is being answered by that server right now.
+      // The client's, which is the assertion: three fields, each the opposite of
+      // what a serving, unattached process reports, read from a window whose
+      // every other channel is being answered by that server right now.
       expect(clientInfo.serverBoundHost).toBeNull();
       expect(clientInfo.servingDeviceCount).toBe(0);
       expect(clientInfo.attachedServerName).toBe(hostname());
-      expect(clientInfo.serverBoundHost).not.toBe(serverInfo.serverBoundHost);
-      expect(clientInfo.servingDeviceCount).not.toBe(serverInfo.servingDeviceCount);
     }, 90_000);
 
     it('21l. config:get-remote stays this process’s own while attached (HIVE-149)', async () => {
