@@ -91,6 +91,7 @@ interface Presenter {
   broadcast: (notification: unknown) => void;
   announceRead: (id: string, unread: number) => void;
   announceDismissed: (id: string) => void;
+  announceUnread: (count: number) => void;
 }
 
 let presenter: Presenter | undefined;
@@ -144,11 +145,16 @@ const { CH } = await import('../../../../electron/shared/ipc-contract');
 const { registerIpcHandlers, resetIpcHandlers } = await import(
   '../../../../electron/main/ipc'
 );
+const { app } = await import('electron');
+const { resetServerModeForTest, setServerMode } = await import(
+  '../../../../electron/main/server-mode'
+);
 
 beforeEach(() => {
   sent.length = 0;
   presenter = undefined;
   windows = [fakeWindow()];
+  resetServerModeForTest();
   vi.clearAllMocks();
   resetIpcHandlers();
   registerIpcHandlers();
@@ -201,5 +207,48 @@ describe('the notification hub’s presenters (HIVE-75)', () => {
     presenter!.broadcast({ id: 'n1' });
 
     expect(sent).toHaveLength(1);
+  });
+});
+
+/**
+ * Whose dock the hub's count lands on (HIVE-159).
+ *
+ * The count is the fleet's, but the badge is a fact about one screen. A
+ * standalone app is its own screen and badges exactly as it always did. A
+ * serving machine answers for attached clients, each of which badges its own
+ * dock from its own renderer, so the server's hub writing the same number onto
+ * the server's dock was a count shown on behalf of somebody else.
+ */
+describe('the hub’s unread count on the dock (HIVE-159)', () => {
+  // The outer `beforeEach` tears down before registering, and that teardown
+  // clears the badge — which would satisfy or fail these cases on its own.
+  beforeEach(() => {
+    vi.mocked(app.dock!.setBadge).mockClear();
+  });
+
+  it('badges this dock on a standalone app', () => {
+    presenter!.announceUnread(3);
+
+    expect(app.dock?.setBadge).toHaveBeenCalledWith('3');
+  });
+
+  it('does not badge the dock of a serving machine', () => {
+    setServerMode(true);
+
+    presenter!.announceUnread(3);
+
+    expect(app.dock?.setBadge).not.toHaveBeenCalled();
+  });
+
+  /*
+    A teardown is also a mode switch (`unbindEverything` calls it in both
+    directions), and whichever mode comes next inherits a badge written by a
+    writer that no longer exists: the hub it just disposed, or the renderer
+    reports of an attachment that has ended.
+  */
+  it('clears the dock badge when the handlers are torn down', () => {
+    resetIpcHandlers();
+
+    expect(app.dock?.setBadge).toHaveBeenCalledWith('');
   });
 });

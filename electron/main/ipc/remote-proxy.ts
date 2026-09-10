@@ -14,6 +14,7 @@ import {
 import { RemoteCallError, type RemoteClient } from '../../remote-client/socket';
 import { activateOnThisMachine } from '../notifications/activate-here';
 import { notificationDelivery } from '../notifications/delivery';
+import { badgeDock, clearDockBadgeWithLastWindow } from '../notifications/dock-badge';
 import { createRemoteToasts, type RemoteToasts } from '../notifications/remote-toast';
 import { checkForUpdatesInteractively, updateStatus } from '../updates';
 
@@ -113,6 +114,14 @@ function localAnswerFor(
     */
     case CH.notificationsDelivery:
       return () => notificationDelivery();
+    /*
+      The ninth (HIVE-159), imported for `CH.notificationsDelivery`'s reason:
+      `notifications/dock-badge.ts` reaches only `electron`. The one member
+      that takes a payload for `CH.configSetRemote`'s reason — the count is
+      the whole of what it says — and the guard lives in `badgeDock`.
+    */
+    case CH.notificationsBadge:
+      return (payload) => badgeDock(payload);
     default:
       return null;
   }
@@ -216,6 +225,8 @@ let bindings: Bindings | null = null;
 let unsubscribe: (() => void) | null = null;
 /** This machine's focus, stamped onto `ui:foreground` (HIVE-145). */
 let foregroundStamp: ForegroundStamp | null = null;
+/** Clears this machine's dock badge with the last window (HIVE-159). */
+let stopBadgeWatch: (() => void) | null = null;
 /** The server's toasts, raised on this machine's desktop (HIVE-145). */
 let remoteToasts: RemoteToasts | null = null;
 
@@ -348,6 +359,11 @@ export function registerRemoteProxy(deps: {
   } = deps;
 
   bindings = createBindings(ipcMain);
+  /*
+    The badge is the renderer's report while attached, and a closed window is
+    a renderer that can no longer report. See `clearDockBadgeWithLastWindow`.
+  */
+  stopBadgeWatch = clearDockBadgeWithLastWindow();
   remoteToasts = createRemoteToasts({
     call: (channel, payload) => client.call(channel, payload),
     /*
@@ -614,4 +630,6 @@ export function resetRemoteProxy(): void {
   foregroundStamp = null;
   remoteToasts?.dispose();
   remoteToasts = null;
+  stopBadgeWatch?.();
+  stopBadgeWatch = null;
 }

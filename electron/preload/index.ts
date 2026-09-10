@@ -708,6 +708,9 @@ const bridge: HiveBridge = {
     /** Hand a clicked row's action back to main to carry out. */
     act: (action: NotificationAction): Promise<void> =>
       ipcRenderer.invoke(CH.notificationsAct, action) as Promise<void>,
+    /** This window's unread count, for this machine's dock (HIVE-159). */
+    badge: (count: number): Promise<void> =>
+      ipcRenderer.invoke(CH.notificationsBadge, count) as Promise<void>,
   },
   ledger: {
     /** The log main holds. Hydration on mount. */

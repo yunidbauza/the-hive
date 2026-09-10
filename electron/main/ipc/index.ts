@@ -247,6 +247,7 @@ import {
   notificationDelivery,
   recordNotificationRefusal,
 } from '../notifications/delivery';
+import { badgeDock, clearDockBadge } from '../notifications/dock-badge';
 import { registerPtyHost } from '../pty-host';
 import {
   pairDevice,
@@ -1687,17 +1688,21 @@ export function registerIpcHandlers(
     /**
      * The count on the dock icon.
      *
-     * Empty string, not `'0'`, clears it — that is Electron's API, and a badge
-     * reading `0` is a worse lie than no badge, because it says the app has
-     * something to report and the something is nothing.
+     * Written by `notifications/dock-badge.ts`, which owns Electron's contract
+     * (an empty string clears, `'0'` would not). Off macOS `app.dock` is
+     * undefined and this is a no-op. Windows has a taskbar overlay that would
+     * serve the same purpose and needs an icon rather than a string, so it is
+     * left for whoever ships a Windows build rather than approximated here.
      *
-     * Off macOS `app.dock` is undefined and this is a no-op. Windows has a
-     * taskbar overlay that would serve the same purpose and needs an icon
-     * rather than a string, so it is left for whoever ships a Windows build
-     * rather than approximated here.
+     * **Not on a serving machine (HIVE-159).** The count is the fleet's, but
+     * the badge describes one screen. Each attached client badges its own dock
+     * from its own renderer, so a server writing the same number onto its own
+     * dock was showing a count on somebody else's behalf, on a dock that
+     * server mode has hidden anyway.
      */
     announceUnread: (count) => {
-      app.dock?.setBadge(count > 0 ? String(count) : '');
+      if (isServerMode()) return;
+      badgeDock(count);
     },
     activate: activateNotification,
     now: () => Date.now(),
@@ -1756,6 +1761,20 @@ export function registerIpcHandlers(
    * desktop. Proxied, this told an attached user about the server's OS.
    */
   handle(CH.notificationsDelivery, () => notificationDelivery());
+
+  /**
+   * Heard and ignored (HIVE-159).
+   *
+   * The renderer reports its unread count whatever mode it is in, and only an
+   * attached process acts on it — `remote-proxy.ts` answers it by badging this
+   * machine's dock, because no hub runs there. Here the hub does run, counts
+   * its own buffer, and badges the dock through `announceUnread` above. Two
+   * writers of one badge would race, so in this mode the hub is the only one.
+   *
+   * Bound rather than left unbound so the renderer's call resolves instead of
+   * rejecting with "no handler registered".
+   */
+  handle(CH.notificationsBadge, () => undefined);
 
   handle(CH.notificationsList, () => hub.list());
   handle(CH.notificationsMarkRead, (_event, payload) =>
@@ -4926,6 +4945,15 @@ export function registerIpcHandlers(
  */
 export function resetIpcHandlers(options: { flush?: boolean } = {}): void {
   const { flush = false } = options;
+  /*
+    HIVE-159. A teardown is also every mode switch — `unbindEverything` calls
+    this in both directions — and whichever mode comes next inherits a badge
+    written by a writer that no longer exists: the hub disposed below, or the
+    renderer's reports to an attachment that has ended. The next writer states
+    its own count: a fresh hub starts from an empty buffer, and the renderer
+    re-reports when its link changes (`useDockBadge`).
+  */
+  clearDockBadge();
   /*
     HIVE-142. Most tests never call `startRemoteListener`, so this is usually
     stopping a socket that was never bound — cheap, per `listener.ts`'s own
