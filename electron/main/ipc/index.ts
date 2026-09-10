@@ -3532,7 +3532,6 @@ export function registerIpcHandlers(
     return {
       gh: readGhStatus(env, runCommand),
       loginEnv,
-      notificationsSupported: Notification.isSupported(),
     };
   });
 
