@@ -252,7 +252,6 @@ import {
 import { onShutdown } from '../shutdown';
 import { createSkillsRuntime, type SkillsRuntime } from '../skills';
 import { PLUGIN_DIR } from '../skills/paths';
-import { parseSaveThemeRequest, pickTheme, saveTheme } from '../theme';
 import {
   checkForUpdatesInteractively,
   downloadUpdate,
@@ -4152,9 +4151,17 @@ export function registerIpcHandlers(
     const request = parseSkillImportRequest(payload);
     return skills?.importFiles(request.name, request.dir, async () => {
       /*
-        Main opens the picker, so no source path crosses IPC inward. The same
-        arrangement `pickTheme()` uses, and the reason `import` is a verb of its
-        own rather than a second shape of `drop`.
+        Main opens the picker, so no source path crosses IPC inward, and that
+        is the reason `import` is a verb of its own rather than a second shape
+        of `drop`.
+
+        It is also why this channel is in `WINDOW_BOUND`: main is the wrong
+        machine to open a picker on whenever the user is attached to a server.
+        The theme verbs used to share the arrangement and HIVE-146 deleted them
+        for exactly that, moving the read into the renderer. This one cannot
+        follow: the files being added belong beside the skill on the server, so
+        a renderer-side picker would offer the wrong machine's disk. `drop`
+        already carries the user's own files, and the refusal names it.
       */
       const window = BrowserWindow.fromWebContents(event.sender);
       if (window === null) return [];
@@ -4496,20 +4503,6 @@ export function registerIpcHandlers(
     */
     return agentState.read(name).status;
   });
-
-  /**
-   * Getting a theme file on and off disk (HIVE-80).
-   *
-   * Neither verb takes a payload that names a destination: `pick` returns
-   * whatever the open dialog chose, and `save`'s only renderer-supplied fields
-   * are the file's contents and a suggested name for the save dialog — see
-   * `parseSaveThemeRequest` for why both still need validating even though
-   * neither is a path.
-   */
-  handle(CH.themePick, (event) => pickTheme(event));
-  handle(CH.themeSave, (event, payload) =>
-    saveTheme(event, parseSaveThemeRequest(payload)),
-  );
 
   /**
    * What the renderer is showing (HIVE-81). Guarded to reject rather than

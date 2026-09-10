@@ -18,7 +18,6 @@ import {
   BRIDGE_SESSION_KEYS,
   BRIDGE_SKILLS_KEYS,
   BRIDGE_SLACK_KEYS,
-  BRIDGE_THEME_KEYS,
   BRIDGE_UI_KEYS,
   CH,
   EVENT_CHANNELS,
@@ -96,8 +95,6 @@ const skills = () =>
   exposed.skills as Record<string, (...args: unknown[]) => unknown>;
 const updates = () =>
   exposed.updates as Record<string, (...args: unknown[]) => unknown>;
-const theme = () =>
-  exposed.theme as Record<string, (...args: unknown[]) => unknown>;
 const ui = () =>
   exposed.ui as Record<string, (...args: unknown[]) => unknown>;
 
@@ -331,11 +328,6 @@ describe('exposed surface', () => {
     // `IpcRendererEvent` before the page ever sees it.
     expect(status).toHaveBeenCalledWith(push);
     expect(lines).toHaveBeenCalledWith(batch);
-  });
-
-  /** HIVE-80. Two verbs, neither taking a destination path from the renderer. */
-  it('exposes exactly the theme verbs', () => {
-    expect(Object.keys(theme()).sort()).toEqual([...BRIDGE_THEME_KEYS].sort());
   });
 
   /**
@@ -679,21 +671,6 @@ describe('verbs route to the contract channels', () => {
       sessionId: 's1',
       cols: 100,
       rows: 30,
-    });
-  });
-});
-
-describe('theme verbs route to their channels (HIVE-80)', () => {
-  it('pick invokes theme:pick with no payload', async () => {
-    await theme().pick();
-    expect(ipcRendererMock.invoke).toHaveBeenCalledWith(CH.themePick);
-  });
-
-  it('save invokes theme:save with the request', async () => {
-    await theme().save({ suggestedName: 'x.json', contents: '{}' });
-    expect(ipcRendererMock.invoke).toHaveBeenCalledWith(CH.themeSave, {
-      suggestedName: 'x.json',
-      contents: '{}',
     });
   });
 });

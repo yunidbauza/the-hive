@@ -143,7 +143,6 @@ import type {
   SlackStatus,
   SlackTokensState,
 } from './slack-contract';
-import type { PickedTheme, SaveThemeRequest } from './theme-contract';
 import type { UpdateStatus } from './update-contract';
 
 export const CH = {
@@ -996,12 +995,6 @@ export const CH = {
   agentsLines: 'agents:lines',
   appInfo: 'app:info',
   /**
-   * HIVE-80's two verbs. Neither takes a destination path — the dialog chooses
-   * it — so the epic's "no verb takes a destination path" rule still holds by
-   * construction.
-   */
-  themePick: 'theme:pick',
-  themeSave: 'theme:save',
   /**
    * Which session's terminal is on the centre stage, renderer → main (HIVE-81).
    *
@@ -2419,20 +2412,6 @@ export interface HiveBridge {
     pr(request: SessionPrRequest): Promise<void>;
   };
   /**
-   * Getting a theme file on and off disk (HIVE-80).
-   *
-   * Two verbs, and neither takes a destination path: the dialog chooses it in
-   * both directions, which is what keeps the epic's "no verb takes a
-   * destination path" rule true by construction rather than by a check that
-   * could be forgotten.
-   */
-  theme: {
-    /** Native open dialog filtered to .json. Resolves null when cancelled. */
-    pick(): Promise<PickedTheme | null>;
-    /** Native save dialog, then writes. Resolves the path, or null when cancelled. */
-    save(request: SaveThemeRequest): Promise<string | null>;
-  };
-  /**
    * What the renderer is showing (HIVE-81).
    *
    * Its own namespace rather than a verb on `session`, which is documented and
@@ -2587,7 +2566,6 @@ export const BRIDGE_KEYS = [
   'session',
   'skills',
   'slack',
-  'theme',
   'ui',
   'updates',
 ] as const;
@@ -3138,9 +3116,6 @@ export const BRIDGE_LEDGER_KEYS = [
 
 /** The exact key set of `window.hive.updates`. */
 export const BRIDGE_UPDATES_KEYS = ['status', 'check'] as const;
-
-/** The exact key set of `window.hive.theme` (HIVE-80). */
-export const BRIDGE_THEME_KEYS = ['pick', 'save'] as const;
 
 /** The exact key set of `window.hive.ui` (HIVE-81). */
 export const BRIDGE_UI_KEYS = ['reportForeground', 'reportSessionName'] as const;

@@ -2,7 +2,6 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { REMOTE_DISABLED_REASON } from '@config/runtime';
 import { ThemeGallery } from '@features/settings/components/theme-gallery';
 import { BUILT_IN_THEME } from '@lib/theme/built-in';
 import { BUILT_IN_THEMES } from '@lib/theme/built-in-themes';
@@ -327,10 +326,15 @@ describe('ThemeGallery', () => {
 });
 
 /**
- * `theme:pick` and `theme:save` while attached to someone else's Hive
- * (HIVE-144) — see `WINDOW_BOUND` (`electron/shared/remote-contract.ts`).
- * Every button that reaches either channel disables with that table's own
- * reason and never calls the bridge function.
+ * The same three controls HIVE-144 disabled while attached, asserted the other
+ * way round (HIVE-146).
+ *
+ * `theme:pick` and `theme:save` were `WINDOW_BOUND` because they opened a
+ * dialog on the server. Both channels are gone: `files.ts` reads and writes
+ * through the File API, in the renderer, which is on the machine the user is
+ * sitting at in either mode. So attachment is no longer a reason to refuse
+ * anything here, and this block exists to fail if a capability gate is ever
+ * reintroduced — the state is still set up exactly as it was.
  */
 describe('ThemeGallery — attached to a remote server', () => {
   beforeEach(() => {
@@ -351,39 +355,37 @@ describe('ThemeGallery — attached to a remote server', () => {
     resetProjectConfig();
   });
 
-  it('disables Import theme… and never opens the picker', async () => {
+  it('leaves Import theme… live and opens the picker', async () => {
+    vi.mocked(pickThemeFile).mockResolvedValue(null);
     render(<ThemeGallery />);
 
     const button = screen.getByRole('button', { name: 'Import theme…' });
-    expect(button).toBeDisabled();
-    expect(button).toHaveAttribute('title', REMOTE_DISABLED_REASON.pickTheme);
+    expect(button).toBeEnabled();
 
     await userEvent.click(button);
-    expect(pickThemeFile).not.toHaveBeenCalled();
+    expect(pickThemeFile).toHaveBeenCalled();
   });
 
-  it('disables Download template and never writes a file', async () => {
+  it('leaves Download template live and writes a file', async () => {
     render(<ThemeGallery />);
 
     const button = screen.getByRole('button', { name: 'Download template' });
-    expect(button).toBeDisabled();
-    expect(button).toHaveAttribute('title', REMOTE_DISABLED_REASON.saveTheme);
+    expect(button).toBeEnabled();
 
     await userEvent.click(button);
-    expect(saveThemeFile).not.toHaveBeenCalled();
+    expect(saveThemeFile).toHaveBeenCalled();
   });
 
-  it('disables Export… on every card and never writes a file', async () => {
+  it('leaves Export… live on every card and writes a file', async () => {
     render(<ThemeGallery />);
 
     await userEvent.click(
       screen.getAllByRole('button', { name: /actions$/ })[0],
     );
     const item = screen.getByRole('menuitem', { name: 'Export…' });
-    expect(item).toHaveAttribute('aria-disabled', 'true');
-    expect(item).toHaveAttribute('title', REMOTE_DISABLED_REASON.saveTheme);
+    expect(item).not.toHaveAttribute('aria-disabled', 'true');
 
     await userEvent.click(item);
-    expect(saveThemeFile).not.toHaveBeenCalled();
+    expect(saveThemeFile).toHaveBeenCalled();
   });
 });

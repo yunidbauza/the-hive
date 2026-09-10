@@ -77,7 +77,7 @@ const MAIN_ONLY: ReadonlyMap<string, FrameKind> = new Map([
 
 describe('remote contract: coverage', () => {
   it('classifies every channel exactly once for frame kind', () => {
-    expect(entries).toHaveLength(131);
+    expect(entries).toHaveLength(129);
     expect(Object.keys(FRAME_KIND).sort()).toEqual([...Object.values(CH)].sort());
   });
 
@@ -116,11 +116,11 @@ describe('remote contract: frame kinds match the preload bridge', () => {
     expect(frameKindOf(channel)).toBe(expected);
   });
 
-  it('splits 100 call, 6 notify and 25 event', () => {
+  it('splits 98 call, 6 notify and 25 event', () => {
     const tally = { call: 0, notify: 0, event: 0 };
     for (const kind of Object.values(FRAME_KIND)) tally[kind] += 1;
 
-    expect(tally).toEqual({ call: 100, notify: 6, event: 25 });
+    expect(tally).toEqual({ call: 98, notify: 6, event: 25 });
   });
 
   /**
@@ -163,11 +163,11 @@ describe('remote contract: authorization', () => {
     expect(authorizationOf(channel)).toBe('execute');
   });
 
-  it('grades the 131 as 55 read, 44 mutate and 32 execute', () => {
+  it('grades the 129 as 54 read, 43 mutate and 32 execute', () => {
     const tally = { read: 0, mutate: 0, execute: 0 };
     for (const authz of Object.values(CHANNEL_AUTHORIZATION)) tally[authz] += 1;
 
-    expect(tally).toEqual({ read: 55, mutate: 44, execute: 32 });
+    expect(tally).toEqual({ read: 54, mutate: 43, execute: 32 });
   });
 
   /**
@@ -473,13 +473,11 @@ describe('remote contract: an unclassified channel is a compile error', () => {
 });
 
 describe('WINDOW_BOUND', () => {
-  it('names exactly the five refused channels', () => {
+  it('names exactly the three refused channels', () => {
     expect(Object.keys(WINDOW_BOUND).sort()).toEqual(
       [
         CH.configChooseDirectory,
         CH.skillsFileImport,
-        CH.themePick,
-        CH.themeSave,
         CH.configReveal,
       ].sort(),
     );
@@ -499,23 +497,26 @@ describe('WINDOW_BOUND', () => {
     expect(WINDOW_BOUND[CH.configReveal]).toMatch(/server/);
   });
 
-  it('names the ticket that removes an entry, where one exists', () => {
+  it('tells a remote user what to do instead, for every entry', () => {
     /*
-      HIVE-146 owns three of these and deletes each as it lands a replacement.
-      `skills:file:import` is the fourth and has no such ticket: picking files
-      for a skill on the *server* would copy the server's files rather than the
-      user's, so there is nothing to move to a client-side picker — the drop
-      verb already does that job, and the reason below says so.
-    */
-    expect(WINDOW_BOUND[CH.configChooseDirectory]).toMatch(/HIVE-146/);
-    expect(WINDOW_BOUND[CH.themePick]).toMatch(/HIVE-146/);
-    expect(WINDOW_BOUND[CH.themeSave]).toMatch(/HIVE-146/);
-  });
+      This used to assert that three entries named HIVE-146, the ticket that
+      would delete them. Two of those are gone — `theme:pick` and `theme:save`
+      are not refused any more, they do not exist — and naming a closed ticket
+      is worth nothing to whoever reads the refusal.
 
-  it('tells a remote user what to do instead, for the entry no ticket covers', () => {
-    // A refusal with no route forward is a dead end. This one names the verb
-    // that does work over a socket.
+      What survives it is the property the ticket reference was standing in
+      for: a refusal with no route forward is a dead end, and every entry here
+      names a route. `config:choose-directory` names the channel that browses
+      the server's disk, `skills:file:import` names the drop verb that carries
+      the user's own files, and `config:reveal` explains that the config on
+      screen is already the server's. That is checkable, and it stays true
+      after the tickets are closed.
+    */
+    expect(WINDOW_BOUND[CH.configChooseDirectory]).toMatch(
+      /config:browse-directory/,
+    );
     expect(WINDOW_BOUND[CH.skillsFileImport]).toMatch(/drag/i);
+    expect(WINDOW_BOUND[CH.configReveal]).toMatch(/already/i);
   });
 
   it('only ever names a call channel', () => {
@@ -534,7 +535,9 @@ describe('WINDOW_BOUND', () => {
   });
 
   it('returns the reason for one that is', () => {
-    expect(windowBoundReason(CH.themePick)).toMatch(/HIVE-146/);
+    expect(windowBoundReason(CH.configChooseDirectory)).toMatch(
+      /config:browse-directory/,
+    );
   });
 });
 

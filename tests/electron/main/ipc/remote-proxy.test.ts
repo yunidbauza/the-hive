@@ -30,7 +30,7 @@ vi.mock('../../../../electron/main/updates', () => ({ updateStatus, checkForUpda
  *
  * The three channel lists below are derived from `FRAME_KIND` — the same
  * table `registerRemoteProxy` itself walks — but the counts asserted against
- * them (100, 6, 24, 106) are literals, not read back off the derived lists.
+ * them (98, 6, 25, 104) are literals, not read back off the derived lists.
  * `tests/shared/remote-contract.test.ts:58,93` pins the same four numbers
  * independently. A channel added to the contract without a home in this file
  * fails a count here, which is the point: a self-referential assertion could
@@ -174,7 +174,7 @@ afterEach(() => {
 
 describe('registerRemoteProxy', () => {
   it('binds every call channel to the client', () => {
-    expect(callChannels.length).toBe(100);
+    expect(callChannels.length).toBe(98);
 
     registerRemoteProxy({ client: fakeClient(), broadcaster: fakeBroadcaster() });
 
@@ -336,10 +336,13 @@ describe('registerRemoteProxy', () => {
   });
 
   it("refuses each WINDOW_BOUND channel locally with the table's own reason", async () => {
-    // 5, not 4 (HIVE-144, Ruling 25): `configReveal` joined this table rather
-    // than `PROCESS_LOCAL`, refused for the same reason the other four are —
+    // 3 (HIVE-146): `themePick` and `themeSave` left the table with their
+    // channels, because the renderer reads and writes a theme file itself now.
+    // `configChooseDirectory` stayed — a server still cannot open a dialog, the
+    // renderer just asks `config:browse-directory` instead of asking at all —
+    // and `configReveal` is here for Ruling 25's reason rather than the event:
     // its effect lands on the answering machine, not the one the user is at.
-    expect(Object.keys(WINDOW_BOUND).length).toBe(5);
+    expect(Object.keys(WINDOW_BOUND).length).toBe(3);
 
     const client = fakeClient();
     registerRemoteProxy({ client, broadcaster: fakeBroadcaster() });
@@ -357,7 +360,7 @@ describe('registerRemoteProxy', () => {
   it('records every binding, so the mode can be switched back', () => {
     registerRemoteProxy({ client: fakeClient(), broadcaster: fakeBroadcaster() });
 
-    expect(remoteProxyBindingsSize()).toBe(106);
+    expect(remoteProxyBindingsSize()).toBe(104);
   });
 
   /**
@@ -539,12 +542,12 @@ describe('registerRemoteProxy', () => {
 
     resetRemoteProxy();
 
-    // 106 (100 call + 6 notify), the same literal `records every binding`
+    // 104 (98 call + 6 notify), the same literal `records every binding`
     // pins — not `callChannels.length + notifyChannels.length`, which would
     // recompute its own expectation from the same source the code under test
     // reads and could never catch a channel silently lost between the two.
-    expect(removeHandler).toHaveBeenCalledTimes(106);
-    expect(removeAllListeners).toHaveBeenCalledTimes(106);
+    expect(removeHandler).toHaveBeenCalledTimes(104);
+    expect(removeAllListeners).toHaveBeenCalledTimes(104);
     expect(remoteProxyBindingsSize()).toBe(0);
 
     client.emit('pty:data', { seq: 2 });

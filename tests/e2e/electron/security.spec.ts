@@ -77,7 +77,6 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     server: Object.keys(window.hive!.server).sort(),
     remote: Object.keys(window.hive!.remote).sort(),
     updates: Object.keys(window.hive!.updates).sort(),
-    theme: Object.keys(window.hive!.theme).sort(),
     ui: Object.keys(window.hive!.ui).sort(),
   }));
 
@@ -148,11 +147,14 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * already mapped rather than a general-purpose GitHub client.
    */
   /**
-   * HIVE-80 adds `theme`, and the bound still holds: two verbs, neither
-   * taking a destination path from the renderer. `pick` reads whatever the
-   * open dialog chose; `save` writes to whatever the save dialog chose, with
-   * the renderer's own `suggestedName` only ever offered to that dialog as a
-   * default — never joined to a directory or trusted as a destination.
+   * HIVE-80 added a `theme` namespace here, two verbs wrapping native dialogs.
+   * HIVE-146 removed it: a theme file is on the machine the user is sitting at,
+   * so the renderer reads and writes it with the File API and nothing about
+   * themes crosses the bridge at all.
+   *
+   * The narrowing is the point. This spec exists to catch the surface growing,
+   * and a namespace that leaves it is the one direction that never needs an
+   * argument.
    */
   /**
    * HIVE-81 adds `ui`, and it is the first namespace whose one verb travels
@@ -326,7 +328,6 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
       (`electron/shared/ipc-contract.ts`, the comment above `BRIDGE_KEYS`).
     */
     'slack',
-    'theme',
     'ui',
     'updates',
   ]);
@@ -396,7 +397,6 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'rename',
     'write',
   ]);
-  expect(surface.theme).toEqual(['pick', 'save']);
   /**
    * HIVE-110 adds `reportSessionName`, and it is the first verb here that takes
    * renderer-supplied *content* rather than an identifier.
