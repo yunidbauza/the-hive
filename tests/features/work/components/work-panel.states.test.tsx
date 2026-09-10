@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { WorkPanel } from '@features/work/components/work-panel';
 import { useHiveStore } from '@stores/hive-store';
+import { useUiStore } from '@stores/ui-store';
 import type { JiraIssue } from '@shared/jira-contract';
 
 /**
@@ -42,6 +43,66 @@ beforeEach(() => {
 
 afterEach(() => {
   state().reset();
+  useUiStore.getState().reset();
+});
+
+/**
+ * A mode switch while a search is on screen (HIVE-152).
+ *
+ * The panel's `searching` flag is derived from the **term**, which lives in
+ * `ui-store`, while the results live in `hive-store`. `clearModeEntities` has
+ * to empty both: emptying only the results leaves `searching` true over
+ * `results === null`, `error === null`, `tooShort === false` — the skeleton
+ * branch — and nothing re-issues the search, because the debounce's deps did
+ * not change and the panel never unmounts.
+ *
+ * There is no way out of that state either. After a switch `ticketSource` is
+ * `loading`, which is the state that hides "Try again" and disables
+ * pull-to-refresh, so the search box is the only affordance and it is showing
+ * a term whose answer will never arrive.
+ */
+describe('a mode switch while a search is on screen', () => {
+  it('does not strand the panel on a skeleton that never resolves', async () => {
+    // A settled list underneath, so the only thing that can put a skeleton on
+    // screen after the switch is the stranded search branch — not the boot
+    // `loading` state, which legitimately renders one.
+    state().hydrateTickets([issue({ key: 'HIVE-9' })], false);
+
+    useUiStore.getState().setWorkSearchTerm('hero');
+    useHiveStore.setState({
+      ticketSearch: {
+        term: 'hero',
+        // `Ticket`, not `JiraIssue` — the search slice holds what the panel
+        // renders, already mapped.
+        results: [
+          {
+            key: 'OLD-1',
+            status: 'In Progress',
+            statusCategory: 'in-progress' as const,
+            title: 'from the departed machine',
+          },
+        ],
+        searching: false,
+        error: null,
+        capped: false,
+        tooShort: false,
+      },
+    });
+
+    render(<WorkPanel />);
+    expect(screen.getByText('OLD-1')).toBeInTheDocument();
+
+    await act(async () => {
+      state().applyModeChange({ to: 'local' });
+      await Promise.resolve();
+    });
+
+    // The departed machine's hit is gone, and the panel has left the search
+    // branch entirely rather than pulsing over a question nobody will answer.
+    expect(screen.queryByText('OLD-1')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('work-skeleton')).not.toBeInTheDocument();
+    expect(useUiStore.getState().workSearchTerm).toBe('');
+  });
 });
 
 /**

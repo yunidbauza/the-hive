@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { GhResult, PrsSnapshot } from '@shared/github-contract';
 import { CH } from '@shared/ipc-contract';
@@ -95,6 +95,21 @@ const issue = (key: string) => ({
   url: `https://behiques.atlassian.net/browse/${key}`,
 });
 
+/**
+ * Let a ticket sweep settle its status read and park on the Jira search.
+ *
+ * Draining microtasks rather than `vi.waitFor`: everything between the call
+ * and the search is already-resolved promises, so there is nothing to wait for
+ * in wall-clock terms and a real timed poll would be the "real wait" this
+ * repo's testing rules forbid. The call-count assertion is what makes it a
+ * check rather than a guess — if the sweep were not parked on the search, the
+ * test fails here instead of quietly proving the wrong window.
+ */
+const searchIssued = async (times: number) => {
+  for (let i = 0; i < 10; i += 1) await Promise.resolve();
+  expect(searchJiraIssues).toHaveBeenCalledTimes(times);
+};
+
 /** `isDesktop()` feature-detects `window.hive`; every sweep below needs it. */
 const asDesktop = (): void => {
   window.hive = {} as NonNullable<Window['hive']>;
@@ -113,6 +128,13 @@ beforeEach(() => {
   state().reset();
   asDesktop();
   readJiraStatus.mockResolvedValue(jiraStatus());
+});
+
+// `asDesktop` is a global flag, and leaving it set leaks into every file that
+// runs after this one in the same environment — both sibling sweep suites tear
+// it down for that reason.
+afterEach(() => {
+  delete window.hive;
 });
 
 describe('a PR sweep that outlives the mode switch it started under', () => {
@@ -234,12 +256,7 @@ describe('a PR sweep that outlives the mode switch it started under', () => {
  * below is what puts the switch in the second window on purpose.
  */
 describe('a ticket sweep that outlives the mode switch it started under', () => {
-  /** Resolve the status read and wait until the sweep is genuinely on the search. */
-  const startedSearching = async () => {
-    await vi.waitFor(() => {
-      expect(searchJiraIssues).toHaveBeenCalled();
-    });
-  };
+  const startedSearching = () => searchIssued(1);
 
   it('cannot replace the attached machine’s tickets with the departed one’s', async () => {
     const jira = deferred<unknown>();
@@ -358,6 +375,132 @@ describe('the in-flight handle across a switch', () => {
 });
 
 /**
+ * The same two properties on the **ticket** side.
+ *
+ * Not symmetry for its own sake: the PR cases above leave every ticket-side
+ * line of the fix unexercised, so `inFlightTicketSweep = null` and the ticket
+ * `finally`'s identity check could both be deleted with the whole suite still
+ * green. The live consequence of the second is the one the PR body claims the
+ * identity check exists to prevent — a condemned Jira sweep settling after a
+ * fresh one erases the fresh handle, and the next caller starts a third
+ * concurrent search.
+ */
+describe('the in-flight ticket handle across a switch', () => {
+  it('lets the attached machine sweep immediately instead of joining the condemned one', async () => {
+    const first = deferred<unknown>();
+    const second = deferred<unknown>();
+    searchJiraIssues.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+
+    const condemned = state().refreshTickets();
+    await searchIssued(1);
+    state().applyModeChange({ to: 'local' });
+
+    // Not a join: a second Jira search really goes out for the machine now on
+    // screen, which is what dropping the handle is for.
+    const fresh = state().refreshTickets();
+    await searchIssued(2);
+
+    first.settle({ ok: true, value: { issues: [issue('OLD-1')], capped: false } });
+    second.settle({ ok: true, value: { issues: [issue('NEW-1')], capped: false } });
+    await Promise.all([condemned, fresh]);
+
+    expect(state().tickets.map((t) => t.key)).toEqual(['NEW-1']);
+  });
+
+  it('does not let the condemned sweep erase the fresh sweep’s handle when it settles', async () => {
+    const condemnedJira = deferred<unknown>();
+    const freshJira = deferred<unknown>();
+    searchJiraIssues
+      .mockReturnValueOnce(condemnedJira.promise)
+      .mockReturnValueOnce(freshJira.promise);
+
+    const condemned = state().refreshTickets();
+    await searchIssued(1);
+    state().applyModeChange({ to: 'local' });
+    const fresh = state().refreshTickets();
+    await searchIssued(2);
+
+    condemnedJira.settle({ ok: true, value: { issues: [issue('OLD-1')], capped: false } });
+    await condemned;
+
+    /*
+      A caller arriving now must *join* the fresh sweep, not start a third.
+
+      Asserted on `readJiraStatus`, not `searchJiraIssues`: the ticket sweep
+      suspends on the status read before it ever reaches Jira, so a third
+      sweep that really did start has issued no search yet at this line and a
+      `searchJiraIssues` count here reads 2 either way. `readJiraStatus` is
+      the call the sweep makes synchronously, so it is the one that can tell
+      a join from a third sweep without waiting. (The PR side has no such hop
+      — `readPullRequests` is its synchronous first call — which is why its
+      twin above can assert on the sweep verb directly.)
+    */
+    const joined = state().refreshTickets();
+    expect(readJiraStatus).toHaveBeenCalledTimes(2);
+    expect(searchJiraIssues).toHaveBeenCalledTimes(2);
+
+    freshJira.settle({ ok: true, value: { issues: [issue('NEW-1')], capped: false } });
+    await Promise.all([fresh, joined]);
+
+    expect(state().tickets.map((t) => t.key)).toEqual(['NEW-1']);
+  });
+});
+
+/**
+ * `reset()` drops both handles too, and the test named for that in
+ * `hive-store.refresh-tickets.test.ts` cannot actually observe it: it `await`s
+ * the condemned sweep first, by which point that sweep's own `finally` has
+ * already nulled the handle, so the drop and its absence look identical.
+ *
+ * The case that distinguishes them is a caller arriving **while the condemned
+ * sweep is still out**. Deleting the two lines from `reset()` leaves the whole
+ * store suite green without these.
+ */
+describe('reset drops the handles while a sweep is still in flight', () => {
+  it('starts a fresh PR sweep rather than joining the condemned one', async () => {
+    const condemnedGh = deferred<GhResult<PrsSnapshot>>();
+    const freshGh = deferred<GhResult<PrsSnapshot>>();
+    readPullRequests.mockReturnValueOnce(condemnedGh.promise).mockReturnValueOnce(freshGh.promise);
+
+    const condemned = state().refreshPrs();
+    state().reset();
+    asDesktop();
+
+    // Still out — this is the window the sibling test skips past.
+    const fresh = state().refreshPrs();
+    expect(readPullRequests).toHaveBeenCalledTimes(2);
+
+    condemnedGh.settle(prsOk([prRecord({ repo: 'departed-repo' })], 9));
+    freshGh.settle(prsOk([prRecord({ number: 7, repo: 'fresh-repo' })], 3));
+    await Promise.all([condemned, fresh]);
+
+    expect(state().prs.map((pr) => pr.repo)).toEqual(['fresh-repo']);
+  });
+
+  it('starts a fresh ticket sweep rather than joining the condemned one', async () => {
+    const condemnedJira = deferred<unknown>();
+    const freshJira = deferred<unknown>();
+    searchJiraIssues
+      .mockReturnValueOnce(condemnedJira.promise)
+      .mockReturnValueOnce(freshJira.promise);
+
+    const condemned = state().refreshTickets();
+    await searchIssued(1);
+    state().reset();
+    asDesktop();
+
+    const fresh = state().refreshTickets();
+    await searchIssued(2);
+
+    condemnedJira.settle({ ok: true, value: { issues: [issue('OLD-1')], capped: false } });
+    freshJira.settle({ ok: true, value: { issues: [issue('NEW-1')], capped: false } });
+    await Promise.all([condemned, fresh]);
+
+    expect(state().tickets.map((t) => t.key)).toEqual(['NEW-1']);
+  });
+});
+
+/**
  * The search path, one layer down from the sweeps.
  *
  * `searchPrs`/`searchTickets` already carried monotonic tickets against a
@@ -398,5 +541,37 @@ describe('a search across the mode switch', () => {
 
     expect(state().prSearch.results).toBeNull();
     expect(state().prSearch.term).toBe('');
+  });
+
+  // The ticket half of both properties above. Without these, both
+  // `ticketSearchTicket += 1` and `ticketSearch: NO_TICKET_SEARCH` can be
+  // deleted with the whole suite still green.
+  it('cannot land the departed machine’s issues in the attached view', async () => {
+    const hits = deferred<unknown>();
+    searchJiraIssues.mockReturnValue(hits.promise);
+
+    const search = state().searchTickets('hero', false);
+    state().applyModeChange({ to: 'local' });
+
+    hits.settle({ ok: true, value: { issues: [issue('OLD-1')], capped: false } });
+    await search;
+
+    expect(state().ticketSearch.results).toBeNull();
+    expect(state().ticketSearch.term).toBe('');
+  });
+
+  it('clears issue results that had already landed before the switch', async () => {
+    searchJiraIssues.mockResolvedValue({
+      ok: true,
+      value: { issues: [issue('OLD-1')], capped: false },
+    });
+
+    await state().searchTickets('hero', false);
+    expect(state().ticketSearch.results).toHaveLength(1);
+
+    state().applyModeChange({ to: 'local' });
+
+    expect(state().ticketSearch.results).toBeNull();
+    expect(state().ticketSearch.term).toBe('');
   });
 });

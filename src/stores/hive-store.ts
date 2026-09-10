@@ -249,6 +249,14 @@ const NO_TICKET_SEARCH: TicketSearchState = {
   tooShort: false,
 };
 
+/** The same rest state for PR search, which had been spelled out at each of its four sites. */
+const NO_PR_SEARCH: PrSearchState = {
+  term: '',
+  results: null,
+  searching: false,
+  error: null,
+};
+
 export type PrSource =
   /** A read is in flight and there is nothing yet. The boot state. */
   | { kind: 'loading' }
@@ -1755,7 +1763,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
 
   /** Loading until the first sweep answers, for the same reason as above. */
   prSource: { kind: 'loading' } as PrSource,
-  prSearch: { term: '', results: null, searching: false, error: null } as PrSearchState,
+  prSearch: NO_PR_SEARCH,
   ticketSearch: NO_TICKET_SEARCH,
 
   /**
@@ -5130,7 +5138,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     // Retires anything in flight, so a search cancelled mid-request cannot
     // land its results into an empty box.
     prSearchTicket += 1;
-    set({ prSearch: { term: '', results: null, searching: false, error: null } });
+    set({ prSearch: NO_PR_SEARCH });
   },
 
   searchTickets: async (term, mineOnly) => {
@@ -5284,6 +5292,31 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     inFlightPrSweep = null;
     inFlightTicketSweep = null;
 
+    /*
+      **The term lives in the other store, and clearing only half strands the
+      panel.**
+
+      A search is split deliberately: the results are here, the term the user
+      typed is `ui-store`'s (`prSearchTerm`, `workSearchTerm`), because a
+      keystroke must not re-render thirteen live terminals. Both panels then
+      derive `searching` from the *term* — `work-panel.tsx` and its PR twin
+      each compute `term !== ''` — and render the search branch on it.
+
+      So emptying `prSearch`/`ticketSearch` below without emptying the term
+      leaves `searching` true over `results === null`, `error === null`,
+      `tooShort === false`: the skeleton branch, pulsing forever. Nothing
+      re-issues the search — the debounce's deps did not change and the panel
+      never unmounts — and there is no way out, because `prSource` is
+      `loading` after a switch, which is exactly the state that hides "Try
+      again" and disables pull-to-refresh.
+
+      Cross-store by calling the other store's action, never by subscribing to
+      it, which is this codebase's rule for exactly this direction.
+    */
+    const ui = useUiStore.getState();
+    ui.clearPrSearch();
+    ui.clearWorkSearch();
+
     set({
       // `entities` holds only sessions and agents (`Entity = Session |
       // Agent`), so clearing it and both order arrays drops exactly what
@@ -5329,7 +5362,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         empty search box is the right state for a machine just attached to,
         not the previous machine's question asked again on its behalf.
       */
-      prSearch: { term: '', results: null, searching: false, error: null },
+      prSearch: NO_PR_SEARCH,
       ticketSearch: NO_TICKET_SEARCH,
     });
   },
@@ -5371,7 +5404,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       metrics: {},
       ticketSource: { kind: 'loading' },
       prSource: { kind: 'loading' },
-      prSearch: { term: '', results: null, searching: false, error: null },
+      prSearch: NO_PR_SEARCH,
       ticketSearch: NO_TICKET_SEARCH,
     });
   },
