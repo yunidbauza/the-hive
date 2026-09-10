@@ -53,6 +53,16 @@ export interface RegisterIpcOptions {
   broadcaster?: Broadcaster;
   /** The attached socket, required in `remote` mode and ignored in `local`. */
   client?: RemoteClient;
+  /**
+   * Where a reconnect's `resumeFrom` is built from, in `remote` mode
+   * (HIVE-150).
+   *
+   * Passed in rather than read off this module's own {@link resumeTracker} so
+   * that the value the proxy is fed and the value a reattach composes from are
+   * the same object by construction, rather than by two reads that could
+   * straddle a mode switch.
+   */
+  resumeTracker?: ResumeTracker;
 }
 
 /**
@@ -79,6 +89,7 @@ export function registerIpc(mode: IpcMode, options: RegisterIpcOptions = {}): vo
     registerRemoteProxy({
       client: options.client,
       broadcaster: options.broadcaster ?? createWindowBroadcaster(),
+      resumeTracker: options.resumeTracker,
       // See `localAppInfo`'s own doc comment: this is the closure the most
       // recent `registerIpc('local', ...)` produced, so `CH.appInfo` keeps
       // answering from *this* process even once it stops answering anything
@@ -507,17 +518,24 @@ export async function switchIpcMode(
       rather than as an unhandled rejection in main.
     */
     const credential = requireCredential(options);
+    /*
+      Built before the dial so the very first client is registered with it
+      (HIVE-150). A tracker created afterwards would leave the first
+      connection's `pty:data` unrecorded, and the first drop — the one most
+      likely to happen while the user is actually watching a terminal — would
+      resume from nothing.
+    */
+    resumeTracker = createResumeTracker();
     client = await dial({
       host: target.host,
       port: target.port,
       credential,
     });
-    registerIpc('remote', { client, broadcaster: pushes });
+    registerIpc('remote', { client, broadcaster: pushes, resumeTracker });
     // Recorded only once the surface is up, so a registration that threw
     // leaves nothing behind for the next `unbindEverything` to close twice —
     // the catch below closes this attempt's own socket itself.
     attached = client;
-    resumeTracker = createResumeTracker();
     armReattach(client, { host: target.host, port: target.port }, credential, dial, pushes);
   } catch (cause) {
     /*
@@ -594,7 +612,7 @@ function armReattach(
     },
     onAttached: (fresh) => {
       resetRemoteProxy();
-      registerIpc('remote', { client: fresh, broadcaster: pushes });
+      registerIpc('remote', { client: fresh, broadcaster: pushes, resumeTracker: resumeTracker ?? undefined });
       attached = fresh;
       // The replacement's own subscription, against the loop that already exists.
       watchForClose(fresh, loop);

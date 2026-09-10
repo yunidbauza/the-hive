@@ -107,6 +107,7 @@ vi.mock('electron', () => ({
 const { registerRemoteProxy, remoteProxyBindingsSize, resetRemoteProxy } = await import(
   '../../../../electron/main/ipc/remote-proxy'
 );
+const { createResumeTracker } = await import('../../../../electron/main/ipc/resume-tracker');
 
 /** Matches `foreground.test.ts`'s trusted-sender fixture: identity, not shape. */
 const mainFrame = { url: 'file:///out/renderer/index.html' };
@@ -363,6 +364,99 @@ describe('registerRemoteProxy', () => {
     });
 
     expect(broadcaster.emit).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Feeding the resume tracker (HIVE-150).
+   *
+   * The two signals come from opposite directions and the proxy is the one
+   * place that sees both: `pty:data` arriving from the socket carries the
+   * `{gen, seq}` a reconnect resumes from, and `pty:ack` leaving for the socket
+   * is what says a terminal is actually mounted here — HIVE-145's ruling that
+   * being attached is not the same as watching.
+   */
+  describe('the resume tracker', () => {
+    it('records the generation and sequence of arriving output', () => {
+      const client = fakeClient();
+      const resumeTracker = createResumeTracker();
+      registerRemoteProxy({ client, broadcaster: fakeBroadcaster(), resumeTracker });
+
+      resumeTracker.markWatched('sess-a');
+      client.emit(CH.ptyData, { sessionId: 'sess-a', chunk: 'hi', gen: 2, seq: 17 });
+
+      expect(resumeTracker.points()).toEqual([
+        { sessionId: 'sess-a', point: { gen: 2, seq: 17 } },
+      ]);
+    });
+
+    it('marks a session watched when this surface acks it', () => {
+      const client = fakeClient();
+      const resumeTracker = createResumeTracker();
+      registerRemoteProxy({ client, broadcaster: fakeBroadcaster(), resumeTracker });
+
+      client.emit(CH.ptyData, { sessionId: 'sess-a', chunk: 'hi', gen: 2, seq: 17 });
+      // Nothing has mounted it yet, so it is not worth a slot in the frame.
+      expect(resumeTracker.points()).toEqual([]);
+
+      listeners.get(CH.ptyAck)?.(trustedEvent, { sessionId: 'sess-a', seq: 17 });
+
+      expect(resumeTracker.points()).toEqual([
+        { sessionId: 'sess-a', point: { gen: 2, seq: 17 } },
+      ]);
+    });
+
+    it('leaves delivery alone in both directions', () => {
+      const client = fakeClient();
+      const broadcaster = fakeBroadcaster();
+      const resumeTracker = createResumeTracker();
+      registerRemoteProxy({ client, broadcaster, resumeTracker });
+
+      const data = { sessionId: 'sess-a', chunk: 'hi', gen: 2, seq: 17 };
+      client.emit(CH.ptyData, data);
+      listeners.get(CH.ptyAck)?.(trustedEvent, { sessionId: 'sess-a', seq: 17 });
+
+      /*
+        The taps observe, they do not intercept. A `pty:data` that stopped
+        reaching the window would be a black terminal, and an ack that stopped
+        reaching the socket would stall the session behind its own flow control.
+      */
+      expect(broadcaster.emit).toHaveBeenCalledWith(CH.ptyData, data);
+      expect(client.notify).toHaveBeenCalledWith(CH.ptyAck, {
+        sessionId: 'sess-a',
+        seq: 17,
+      });
+    });
+
+    it('binds without one, so every existing caller keeps working', () => {
+      const client = fakeClient();
+      const broadcaster = fakeBroadcaster();
+
+      expect(() => {
+        registerRemoteProxy({ client, broadcaster });
+        client.emit(CH.ptyData, { sessionId: 'sess-a', chunk: 'hi', gen: 1, seq: 1 });
+        listeners.get(CH.ptyAck)?.(trustedEvent, { sessionId: 'sess-a', seq: 1 });
+      }).not.toThrow();
+    });
+
+    it('survives a malformed frame rather than taking the pump down with it', () => {
+      const client = fakeClient();
+      const broadcaster = fakeBroadcaster();
+      const resumeTracker = createResumeTracker();
+      registerRemoteProxy({ client, broadcaster, resumeTracker });
+
+      /*
+        A server is not required to be well-behaved, and this pump runs inside
+        `ws`'s own emit — a throw here would abort the fan-out for every other
+        subscriber and surface as an uncaught exception in main.
+      */
+      expect(() => {
+        client.emit(CH.ptyData, null);
+        client.emit(CH.ptyData, { sessionId: 'sess-a' });
+        client.emit(CH.ptyData, { sessionId: 42, gen: 'x', seq: {} });
+      }).not.toThrow();
+
+      expect(resumeTracker.points()).toEqual([]);
+    });
   });
 
   it('raises a toast here rather than forwarding it to the window', () => {
