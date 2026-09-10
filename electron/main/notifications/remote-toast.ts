@@ -1,4 +1,4 @@
-import { BrowserWindow, Notification } from 'electron';
+import { Notification } from 'electron';
 
 import { CH, type Channel } from '@shared/ipc-contract';
 import {
@@ -6,6 +6,8 @@ import {
   type NotificationAction,
   type ToastPayload,
 } from '@shared/notification-contract';
+
+import { focusThisMachine } from './activate-here';
 
 /**
  * Raise an attached server's toasts on **this** machine (HIVE-145).
@@ -108,19 +110,6 @@ function asToast(payload: unknown): ToastPayload | null {
 export interface RemoteToastOptions {
   /** Call a channel on the attached server — `RemoteClient.call`. */
   call: (channel: Channel, payload: unknown) => Promise<unknown>;
-}
-
-/**
- * Any window of ours, restored and focused — the same thing the local
- * `activate` does, and for the same reason: a minimised window that is merely
- * focused does nothing visible.
- */
-function focusThisMachine(): void {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (window.isDestroyed()) continue;
-    if (window.isMinimized()) window.restore();
-    window.focus();
-  }
 }
 
 export function createRemoteToasts(options: RemoteToastOptions): RemoteToasts {

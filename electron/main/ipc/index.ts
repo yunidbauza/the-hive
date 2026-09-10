@@ -132,7 +132,10 @@ import type {
   JiraTransition,
 } from '@shared/jira-contract';
 import { LEDGER_DIR, OVERMIND } from '@shared/ledger-contract';
-import type { NotificationAction } from '@shared/notification-contract';
+import {
+  isThisMachineAction,
+  type NotificationAction,
+} from '@shared/notification-contract';
 import { SNAPSHOT_CHANNELS } from '@shared/remote-contract';
 import { SESSION_NAME_DISPLAY_MAX } from '@shared/session-contract';
 import {
@@ -197,7 +200,6 @@ import {
 import { diagnoseEnv } from '../config/env-diagnostic';
 import { loginEnvStatus } from '../config/login-env';
 import { diagnoseCommand, effectiveRuntime, receiverHostAliases } from '../config/runtime';
-import { isSafeExternalUrl } from '../external-links';
 import {
   browseHomeDirectory,
   createFsWatchLayer,
@@ -237,6 +239,10 @@ import {
   createToastQueue,
   createToastRoute,
 } from '../notifications';
+import {
+  activateOnThisMachine,
+  focusThisMachine,
+} from '../notifications/activate-here';
 import { registerPtyHost } from '../pty-host';
 import {
   pairDevice,
@@ -256,8 +262,6 @@ import { createSkillsRuntime, type SkillsRuntime } from '../skills';
 import { PLUGIN_DIR } from '../skills/paths';
 import {
   checkForUpdatesInteractively,
-  downloadUpdate,
-  installUpdate,
   setUpdateNotificationSink,
   updateStatus,
 } from '../updates';
@@ -1524,49 +1528,34 @@ export function registerIpcHandlers(
    */
   const activateNotification = (action: NotificationAction): void => {
       /**
+       * Split by machine before anything else (HIVE-151).
+       *
+       * The three actions that reach hardware — a browser, this process's
+       * updater — belong to `activate-here.ts`, which takes a type admitting
+       * only those. Everything past this point resolves against fleet state
+       * and reaches the renderer through `CH.notificationsActivate`.
+       *
+       * The same split is what `remote-proxy.ts` routes on, so a click made on
+       * an attached client runs its hardware half *there* rather than on the
+       * machine that happens to answer the socket. Keeping the branch here
+       * rather than at each call site is what makes the row and the desktop
+       * toast agree about what one notification means.
+       *
+       * A `none` action has nowhere to go and is satisfied by the focus below.
+       */
+      if (isThisMachineAction(action)) {
+        activateOnThisMachine(action);
+        return;
+      }
+
+      /**
        * Main focuses the window; the renderer opens the session.
        *
        * Split that way because only main can raise a window and only the
        * renderer knows what opening a session means — and a minimised window
        * has to be restored first, or focusing it does nothing visible.
        */
-      for (const window of BrowserWindow.getAllWindows()) {
-        if (window.isDestroyed()) continue;
-        if (window.isMinimized()) window.restore();
-        window.focus();
-      }
-
-      /**
-       * A `url` action goes to the user's browser, through the same allowlist
-       * every other outbound link uses (story 081).
-       *
-       * `isSafeExternalUrl` is not optional politeness here: `shell.openExternal`
-       * will happily launch a `file:` URL or a custom scheme registered by some
-       * other application, and a notification's URL is data rather than a
-       * constant. A `none` action has nowhere to go and is satisfied by the
-       * focus above.
-       */
-      if (action.type === 'url') {
-        if (isSafeExternalUrl(action.url)) void shell.openExternal(action.url);
-        return;
-      }
-
-      /**
-       * The update actions carry no data at all, which is what makes them safe
-       * to accept from a renderer without validating anything beyond the tag.
-       * The updater already holds the version it found; these say only "do the
-       * thing you offered", and a stale row clicked after the updater has moved
-       * on is answered by whatever the updater's state actually is now.
-       */
-      if (action.type === 'update.download') {
-        void downloadUpdate();
-        return;
-      }
-
-      if (action.type === 'update.install') {
-        void installUpdate();
-        return;
-      }
+      focusThisMachine();
 
       /**
        * An `ask` answers nothing from here (HIVE-118) — it *reveals* the card.
