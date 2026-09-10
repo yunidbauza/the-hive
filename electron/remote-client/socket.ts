@@ -332,8 +332,19 @@ function fencedLookup(
   };
 }
 
-/** How many bytes a frame actually weighs on the wire — UTF-8, not UTF-16. */
-function frameBytes(text: string): number {
+/**
+ * How many bytes a frame actually weighs on the wire — UTF-8, not UTF-16.
+ *
+ * Exported since HIVE-150 so that whatever *builds* a `resumeFrom` measures it
+ * with the same function that later refuses it. Two measurements would be one
+ * defect waiting: a composer that fitted the map under the ceiling by its own
+ * arithmetic, and a client that then weighed the real frame and threw.
+ *
+ * It cannot live in `electron/shared/` beside `ATTACH_FRAME_MAX_BYTES`, where
+ * it otherwise belongs — that module may not reach a Node API, and `Buffer` is
+ * one.
+ */
+export function frameBytes(text: string): number {
   return Buffer.byteLength(text, 'utf8');
 }
 
