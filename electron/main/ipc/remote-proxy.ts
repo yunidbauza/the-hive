@@ -41,10 +41,23 @@ import { assertSender } from './sender';
  * at all — but the switcher it needs is `router.ts`'s own `switchIpcMode`, and
  * this module is on `router.ts`'s import graph already, so reaching back for
  * it would close a cycle `import/no-cycle` refuses.
+ *
+ * `CH.remotePair` and `CH.remoteForget` are the fifth and sixth (HIVE-153),
+ * and they are `CH.configSetRemote`'s shape exactly: handed down for the cycle
+ * reason rather than the per-registration one, since `applyRemotePair` and
+ * `applyRemoteForget` close over no registration either — what they need is a
+ * `TokenStore`, and the factory that builds one lives in `ipc/index.ts`, which
+ * this module may not import back. `router.ts` builds it and closes over it,
+ * the same way it closes over `switchIpcMode`.
  */
 function localAnswerFor(
   channel: Channel,
-  deps: { localAppInfo: () => AppInfo; localSetRemote: (payload: unknown) => Promise<unknown> },
+  deps: {
+    localAppInfo: () => AppInfo;
+    localSetRemote: (payload: unknown) => Promise<unknown>;
+    localRemotePair: (payload: unknown) => unknown;
+    localRemoteForget: () => void;
+  },
 ): ((payload: unknown) => unknown | Promise<unknown>) | null {
   switch (channel) {
     case CH.appInfo:
@@ -55,6 +68,16 @@ function localAnswerFor(
       return () => checkForUpdatesInteractively();
     case CH.configSetRemote:
       return (payload) => deps.localSetRemote(payload);
+    /*
+      HIVE-153. Both take the same shape as `CH.configSetRemote` above, and
+      `CH.remoteForget` takes a payload parameter it ignores rather than a
+      distinct arm: the channel carries none, and the table this switch feeds
+      is uniform in `(payload) => ...` on purpose.
+    */
+    case CH.remotePair:
+      return (payload) => deps.localRemotePair(payload);
+    case CH.remoteForget:
+      return () => deps.localRemoteForget();
     default:
       return null;
   }
@@ -92,6 +115,32 @@ function noLocalSetRemote(): Promise<never> {
       'registerRemoteProxy reached CH.configSetRemote with no localSetRemote supplied. ' +
         'registerRemoteProxy was called directly rather than through registerIpc.',
     ),
+  );
+}
+
+/**
+ * {@link noLocalSetRemote}'s siblings for `CH.remotePair` and
+ * `CH.remoteForget` (HIVE-153), throwing for that one's reason rather than
+ * {@link noLocalAppInfo}'s.
+ *
+ * There is no placeholder to answer with. A default that quietly proxied
+ * would restore the exact defect this list closed — a Forget landing on the
+ * server's credential — and one that reported `{ paired: true }` would claim
+ * a credential this machine does not hold, which is the failure
+ * `remote:pair`'s return type exists to make impossible.
+ */
+function noLocalRemotePair(): never {
+  throw new Error(
+    'registerRemoteProxy reached CH.remotePair with no localRemotePair supplied. ' +
+      'registerRemoteProxy was called directly rather than through registerIpc.',
+  );
+}
+
+/** {@link noLocalRemotePair}'s pair, for the verb that takes no payload. */
+function noLocalRemoteForget(): never {
+  throw new Error(
+    'registerRemoteProxy reached CH.remoteForget with no localRemoteForget supplied. ' +
+      'registerRemoteProxy was called directly rather than through registerIpc.',
   );
 }
 
@@ -145,21 +194,25 @@ let remoteToasts: RemoteToasts | null = null;
  * listener — so the stale first client would keep answering `pty:write`
  * alongside the new one, unbindable because nothing still references it.
  *
- * `localAppInfo` answers `CH.appInfo` (HIVE-144, Ruling 24) and
- * `localSetRemote` answers `CH.configSetRemote` (Ruling 28) — see
- * `isProcessLocal`'s own doc comment for the four channels this bypasses the
- * socket for entirely, and why. Both optional only so the many call sites in
+ * `localAppInfo` answers `CH.appInfo` (HIVE-144, Ruling 24), `localSetRemote`
+ * answers `CH.configSetRemote` (Ruling 28), and `localRemotePair` /
+ * `localRemoteForget` answer their own two (HIVE-153) — see `isProcessLocal`'s
+ * own doc comment for the six channels this bypasses the socket for entirely,
+ * and why. Both optional only so the many call sites in
  * this module's own test file that never touch those channels do not all need
  * one; every production caller (`ipc/router.ts`'s `registerIpc`) passes the
- * real ones, and {@link noLocalAppInfo} and {@link noLocalSetRemote} fail
- * loudly rather than answering quietly wrong if a caller that skips
- * `router.ts` ever does exercise those channels without supplying them.
+ * real ones, and {@link noLocalAppInfo}, {@link noLocalSetRemote},
+ * {@link noLocalRemotePair} and {@link noLocalRemoteForget} fail loudly rather
+ * than answering quietly wrong if a caller that skips `router.ts` ever does
+ * exercise those channels without supplying them.
  */
 export function registerRemoteProxy(deps: {
   client: RemoteClient;
   broadcaster: Broadcaster;
   localAppInfo?: () => AppInfo;
   localSetRemote?: (payload: unknown) => Promise<unknown>;
+  localRemotePair?: (payload: unknown) => unknown;
+  localRemoteForget?: () => void;
 }): void {
   if (bindings !== null) {
     throw new Error(
@@ -174,6 +227,8 @@ export function registerRemoteProxy(deps: {
     broadcaster,
     localAppInfo = noLocalAppInfo,
     localSetRemote = noLocalSetRemote,
+    localRemotePair = noLocalRemotePair,
+    localRemoteForget = noLocalRemoteForget,
   } = deps;
 
   bindings = createBindings(ipcMain);
@@ -213,7 +268,12 @@ export function registerRemoteProxy(deps: {
         every time, never depending on what the socket would have said.
       */
       const localAnswer = isProcessLocal(channel)
-        ? localAnswerFor(channel as Channel, { localAppInfo, localSetRemote })
+        ? localAnswerFor(channel as Channel, {
+            localAppInfo,
+            localSetRemote,
+            localRemotePair,
+            localRemoteForget,
+          })
         : null;
 
       ipcMain.handle(channel, (event: IpcMainInvokeEvent, payload: unknown) => {

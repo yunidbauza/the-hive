@@ -596,7 +596,7 @@ export function windowBoundReason(channel: string): string | null {
  * and is not wrong, only irrelevant — the same plausible-but-wrong shape a
  * server's own Electron version has when it stands in for the client's.
  *
- * Four channels pass on this branch. `AppInfo` (`CH.appInfo`) and
+ * Six channels pass on this branch. `AppInfo` (`CH.appInfo`) and
  * `UpdateStatus` (`CH.updatesStatus`, `CH.updatesCheck`) *read* this process's
  * identity — its own Electron/Chrome/Node build, its own log path, its own
  * receiver and server-mode binds, whether it is itself attached, its own
@@ -612,6 +612,20 @@ export function windowBoundReason(channel: string): string | null {
  * recorded — `registerRemoteProxy` swaps what the handler does, never whether
  * one exists — so the binding counts Task 9 pins do not move when a channel
  * joins this list.
+ *
+ * **This fence is sender-side, and "never forwarded" above means exactly
+ * that.** `registerRemoteProxy` will not put these channels on the wire, which
+ * is what closes the defects each of them was added for — every one of those
+ * was a client forwarding its own verb and getting the server's answer. It is
+ * not a *receiver*-side refusal: `remote-dispatch.ts`'s `refuse()` consults
+ * `remoteRefusedReason`, `isClientFrameAllowed` and `windowBoundReason`, never
+ * this list, so a credentialed peer that hand-builds the frame still reaches
+ * the handler on the far side. That gap is as old as Ruling 28 and grants
+ * nothing new — `DEVICE_GRANT` is `execute`, so such a peer already holds
+ * `pty:spawn` — but the asymmetry is real and is worth stating rather than
+ * being read out of the word "never". Closing it properly means teaching
+ * `refuse()` this table for all six channels at once, with the two-real-app
+ * suite to prove it; HIVE-155 owns that.
  *
  * This is the same problem `WINDOW_BOUND` solves, and it rests on the same
  * observation — proxying some channels wholesale is wrong — but it needs the
@@ -652,12 +666,32 @@ export function windowBoundReason(channel: string): string | null {
  * neither proxied nor refused — it is **answered here**. `WINDOW_BOUND` would
  * have been the wrong remedy: refusing a detach leaves a client just as stuck
  * as forwarding it did.
+ *
+ * **`CH.remotePair` and `CH.remoteForget` joined under the wording as it
+ * already stood (HIVE-153).** The test was not widened a third time for them;
+ * they were simply the two channels it already admitted and nobody had
+ * applied it to. `config:set-remote` changes *where* this process attaches;
+ * these two change *who this process is when it dials* — the device identity
+ * and the secret behind it — and that is the same half of the test, reached
+ * from the other side. Neither is about the fleet: a client's credential is
+ * meaningless on the server, which minted it.
+ *
+ * What proxying them cost, concretely: a Forget click on an attached client
+ * ran on the server and cleared the *server's* credential, revoking the far
+ * machine's own pairing from the near machine's UI while leaving the clicking
+ * user's credential in place. HIVE-144 hid the button rather than fixing the
+ * routing, which is a UI mitigation for an IPC defect and held only while
+ * `src/` had exactly one caller. The bodies now live in
+ * `electron/main/ipc/remote-pairing.ts`, for the reason `config:set-remote`'s
+ * live in `set-remote.ts`.
  */
 export const PROCESS_LOCAL: readonly Channel[] = [
   CH.appInfo,
   CH.updatesStatus,
   CH.updatesCheck,
   CH.configSetRemote,
+  CH.remotePair,
+  CH.remoteForget,
 ];
 
 /** Whether `channel` must be answered by this process itself, never proxied. */

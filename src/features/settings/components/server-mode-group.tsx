@@ -846,26 +846,27 @@ export function ServerModeGroup({
             re-target without detaching first anyway, so nothing is lost but
             the ability to *read* the stored address while attached. Restoring
             that needs a `PROCESS_LOCAL` read verb for this machine's own
-            `remote` block — the follow-up ticket, deliberately not this fix
-            round, because a new channel moves the binding count three tasks
-            pin.
+            `remote` block — `config:remote-get`, HIVE-149, which un-hides
+            these two and retires this conditional entirely.
 
-            The pairing fields go with them, for a sharper reason than
-            tidiness: `remote:pair` and `remote:forget` are **not** on
-            `PROCESS_LOCAL`, so while attached they are proxied — a click on
-            Forget here would clear the *server's* stored credential, not this
-            machine's. That is the same family as the defect Ruling 28 closed
-            and it wants the same remedy; until it gets one, the honest thing
-            is not to offer the button. Noted in the follow-up ticket.
+            **The pairing fields no longer go with them (HIVE-153).** They used
+            to, for a sharper reason than tidiness: `remote:pair` and
+            `remote:forget` were not on `PROCESS_LOCAL`, so while attached they
+            were proxied and a click on Forget cleared the *server's* stored
+            credential rather than this machine's. Hiding the button was a UI
+            mitigation for an IPC defect, and it held only while this file was
+            `remote:forget`'s single caller anywhere. Both channels are now
+            answered by this process in either mode, so the controls render
+            unconditionally — which is what the hide was standing in for.
           */}
           {attached ? (
             <p className="text-[11.5px] text-subtle">
-              The address and pairing fields are hidden while attached — they
-              would describe the server&rsquo;s config, not this
-              machine&rsquo;s. Detach to change where this window attaches.
+              The address fields are hidden while attached — they would
+              describe the server&rsquo;s config, not this machine&rsquo;s — and
+              so is Attach, with a socket already open. Detach to change where
+              this window attaches.
             </p>
           ) : (
-          <>
           <div className="grid grid-cols-[1fr_96px] gap-2">
             <TextField
               label="Server address"
@@ -897,6 +898,7 @@ export function ServerModeGroup({
               hint={remotePortInvalid ? ATTACH_PORT_INVALID : ATTACH_PORT_HINT}
             />
           </div>
+          )}
 
           {/*
             Fix round 1, item 3 (IMPORTANT). The pairing fields and Forget
@@ -905,6 +907,14 @@ export function ServerModeGroup({
             Forget's reachability (see `handleForget`'s own doc comment) and
             what the mockup actually shows: "Paired as" and the token field
             together, not one replacing the other.
+
+            **And unconditionally now means in either mode, too (HIVE-153).**
+            This block used to sit inside the `attached ?` conditional above,
+            hidden along with the address fields but for an unrelated reason —
+            `remote:forget` was proxied, so the click landed on the server's
+            credential. Both channels are `PROCESS_LOCAL` now, answered by this
+            process whichever mode it is bound in, so the controls describe
+            this machine in both and there is nothing left to hide them from.
           */}
           {paired ? (
             <div className="flex items-center gap-2 rounded-[6px] border border-border bg-panel px-2.5 py-2 text-[11.5px]">
@@ -923,7 +933,7 @@ export function ServerModeGroup({
               label="Pairing token"
               value={remotePairToken}
               onChange={setRemotePairToken}
-              hint="Printed by `the-hive --pair <name>` on the server. Stored in this machine's keychain, never in config.json."
+              hint="Printed by `the-hive --pair <name>` on the server. Stored in this machine's keychain, never in config.json. Forget clears it here without ending a live attachment — the next dial is what needs a new one."
             />
             {remotePairError ? (
               <p className="text-[11.5px] text-red">{remotePairError}</p>
@@ -954,7 +964,15 @@ export function ServerModeGroup({
             machine that both serves and is configured to attach is exactly the
             config this interlock exists for — so the button is reachable in
             the one state it must refuse.
+
+            Its own `attached` gate rather than the block's (HIVE-153). Lifting
+            the pairing controls out from between the address fields and this
+            button is what split one conditional into two, and keeping this one
+            preserves both the reading order and the fact that Attach is
+            meaningless on a window already attached — there is nothing to dial.
+            HIVE-149 retires the first of the two; this one outlives it.
           */}
+          {attached ? null : (
           <Button
             variant="primary"
             size="sm"
@@ -965,7 +983,6 @@ export function ServerModeGroup({
           >
             {attaching ? 'Attaching…' : 'Attach'}
           </Button>
-          </>
           )}
 
           {switchResult && !switchResult.ok && switchResult.reason === 'live-sessions' ? (
