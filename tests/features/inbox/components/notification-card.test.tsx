@@ -358,6 +358,88 @@ describe('NotificationCard', () => {
       expect(openEntity).toHaveBeenCalledWith('drone');
     });
   });
+
+  /**
+   * Everything the renderer does not answer itself goes back to main
+   * (HIVE-151).
+   *
+   * The row answers `session`, `agent` and `none` locally, and forks to
+   * `AskCard` before it ever draws a button row for an `ask`. What is left —
+   * `url`, `update.download`, `update.install` — is main's by definition: only
+   * main has the external-link allowlist, and installing an update is not
+   * something a renderer can do.
+   *
+   * That branch had never run under test. `window.hive` was never stubbed in
+   * this file, so the call at the end of `performAction` was reached only in
+   * the sense that nothing threw — it went to `undefined?.` and vanished.
+   * Which machine carries the action out is now a routing decision the proxy
+   * makes from this exact payload, so what gets handed over is worth pinning.
+   */
+  describe('handing an action main owns back to main', () => {
+    afterEach(() => {
+      delete window.hive;
+    });
+
+    const stubAct = () => {
+      const actFn = vi.fn();
+      window.hive = {
+        notifications: { act: actFn },
+      } as unknown as Window['hive'];
+      return actFn;
+    };
+
+    it.each([
+      ['url', { type: 'url' as const, url: 'https://example.com/x' }],
+      ['update.download', { type: 'update.download' as const }],
+      ['update.install', { type: 'update.install' as const }],
+    ])('sends a %s action through notifications.act', async (_name, action) => {
+      const actFn = stubAct();
+      const user = userEvent.setup();
+
+      render(<NotificationCard notif={notif({ action })} />);
+      await user.click(screen.getByRole('button'));
+
+      expect(actFn).toHaveBeenCalledWith(action);
+    });
+
+    /*
+      The three the renderer owns must not also be sent. `session` and `agent`
+      resolve to a tab, a selection and a view transition, none of which main
+      can see; `none` has nowhere to go at all. Sending them anyway would mean
+      one click doing two different things.
+    */
+    it.each([
+      ['session', { type: 'session' as const, entityId: 'lead-form' }],
+      ['agent', { type: 'agent' as const, name: 'drone' }],
+      ['none', { type: 'none' as const }],
+    ])('does not send a %s action to main', async (_name, action) => {
+      const actFn = stubAct();
+      useHiveStore.setState({ openEntity: vi.fn() });
+      const user = userEvent.setup();
+
+      render(<NotificationCard notif={notif({ action })} />);
+      await user.click(screen.getByRole('button'));
+
+      expect(actFn).not.toHaveBeenCalled();
+    });
+
+    /*
+      The bridge is absent in the browser target, which has no main process at
+      all. The optional chain is what keeps that a no-op rather than a crash on
+      every click.
+    */
+    it('does nothing when there is no bridge to hand it to', async () => {
+      const user = userEvent.setup();
+
+      render(
+        <NotificationCard
+          notif={notif({ action: { type: 'url', url: 'https://example.com' } })}
+        />,
+      );
+
+      await expect(user.click(screen.getByRole('button'))).resolves.not.toThrow();
+    });
+  });
 });
 
 /**
