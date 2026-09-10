@@ -947,6 +947,16 @@ let inFlightTicketSweep: Promise<void> | null = null;
  * Module scope for the reason every counter around it is: nothing renders a
  * generation number, and putting it in the store would wake every subscriber
  * to announce that a request had been stamped.
+ *
+ * **It counts mode changes, not machines**, and the two come apart in one
+ * place: `modeChange` in `set-remote.ts` compares only *attached vs not*
+ * (`(after !== null) === before`), so re-attaching straight from one server to
+ * another reports no change and never reaches `clearModeEntities` — leaving
+ * this counter where it was. That is currently unreachable rather than
+ * unhandled: the address fields are hidden while attached, so a detach always
+ * sits in between. Widening `modeChange` to compare the address is what would
+ * make the name literally true, and it belongs with whatever first allows a
+ * direct hand-off.
  */
 let modeEpoch = 0;
 

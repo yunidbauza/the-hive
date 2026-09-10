@@ -17,6 +17,7 @@ import type { JiraIssue } from '@shared/jira-contract';
  */
 
 const refreshTickets = vi.fn(() => Promise.resolve());
+const searchTickets = vi.fn(() => Promise.resolve());
 
 const issue = (over: Partial<JiraIssue> = {}): JiraIssue => ({
   key: 'HIVE-1',
@@ -62,7 +63,17 @@ afterEach(() => {
  * a term whose answer will never arrive.
  */
 describe('a mode switch while a search is on screen', () => {
+  // Scoped here, not file-wide: only this case advances the search debounce.
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('does not strand the panel on a skeleton that never resolves', async () => {
+    useHiveStore.setState({ searchTickets });
     useUiStore.getState().setWorkSearchTerm('hero');
     useHiveStore.setState({
       ticketSearch: {
@@ -115,6 +126,23 @@ describe('a mode switch while a search is on screen', () => {
       pixel-identical and only one of them ends.
     */
     expect(refreshTickets).toHaveBeenCalled();
+
+    /*
+      And a debounce already scheduled when the switch landed does not fire.
+
+      Worth asserting rather than assuming: the search row re-runs its effect
+      when the term changes, so clearing the term both cancels the pending
+      timer in its cleanup and takes the `term === ''` branch. Had only the
+      results been cleared, that timer would still have been out and would
+      have re-asked the departed machine's question 300ms later, writing
+      `searching: true` straight back into the slice this switch just emptied.
+    */
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+      await Promise.resolve();
+    });
+
+    expect(searchTickets).not.toHaveBeenCalled();
   });
 });
 
