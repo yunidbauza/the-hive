@@ -26,6 +26,7 @@ import {
   CONFIG_VERSION,
   type BrowseListing,
   type ConfigSnapshot,
+  type RemoteConfig,
   type SetRemoteResult,
 } from '../../electron/shared/config-contract';
 import {
@@ -3025,6 +3026,55 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       expect(clientInfo.servingDeviceCount).not.toBe(serverInfo.servingDeviceCount);
     }, 90_000);
 
+    it('21l. config:get-remote stays this process’s own while attached (HIVE-149)', async () => {
+      /*
+        HIVE-149, and the pair of reads is the assertion rather than either one
+        alone.
+
+        `config:get` is proxied on purpose — Settings names the machine whose
+        config it is editing, and while attached that is the far end — so the
+        `remote` block it answers with is the *server's*, whose own `mode` reads
+        `local` because the server is the thing being attached to.
+        `config:get-remote` is `PROCESS_LOCAL`, so it is answered here and
+        reports `remote` with the address this window actually dialled.
+
+        Taking both from the same window in the same breath is what makes this
+        prove the routing. Either read alone passes on a wrongly-routed channel,
+        because in local mode the two blocks are the same file read twice; only
+        their disagreement while attached shows which process answered. That is
+        also why this belongs in the live suite at all — a unit test can only
+        assert that the local arm was chosen, never that a real socket was left
+        untouched by a real renderer's call.
+
+        Lettered last and placed here on purpose: the letters in this block run
+        in authorship order, but the cases run in *precondition* order, and this
+        one needs the window 21d attached and 21g gives back.
+      */
+      assert(renderer !== undefined, 'the client app must have a renderer');
+
+      const proxied = await renderer.evaluate<ConfigSnapshot>('window.hive.config.get()');
+      const local = await renderer.evaluate<RemoteConfig>('window.hive.config.getRemote()');
+
+      measurements.push({
+        case: '21l. HIVE-149',
+        proxied: { mode: proxied.remote.mode, host: proxied.remote.host },
+        local: { mode: local.mode, host: local.host },
+      });
+
+      // The proxied read, answered by the server: a machine attached to nobody.
+      expect(
+        proxied.remote.mode,
+        `the served app's stderr so far:\n${serverRecord?.stderr || '(empty)'}`,
+      ).toBe('local');
+
+      // And this window's own, which is the assertion: the mode and the address
+      // it dialled, from the one channel on this pane the socket never carries.
+      expect(local.mode).toBe('remote');
+      expect(local.host).toBe('127.0.0.1');
+      expect(local.port).toBe(serverPort);
+      expect(local.mode).not.toBe(proxied.remote.mode);
+    }, 90_000);
+
     it('21f. the attached client sees the server’s live session', async () => {
       /*
         The fleet half. A pty is spawned on the server over the raw socket —
@@ -3346,16 +3396,34 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
 
       /*
         What an attached client now shows, which is the whole of Ruling 29:
-        the panel is open, it names the machine the **socket** is open to
-        (`attachedServerName`, not a config field the far end answered), and
-        the address and pairing controls are gone rather than displaying the
-        server's values under a control that writes locally.
+        the panel is open, and it names the machine the **socket** is open to
+        (`attachedServerName`, not a config field the far end answered).
       */
       const attachedText = await ui.evaluate<string>('document.body.innerText');
       expect(attachedText).toContain('Attached to');
       expect(attachedText).toContain(hostname());
-      expect(attachedText).toMatch(/hidden while attached/i);
-      expect(await ui.evaluate<boolean>(addressField)).toBe(false);
+
+      /*
+        **The address field is present and correct here, and HIVE-149 is what
+        changed that.** This asserted its absence, and the copy explaining the
+        absence, for as long as the field could only read the proxied block:
+        while attached that is the *server's* — `mode: 'local'` and an empty
+        host — under a control that writes locally, so showing it was worse than
+        hiding it.
+
+        It reads `config:get-remote` now, which is `PROCESS_LOCAL`, so the field
+        holds the address this window actually dialled. That is the end-to-end
+        assertion the unit tests cannot make: this value came out of a real
+        renderer, in a real attached client, through the one channel on this
+        pane that a real open socket does not carry.
+
+        `127.0.0.1` because that is what case 21d dialled — read against the
+        server's own port rather than a literal, so the two cannot drift.
+      */
+      expect(await ui.evaluate<boolean>(addressField)).toBe(true);
+      expect(await ui.evaluate<string>(`${FIELD('Server address')}.value`)).toBe('127.0.0.1');
+      expect(await ui.evaluate<string>(`${FIELD('Port')}.value`)).toBe(String(serverPort));
+      expect(attachedText).toMatch(/read from this machine/i);
       /*
         **Forget is present while attached, and that is HIVE-153's fix rather
         than a regression in this one.**
