@@ -1,84 +1,59 @@
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 
-import { REMOTE_DISABLED_REASON } from '@config/runtime';
-import { useRemoteCapabilities } from '@hooks/use-project-config';
-import { addProjectToConfig, chooseProjectDirectory } from '@lib/project-config';
+import { useChooseDirectory } from '@hooks/use-choose-directory';
+import { addProjectToConfig } from '@lib/project-config';
 
 export interface AddProject {
   /**
-   * Open the native directory chooser and map what comes back.
+   * Map a directory as a project.
    *
-   * Fire-and-forget: nothing a caller could do with the promise, since the
-   * fresh snapshot arrives through the config subscription rather than as a
-   * return value.
+   * Opens the native dialog locally, or the server-side picker while attached.
+   * Fire-and-forget in both cases: the fresh snapshot arrives through the
+   * config subscription rather than as a return value, so there is nothing a
+   * caller could do with a promise.
    */
   addProject: () => void;
-  /** Whether a dialog is already open, so the control can refuse a second. */
+  /** Whether a native dialog is already open, so the control can refuse a second. */
   choosing: boolean;
   /**
-   * Why the control is disabled while this window is attached to someone
-   * else's Hive, or `null` when the dialog is available (HIVE-144).
+   * Whether the server-side picker should be open (HIVE-146).
    *
-   * `config:choose-directory` opens on the server, which has no window — see
-   * `WINDOW_BOUND` (`electron/shared/remote-contract.ts`). Both callers show
-   * this as the button's `disabled` reason rather than letting the call fail
-   * silently.
+   * The caller mounts `DirectoryPicker` on this. It replaced a
+   * `disabledReason`, and that is the whole shape of the change: while attached
+   * there is now something the button can do, so a disabled control would be
+   * wrong rather than honest.
    */
-  disabledReason: string | null;
+  picking: boolean;
+  /** Close the picker without choosing. */
+  cancelPicking: () => void;
+  /** A path the picker returned. Writes it, then closes. */
+  onPicked: (path: string) => void;
 }
 
 /**
  * Map a directory as a project — the flow, without the button.
  *
  * Two surfaces offer it: Settings → Projects, and the projects rail. They owe
- * the user the same three things — one dialog per click, a write of exactly
- * the path the dialog returned, and nothing at all when it is closed — so the
+ * the user the same three things — one chooser per click, a write of exactly
+ * the path that came back, and nothing at all when it is dismissed — so the
  * flow lives here and the buttons are only buttons.
  *
  * `src/hooks/` rather than either slice: `features/settings/` and
  * `features/projects/` may not import each other, and this is the shape a fact
- * shared by two slices has to take.
+ * shared by two slices has to take. `DirectoryPicker` lives in
+ * `features/shared/components/` for the same reason.
  *
- * ## Why `choosing` is not a loading flag
- *
- * The dialog is modal to the window, so there is nothing to spin *over*. The
- * flag exists to stop a second `invoke` racing the first, which would open two
- * dialogs and write twice.
+ * Which chooser opens is {@link useChooseDirectory}'s decision, shared with
+ * repointing a project and choosing a clone's destination. All this adds is
+ * what to do with the path.
  */
 export function useAddProject(): AddProject {
-  const [choosing, setChoosing] = useState(false);
-  const { chooseDirectory } = useRemoteCapabilities();
+  const write = useCallback(
+    (path: string) => addProjectToConfig({ path }),
+    [],
+  );
+  const { choose, choosing, picking, cancelPicking, onPicked } =
+    useChooseDirectory(write);
 
-  const addProject = useCallback(() => {
-    if (choosing || !chooseDirectory) return;
-    setChoosing(true);
-
-    void (async () => {
-      try {
-        const path = await chooseProjectDirectory();
-        // Cancelled, or no bridge to ask. Nothing to write, and nothing to
-        // say: the user closed a dialog they opened.
-        if (path === null) return;
-        await addProjectToConfig({ path });
-      } catch (cause) {
-        /*
-          `addProjectToConfig` cannot land here — the config module catches a
-          refused write and keeps the last good snapshot. `chooseDirectory`
-          can: it invokes main directly, so a broken channel rejects. Swallowed
-          rather than rethrown because the caller is a click with no promise to
-          reject into, and left unreported to the user because the thing they
-          would be told is that a dialog they can simply reopen did not open.
-        */
-        console.error('[hive] the directory chooser failed:', cause);
-      } finally {
-        setChoosing(false);
-      }
-    })();
-  }, [choosing, chooseDirectory]);
-
-  return {
-    addProject,
-    choosing,
-    disabledReason: chooseDirectory ? null : REMOTE_DISABLED_REASON.chooseDirectory,
-  };
+  return { addProject: choose, choosing, picking, cancelPicking, onPicked };
 }

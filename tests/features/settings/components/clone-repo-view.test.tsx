@@ -2,7 +2,6 @@ import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { REMOTE_DISABLED_REASON } from '@config/runtime';
 import { emptySnapshot, type CloneDoneEvent } from '@shared/config-contract';
 
 import { CloneRepoView } from '@features/settings/components/clone-repo-view';
@@ -271,7 +270,13 @@ describe('CloneRepoView', () => {
    * reason, and the click never reaches the bridge.
    */
   describe('attached to a remote server', () => {
-    it('disables Choose… and carries the refusal as its title', () => {
+    /**
+     * A clone runs wherever the sessions do, so while attached its destination
+     * is a folder on the server. HIVE-144 disabled this because only a native
+     * dialog could answer it; HIVE-146 gave it the picker, which asks the
+     * machine that will actually do the cloning.
+     */
+    it('opens the picker rather than disabling Choose…', async () => {
       setProjectConfigForTest({
         ...emptySnapshot('/tmp/hive/config.json'),
       });
@@ -279,12 +284,18 @@ describe('CloneRepoView', () => {
       // `config:get` is answered by the server, whose own `remote.mode`
       // reads 'local' (HIVE-144 review, C1).
       setAttachedServerForTest('mini.tail1234.ts.net');
+      const user = userEvent.setup();
 
       render(<CloneRepoView onDone={() => {}} />);
 
       const button = screen.getByRole('button', { name: /choose/i });
-      expect(button).toBeDisabled();
-      expect(button).toHaveAttribute('title', REMOTE_DISABLED_REASON.chooseDirectory);
+      expect(button).toBeEnabled();
+
+      await user.click(button);
+
+      expect(
+        await screen.findByRole('dialog', { name: /Choose a project folder/i }),
+      ).toBeInTheDocument();
     });
 
     it('never opens the dialog', async () => {

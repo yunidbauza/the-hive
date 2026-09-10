@@ -2,7 +2,6 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { REMOTE_DISABLED_REASON } from '@config/runtime';
 import { NewProjectLink } from '@features/projects/components/new-project-link';
 import {
   resetProjectConfig,
@@ -130,26 +129,37 @@ describe('NewProjectLink', () => {
   });
 
   /**
-   * While attached to someone else's Hive (HIVE-144): `config:choose-directory`
-   * opens on the server, which has no window. Disabled with the same reason
-   * `WINDOW_BOUND` gives, and the click never reaches the bridge.
+   * While attached to someone else's Hive, `config:choose-directory` opens on
+   * the server, which has no window. The click still never reaches the bridge;
+   * what changed in HIVE-146 is that it now reaches the server-side picker
+   * instead of nothing.
    */
   describe('attached to a remote server', () => {
     afterEach(() => {
       resetProjectConfig();
     });
 
-    it('disables the control and carries the refusal as its title', () => {
+    /**
+     * HIVE-144 disabled this control while attached, because the only thing it
+     * could do was fail. HIVE-146 gave it something to do, so the assertion
+     * inverts: it stays live, and a click opens the server-side picker.
+     */
+    it('stays live and opens the picker', async () => {
       attach();
+      const user = userEvent.setup();
 
       render(<NewProjectLink />);
-
       const button = screen.getByRole('button', { name: /new project/i });
-      expect(button).toBeDisabled();
-      expect(button).toHaveAttribute('title', REMOTE_DISABLED_REASON.chooseDirectory);
+      expect(button).toBeEnabled();
+
+      await user.click(button);
+
+      expect(
+        await screen.findByRole('dialog', { name: /Choose a project folder/i }),
+      ).toBeInTheDocument();
     });
 
-    it('never opens the dialog', async () => {
+    it('never opens the native dialog', async () => {
       attach();
       const user = userEvent.setup();
 

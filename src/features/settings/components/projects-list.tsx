@@ -1,7 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import {
-  chooseProjectDirectory,
   removeProjectFromConfig,
   renameProjectInConfig,
   reorderProjectsInConfig,
@@ -9,13 +8,14 @@ import {
   setProjectKeyInConfig,
 } from '@/lib/project-config';
 
-import { REMOTE_DISABLED_REASON } from '@config/runtime';
 import { ProjectKeyEditor } from '@features/settings/components/project-key-editor';
 import { ProjectNameEditor } from '@features/settings/components/project-name-editor';
 import { ProjectRemoveConfirm } from '@features/settings/components/project-remove-confirm';
 import { ProjectRow } from '@features/settings/components/project-row';
 import { ProjectRowMenu } from '@features/settings/components/project-row-menu';
-import { useRemoteCapabilities } from '@hooks/use-project-config';
+import { DirectoryPicker } from '@features/shared/components/directory-picker';
+import { useChooseDirectory } from '@hooks/use-choose-directory';
+import { useAttachedServer } from '@hooks/use-project-config';
 import { projectAliases, type ProjectConfig } from '@shared/config-contract';
 import { useLiveSessionCounts } from '@stores/hive-store';
 
@@ -80,7 +80,7 @@ export function ProjectsList({ entries }: ProjectsListProps) {
     itself in the same sentence.
   */
   const liveCounts = useLiveSessionCounts();
-  const { chooseDirectory } = useRemoteCapabilities();
+  const attachedServer = useAttachedServer();
 
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
@@ -131,15 +131,34 @@ export function ProjectsList({ entries }: ProjectsListProps) {
     setDropIndex(null);
   };
 
-  const onRepoint = async (id: string): Promise<void> => {
-    // Belt over the disabled menu item below (HIVE-144): the dialog opens on
-    // the server while attached, which has no window to open it in.
-    if (!chooseDirectory) return;
-    const path = await chooseProjectDirectory();
-    // Cancelled, or no bridge to ask. Nothing to write, and nothing to say —
-    // the user closed a dialog they opened. Same shape as the section's `onAdd`.
-    if (path === null) return;
-    await repointProjectInConfig({ id, path });
+  /**
+   * Which project a chosen folder is about to be pointed at.
+   *
+   * Held rather than passed, because the picker is one mounted component
+   * shared by every row: the row click records the id, and `onPicked` reads it
+   * back when a path arrives. `null` means nothing is being repointed.
+   */
+  const [repointing, setRepointing] = useState<string | null>(null);
+
+  const {
+    choose: chooseRepointFolder,
+    picking,
+    cancelPicking,
+    onPicked,
+  } = useChooseDirectory(
+    useCallback(
+      async (path: string) => {
+        if (repointing === null) return;
+        await repointProjectInConfig({ id: repointing, path });
+        setRepointing(null);
+      },
+      [repointing],
+    ),
+  );
+
+  const onRepoint = (id: string): void => {
+    setRepointing(id);
+    chooseRepointFolder();
   };
 
   const onRemove = (id: string): void => {
@@ -241,17 +260,24 @@ export function ProjectsList({ entries }: ProjectsListProps) {
                 onChangeKey={() =>
                   setMode({ id: project.id, kind: 'change-key' })
                 }
-                onRepoint={() => void onRepoint(project.id)}
-                canRepoint={chooseDirectory}
-                repointDisabledReason={
-                  chooseDirectory ? null : REMOTE_DISABLED_REASON.chooseDirectory
-                }
+                onRepoint={() => onRepoint(project.id)}
                 onRemove={() => onRemove(project.id)}
               />
             }
           />
         );
       })}
+      <DirectoryPicker
+        open={picking}
+        onOpenChange={(next) => {
+          if (!next) {
+            cancelPicking();
+            setRepointing(null);
+          }
+        }}
+        onChoose={onPicked}
+        serverName={attachedServer ?? 'the server'}
+      />
     </ul>
   );
 }

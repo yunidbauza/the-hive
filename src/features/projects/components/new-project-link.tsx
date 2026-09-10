@@ -1,6 +1,8 @@
 import { Plus } from '@phosphor-icons/react';
 
+import { DirectoryPicker } from '@features/shared/components/directory-picker';
 import { useAddProject } from '@hooks/use-add-project';
+import { useAttachedServer } from '@hooks/use-project-config';
 
 /** Which of the panel's two registers this control is drawn in. */
 export type NewProjectVariant = 'line' | 'cta';
@@ -64,25 +66,37 @@ export function NewProjectLink({
 }: {
   variant?: NewProjectVariant;
 }) {
-  const { addProject, choosing, disabledReason } = useAddProject();
+  const { addProject, choosing, picking, cancelPicking, onPicked } =
+    useAddProject();
+  const attachedServer = useAttachedServer();
 
   return (
-    <button
-      type="button"
-      onClick={addProject}
-      disabled={choosing || disabledReason !== null}
-      /*
-        What the click opens, named as the OS thing it is, unless the dialog
-        is unavailable while attached (HIVE-144) — the one refusal state this
-        control does have, borrowed from `WINDOW_BOUND`'s own wording rather
-        than invented here.
-      */
-      title={disabledReason ?? 'Choose a folder to map as a project'}
-      aria-label="Add a new project"
-      className={CLASSES[variant]}
-    >
-      <Plus size={11} weight="bold" aria-hidden="true" className="shrink-0" />
-      new project
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={addProject}
+        disabled={choosing}
+        /*
+          What the click opens. It no longer carries a refusal: while attached
+          this opens the server-side picker rather than a dialog that could
+          only fail (HIVE-146), so the control has no disabled state left
+          beyond a native dialog already being open.
+        */
+        title="Choose a folder to map as a project"
+        aria-label="Add a new project"
+        className={CLASSES[variant]}
+      >
+        <Plus size={11} weight="bold" aria-hidden="true" className="shrink-0" />
+        new project
+      </button>
+      <DirectoryPicker
+        open={picking}
+        onOpenChange={(next) => {
+          if (!next) cancelPicking();
+        }}
+        onChoose={onPicked}
+        serverName={attachedServer ?? 'the server'}
+      />
+    </>
   );
 }

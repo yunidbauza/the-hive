@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DirectoryPicker } from '@features/settings/components/directory-picker';
+import { DirectoryPicker } from '@features/shared/components/directory-picker';
 import type { BrowseListing } from '@shared/config-contract';
 
 const browse = vi.hoisted(() => vi.fn());

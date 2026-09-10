@@ -162,12 +162,13 @@ describe('ProjectsSection', () => {
     });
 
     /**
-     * While attached to someone else's Hive (HIVE-144): `config:choose-directory`
-     * opens on the server, which has no window — see `WINDOW_BOUND`
-     * (`electron/shared/remote-contract.ts`). Disabled with that table's own
-     * reason, and the click never reaches the bridge.
+     * While attached to someone else's Hive, `config:choose-directory` opens on
+     * the server, which has no window — see `WINDOW_BOUND`
+     * (`electron/shared/remote-contract.ts`). HIVE-144 disabled the button for
+     * that; HIVE-146 gave it the server-side picker instead, so the control
+     * stays live and the click still never reaches the bridge.
      */
-    it('disables Add project and never opens the dialog while attached', async () => {
+    it('opens the picker rather than the dialog while attached', async () => {
       const user = userEvent.setup();
       const snapshot: ConfigSnapshot = {
         ...emptySnapshot('/tmp/hive/config.json'),
@@ -181,9 +182,13 @@ describe('ProjectsSection', () => {
 
       render(<ProjectsSection />);
       const button = screen.getByRole('button', { name: /add project/i });
-      expect(button).toBeDisabled();
+      expect(button).toBeEnabled();
 
       await user.click(button);
+
+      expect(
+        await screen.findByRole('dialog', { name: /Choose a project folder/i }),
+      ).toBeInTheDocument();
       expect(chooseProjectDirectory).not.toHaveBeenCalled();
     });
   });
