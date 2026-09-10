@@ -163,6 +163,21 @@ const NO_SERVE_WHILE_ATTACHED =
   'This window is driving another machine. An install is the server or the client, never both — detach first.';
 
 /**
+ * The serve half's own doctrine, stated at the two spots that need it
+ * (HIVE-156).
+ *
+ * While attached, `config:set-server` and `server:revoke` are both proxied
+ * to the far end — deliberately (see `ATTACH_TARGET_HINT` above for the
+ * mirror-image case). Nothing near the bind fields or the roster said so;
+ * a person editing the bind address or clicking Revoke had no way to tell
+ * they were editing the server's file and roster, not this window's own.
+ */
+const SERVE_BIND_ATTACHED_HINT =
+  "These are the server's bind settings, not this window's own. A change here applies the next time the server relaunches.";
+const SERVE_ROSTER_ATTACHED_HINT =
+  "This is the server's device roster. Revoke acts on the server's credential, not this window's.";
+
+/**
  * How long until the next reconnect attempt, in words (HIVE-150).
  *
  * Rounded up and floored at one second, so the line never reads "in 0 seconds"
@@ -845,6 +860,10 @@ export function ServerModeGroup({
 
       {open ? (
         <>
+          {attached ? (
+            <p className="text-[11.5px] text-muted">{SERVE_BIND_ATTACHED_HINT}</p>
+          ) : null}
+
           <TextField
             label="Bind address"
             value={hostDraft}
@@ -1240,6 +1259,10 @@ export function ServerModeGroup({
         <h4 className="text-[11px] font-semibold uppercase tracking-wide text-subtle">
           Paired devices
         </h4>
+
+        {attached ? (
+          <p className="text-[11.5px] text-muted">{SERVE_ROSTER_ATTACHED_HINT}</p>
+        ) : null}
 
         {devices.length === 0 ? (
           <p className="text-[11.5px] text-subtle">No devices are paired.</p>
