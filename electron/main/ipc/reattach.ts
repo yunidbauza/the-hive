@@ -128,8 +128,17 @@ export function createReattachLoop(deps: ReattachDeps): ReattachLoop {
         The socket is real and nobody owns it, so it is closed rather than
         leaked — an orphaned socket holds a handle on the server and counts
         against the attachment it is no longer part of.
+
+        Guarded, because this whole function runs as a floating promise off a
+        timer: a `close()` that threw here would surface as an unhandled
+        rejection in main rather than as anything anyone could act on, and
+        failing to close an orphan is not worth taking the process down for.
       */
-      client.close();
+      try {
+        client.close();
+      } catch {
+        // Nothing to do about it, and nobody to tell.
+      }
       return;
     }
 

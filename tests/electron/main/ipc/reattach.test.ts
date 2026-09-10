@@ -30,8 +30,15 @@ const TERMINAL: CloseCause = {
   message: 'That device was revoked.',
 };
 
-/** A `RemoteClient` stand-in — the loop only ever hands it on. */
-const fakeClient = () => ({ serverName: () => 'mini' }) as unknown as RemoteClient;
+/**
+ * A `RemoteClient` stand-in.
+ *
+ * `close` is real rather than omitted: the loop closes a socket that lands
+ * after it was cancelled, and a fake without it turned that path into an
+ * unhandled rejection the assertions could not see.
+ */
+const fakeClient = () =>
+  ({ serverName: () => 'mini', close: vi.fn() }) as unknown as RemoteClient;
 
 interface Harness {
   statuses: RemoteLinkStatus[];
@@ -278,10 +285,18 @@ describe('createReattachLoop', () => {
       silently reattaches them a second later.
     */
     h.loop.cancel();
-    release(fakeClient());
+    const orphan = fakeClient();
+    release(orphan);
     await vi.advanceTimersByTimeAsync(0);
 
     expect(h.attached).toEqual([]);
+    /*
+      And it is closed rather than merely dropped. An unowned socket still holds
+      its half of the server's fan-out and counts against the attachment it is
+      no longer part of — the same reason `unbindEverything` closes the client
+      it dialled instead of letting the reference go.
+    */
+    expect(orphan.close).toHaveBeenCalledTimes(1);
   });
 
   it('stops listening for wakes once cancelled', async () => {

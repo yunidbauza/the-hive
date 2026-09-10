@@ -80,6 +80,12 @@ vi.mock('electron', () => ({
     getPath: () => '/tmp/hive-test-remote-composition',
     dock: { bounce: vi.fn(), setBadge: vi.fn() },
   },
+  /*
+    HIVE-150. The reconnect loop asks to be told when this machine wakes, so a
+    lid opening reattaches at once rather than waiting out the backoff step it
+    was parked on. Modelled here because `router.ts` really reads it.
+  */
+  powerMonitor: { on: vi.fn(), removeListener: vi.fn() },
   BrowserWindow: { fromWebContents: () => null, getAllWindows: () => windows },
   dialog: { showOpenDialog: vi.fn() },
   Notification: Object.assign(vi.fn(), { isSupported: () => false }),
@@ -380,7 +386,10 @@ const { remoteProxyBindingsSize, resetRemoteProxy } = await import(
   '../../../../electron/main/ipc/remote-proxy'
 );
 const { PlaintextRefusedError } = await import('../../../../electron/remote-client/socket');
-const { registerIpc, switchIpcMode } = await import('../../../../electron/main/ipc/router');
+const { BACKOFF_MS } = await import('../../../../electron/main/ipc/reattach');
+const { attachedResumeTracker, attachedServerName, registerIpc, switchIpcMode } = await import(
+  '../../../../electron/main/ipc/router'
+);
 const { resetServerModeForTest, setServerMode } = await import(
   '../../../../electron/main/server-mode'
 );
@@ -1369,6 +1378,123 @@ describe('the mode switch (HIVE-144)', () => {
     expect(connect).not.toHaveBeenCalled();
     expect(ipcBindingsSize()).toBe(local);
     expect(remoteProxyBindingsSize()).toBe(0);
+  });
+
+  /**
+   * Reconnecting after a drop (HIVE-150).
+   *
+   * HIVE-144's delivery notes list "nothing re-attaches after a socket drops"
+   * as a deliberately deferred gap; this is where it closes. The loop's own
+   * schedule is `reattach.test.ts`'s subject — what these prove is the seam:
+   * that a drop is heard at all, that the surface is rebound to the new socket
+   * rather than left pointing at the dead one, and that the two teardown paths
+   * this module already had are not disturbed.
+   */
+  describe('a socket that drops after a successful attach', () => {
+    // The backoff is the subject of every case here, and waiting out even the
+    // first step for real would be a second of wall-clock per assertion.
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('rebinds the surface to the new client without unbinding local twice', async () => {
+      boundLocally();
+      const first = fakeClient();
+      const second = fakeClient();
+      let dials = 0;
+      const connect = vi.fn(() => {
+        dials += 1;
+        return Promise.resolve(dials === 1 ? first : second);
+      });
+
+      await switchIpcMode('remote', opts({ connect }));
+      expect(remoteProxyBindingsSize()).toBe(BOUND_CHANNELS);
+
+      first.drop();
+      await vi.advanceTimersByTimeAsync(BACKOFF_MS[0]);
+
+      /*
+        The count is the assertion that matters. `registerRemoteProxy` refuses
+        to bind over itself, so a reattach that forgot `resetRemoteProxy` would
+        throw; one that used `unbindEverything` instead would tear down the
+        sessions layer and stop the receiver, which is a different bug with the
+        same passing count. Both are excluded by binding exactly once more.
+      */
+      expect(remoteProxyBindingsSize()).toBe(BOUND_CHANNELS);
+      expect(attachedServerName()).toBe('mini');
+      expect(connect).toHaveBeenCalledTimes(2);
+    });
+
+    it('dials again naming where each watched terminal left off', async () => {
+      boundLocally();
+      const first = fakeClient();
+      let dialCount = 0;
+      const connect = vi.fn((deps: { resumeFrom?: Record<string, unknown> }) => {
+        dialCount += 1;
+        void deps;
+        return Promise.resolve(dialCount === 1 ? first : fakeClient());
+      });
+
+      await switchIpcMode('remote', opts({ connect }));
+
+      // What the proxy's two taps will do for real once a session is running.
+      const tracker = attachedResumeTracker();
+      tracker?.markWatched('sess-a');
+      tracker?.record('sess-a', 2, 44);
+
+      first.drop();
+      await vi.advanceTimersByTimeAsync(BACKOFF_MS[0]);
+
+      /*
+        The first dial cannot carry one — there was nothing to resume from — and
+        the second is the whole reason HIVE-144 built `ResumePoint` and bumped
+        the protocol. Until this, `router.ts` dialled without it and the machine
+        on the far side had no way to know a returning client had ever been
+        there.
+      */
+      expect(connect.mock.calls[0][0].resumeFrom).toBeUndefined();
+      expect(connect.mock.calls[1][0].resumeFrom).toEqual({
+        'sess-a': { gen: 2, seq: 44 },
+      });
+    });
+
+    it('does not reattach after the user has gone local', async () => {
+      boundLocally();
+      const first = fakeClient();
+      const connect = vi.fn(() => Promise.resolve(fakeClient()));
+      connect.mockResolvedValueOnce(first);
+
+      await switchIpcMode('remote', opts({ connect }));
+      first.drop();
+      // Mid-backoff, the user gives up and works locally.
+      await switchIpcMode('local');
+      await vi.advanceTimersByTimeAsync(600_000);
+
+      /*
+        The trap this closes: a live timer outliving the mode switch and
+        silently reattaching a user who explicitly asked to stop. `config:set-remote`
+        is PROCESS_LOCAL precisely so this exit still answers with the socket
+        dead, and it would be worth nothing if the loop ignored it.
+      */
+      expect(connect).toHaveBeenCalledTimes(1);
+      expect(attachedServerName()).toBeNull();
+      expect(remoteProxyBindingsSize()).toBe(0);
+    });
+
+    it('never dials for a refusal another dial would reproduce', async () => {
+      boundLocally();
+      const first = fakeClient();
+      const connect = vi.fn(() => Promise.resolve(first));
+
+      await switchIpcMode('remote', opts({ connect }));
+      first.drop({ kind: 'terminal', code: 'revoked', message: 'That device was revoked.' });
+      await vi.advanceTimersByTimeAsync(600_000);
+
+      expect(connect).toHaveBeenCalledTimes(1);
+    });
   });
 });
 

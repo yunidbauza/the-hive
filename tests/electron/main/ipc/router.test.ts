@@ -24,7 +24,15 @@ import type { CloseCause } from '../../../../electron/remote-client/socket';
 const registerIpcHandlers = vi.fn();
 const registerRemoteProxy = vi.fn();
 
-vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: vi.fn(() => []) } }));
+vi.mock('electron', () => ({
+  BrowserWindow: { getAllWindows: vi.fn(() => []) },
+  /*
+    HIVE-150. The reconnect loop asks to be told when this machine wakes, so a
+    lid opening reattaches at once rather than waiting out the backoff step it
+    was parked on. Modelled here because `router.ts` really reads it.
+  */
+  powerMonitor: { on: vi.fn(), removeListener: vi.fn() },
+}));
 vi.mock('../../../../electron/main/ipc/index', () => ({ registerIpcHandlers }));
 vi.mock('../../../../electron/main/ipc/remote-proxy', () => ({ registerRemoteProxy }));
 
