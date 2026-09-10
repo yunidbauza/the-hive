@@ -165,6 +165,9 @@ const fakeClient = () => ({
   onEvent: vi.fn(() => () => {}),
   snapshot: vi.fn(() => ({})),
   serverName: vi.fn(() => 'mini'),
+  // Never dropped in this file — durability across mode switches is its
+  // subject, and a reconnect is `remote-composition.test.ts`'s (HIVE-150).
+  onClose: vi.fn(() => () => undefined),
   close: vi.fn(),
 });
 

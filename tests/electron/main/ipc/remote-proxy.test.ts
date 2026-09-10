@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { CloseCause } from '../../../../electron/remote-client/socket';
 import type { AppInfo } from '../../../../electron/shared/ipc-contract';
 import { FRAME_KIND, PROCESS_LOCAL, WINDOW_BOUND } from '../../../../electron/shared/remote-contract';
 
@@ -108,6 +109,7 @@ const trustedEvent = { senderFrame: mainFrame, sender: { mainFrame } } as never;
 
 function fakeClient() {
   const eventListeners = new Set<(channel: string, payload: unknown) => void>();
+  const closeListeners = new Set<(cause: CloseCause) => void>();
   return {
     call: vi.fn().mockResolvedValue('ok'),
     notify: vi.fn(),
@@ -117,10 +119,19 @@ function fakeClient() {
     }),
     snapshot: vi.fn(),
     serverName: vi.fn(),
+    onClose: vi.fn((listener: (cause: CloseCause) => void) => {
+      closeListeners.add(listener);
+      return () => closeListeners.delete(listener);
+    }),
     close: vi.fn(),
     /** Test-only: fire an event as the real socket's fan-out would. */
     emit(channel: string, payload: unknown) {
       for (const listener of eventListeners) listener(channel, payload);
+    },
+    /** Test-only: end the connection as the real socket's handlers would. */
+    drop(cause: CloseCause = { kind: 'transport', code: 'transport', message: 'closed' }) {
+      for (const listener of closeListeners) listener(cause);
+      closeListeners.clear();
     },
   };
 }

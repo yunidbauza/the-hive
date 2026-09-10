@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { CloseCause } from '../../../../electron/remote-client/socket';
+
 /**
  * The mode switch in front of `registerIpcHandlers` and `registerRemoteProxy`
  * (HIVE-141, HIVE-144).
@@ -31,13 +33,23 @@ const { registerIpc, switchIpcMode } = await import('../../../../electron/main/i
 /** A `RemoteClient` fake, fully implemented rather than cast away — the point
  * of this file is that `registerIpc` hands it through unchanged. */
 function fakeClient() {
+  const closeListeners = new Set<(cause: CloseCause) => void>();
   return {
     call: vi.fn(),
     notify: vi.fn(),
     onEvent: vi.fn(),
     snapshot: vi.fn(),
     serverName: vi.fn(),
+    onClose: vi.fn((listener: (cause: CloseCause) => void) => {
+      closeListeners.add(listener);
+      return () => closeListeners.delete(listener);
+    }),
     close: vi.fn(),
+    /** Test-only: end the connection as the real socket's handlers would. */
+    drop(cause: CloseCause = { kind: 'transport', code: 'transport', message: 'closed' }) {
+      for (const listener of closeListeners) listener(cause);
+      closeListeners.clear();
+    },
   };
 }
 

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SNAPSHOT_READ_BUDGET_MS } from '@remote-host/listener';
+import type { CloseCause } from '../../../../electron/remote-client/socket';
 import { emptySnapshot } from '../../../../electron/shared/config-contract';
 import { OVERMIND } from '../../../../electron/shared/ledger-contract';
 import type { Channel } from '../../../../electron/shared/ipc-contract';
@@ -1013,15 +1014,31 @@ describe('the mode switch (HIVE-144)', () => {
     return Promise.resolve(handler(trustedEvent, payload));
   };
 
-  /** A `RemoteClient` fake — fully implemented, so nothing is cast away. */
-  const fakeClient = () => ({
-    call: vi.fn(async () => undefined),
-    notify: vi.fn(),
-    onEvent: vi.fn(() => () => {}),
-    snapshot: vi.fn(() => ({})),
-    serverName: vi.fn(() => 'mini'),
-    close: vi.fn(),
-  });
+  /**
+   * A `RemoteClient` fake — fully implemented, so nothing is cast away.
+   *
+   * `drop()` is how a test ends this connection the way the real socket's
+   * handlers would (HIVE-150), which is what the reconnect path listens on.
+   */
+  const fakeClient = () => {
+    const closeListeners = new Set<(cause: CloseCause) => void>();
+    return {
+      call: vi.fn(async () => undefined),
+      notify: vi.fn(),
+      onEvent: vi.fn(() => () => {}),
+      snapshot: vi.fn(() => ({})),
+      serverName: vi.fn(() => 'mini'),
+      onClose: vi.fn((listener: (cause: CloseCause) => void) => {
+        closeListeners.add(listener);
+        return () => closeListeners.delete(listener);
+      }),
+      close: vi.fn(),
+      drop(cause: CloseCause = { kind: 'transport', code: 'transport', message: 'closed' }) {
+        for (const listener of closeListeners) listener(cause);
+        closeListeners.clear();
+      },
+    };
+  };
 
   /**
    * A switch that would succeed: a loopback target, a stored credential, and a

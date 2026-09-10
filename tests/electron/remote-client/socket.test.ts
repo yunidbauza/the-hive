@@ -27,6 +27,7 @@ import {
   CLIENT_ATTACH_TIMEOUT_MS,
   PlaintextRefusedError,
   RemoteCallError,
+  classifyCause,
   connectRemote,
   type RemoteClient,
 } from '../../../electron/remote-client/socket';
@@ -790,5 +791,139 @@ describe('connectRemote — events', () => {
     socket.emit('message', Buffer.from('{not json'));
 
     expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The close signal (HIVE-150).
+ *
+ * HIVE-144 bounded the dial and rejected every pending call on a drop, but
+ * nothing upstream could hear that a socket had died: `RemoteClient` exposed no
+ * lifecycle at all, so `router.ts` kept `attached` pointing at a dead client and
+ * the header chip kept naming a machine this window could no longer reach.
+ * These cover the signal the reconnect loop listens on.
+ */
+describe('onClose', () => {
+  it('fires once when an attached socket closes', async () => {
+    const { client, socket } = await attachedClient();
+    const heard = vi.fn();
+    client.onClose(heard);
+
+    socket.emit('close');
+
+    expect(heard).toHaveBeenCalledTimes(1);
+    expect(heard.mock.calls[0][0]).toMatchObject({ kind: 'transport' });
+  });
+
+  it('fires once on an error, and not again on the close that follows it', async () => {
+    const { client, socket } = await attachedClient();
+    const heard = vi.fn();
+    client.onClose(heard);
+
+    /*
+      `ws` emits both, in this order, for a connection that dies rather than one
+      closed politely. A listener that heard it twice would start two reconnect
+      loops against one drop, and the second would dial while the first was
+      already waiting on its backoff.
+    */
+    socket.emit('error', new Error('ECONNRESET'));
+    socket.emit('close');
+
+    expect(heard).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands its subscriber a client that is already fully shut', async () => {
+    const { client, socket } = await attachedClient();
+
+    const outstanding = client.call(CH.configGet, undefined);
+    let refusedFromInside: unknown = null;
+    client.onClose(() => {
+      /*
+        Started from inside the listener, so it can only be refused outright if
+        the teardown finished before the announcement. That is the property
+        worth pinning: the loop's first act on hearing a close is to dial again,
+        and it must never do that against a client still holding callers.
+
+        The rejection of `outstanding` cannot be observed *before* this listener
+        instead — `promise.catch` is a microtask by specification and a listener
+        is synchronous, so no correct implementation could make that ordering
+        visible. What is visible is that both are settled by the time anyone can
+        act, which is what this asserts from the two directions available.
+      */
+      client.call(CH.configGet, undefined).catch((cause: unknown) => {
+        refusedFromInside = cause;
+      });
+    });
+
+    socket.emit('close');
+
+    await expect(outstanding).rejects.toThrow(/closed/);
+    await Promise.resolve();
+    expect(refusedFromInside).toBeInstanceOf(Error);
+    expect(String(refusedFromInside)).toMatch(/is closed/);
+  });
+
+  it('stops delivering once unsubscribed', async () => {
+    const { client, socket } = await attachedClient();
+    const heard = vi.fn();
+    const stop = client.onClose(heard);
+
+    stop();
+    socket.emit('close');
+
+    expect(heard).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What the reconnect loop branches on (HIVE-150).
+ *
+ * Exported rather than kept private because the loop classifies two different
+ * things with it: the `CloseCause` a live socket hands `onClose`, and the
+ * rejection a *failed dial* produces, which never reaches `onClose` at all
+ * because there was no attached client to hear it. One table, both paths.
+ */
+describe('classifyCause', () => {
+  it('names a refused resolution terminal rather than a transport drop', () => {
+    /*
+      Retrying this one would re-refuse on a timer forever while the pane
+      claimed it was reconnecting — the address is wrong, and no amount of
+      waiting changes an address.
+    */
+    expect(classifyCause(new PlaintextRefusedError('nope'))).toMatchObject({
+      kind: 'terminal',
+      code: 'plaintext-refused',
+    });
+  });
+
+  it('carries a server refusal through under its own code', () => {
+    expect(classifyCause(new AttachRefusedError('unauthorized', 'no'))).toMatchObject({
+      kind: 'terminal',
+      code: 'unauthorized',
+    });
+    expect(classifyCause(new AttachRefusedError('revoked', 'no'))).toMatchObject({
+      kind: 'terminal',
+      code: 'revoked',
+    });
+    expect(classifyCause(new AttachRefusedError('protocol-mismatch', 'no'))).toMatchObject({
+      kind: 'terminal',
+      code: 'protocol-mismatch',
+    });
+  });
+
+  it('names an oversized attach frame terminal', () => {
+    /*
+      The one terminal cause this side raises about itself. Dialling again sends
+      the same oversized frame, so a retry is a loop that cannot converge.
+    */
+    expect(classifyCause(new AttachFrameTooLargeError('too big'))).toMatchObject({
+      kind: 'terminal',
+      code: 'attach-frame-too-large',
+    });
+  });
+
+  it('treats anything else as worth retrying', () => {
+    expect(classifyCause(new Error('ECONNREFUSED'))).toMatchObject({ kind: 'transport' });
+    expect(classifyCause('not even an error')).toMatchObject({ kind: 'transport' });
   });
 });

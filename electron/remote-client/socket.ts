@@ -169,6 +169,58 @@ export class RemoteCallError extends Error {
   }
 }
 
+/**
+ * Whether a dead connection is worth dialling again (HIVE-150).
+ *
+ * `transport` is the connection itself failing — the far machine is rebooting,
+ * asleep, or off the tailnet — and another dial is exactly the right response.
+ * `terminal` is a refusal whose cause the next dial would reproduce: the same
+ * credential, the same protocol number, the same oversized frame. Retrying one
+ * of those is a loop that cannot converge, and worse, it would leave the pane
+ * saying "reconnecting" about something that is never going to reconnect.
+ */
+export type CloseKind = 'transport' | 'terminal';
+
+/** Why a connection ended, in the terms the reconnect loop branches on. */
+export interface CloseCause {
+  kind: CloseKind;
+  /**
+   * The server's own refusal code where there is one (`unauthorized`,
+   * `revoked`, `protocol-mismatch`), this side's where it refused first
+   * (`plaintext-refused`, `attach-frame-too-large`), or `transport`.
+   */
+  code: string;
+  message: string;
+}
+
+/**
+ * Classifies a dead connection for {@link CloseCause}.
+ *
+ * Exported because the reconnect loop classifies **two** things with it and
+ * only one of them is a close: a live socket's `onClose`, and the rejection a
+ * failed *dial* produces — which never reaches `onClose` at all, because there
+ * was no attached client to hear it. One table for both, so a refusal cannot be
+ * terminal on one path and retryable on the other.
+ *
+ * Takes `unknown` because a rejected promise carries whatever was thrown.
+ */
+export function classifyCause(cause: unknown): CloseCause {
+  if (cause instanceof AttachRefusedError) {
+    return { kind: 'terminal', code: cause.code, message: cause.message };
+  }
+  if (cause instanceof PlaintextRefusedError) {
+    return { kind: 'terminal', code: 'plaintext-refused', message: cause.message };
+  }
+  if (cause instanceof AttachFrameTooLargeError) {
+    return { kind: 'terminal', code: 'attach-frame-too-large', message: cause.message };
+  }
+  return {
+    kind: 'transport',
+    code: 'transport',
+    message: cause instanceof Error ? cause.message : String(cause),
+  };
+}
+
 export interface RemoteClient {
   /** Invoke a call channel. Rejects on an error frame or the give-up deadline. */
   call(channel: Channel, payload: unknown): Promise<unknown>;
@@ -176,6 +228,19 @@ export interface RemoteClient {
   notify(channel: Channel, payload: unknown): void;
   /** Subscribe to every event frame. Returns an unsubscribe. */
   onEvent(listener: (channel: Channel, payload: unknown) => void): () => void;
+  /**
+   * Subscribe to this connection ending. Fires **once**, after every pending
+   * call has been rejected. Returns an unsubscribe (HIVE-150).
+   *
+   * Once, because `ws` emits `'error'` and then `'close'` for a connection that
+   * dies rather than one closed politely, and a listener that heard both would
+   * start two reconnect loops against one drop.
+   *
+   * After the rejections, because the listener's first act is to dial again:
+   * a caller still holding an unsettled promise at that moment would outlive
+   * the client that owed it an answer.
+   */
+  onClose(listener: (cause: CloseCause) => void): () => void;
   /** The snapshot the server sent with AttachAccepted. */
   snapshot(): Readonly<Partial<Record<Channel, unknown>>>;
   /** The name this client paired under, for the header chip. */
@@ -339,6 +404,41 @@ export function connectRemote(deps: ConnectRemoteDeps): Promise<RemoteClient> {
       listeners: Set<(channel: Channel, payload: unknown) => void>;
     } | null = null;
     let closed = false;
+
+    /**
+     * Subscribers to this connection ending, and the guard that keeps the
+     * notification to one (HIVE-150).
+     *
+     * The guard is separate from `closed` on purpose: `closed` is also set by
+     * `close()`, and it answers "may this client still be used", which `call`
+     * reads on every invocation. This one answers "has the ending already been
+     * announced", which is asked exactly twice and only by the two handlers.
+     */
+    const closeListeners = new Set<(cause: CloseCause) => void>();
+    let closeAnnounced = false;
+
+    /** Announces the ending to {@link closeListeners}, once. */
+    const announceClose = (cause: unknown): void => {
+      if (closeAnnounced) return;
+      closeAnnounced = true;
+      const classified = classifyCause(cause);
+      for (const listener of closeListeners) {
+        /*
+          Guarded per listener for the reason the event fan-out is: this runs
+          inside `ws`'s own emit, so a subscriber that throws would propagate
+          out of the EventEmitter as an uncaught exception in the main process
+          — and the subscriber here is the reconnect loop, whose failure would
+          take the app down rather than merely lose a reconnect.
+        */
+        try {
+          listener(classified);
+        } catch {
+          // A subscriber's own failure is its own, and there is no channel back
+          // to one that has already failed.
+        }
+      }
+      closeListeners.clear();
+    };
 
     /**
      * The whole-handshake deadline (HIVE-144 review, I5).
@@ -519,6 +619,9 @@ export function connectRemote(deps: ConnectRemoteDeps): Promise<RemoteClient> {
       // generic connect failure.
       failHandshake(refusal ?? cause);
       failAllPending(refusal ?? cause);
+      // Last, so no subscriber is told the connection is over while a caller
+      // is still holding a promise against it — see `RemoteClient.onClose`.
+      announceClose(refusal ?? cause);
     });
 
     socket.on('close', () => {
@@ -527,7 +630,9 @@ export function connectRemote(deps: ConnectRemoteDeps): Promise<RemoteClient> {
         refusal ??
           new Error(`The connection to ${host}:${String(port)} closed before it attached.`),
       );
-      failAllPending(new Error(`The connection to ${host}:${String(port)} closed.`));
+      const ending = new Error(`The connection to ${host}:${String(port)} closed.`);
+      failAllPending(ending);
+      announceClose(refusal ?? ending);
     });
 
     /**
@@ -611,6 +716,19 @@ export function connectRemote(deps: ConnectRemoteDeps): Promise<RemoteClient> {
         onEvent(listener) {
           listeners.add(listener);
           return () => listeners.delete(listener);
+        },
+
+        onClose(listener) {
+          /*
+            A connection that is already over never calls its new subscriber.
+            The reconnect loop subscribes at the moment it takes ownership of a
+            fresh client, so this can only be reached by a caller subscribing to
+            a client it kept a reference to past its ending — for which the
+            answer it wants is the one it already had.
+          */
+          if (closeAnnounced) return () => undefined;
+          closeListeners.add(listener);
+          return () => closeListeners.delete(listener);
         },
 
         snapshot() {
