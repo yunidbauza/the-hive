@@ -49,8 +49,8 @@ beforeEach(() => {
 
 /**
  * A hub built from the shared collaborators above, with room to override or
- * add options per test — chiefly `present`, `announceUnread` and, for
- * HIVE-81, `isForeground`.
+ * add options per test — chiefly `present`, `announceUnread` and, for HIVE-81
+ * (widened to the fleet in HIVE-154), `isForegroundEverywhere`.
  */
 const makeHub = (overrides: Partial<NotificationHubOptions> = {}): NotificationHub =>
   createNotificationHub({
@@ -256,7 +256,7 @@ describe('supersede', () => {
 
   /** A gated row is still a row, and the older one is still stale. */
   it('supersedes a row that was raised behind the foreground gate', () => {
-    hub = makeHub({ isForeground: (action) => action.type === 'session' });
+    hub = makeHub({ isForegroundEverywhere: (action) => action.type === 'session' });
 
     hub.raise({
       kind: 'session.idle',
@@ -693,21 +693,24 @@ describe('robustness', () => {
 
 describe('the foreground gate', () => {
   /**
-   * The gate moved, and this is where it went (HIVE-145).
+   * The gate moved, and this is where it went (HIVE-145) — and then the
+   * question it asks changed (HIVE-154).
    *
-   * The hub used to refuse to present at all while `isForeground` answered
-   * true. It cannot any more: with two devices attached that question has two
-   * answers, and one device watching a session must not silence the
+   * The hub used to refuse to present at all while the foreground predicate
+   * answered true. It cannot any more: with two devices attached that question
+   * has two answers, and one device watching a session must not silence the
    * interruption for another device that is not. So the hub hands every toast
    * to its presenter and the presenter — `createToastRoute` in production —
    * asks the question once per surface.
    *
-   * What `isForeground` still decides here is `unread`, which is genuinely the
-   * any-surface question: a row somebody has seen is a row that has been seen.
+   * What `isForegroundEverywhere` still decides here is `unread`, which is the
+   * fleet question: a row may arrive already-read only when *every* attended
+   * surface is looking at it. One device watching must never mark seen a row
+   * another device has never seen.
    */
   it('marks an already-seen row read, and still offers it to the presenter', () => {
     const present = vi.fn();
-    const hub = makeHub({ present, isForeground: () => true });
+    const hub = makeHub({ present, isForegroundEverywhere: () => true });
 
     const raised = hub.raise({
       kind: 'session.blocked',
@@ -730,21 +733,21 @@ describe('the foreground gate', () => {
 
   it('leaves the unread count untouched', () => {
     const announceUnread = vi.fn();
-    const hub = makeHub({ announceUnread, isForeground: () => true });
+    const hub = makeHub({ announceUnread, isForegroundEverywhere: () => true });
     hub.raise({ kind: 'session.blocked', title: 't', action: { type: 'session', entityId: 'term-3' } });
     expect(announceUnread).toHaveBeenLastCalledWith(0);
   });
 
   it('raises normally for a background session', () => {
     const present = vi.fn();
-    const hub = makeHub({ present, isForeground: () => false });
+    const hub = makeHub({ present, isForegroundEverywhere: () => false });
     const raised = hub.raise({ kind: 'session.blocked', title: 't', action: { type: 'session', entityId: 'term-9' } });
     expect(raised?.unread).toBe(true);
     expect(present).toHaveBeenCalled();
   });
 
   it('remembers a foreground-raised id, so a duplicate still dedups', () => {
-    const hub = makeHub({ isForeground: () => true });
+    const hub = makeHub({ isForegroundEverywhere: () => true });
     const input = { kind: 'session.blocked' as const, id: 'fixed', title: 't', action: { type: 'session' as const, entityId: 'term-3' } };
     expect(hub.raise(input)).not.toBeNull();
     expect(hub.raise(input)).toBeNull();
@@ -758,11 +761,11 @@ describe('the foreground gate', () => {
     //
     // The predicate below checks `action.type` itself — the "answers false by
     // construction" shape the real predicate in `ipc/index.ts` has (Step 5:
-    // `action.type === 'session' && isForeground(action.entityId)`). A fake
+    // `action.type === 'session' && isForegroundEverywhere(action.entityId)`). A fake
     // that ignored the action entirely, always answering `true`, would gate
     // every kind and could never demonstrate this test's claim.
     const present = vi.fn();
-    const hub = makeHub({ present, isForeground: (action) => action.type === 'session' });
+    const hub = makeHub({ present, isForegroundEverywhere: (action) => action.type === 'session' });
     hub.raise({ kind: 'clone.done', title: 't', action: { type: 'url', url: 'https://example.test' } });
     expect(present).toHaveBeenCalled();
   });
@@ -773,7 +776,7 @@ describe('promote', () => {
     const present = vi.fn();
     const announceRead = vi.fn();
     let foreground = true;
-    const hub = makeHub({ present, announceRead, isForeground: () => foreground });
+    const hub = makeHub({ present, announceRead, isForegroundEverywhere: () => foreground });
 
     const raised = hub.raise({ kind: 'session.blocked', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
     present.mockClear();
@@ -789,7 +792,7 @@ describe('promote', () => {
   it('is a no-op for an unknown or dismissed id', () => {
     const present = vi.fn();
     const announceRead = vi.fn();
-    const hub = makeHub({ present, announceRead, isForeground: () => false });
+    const hub = makeHub({ present, announceRead, isForegroundEverywhere: () => false });
 
     const raised = hub.raise({ kind: 'session.blocked', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
     hub.dismiss(raised.id);
@@ -807,7 +810,7 @@ describe('promote', () => {
     const present = vi.fn();
     const announceRead = vi.fn();
     // Never gated — raised straight to unread, same as any background session.
-    const hub = makeHub({ present, announceRead, isForeground: () => false });
+    const hub = makeHub({ present, announceRead, isForegroundEverywhere: () => false });
 
     const raised = hub.raise({ kind: 'session.blocked', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
     present.mockClear();
@@ -824,7 +827,7 @@ describe('promote', () => {
     const present = vi.fn();
     const announceRead = vi.fn();
     let foreground = true;
-    const hub = makeHub({ present, announceRead, isForeground: () => foreground });
+    const hub = makeHub({ present, announceRead, isForegroundEverywhere: () => foreground });
 
     const raised = hub.raise({ kind: 'session.blocked', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
     present.mockClear();
@@ -861,7 +864,7 @@ describe('promote', () => {
         if (throwing) throw new Error('config exploded');
         return prefs;
       },
-      isForeground: () => true,
+      isForegroundEverywhere: () => true,
     });
 
     const raised = hub.raise({ kind: 'session.blocked', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
@@ -898,7 +901,7 @@ describe('promote', () => {
         if (throwing) throw new Error('config exploded');
         return prefs;
       },
-      isForeground: () => true,
+      isForegroundEverywhere: () => true,
     });
 
     const raised = hub.raise({ kind: 'session.blocked', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
@@ -936,7 +939,7 @@ describe('promote', () => {
       present,
       announceRead,
       announceUnread,
-      isForeground: () => foreground,
+      isForegroundEverywhere: () => foreground,
     });
 
     const raised = hub.raise({ kind: 'session.blocked', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
@@ -969,7 +972,7 @@ describe('promote', () => {
       announceRead: () => {
         if (throwing) throw new Error('renderer gone');
       },
-      isForeground: () => true,
+      isForegroundEverywhere: () => true,
     });
 
     const raised = hub.raise({ kind: 'session.blocked', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
@@ -991,7 +994,7 @@ describe('promote', () => {
     const present = vi.fn();
     const announceDismissed = vi.fn();
     let foreground = true;
-    const hub = makeHub({ present, announceDismissed, isForeground: () => foreground });
+    const hub = makeHub({ present, announceDismissed, isForegroundEverywhere: () => foreground });
 
     const raised = hub.raise({ kind: 'session.blocked', title: 't', action: { type: 'session', entityId: 'term-3' } })!;
     present.mockClear();
@@ -1054,7 +1057,7 @@ describe('the toast’s name for a subject', () => {
     const hub = makeHub({
       present,
       subjectName: () => name,
-      isForeground: () => foreground,
+      isForegroundEverywhere: () => foreground,
     });
 
     const raised = hub.raise({
@@ -1134,7 +1137,7 @@ describe('the toast’s name for a subject', () => {
  * Two methods rather than one with an optional subject, because the two
  * questions are asked by different callers about different things: one means
  * "whatever the user is looking at", which only the hub can answer because only
- * the hub holds `isForeground`; the other names a session that has stopped
+ * the hub holds `isForegroundEverywhere`; the other names a session that has stopped
  * being blocked, which only the notifier knows because only it sees the status
  * stream. Neither caller can answer the other's question.
  */
@@ -1147,7 +1150,7 @@ describe('dismissForeground', () => {
 
   it('drops rows of the named kinds about the session on screen', () => {
     const hub = makeHub({
-      isForeground: (action) =>
+      isForegroundEverywhere: (action) =>
         action.type === 'session' && action.entityId === 'term-3',
     });
     hub.raise(sessionRow('session.idle', 'term-3'));
@@ -1159,7 +1162,7 @@ describe('dismissForeground', () => {
   });
 
   it('leaves a kind it was not asked for, however foreground it is', () => {
-    const hub = makeHub({ isForeground: () => true });
+    const hub = makeHub({ isForegroundEverywhere: () => true });
     hub.raise(sessionRow('session.blocked', 'term-3'));
 
     hub.dismissForeground(['session.idle', 'session.input_needed']);
@@ -1167,10 +1170,10 @@ describe('dismissForeground', () => {
     expect(hub.list()).toHaveLength(1);
   });
 
-  /** The whole point of asking `isForeground` rather than sweeping by kind. */
+  /** The whole point of asking `isForegroundEverywhere` rather than sweeping by kind. */
   it('leaves the same kind about a session the user is not looking at', () => {
     const hub = makeHub({
-      isForeground: (action) =>
+      isForegroundEverywhere: (action) =>
         action.type === 'session' && action.entityId === 'term-3',
     });
     hub.raise(sessionRow('session.idle', 'term-3'));
@@ -1183,7 +1186,7 @@ describe('dismissForeground', () => {
   });
 
   /**
-   * A hub with no `isForeground` — the browser target, and every test that
+   * A hub with no `isForegroundEverywhere` — the browser target, and every test that
    * builds one without it — has no foreground to sweep and must not guess one.
    */
   it('sweeps nothing when the hub was built without the predicate', () => {
@@ -1201,7 +1204,7 @@ describe('dismissForeground', () => {
     const hub = makeHub({
       announceDismissed,
       announceUnread,
-      isForeground: () => true,
+      isForegroundEverywhere: () => true,
     });
     // Raised while the session is foreground, so both arrive already-read and
     // the badge is 0 before the sweep. Un-gate the second by hand instead: a
@@ -1221,7 +1224,7 @@ describe('dismissForeground', () => {
   it('says nothing at all when it matched nothing', () => {
     const announceDismissed = vi.fn();
     const announceUnread = vi.fn();
-    const hub = makeHub({ announceDismissed, announceUnread, isForeground: () => true });
+    const hub = makeHub({ announceDismissed, announceUnread, isForegroundEverywhere: () => true });
     announceUnread.mockClear();
 
     hub.dismissForeground(['session.idle']);
@@ -1236,7 +1239,7 @@ describe('dismissForeground', () => {
    * resolved.
    */
   it('keeps a swept id remembered, so a duplicate cannot re-raise it', () => {
-    const hub = makeHub({ isForeground: () => true });
+    const hub = makeHub({ isForegroundEverywhere: () => true });
     const input = { ...sessionRow('session.idle', 'term-3'), id: 'fixed' };
     expect(hub.raise(input)).not.toBeNull();
 

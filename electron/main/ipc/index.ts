@@ -1701,8 +1701,8 @@ export function registerIpcHandlers(
     },
     activate: activateNotification,
     now: () => Date.now(),
-    isForeground: (action) =>
-      action.type === 'session' && isForeground(action.entityId),
+    isForegroundEverywhere: (action) =>
+      action.type === 'session' && isForegroundEverywhere(action.entityId),
     subjectName: (terminalId) => sessionNames.get(terminalId),
   });
 

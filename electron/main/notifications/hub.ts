@@ -151,7 +151,8 @@ export interface NotificationHubOptions {
   announceUnread: (count: number) => void;
   now: () => number;
   /**
-   * Is the user already looking at what this notification is about (HIVE-81)?
+   * Is **every** attended surface already looking at what this notification is
+   * about (HIVE-81, widened to the fleet in HIVE-154)?
    *
    * Read at the moment of the event, never captured — the same rule `prefs` and
    * `now` state, and for a sharper reason: the answer changes on every tab
@@ -163,15 +164,19 @@ export interface NotificationHubOptions {
    * by construction. That is what keeps `pr.*`, `clone.done` and `app.update_*`
    * out of the gate without a list to maintain.
    *
+   * "Every", not "any": with two devices attached, one of them watching must
+   * not write the row already-read for the other (`unread` at raise), nor
+   * sweep out from under it a row it was toasted about (`dismissForeground`).
+   *
    * Optional: a hub built without it — every existing test, and the browser
    * target's absence of one — behaves exactly as it did before.
    */
-  isForeground?: (action: NotificationAction) => boolean;
+  isForegroundEverywhere?: (action: NotificationAction) => boolean;
   /**
    * What to call a notification's `subject` in a **desktop toast** (HIVE-110).
    *
    * Read at the moment of presentation, never captured, for the same reason
-   * `prefs` and `isForeground` are: a session renames itself while its rows sit
+   * `prefs` and `isForegroundEverywhere` are: a session renames itself while its rows sit
    * in the buffer, and a promoted row is presented long after it was raised.
    *
    * Only the toast needs it. The inbox row carries `subject` and the renderer
@@ -236,10 +241,12 @@ export interface NotificationHub {
    * arriving does not finish every kind: a `session.blocked` is finished by an
    * *answer*, and walking over to look at it is not one. The caller decides
    * which kinds arriving answers; the hub decides which rows are in front of
-   * the user, because `isForeground` is the hub's to hold.
+   * the fleet, because `isForegroundEverywhere` is the hub's to hold — and it
+   * answers "every", so a device that has never looked keeps the row it was
+   * toasted about (HIVE-154).
    *
-   * A hub built without `isForeground` sweeps nothing. It has no foreground to
-   * ask about and must not invent one.
+   * A hub built without `isForegroundEverywhere` sweeps nothing. It has no
+   * foreground to ask about and must not invent one.
    *
    * Swept ids stay in the dedup set, exactly as {@link NotificationHub.dismiss}
    * leaves its own behind.
@@ -255,7 +262,7 @@ export interface NotificationHub {
    * buffer, and does not keep their ids. So it names the session and the kinds,
    * and the hub finds them.
    *
-   * Keyed on the **action**, like `supersedeKey` and `isForeground` before it:
+   * Keyed on the **action**, like `supersedeKey` and `isForegroundEverywhere` before it:
    * a `session` action names a terminal and can be compared, and every other
    * action type answers no by construction. That is what keeps `pr.*`,
    * `clone.done` and `app.update_*` unreachable from here without a list of
@@ -341,7 +348,7 @@ function mintId(kind: NotificationKind, at: number): string {
  *
  * ## Why the key comes off the action
  *
- * The same reason `isForeground` takes one: the hub then needs no idea which
+ * The same reason `isForegroundEverywhere` takes one: the hub then needs no idea which
  * kinds are about a session, and no list to keep in step with the registry. A
  * `session` action names a terminal and can be compared; every other action
  * type has no session to collapse against and answers `null` by construction,
@@ -374,7 +381,7 @@ export function createNotificationHub(
     announceDismissed,
     announceUnread,
     now,
-    isForeground,
+    isForegroundEverywhere,
     subjectName,
   } = options;
 
@@ -558,9 +565,9 @@ export function createNotificationHub(
              * which mints only `session.blocked`, `session.input_needed` and
              * `session.idle`. An `agent.ask` is raised straight through
              * `hub.raise` and never gated in the first place, because
-             * `isForeground` answers `false` for every action that is not
-             * `session` — so it can never reach this handler. If that ever
-             * changes, this needs the same guard `raise` got.
+             * `isForegroundEverywhere` answers `false` for every action that
+             * is not `session` — so it can never reach this handler. If that
+             * ever changes, this needs the same guard `raise` got.
              */
             dismiss(id);
             activate(entry.action);
@@ -634,11 +641,16 @@ export function createNotificationHub(
   };
 
   const dismissForeground = (kinds: readonly NotificationKind[]): void => {
-    // `isForeground` is optional, and its absence means "no foreground is
-    // observable here" rather than "everything is foreground" — see the
-    // interface. `?? false` is what makes a hub without it sweep nothing.
+    // `isForegroundEverywhere` is optional, and its absence means "no
+    // foreground is observable here" rather than "everything is foreground" —
+    // see the interface. `?? false` is what makes a hub without it sweep
+    // nothing. And it answers "every" (HIVE-154): one surface watching is not
+    // the fleet having seen the row, so a row survives until every attended
+    // device is looking at its session.
     const wanted = new Set(kinds);
-    sweep((entry) => wanted.has(entry.kind) && (isForeground?.(entry.action) ?? false));
+    sweep(
+      (entry) => wanted.has(entry.kind) && (isForegroundEverywhere?.(entry.action) ?? false),
+    );
   };
 
   const dismissForSession = (
@@ -710,10 +722,13 @@ export function createNotificationHub(
         /**
          * The gate: **downgrade, never drop** (HIVE-81).
          *
-         * The user is watching this session's terminal in a focused window, so
-         * the app has already told them — a toast, a dock bounce and a bump to
-         * the unread badge about a question they are reading on screen is the
-         * app talking over itself.
+         * Every attended surface is watching this session's terminal, so the
+         * app has already told the fleet — a toast, a dock bounce and a bump
+         * to the unread badge about a question its watchers are reading on
+         * screen is the app talking over itself. The question is asked of the
+         * whole fleet (HIVE-154): one device watching must not mark seen a row
+         * another device has never seen, so `foreground` here is the
+         * *every*-surface answer.
          *
          * What it does *not* do is suppress. The row is kept and raised
          * already-read, which matters more than it looks: on this machine macOS
@@ -726,7 +741,7 @@ export function createNotificationHub(
          * must still dedup. This is the argument for keeping the row rather than
          * dropping it stated a second way.
          */
-        const foreground = isForeground?.(input.action ?? { type: 'none' }) ?? false;
+        const foreground = isForegroundEverywhere?.(input.action ?? { type: 'none' }) ?? false;
 
         const notification: HiveNotification = {
           id,
@@ -806,19 +821,14 @@ export function createNotificationHub(
           remembers who it has told, so the promotion that follows when the
           watching surface looks away reaches only that surface.
 
-          `foreground` still decides `unread` above, and still gates the
-          notifier's `pendingForeground`. Those are the any-surface question —
-          has anybody seen this — which is a different one and still has one
-          right answer.
-
-          **Parked, knowingly (HIVE-145 whole-branch review).** It leaves one
-          asymmetry: with device A watching a session and device B not, B is
-          interrupted about a row its own inbox already shows as read, with no
-          badge. Closing it means a per-surface `unread`, and the inbox is
-          shared state — one buffer, one `notifications:read` push, one badge
-          count — so that is a change to what a notification *is*, not a fix to
-          where a toast goes. The interruption is right and the badge is
-          arguably wrong, which is the better way round.
+          `foreground` above is the every-surface reading (HIVE-154): the row
+          is written already-read only when *every* attended surface is
+          looking, so a device that was never looking is never handed a row
+          its own inbox claims are seen. Per-surface `unread` was considered
+          and rejected: the inbox is shared state — one buffer, one
+          `notifications:read` push, one badge count — and the toast owns the
+          per-surface question. "Seen by the fleet" is the row's one honest
+          answer.
         */
         if (delivery === 'both') {
           present({

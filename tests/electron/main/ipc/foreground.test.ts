@@ -100,16 +100,17 @@ vi.mock('../../../../electron/main/shutdown', () => ({
 }));
 
 /**
- * The real `isForeground` composition (HIVE-81) — `action.type === 'session'
- * && isForeground(action.entityId)` in `ipc/index.ts` — is the one line that
- * makes "non-session kinds are never gated" true in the shipped app. Asserting
- * it by inspection is not enough, so this mocks the hub *factory* rather than
- * the hub itself: `registerIpcHandlers` still runs for real, still resolves
- * the real `isForeground` from module scope, still composes the real
- * predicate — this only intercepts the options object handed to
+ * The real `isForegroundEverywhere` composition (HIVE-81, widened to the fleet
+ * in HIVE-154) — `action.type === 'session' &&
+ * isForegroundEverywhere(action.entityId)` in `ipc/index.ts` — is the one line
+ * that makes "non-session kinds are never gated" true in the shipped app.
+ * Asserting it by inspection is not enough, so this mocks the hub *factory*
+ * rather than the hub itself: `registerIpcHandlers` still runs for real, still
+ * resolves the real `isForegroundEverywhere` from module scope, still composes
+ * the real predicate — this only intercepts the options object handed to
  * `createNotificationHub` so the predicate can be called directly.
  */
-let capturedIsForeground:
+let capturedIsForegroundEverywhere:
   | ((action: import('../../../../electron/shared/notification-contract').NotificationAction) => boolean)
   | undefined;
 
@@ -138,12 +139,12 @@ vi.mock('../../../../electron/main/notifications', async () => {
 
   return {
     createNotificationHub: (options: {
-      isForeground?: (
+      isForegroundEverywhere?: (
         action: import('../../../../electron/shared/notification-contract').NotificationAction,
       ) => boolean;
       subjectName?: (terminalId: string) => string;
     }) => {
-      capturedIsForeground = options.isForeground;
+      capturedIsForegroundEverywhere = options.isForegroundEverywhere;
       capturedSubjectName = options.subjectName;
       return fakeHub;
     },
@@ -584,33 +585,33 @@ describe('window focus drives the re-arm', () => {
   });
 });
 
-describe('the isForeground predicate composed for the notification hub (HIVE-81)', () => {
+describe('the isForegroundEverywhere predicate composed for the notification hub (HIVE-81, HIVE-154)', () => {
   const session = (entityId: string) => ({ type: 'session' as const, entityId });
 
   it('is true for a session action naming the reported terminal while focused', () => {
     report({ terminalId: 'term-1' });
 
-    expect(capturedIsForeground?.(session('term-1'))).toBe(true);
+    expect(capturedIsForegroundEverywhere?.(session('term-1'))).toBe(true);
   });
 
   it('is false while the window is blurred', () => {
     windows = [fakeWindow(false)];
     report({ terminalId: 'term-1' });
 
-    expect(capturedIsForeground?.(session('term-1'))).toBe(false);
+    expect(capturedIsForegroundEverywhere?.(session('term-1'))).toBe(false);
   });
 
   it('is false for a session action naming a different terminal', () => {
     report({ terminalId: 'term-1' });
 
-    expect(capturedIsForeground?.(session('term-2'))).toBe(false);
+    expect(capturedIsForegroundEverywhere?.(session('term-2'))).toBe(false);
   });
 
   it('is false for a non-session action, even while a session is foreground', () => {
     report({ terminalId: 'term-1' });
 
-    expect(capturedIsForeground?.({ type: 'url', url: 'https://example.test' })).toBe(false);
-    expect(capturedIsForeground?.({ type: 'none' })).toBe(false);
+    expect(capturedIsForegroundEverywhere?.({ type: 'url', url: 'https://example.test' })).toBe(false);
+    expect(capturedIsForegroundEverywhere?.({ type: 'none' })).toBe(false);
   });
 });
 

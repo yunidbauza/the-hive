@@ -301,6 +301,13 @@ export interface HiveNotification {
   body: string;
   /** Epoch ms. The relative time on the card is derived from this, and ticks. */
   createdAt: number;
+  /**
+   * Has the **fleet** seen this row (HIVE-154)? Written `false` at raise when
+   * every attended surface was already looking at its session — one device's
+   * attention never speaks for another's. Flipped to `true` by a click on any
+   * device or by a promotion once the last watcher walks away; there is one
+   * value, because the inbox is shared state.
+   */
   unread: boolean;
   action: NotificationAction;
   /**
@@ -325,8 +332,9 @@ export interface HiveNotification {
  * The **interruption**, as distinct from `HiveNotification`, which is the inbox
  * row. A toast belongs to whichever surfaces are not already looking at the
  * session it is about, so with two devices attached one may get it and the
- * other not — a difference the row could never express, since the row goes to
- * everyone.
+ * other not. The row is the opposite shape by design (HIVE-154): it goes to
+ * everyone and its `unread` is the fleet's answer — read only once every
+ * attended surface has seen it.
  *
  * No `onClick`, because no closure crosses a socket. The receiver raises the
  * notification locally and, on a click, sends the two effects the local path
