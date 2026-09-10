@@ -221,6 +221,26 @@ export function classifyCause(cause: unknown): CloseCause {
   };
 }
 
+/**
+ * How many `event` frames are held for a subscriber that has not arrived yet
+ * (HIVE-150).
+ *
+ * The server sends `attach-accepted` and then, **synchronously, before its own
+ * turn ends**, runs the resume replay into the same socket
+ * (`remote-host/listener.ts`). `ws` parses a chunk in a synchronous loop and
+ * emits one `'message'` per frame with that stack still live, so those frames
+ * reach this module before anything can subscribe: `resolveConnection` only
+ * queues a microtask, and the caller that eventually calls `onEvent` runs in
+ * it. Without a buffer they are fanned out to an empty listener set and
+ * silently lost — which is the resume feature failing while reporting success.
+ *
+ * Sized generously against what one attach can legitimately replay, and bounded
+ * because a server is not obliged to stop: a ring, keeping the **newest**. A
+ * client that fell this far behind before it even subscribed is taking a gap
+ * notice regardless, and the recent frames are the ones its terminal needs.
+ */
+export const PRE_SUBSCRIBE_BUFFER = 2_048;
+
 export interface RemoteClient {
   /** Invoke a call channel. Rejects on an error frame or the give-up deadline. */
   call(channel: Channel, payload: unknown): Promise<unknown>;
@@ -413,6 +433,13 @@ export function connectRemote(deps: ConnectRemoteDeps): Promise<RemoteClient> {
       accepted: AttachAccepted;
       pending: Map<string, Pending>;
       listeners: Set<(channel: Channel, payload: unknown) => void>;
+      /**
+       * Events that arrived before anything subscribed — see
+       * {@link PRE_SUBSCRIBE_BUFFER}. `null` once the first subscriber has taken
+       * them, which is what keeps this a handover rather than a log: a later
+       * subscriber must not be handed output the terminal already rendered.
+       */
+      early: { channel: Channel; payload: unknown }[] | null;
     } | null = null;
     let closed = false;
 
@@ -557,7 +584,7 @@ export function connectRemote(deps: ConnectRemoteDeps): Promise<RemoteClient> {
           clearTimeout(deadline);
           const pending = new Map<string, Pending>();
           const listeners = new Set<(channel: Channel, payload: unknown) => void>();
-          attached = { accepted: server, pending, listeners };
+          attached = { accepted: server, pending, listeners, early: [] };
           resolveConnection(buildClient(server, pending, listeners));
           return;
         }
@@ -600,6 +627,16 @@ export function connectRemote(deps: ConnectRemoteDeps): Promise<RemoteClient> {
           drift from the table the server grades against.
         */
         if (frameKindOf(server.channel) !== 'event') return;
+        /*
+          Nobody is listening yet, and this frame is almost certainly the resume
+          replay the server pushed in the accept's own tick. Held rather than
+          dropped — see {@link PRE_SUBSCRIBE_BUFFER}.
+        */
+        if (attached.early !== null && attached.listeners.size === 0) {
+          attached.early.push({ channel: server.channel, payload: server.payload });
+          if (attached.early.length > PRE_SUBSCRIBE_BUFFER) attached.early.shift();
+          return;
+        }
         for (const listener of attached.listeners) {
           /*
             Guarded per listener (HIVE-144 review). This loop runs inside `ws`'s
@@ -719,13 +756,56 @@ export function connectRemote(deps: ConnectRemoteDeps): Promise<RemoteClient> {
         },
 
         notify(channel, payload) {
-          if (closed) return;
+          /*
+            Throws rather than returning quietly (HIVE-150).
+
+            It used to `return`, which was defensible while a closed client only
+            ever existed for the instant between a detach and its teardown. The
+            reconnect loop makes that window a *policy*: the dead client stays
+            bound for the whole backoff — deliberately, so calls reject promptly
+            instead of hitting an unbound channel — and four channels are
+            `notify` kind. `pty:write` is the one that matters: the terminal
+            stays mounted and focused while the chip is amber, and every
+            keystroke typed into it returned here before reaching the wire. The
+            reattach then replays the *server's* transcript, which never
+            contained them, so nothing anywhere recorded that the input existed.
+
+            The same `RemoteCallError` `call` rejects with, so
+            `remote-proxy.ts`'s notify wrapper logs it exactly as it logs a
+            frame that was too large. Losing the keystroke is unavoidable — there
+            is no socket — but losing it silently is not.
+          */
+          if (closed) {
+            throw new RemoteCallError(
+              'connection-closed',
+              `Cannot send ${channel}: the connection to ${host} is closed.`,
+            );
+          }
           const tooLarge = sendBounded({ kind: 'notify', channel, payload });
           if (tooLarge !== null) throw new RemoteCallError('frame-too-large', tooLarge);
         },
 
         onEvent(listener) {
+          const first = listeners.size === 0;
           listeners.add(listener);
+          /*
+            Hand the first subscriber whatever arrived before it existed, then
+            drop the buffer for good. Delivered synchronously, in arrival order,
+            so the resume replay reaches the terminal ahead of the live output
+            that follows it — the ordering the seq numbers assume.
+          */
+          if (first && attached?.early != null) {
+            const held = attached.early;
+            attached.early = null;
+            for (const event of held) {
+              try {
+                listener(event.channel, event.payload);
+              } catch {
+                // A subscriber's own failure is its own, exactly as in the
+                // live fan-out below.
+              }
+            }
+          }
           return () => listeners.delete(listener);
         },
 

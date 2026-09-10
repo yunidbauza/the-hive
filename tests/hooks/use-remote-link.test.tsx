@@ -17,14 +17,14 @@ import { useHiveStore } from '@stores/hive-store';
 type LinkListener = (status: unknown) => void;
 
 let listeners: LinkListener[] = [];
-let appInfo: { attachedServerName: string | null } | null = null;
+let appInfo: { attachedServerName: string | null; remoteLink: unknown } | null = null;
 let onLinkStatus: ReturnType<typeof vi.fn>;
 let unsubscribe: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   useHiveStore.getState().reset();
   listeners = [];
-  appInfo = { attachedServerName: null };
+  appInfo = { attachedServerName: null, remoteLink: null };
   unsubscribe = vi.fn();
   onLinkStatus = vi.fn((listener: LinkListener) => {
     listeners.push(listener);
@@ -72,7 +72,7 @@ describe('useRemoteLinkStream', () => {
   });
 
   it('hydrates a boot attach, whose push happened before this window existed', async () => {
-    appInfo = { attachedServerName: 'mini' };
+    appInfo = { attachedServerName: 'mini', remoteLink: attached() };
 
     renderHook(() => {
       useRemoteLinkStream();
@@ -111,7 +111,7 @@ describe('useRemoteLinkStream', () => {
   });
 
   it('lets a drop that arrives first win over the stale read behind it', async () => {
-    appInfo = { attachedServerName: 'mini' };
+    appInfo = { attachedServerName: 'mini', remoteLink: attached() };
 
     renderHook(() => {
       useRemoteLinkStream();
@@ -126,6 +126,52 @@ describe('useRemoteLinkStream', () => {
     // And it stays lost once the read lands.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(useHiveStore.getState().remoteLink).toMatchObject({ state: 'reconnecting' });
+  });
+
+  it('hydrates a degraded link as degraded, never as attached', async () => {
+    /*
+      `AppInfo.attachedServerName` stays non-null through a drop and through a
+      terminal disconnect, so a window opened or reloaded mid-outage used to
+      synthesise a healthy `attached` status out of it and paint a brand chip
+      over a link that was down. While reconnecting the next backoff emit
+      corrected it; after a terminal disconnect no further transition ever
+      arrives, and the lie was permanent.
+    */
+    appInfo = {
+      attachedServerName: 'mini',
+      remoteLink: attached({ state: 'disconnected', reason: 'That device was revoked.' }),
+    };
+
+    renderHook(() => {
+      useRemoteLinkStream();
+    });
+
+    await waitFor(() => {
+      expect(useHiveStore.getState().remoteLink).toMatchObject({
+        state: 'disconnected',
+        serverName: 'mini',
+        reason: 'That device was revoked.',
+      });
+    });
+  });
+
+  it('re-states the fleet from a reattach’s snapshot', async () => {
+    renderHook(() => {
+      useRemoteLinkStream();
+    });
+
+    push(attached({ epoch: 2, snapshot: { 'notifications:list': [] } }));
+
+    /*
+      Everything the server pushed while the socket was down is gone —
+      terminals are covered by `resumeFrom` and per-surface state by the epoch,
+      and this is the third category. Asserted through the store action rather
+      than by inspecting hydrated rows: what this hook owes is that the snapshot
+      reaches `applyAttachSnapshot` at all.
+    */
+    await waitFor(() => {
+      expect(useHiveStore.getState().remoteLink?.epoch).toBe(2);
+    });
   });
 
   it('unsubscribes on unmount', () => {

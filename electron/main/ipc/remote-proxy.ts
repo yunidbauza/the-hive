@@ -174,10 +174,25 @@ let remoteToasts: RemoteToasts | null = null;
 function recordArrival(tracker: ResumeTracker, payload: unknown): void {
   if (typeof payload !== 'object' || payload === null) return;
   const { sessionId, gen, seq } = payload as Record<string, unknown>;
-  if (typeof sessionId !== 'string' || typeof gen !== 'number' || typeof seq !== 'number') {
+  /*
+    The server's own `isResumePointShaped` predicate, mirrored exactly
+    (`remote-host/listener.ts`). A looser check here is not merely permissive —
+    it is self-harming. `NaN`, `Infinity`, `-1` or `1.5` recorded here rides out
+    in the next dial's `resumeFrom`, fails the server's `isAttachShaped`, comes
+    back as `attach-refused`, and `classifyCause` grades that **terminal** — so
+    the loop stops for good and the pane says reconnecting will not help, about
+    a fleet that is perfectly healthy.
+  */
+  if (
+    typeof sessionId !== 'string' ||
+    !Number.isInteger(gen) ||
+    !Number.isInteger(seq) ||
+    (gen as number) < 0 ||
+    (seq as number) < 0
+  ) {
     return;
   }
-  tracker.record(sessionId, gen, seq);
+  tracker.record(sessionId, gen as number, seq as number);
 }
 
 /** Reads the `sessionId` off an outgoing `pty:ack`, with the same caution. */

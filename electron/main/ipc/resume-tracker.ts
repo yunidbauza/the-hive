@@ -189,7 +189,14 @@ export function composeResumeFrom(
   if (candidates.length === 0) return undefined;
 
   const placeholder = 'x'.repeat(CREDENTIAL_HEADROOM);
-  const fitted: Record<string, ResumePoint> = {};
+  /*
+    Null-prototype, because the keys are session ids the *server* chose. On a
+    plain object literal `fitted['__proto__'] = point` sets the prototype rather
+    than an own key, and the `delete` that backs out an over-budget entry then
+    cannot undo it — leaving a mutated object that `JSON.stringify` renders
+    without the key it thinks it holds.
+  */
+  const fitted: Record<string, ResumePoint> = Object.create(null) as Record<string, ResumePoint>;
   let kept = 0;
 
   for (const { sessionId, point } of candidates) {

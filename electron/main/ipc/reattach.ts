@@ -35,6 +35,18 @@ export interface ReattachDeps {
   onWake?: (listener: () => void) => () => void;
   /** Injectable clock, for `nextAttemptAt`. */
   now?: () => number;
+  /**
+   * Mints the epoch a successful reattach reports (HIVE-150).
+   *
+   * Supplied by the caller rather than counted here, because the value has to
+   * be monotonic across the *window's* whole life and this object's life is one
+   * attachment. A detach or a re-target builds a new loop, and a per-loop
+   * counter restarts at 0 — so re-attaching to the same server, with the same
+   * project and session open, would leave every input to the renderer's
+   * epoch-keyed effects unchanged and neither would re-arm against the new
+   * surface.
+   */
+  nextEpoch: () => number;
 }
 
 export interface ReattachLoop {
@@ -63,11 +75,12 @@ export interface ReattachLoop {
  * re-refuse forever behind a pane claiming to be reconnecting.
  */
 export function createReattachLoop(deps: ReattachDeps): ReattachLoop {
-  const { serverName, connect, onStatus, onAttached, onWake, now = Date.now } = deps;
+  const { serverName, connect, onStatus, onAttached, onWake, nextEpoch, now = Date.now } = deps;
 
   let timer: NodeJS.Timeout | null = null;
   let stopWake: (() => void) | null = null;
   let attempt = 0;
+  /** The last epoch this loop reported, so every status carries a stable one. */
   let epoch = 0;
   let running = false;
   /*
@@ -143,7 +156,7 @@ export function createReattachLoop(deps: ReattachDeps): ReattachLoop {
     }
 
     finish();
-    epoch += 1;
+    epoch = nextEpoch();
     attempt = 0;
     emit({ state: 'attached', attempt: 0, nextAttemptAt: null, reason: null });
     onAttached(client);
@@ -172,8 +185,15 @@ export function createReattachLoop(deps: ReattachDeps): ReattachLoop {
             already attached and one that looks broken for half a minute.
           */
           generation += 1;
-          attempt = 0;
+          attempt = 1;
           stopTimer();
+          /*
+            Say so before dialling. Without this the pane keeps rendering the
+            `nextAttemptAt` from the step that was pending when the machine went
+            to sleep — a countdown to a moment that has already passed, next to
+            an attempt number that is about to restart anyway.
+          */
+          emit({ state: 'reconnecting', attempt: 1, nextAttemptAt: now(), reason: null });
           void dial(generation);
         }) ?? null;
       schedule();

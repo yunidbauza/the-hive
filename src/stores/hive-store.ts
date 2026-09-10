@@ -7368,6 +7368,17 @@ export const useRemoteLink = () => useHiveStore((state) => state.remoteLink);
 export const useSetRemoteLink = () => useHiveStore((state) => state.setRemoteLink);
 
 /**
+ * Re-state the fleet from an accept frame's snapshot (HIVE-150).
+ *
+ * The same action `applyModeChange` runs on a first attach, exposed on its own
+ * because a **re**attach must apply the snapshot without `clearModeEntities`:
+ * the mode has not changed, so there are no local-mode entities to clear, and
+ * clearing would discard the very terminals the resume just brought back.
+ */
+export const useApplyAttachSnapshot = () =>
+  useHiveStore((state) => state.applyAttachSnapshot);
+
+/**
  * How many times this attachment has come back (HIVE-150).
  *
  * The effects that own per-surface state depend on it, so that a reconnect

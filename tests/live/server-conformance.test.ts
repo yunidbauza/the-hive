@@ -2996,11 +2996,13 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
           serverBoundHost: serverInfo.serverBoundHost,
           servingDeviceCount: serverInfo.servingDeviceCount,
           attachedServerName: serverInfo.attachedServerName,
+          remoteLink: null,
         },
         client: {
           serverBoundHost: clientInfo.serverBoundHost,
           servingDeviceCount: clientInfo.servingDeviceCount,
           attachedServerName: clientInfo.attachedServerName,
+          remoteLink: null,
         },
       });
 

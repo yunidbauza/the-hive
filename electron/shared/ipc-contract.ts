@@ -1475,8 +1475,27 @@ export interface RemoteLinkStatus {
    * socket object — and the old surface's fs watcher, foreground record and
    * delivery focus were released when it went away. Nothing re-establishes them
    * on its own, because the renderer never unmounted.
+   *
+   * Monotonic for the **process**, not for one reconnect loop: a detach and a
+   * fresh attach must not restart it, or re-attaching to the same server with
+   * the same project open would leave every input to those effects unchanged.
    */
   epoch: number;
+  /**
+   * The accept frame's snapshot, on a **re**attach only (HIVE-150).
+   *
+   * Everything the server pushed while the socket was down is simply gone: a
+   * session that ended still renders as running, notifications never reach the
+   * inbox, ledger entries and PR sweeps vanish. Terminals are covered by
+   * `resumeFrom` and per-surface state by {@link RemoteLinkStatus.epoch}; this
+   * is the third category, and without it a reconnect looks complete while the
+   * fleet on screen describes a moment that has passed.
+   *
+   * Absent on a first attach, where `config:set-remote` already carries the
+   * snapshot back through `SetRemoteResult.changed` and the store applies it
+   * there.
+   */
+  snapshot?: Readonly<Partial<Record<Channel, unknown>>>;
 }
 
 /** Answer to {@link CH.appInfo} — proves the bridge round-trips. */
@@ -1630,6 +1649,21 @@ export interface AppInfo {
    * one consumer.
    */
   attachedServerName: string | null;
+  /**
+   * What that attachment is *doing*, for a window that has just opened
+   * (HIVE-150).
+   *
+   * {@link AppInfo.attachedServerName} answers "is a socket held", and it stays
+   * non-null through a drop and through a terminal disconnect — `attached` is
+   * only cleared by an explicit mode switch. A window that opened or reloaded
+   * mid-outage and hydrated from that field alone therefore painted a healthy
+   * brand "attached" chip over a link that was down, and in the `disconnected`
+   * case there is never another transition to correct it.
+   *
+   * So the runtime status rides along verbatim. `null` means this window has no
+   * attachment at all.
+   */
+  remoteLink: RemoteLinkStatus | null;
   /**
    * Whether this process was launched to serve (HIVE-144 review, I3).
    *

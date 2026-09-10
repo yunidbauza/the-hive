@@ -62,6 +62,7 @@ const info = (receiverBoundHost: string | null): AppInfo => ({
   serverBoundHost: null,
   servingDeviceCount: 0,
   attachedServerName: null,
+  remoteLink: null,
   serving: false,
 });
 
@@ -77,6 +78,7 @@ const serverInfo = (serverBoundHost: string | null): AppInfo => ({
   serverBoundHost,
   servingDeviceCount: 0,
   attachedServerName: null,
+  remoteLink: null,
   serving: false,
 });
 
@@ -92,11 +94,13 @@ const deviceCountInfo = (servingDeviceCount: number): AppInfo => ({
   serverBoundHost: null,
   servingDeviceCount,
   attachedServerName: null,
+  remoteLink: null,
   serving: false,
 });
 
 /** Same shape as {@link info}, but for `useAttachedServer`'s field. */
 const attachedInfo = (attachedServerName: string | null): AppInfo => ({
+  remoteLink: null,
   version: '0.1.0',
   electron: '38.0.0',
   chrome: '140.0.0',

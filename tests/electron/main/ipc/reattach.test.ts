@@ -48,7 +48,14 @@ interface Harness {
   loop: ReturnType<typeof createReattachLoop>;
 }
 
-function harness(connect: () => Promise<RemoteClient>): Harness {
+function harness(
+  connect: () => Promise<RemoteClient>,
+  /*
+    Shared across loops when a test builds more than one, which is what the
+    router does: the epoch is monotonic for the *process*, not for one loop.
+  */
+  epochs = { last: 0 },
+): Harness {
   const statuses: RemoteLinkStatus[] = [];
   const attached: RemoteClient[] = [];
   const wakeListeners = new Set<() => void>();
@@ -57,6 +64,10 @@ function harness(connect: () => Promise<RemoteClient>): Harness {
   const loop = createReattachLoop({
     serverName: 'mini',
     connect: connectSpy,
+    nextEpoch: () => {
+      epochs.last += 1;
+      return epochs.last;
+    },
     onStatus: (status) => statuses.push(status),
     onAttached: (client) => attached.push(client),
     onWake: (listener) => {
@@ -207,6 +218,28 @@ describe('createReattachLoop', () => {
     ]);
   });
 
+  it('keeps the epoch climbing across a rebuilt loop', async () => {
+    const epochs = { last: 0 };
+    const first = harness(async () => fakeClient(), epochs);
+    first.loop.begin(TRANSPORT);
+    await vi.advanceTimersByTimeAsync(BACKOFF_MS[0]);
+    first.loop.cancel();
+
+    // A detach and a fresh attach build a new loop against the same window.
+    const second = harness(async () => fakeClient(), epochs);
+    second.loop.begin(TRANSPORT);
+    await vi.advanceTimersByTimeAsync(BACKOFF_MS[0]);
+
+    /*
+      2, not 1 again. The renderer's epoch-keyed effects re-run because the
+      value *changed*; re-attaching to the same server with the same project and
+      session open leaves every other input identical, so an epoch that restarted
+      would leave the explorer's watcher and the foreground record pointing at a
+      surface the server had already released.
+    */
+    expect(second.statuses.filter((s) => s.state === 'attached').map((s) => s.epoch)).toEqual([2]);
+  });
+
   it('goes terminal when a retry is refused for good', async () => {
     let calls = 0;
     const h = harness(async () => {
@@ -241,6 +274,7 @@ describe('createReattachLoop', () => {
     // Out to the ceiling, where a lid closed overnight would leave it.
     for (const step of BACKOFF_MS) await vi.advanceTimersByTimeAsync(step);
     const before = h.connect.mock.calls.length;
+    const statusesBefore = h.statuses.length;
 
     h.wake();
     await vi.advanceTimersByTimeAsync(0);
@@ -250,9 +284,21 @@ describe('createReattachLoop', () => {
       long enough to look broken to someone who just watched the machine wake.
     */
     expect(h.connect).toHaveBeenCalledTimes(before + 1);
+    /*
+      And it says so. The pane was rendering the `nextAttemptAt` of whichever
+      step was pending when the machine slept — a countdown to a moment that
+      passed while it was off.
+    */
+    expect(h.statuses[statusesBefore]).toMatchObject({ state: 'reconnecting', attempt: 1 });
 
-    // And the backoff really restarted, rather than the wake being one free dial.
+    /*
+      The backoff really restarted rather than the wake being one free dial: the
+      immediate dial *is* attempt 1, so the next one is the sequence's second
+      step, not its first.
+    */
     await vi.advanceTimersByTimeAsync(BACKOFF_MS[0]);
+    expect(h.connect).toHaveBeenCalledTimes(before + 1);
+    await vi.advanceTimersByTimeAsync(BACKOFF_MS[1] - BACKOFF_MS[0]);
     expect(h.connect).toHaveBeenCalledTimes(before + 2);
   });
 

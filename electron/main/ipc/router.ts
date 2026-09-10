@@ -131,6 +131,7 @@ export function registerIpc(mode: IpcMode, options: RegisterIpcOptions = {}): vo
     switchIpcMode,
     attachedServerName,
     attachedSnapshot,
+    attachedLinkStatus,
   );
 }
 
@@ -258,6 +259,43 @@ let resumeTracker: ResumeTracker | null = null;
  * had a `close()` that fired no listeners, so nothing in-process could see it.
  */
 let stopWatchingClose: (() => void) | null = null;
+
+/**
+ * The reattach epoch, monotonic for this **process**, not for one loop
+ * (HIVE-150).
+ *
+ * The renderer keys the effects that own per-surface state on it, and those
+ * effects re-run because the value *changed* — so it has to keep climbing
+ * across attachments, not just within one. A detach or a re-target builds a new
+ * loop, and a counter living inside the loop restarts at 0: re-attaching to the
+ * same server with the same project and session open would leave `projectId`,
+ * `sessionId`, `root` and the epoch all unchanged, and neither owner would
+ * re-arm against the surface the server has just minted.
+ */
+let reattachEpoch = 0;
+
+/**
+ * The last link status this process pushed, for {@link AppInfo.remoteLink}
+ * (HIVE-150).
+ *
+ * A window that has just opened has received no push, and
+ * `attachedServerName()` alone told it the wrong thing: that field stays
+ * non-null through a drop and through a terminal disconnect, so a window opened
+ * mid-outage painted a healthy chip over a link that was down — and after a
+ * terminal disconnect no further transition ever arrives to correct it.
+ */
+let lastLinkStatus: RemoteLinkStatus | null = null;
+
+/** What {@link AppInfo.remoteLink} answers — the last status pushed, or none. */
+export function attachedLinkStatus(): RemoteLinkStatus | null {
+  return lastLinkStatus;
+}
+
+/** Push a link status, recording it for whoever opens a window next. */
+function pushLink(broadcaster: Broadcaster, status: RemoteLinkStatus | null): void {
+  lastLinkStatus = status;
+  broadcaster.emit(CH.remoteLinkStatus, status);
+}
 
 /** Test-only: the tracker the proxy feeds, so a spec can drive it. */
 export function attachedResumeTracker(): ResumeTracker | null {
@@ -643,7 +681,7 @@ function armReattach(
       });
     },
     onStatus: (status) => {
-      pushes.emit(CH.remoteLinkStatus, status);
+      pushLink(pushes, status);
     },
     onAttached: (fresh) => {
       resetRemoteProxy();
@@ -651,24 +689,46 @@ function armReattach(
       attached = fresh;
       // The replacement's own subscription, against the loop that already exists.
       watchForClose(fresh, loop);
+      /*
+        Re-state the fleet from the accept frame this reattach just received
+        (HIVE-150). Everything the server pushed while the socket was down is
+        gone — a session that ended still renders as running, notifications
+        never reached the inbox, ledger entries and PR sweeps vanished. The
+        `attached` status the loop emitted a moment ago carries no snapshot,
+        because the loop has no access to one; this is the follow-up that does.
+      */
+      pushLink(pushes, {
+        state: 'attached',
+        serverName,
+        attempt: 0,
+        nextAttemptAt: null,
+        reason: null,
+        epoch: reattachEpoch,
+        snapshot: fresh.snapshot(),
+      });
     },
     onWake: subscribeToWake,
+    nextEpoch: () => {
+      reattachEpoch += 1;
+      return reattachEpoch;
+    },
   });
 
   reattach = loop;
   watchForClose(client, loop);
-  pushes.emit(CH.remoteLinkStatus, {
+  pushLink(pushes, {
     state: 'attached',
     serverName,
     attempt: 0,
     nextAttemptAt: null,
     reason: null,
     /*
-      0 on a first attach, and the loop counts from 1 upward for every reattach
-      after it — so the renderer can tell "this is the attachment you already
-      have" from "this is a new socket, re-establish what the old one held".
+      The epoch this process is currently on, unchanged by a *first* attach —
+      nothing needs re-establishing against a surface the renderer has never
+      talked to. It climbs only when a socket is replaced, which is exactly when
+      the old surface's watcher and focus record went away with it.
     */
-    epoch: 0,
+    epoch: reattachEpoch,
   } satisfies RemoteLinkStatus);
 }
 
@@ -681,7 +741,7 @@ function armReattach(
  * is to render nothing.
  */
 function announceNoLink(broadcaster: Broadcaster | undefined): void {
-  (broadcaster ?? createWindowBroadcaster()).emit(CH.remoteLinkStatus, null);
+  pushLink(broadcaster ?? createWindowBroadcaster(), null);
 }
 
 /**
@@ -699,10 +759,11 @@ function watchForClose(client: RemoteClient, loop: ReattachLoop): void {
 /**
  * Tell the loop when this machine wakes from sleep (HIVE-150).
  *
- * The only place in `electron/` that touches `powerMonitor`, and it is reached
- * lazily rather than imported at module scope for the reason that module is
- * documented as needing: it is only meaningful once the app is ready, and this
- * file is imported well before that.
+ * The only place in `electron/` that touches `powerMonitor`. It is imported at
+ * module scope, like `broadcaster.ts` imports `BrowserWindow`, but **read at
+ * call time** — see the body. The distinction matters: the import is harmless
+ * before the app is ready, dereferencing the object is not, and a unit test's
+ * `electron` mock supplies only the surface that test needs.
  *
  * Failing to subscribe is not an error worth propagating. The loop still
  * reconnects on its own schedule — a wake only saves it from waiting out the

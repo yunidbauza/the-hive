@@ -120,6 +120,7 @@ import {
   type NotificationDeliveryStatus,
   type NotificationDismissedEvent,
   type NotificationReadEvent,
+  type RemoteLinkStatus,
 } from '@shared/ipc-contract';
 import type {
   JiraComment,
@@ -1344,6 +1345,16 @@ export function registerIpcHandlers(
   switchMode: ModeSwitcher = noModeSwitcher,
   attachedServerName: () => string | null = () => null,
   attachedSnapshot: AttachedSnapshot = () => null,
+  /**
+   * What the attachment is doing, for {@link AppInfo.remoteLink} (HIVE-150).
+   *
+   * Handed down beside `attachedServerName` and for the identical reason: it is
+   * `router.ts`'s own runtime fact, and importing it back would close a cycle.
+   * A window that has just opened has no pushed status yet, and this is how it
+   * learns one without waiting for the next transition — which, after a
+   * terminal disconnect, never comes.
+   */
+  attachedLink: () => RemoteLinkStatus | null = () => null,
 ): () => AppInfo {
   /*
     Both surfaces, always (HIVE-143). In local mode the socket half iterates an
@@ -3170,6 +3181,9 @@ export function registerIpcHandlers(
       // `AppInfo.attachedServerName`'s for the config-versus-runtime split
       // this answers the runtime half of.
       attachedServerName: attachedServerName(),
+      // The runtime *status* beside the runtime name — see `AppInfo.remoteLink`
+      // for why the name alone told a freshly-opened window the wrong thing.
+      remoteLink: attachedLink(),
       // Intent, not a bound socket — see `AppInfo.serving`. Imported rather
       // than handed down like the two above, because `server-mode.ts` is a
       // leaf that imports nothing and closes no cycle, and because the fact

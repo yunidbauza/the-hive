@@ -504,6 +504,7 @@ describe('Header', () => {
         serverBoundHost: '100.101.102.103',
         servingDeviceCount: 2,
         attachedServerName: null,
+        remoteLink: null,
   serving: false,
       });
 
@@ -546,6 +547,7 @@ describe('Header', () => {
         serverBoundHost: '100.101.102.103',
         servingDeviceCount: 2,
         attachedServerName: 'mini',
+        remoteLink: null,
       });
       /*
         The chip reads the pushed `remote:link-status` since HIVE-150, not an
@@ -595,6 +597,7 @@ describe('Header', () => {
         serverBoundHost: '100.101.102.103',
         servingDeviceCount: 2,
         attachedServerName: 'mini',
+        remoteLink: null,
       });
       /*
         The chip reads the pushed `remote:link-status` since HIVE-150, not an
@@ -648,6 +651,7 @@ describe('Header', () => {
         serverBoundHost: null,
         servingDeviceCount: 0,
         attachedServerName: null,
+        remoteLink: null,
   serving: false,
       });
 

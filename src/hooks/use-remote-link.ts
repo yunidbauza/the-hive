@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 
-import { readAppInfo } from '@lib/project-config';
-import { useSetRemoteLink } from '@stores/hive-store';
+import { loadProjectConfig, readAppInfo } from '@lib/project-config';
+import { useApplyAttachSnapshot, useSetRemoteLink } from '@stores/hive-store';
 
 /**
  * Keeps the store's picture of this window's attachment current (HIVE-150).
@@ -28,6 +28,7 @@ import { useSetRemoteLink } from '@stores/hive-store';
  */
 export function useRemoteLinkStream(): void {
   const setRemoteLink = useSetRemoteLink();
+  const applyAttachSnapshot = useApplyAttachSnapshot();
 
   useEffect(() => {
     // No bridge is the browser demo, which attaches to nothing.
@@ -43,31 +44,46 @@ export function useRemoteLinkStream(): void {
       */
       pushed = true;
       setRemoteLink(status);
+      /*
+        A reattach carries the fleet the server has *now* (HIVE-150). Everything
+        it pushed while the socket was down is gone: a session that ended still
+        renders as running, notifications never reached the inbox, ledger
+        entries and PR sweeps vanished. `applyAttachSnapshot` is the same set of
+        idempotent hydrations a first attach runs through
+        `SetRemoteResult.changed`, so re-applying it costs nothing and closes
+        the third category the epoch and `resumeFrom` do not cover.
+      */
+      if (status?.snapshot !== undefined) {
+        applyAttachSnapshot(status.snapshot);
+        /*
+          The config is the one part the snapshot's handler table does not carry
+          — `config:get` has no entry, deliberately, because the config module
+          owns that read. Re-read it here so a project the server added or
+          removed during the outage is not invisible until the next write.
+        */
+        void loadProjectConfig();
+      }
     });
 
     void readAppInfo()
       .then((info) => {
-        const serverName = info?.attachedServerName ?? null;
         /*
-          Nothing to install for a window with no attachment: `null` is already
-          the store's initial value and the chip's "render nothing" case, and
-          synthesising a `disconnected` here would claim a link was lost that
-          this window never had.
+          The status **verbatim**, never synthesised from
+          `AppInfo.attachedServerName`.
+
+          That field answers "is a socket held", and it stays non-null through a
+          drop and through a terminal disconnect — `attached` is cleared only by
+          an explicit mode switch. Building an `attached` status out of it, as
+          this did, painted a healthy brand chip over a link that was down on
+          any window opened or reloaded mid-outage; while reconnecting the next
+          backoff emit corrected it, but after a terminal disconnect no further
+          transition ever arrives and the lie was permanent.
+
+          `null` needs nothing installed — it is already the store's initial
+          value and the chip's render-nothing case.
         */
-        if (pushed || serverName === null) return;
-        setRemoteLink({
-          state: 'attached',
-          serverName,
-          attempt: 0,
-          nextAttemptAt: null,
-          reason: null,
-          /*
-            0, matching what `armReattach` emits for a first attach. The epoch
-            counts reattaches, and a window that has only just opened has
-            nothing to re-establish.
-          */
-          epoch: 0,
-        });
+        if (pushed || info?.remoteLink == null) return;
+        setRemoteLink(info.remoteLink);
       })
       .catch(() => {
         // A failed read is a chip that appears on the next transition, which is
@@ -75,5 +91,5 @@ export function useRemoteLinkStream(): void {
       });
 
     return unsubscribe;
-  }, [setRemoteLink]);
+  }, [applyAttachSnapshot, setRemoteLink]);
 }

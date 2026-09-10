@@ -56,6 +56,7 @@ const appInfo = (over: Partial<AppInfo> = {}): AppInfo =>
     serverBoundHost: null,
     servingDeviceCount: 0,
     attachedServerName: null,
+    remoteLink: null,
   serving: false,
     ...over,
   }) as AppInfo;

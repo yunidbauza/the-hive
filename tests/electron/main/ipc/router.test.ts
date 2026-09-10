@@ -83,6 +83,7 @@ describe('registerIpc', () => {
       switchIpcMode,
       expect.any(Function),
       expect.any(Function),
+      expect.any(Function),
     );
   });
 
@@ -103,6 +104,7 @@ describe('registerIpc', () => {
       switchIpcMode,
       expect.any(Function),
       expect.any(Function),
+      expect.any(Function),
     );
   });
 
@@ -117,6 +119,7 @@ describe('registerIpc', () => {
 
     expect(registerIpcHandlers).toHaveBeenCalledWith(
       undefined,
+      expect.any(Function),
       expect.any(Function),
       expect.any(Function),
       expect.any(Function),
@@ -139,6 +142,7 @@ describe('registerIpc', () => {
       switchIpcMode,
       attachedServerName,
       expect.any(Function),
+      expect.any(Function),
     );
   });
 
@@ -158,6 +162,7 @@ describe('registerIpc', () => {
       switchIpcMode,
       expect.any(Function),
       attachedSnapshot,
+      expect.any(Function),
     );
   });
 

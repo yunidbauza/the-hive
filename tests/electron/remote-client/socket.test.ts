@@ -25,6 +25,7 @@ import {
   AttachFrameTooLargeError,
   AttachRefusedError,
   CLIENT_ATTACH_TIMEOUT_MS,
+  PRE_SUBSCRIBE_BUFFER,
   PlaintextRefusedError,
   RemoteCallError,
   classifyCause,
@@ -795,6 +796,111 @@ describe('connectRemote — events', () => {
 });
 
 /**
+ * The replay that arrives in the accept's own tick (HIVE-150).
+ *
+ * The server sends `attach-accepted` and then, **synchronously, before its own
+ * turn ends**, runs the resume replay into the same socket
+ * (`remote-host/listener.ts`: `send(…'attach-accepted'…)` is followed directly
+ * by `onAttach(socketHandle, request.resumeFrom)`). `ws` parses a chunk in a
+ * synchronous loop and emits one `'message'` per frame with that stack still
+ * live, so those frames can reach this client before anything has had a chance
+ * to subscribe: `resolveConnection` only *queues a microtask*, and the caller
+ * that eventually calls `onEvent` runs in it.
+ *
+ * Dropped, that is the whole feature failing silently — the replayed scrollback
+ * never reaches the terminal, `recordArrival` never sees it so the tracker does
+ * not advance, and the next reconnect asks from the same stale point again.
+ *
+ * This shape was harmless until HIVE-150: nothing before it depended on frames
+ * arriving inside the accept's own tick.
+ */
+describe('frames that arrive before anyone has subscribed', () => {
+  it('delivers a replay sent in the accept’s own tick to the first subscriber', async () => {
+    const { promise, socket } = dial();
+    if (socket === null) throw new Error('expected a socket');
+
+    socket.emit('open');
+    /*
+      Both frames in one synchronous stretch, which is what the server does and
+      what `ws` can hand over in a single parse of a single TCP segment.
+    */
+    socket.deliver(accepted());
+    socket.deliver({
+      kind: 'event',
+      channel: CH.ptyData,
+      payload: { sessionId: 's1', chunk: 'REPLAYED', gen: 2, seq: 41 },
+    } satisfies EventFrame);
+
+    const client = await promise;
+    const seen: unknown[] = [];
+    client.onEvent((channel, payload) => {
+      seen.push({ channel, payload });
+    });
+
+    // Flushed to the first subscriber, not discarded for want of one.
+    await Promise.resolve();
+    expect(seen).toEqual([
+      {
+        channel: CH.ptyData,
+        payload: { sessionId: 's1', chunk: 'REPLAYED', gen: 2, seq: 41 },
+      },
+    ]);
+  });
+
+  it('does not replay the buffer to a second subscriber', async () => {
+    const { promise, socket } = dial();
+    if (socket === null) throw new Error('expected a socket');
+
+    socket.emit('open');
+    socket.deliver(accepted());
+    socket.deliver({
+      kind: 'event',
+      channel: CH.ptyData,
+      payload: 'once',
+    } satisfies EventFrame);
+
+    const client = await promise;
+    client.onEvent(() => undefined);
+    const later: unknown[] = [];
+    client.onEvent((_channel, payload) => {
+      later.push(payload);
+    });
+
+    /*
+      The buffer is a handover, not a log. A second subscriber joining later —
+      the remote proxy re-registering across a rebind, say — must not be handed
+      output the terminal has already rendered.
+    */
+    expect(later).toEqual([]);
+  });
+
+  it('bounds what it holds, so a server that never stops cannot grow it forever', async () => {
+    const { promise, socket } = dial();
+    if (socket === null) throw new Error('expected a socket');
+
+    socket.emit('open');
+    socket.deliver(accepted());
+    for (let i = 0; i < PRE_SUBSCRIBE_BUFFER + 50; i += 1) {
+      socket.deliver({ kind: 'event', channel: CH.ptyData, payload: i } satisfies EventFrame);
+    }
+
+    const client = await promise;
+    const seen: unknown[] = [];
+    client.onEvent((_channel, payload) => {
+      seen.push(payload);
+    });
+
+    /*
+      Bounded, and the *newest* kept: a client that has fallen this far behind
+      before it even subscribed is going to take a gap notice anyway, and the
+      recent frames are the ones its terminal still needs.
+    */
+    expect(seen).toHaveLength(PRE_SUBSCRIBE_BUFFER);
+    expect(seen.at(-1)).toBe(PRE_SUBSCRIBE_BUFFER + 49);
+  });
+});
+
+/**
  * The close signal (HIVE-150).
  *
  * HIVE-144 bounded the dial and rejected every pending call on a drop, but
@@ -872,6 +978,27 @@ describe('onClose', () => {
     socket.emit('close');
 
     expect(heard).not.toHaveBeenCalled();
+  });
+
+  it('refuses a notify on a dead socket instead of dropping it quietly', async () => {
+    const { client, socket } = await attachedClient();
+    socket.emit('close');
+
+    /*
+      The reconnect loop leaves this dead client bound for the whole backoff, so
+      the terminal stays mounted and focused while the chip is amber. `pty:write`
+      is `notify` kind, and this used to `return` — so every keystroke typed
+      during the gap vanished before reaching the wire, and the reattach then
+      replayed the server's transcript, which never contained them. Nothing
+      anywhere recorded that the input had existed.
+
+      The keystroke is lost either way; there is no socket. What this pins is
+      that it is not lost *silently* — `remote-proxy.ts`'s notify wrapper logs
+      what this throws.
+    */
+    expect(() => {
+      client.notify(CH.ptyWrite, { sessionId: 's1', data: 'x' });
+    }).toThrow(/is closed/);
   });
 });
 
