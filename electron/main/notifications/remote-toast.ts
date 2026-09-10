@@ -9,6 +9,7 @@ import {
 } from '@shared/notification-contract';
 
 import { focusThisMachine } from './activate-here';
+import { recordNotificationRefusal } from './delivery';
 
 /**
  * Raise an attached server's toasts on **this** machine (HIVE-145).
@@ -100,8 +101,6 @@ export interface RemoteToastOptions {
 
 export function createRemoteToasts(options: RemoteToastOptions): RemoteToasts {
   const { call, activateHere } = options;
-  /** Logged once per distinct reason, as the local presenter does. */
-  let refusal: string | null = null;
   let disposed = false;
 
   return {
@@ -141,14 +140,21 @@ export function createRemoteToasts(options: RemoteToastOptions): RemoteToasts {
           than a drop: a `url` clicked here opens a browser here, which is
           what the person who clicked it wanted.
 
-          No dismiss on this path, and that is not an omission. The row lives
-          on the server and a machine-local action does not resolve it — the
-          update is still available, the link still worth keeping — so the
-          toast is the interruption and the row stays until the user says
-          otherwise. `activateHere` focuses this machine itself, so there is
-          no focus call here either.
+          **The dismiss still crosses.** Only the *action* belongs to this
+          machine; the row belongs to the server's hub either way, and a click
+          is a click. The two other paths to the same notification both
+          dismiss — `hub.ts`'s local presenter, and the inbox row in
+          `notification-card.tsx` — so skipping it here would make one
+          notification mean two different things depending on where it was
+          clicked, which is exactly what `toast-route.ts`'s own contract
+          comment forbids. The row would sit unread for ever, and `seen` would
+          block any re-raise.
+
+          `activateHere` focuses this machine itself, so there is no focus call
+          on this arm.
         */
         if (isThisMachineAction(action)) {
+          void call(CH.notificationsDismiss, id).catch(() => undefined);
           activateHere(action);
           return;
         }
@@ -167,10 +173,25 @@ export function createRemoteToasts(options: RemoteToastOptions): RemoteToasts {
         void call(CH.notificationsAct, action).catch(() => undefined);
       });
 
+      /*
+        Recorded, not merely logged (HIVE-151).
+
+        This is the **only** presenter that runs while attached —
+        `registerIpcHandlers` is not registered in remote mode, so `hub.ts`'s
+        `presentLocally`, which used to be the sole writer, never runs. Now
+        that `notifications:delivery` is answered by this process rather than
+        proxied, a refusal that only reached a console line would leave
+        `refused` structurally `null` on every attached client: the settings
+        pane would report the right machine's `supported` and be blind about
+        the same machine's refusals, which is the dishonesty the move to
+        `PROCESS_LOCAL` was meant to end rather than relocate.
+
+        The shared recorder is also what keeps the log once-per-distinct-reason
+        without a second copy of that state to disagree with the first.
+      */
       notification.on('failed', (_event, error) => {
         const reason = String(error);
-        if (refusal === reason) return;
-        refusal = reason;
+        if (!recordNotificationRefusal(reason)) return;
         console.error(
           `[hive] the OS refused a desktop notification from the attached server (${reason})`,
         );
@@ -181,7 +202,6 @@ export function createRemoteToasts(options: RemoteToastOptions): RemoteToasts {
 
     dispose() {
       disposed = true;
-      refusal = null;
     },
   };
 }

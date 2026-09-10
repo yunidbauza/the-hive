@@ -428,7 +428,15 @@ describe('NotificationCard', () => {
       all. The optional chain is what keeps that a no-op rather than a crash on
       every click.
     */
+    /*
+      The bridge is absent in the browser target, which has no main process at
+      all. The optional chain is what keeps that a no-op rather than a crash on
+      every click — asserted by the card surviving to render its dismissal,
+      rather than by `.not.toThrow()` on an already-resolved promise, which
+      would pass whether or not the click did anything.
+    */
     it('does nothing when there is no bridge to hand it to', async () => {
+      expect(window.hive).toBeUndefined();
       const user = userEvent.setup();
 
       render(
@@ -437,7 +445,10 @@ describe('NotificationCard', () => {
         />,
       );
 
-      await expect(user.click(screen.getByRole('button'))).resolves.not.toThrow();
+      await user.click(screen.getByRole('button'));
+
+      // Still mounted and still interactive: the click was absorbed, not fatal.
+      expect(screen.getByRole('button')).toBeInTheDocument();
     });
   });
 });

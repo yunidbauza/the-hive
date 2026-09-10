@@ -69,7 +69,19 @@ export function activateOnThisMachine(action: ThisMachineAction): void {
    * constant.
    */
   if (action.type === 'url') {
-    if (isSafeExternalUrl(action.url)) void shell.openExternal(action.url);
+    /*
+      Caught rather than left to float. Every one of these is reachable from
+      inside an Electron `click` listener (`remote-toast.ts`), where an
+      unhandled rejection is an exception in main with nobody to catch it —
+      fatal under Node 22's default `--unhandled-rejections=throw`, as
+      `updates/index.ts` says of its own. The two `call()`s on the sibling arm
+      of that listener are each swallowed for exactly this reason.
+    */
+    if (isSafeExternalUrl(action.url)) {
+      void shell.openExternal(action.url).catch((cause: unknown) => {
+        console.error('[hive] could not open an external link:', cause);
+      });
+    }
     return;
   }
 
@@ -81,9 +93,32 @@ export function activateOnThisMachine(action: ThisMachineAction): void {
    * answered by whatever the updater's state actually is now.
    */
   if (action.type === 'update.download') {
-    void downloadUpdate();
+    void downloadUpdate().catch((cause: unknown) => {
+      console.error('[hive] could not start the update download:', cause);
+    });
     return;
   }
 
-  void installUpdate();
+  if (action.type === 'update.install') {
+    void installUpdate().catch((cause: unknown) => {
+      console.error('[hive] could not install the update:', cause);
+    });
+    return;
+  }
+
+  /*
+    Exhaustive, and checked rather than assumed.
+
+    The narrow parameter type stops a *fleet* action being handed in, but it
+    does not stop {@link ThisMachineAction} widening underneath this function:
+    it is derived from `ACTION_SCOPE`, so a new member of the union classified
+    `this-machine` joins it automatically. Without this, that member would fall
+    into whichever branch happened to be last and silently do something else —
+    for a while, that meant quitting and replacing the app.
+
+    Assigning to `never` is what makes the widening a compile error here, at
+    the one place that has to answer for every member.
+  */
+  const unreachable: never = action;
+  void unreachable;
 }

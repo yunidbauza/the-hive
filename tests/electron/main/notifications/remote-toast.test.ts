@@ -94,6 +94,9 @@ vi.mock('../../../../electron/main/notifications/activate-here', () => ({
 }));
 
 const { CH } = await import('../../../../electron/shared/ipc-contract');
+const { notificationDelivery } = await import(
+  '../../../../electron/main/notifications/delivery'
+);
 const { createRemoteToasts } = await import(
   '../../../../electron/main/notifications/remote-toast'
 );
@@ -241,7 +244,7 @@ describe('createRemoteToasts', () => {
         type: 'url',
         url: 'https://example.com',
       });
-      expect(call).not.toHaveBeenCalled();
+      expect(call).not.toHaveBeenCalledWith(CH.notificationsAct, expect.anything());
     });
 
     it('activates an update action here rather than driving the server\'s updater', () => {
@@ -251,7 +254,21 @@ describe('createRemoteToasts', () => {
       raised[0]!.click();
 
       expect(activateOnThisMachine).toHaveBeenCalledWith({ type: 'update.install' });
-      expect(call).not.toHaveBeenCalled();
+      expect(call).not.toHaveBeenCalledWith(CH.notificationsAct, expect.anything());
+    });
+
+    /*
+      Only the *action* is this machine's; the row is the server's hub's either
+      way. The local presenter and the inbox row both dismiss for these kinds,
+      so skipping it here would leave the row unread for ever — and `seen`
+      would block any re-raise — while the same click through the row cleared
+      it. One notification, two meanings.
+    */
+    it('still dismisses the row on the server, because the row is the server\'s', () => {
+      toasts.receive({ ...toast, action: { type: 'url', url: 'https://example.com' } });
+      raised[0]!.click();
+
+      expect(call).toHaveBeenCalledWith(CH.notificationsDismiss, 'n1');
     });
 
     /*
@@ -344,6 +361,35 @@ describe('createRemoteToasts', () => {
     raised[1]!.fail('UNErrorDomain error 1');
 
     expect(error).toHaveBeenCalledTimes(1);
+    error.mockRestore();
+  });
+
+  /**
+   * The refusal is *recorded*, not only logged (HIVE-151).
+   *
+   * This is the only presenter that runs while attached — `registerIpcHandlers`
+   * is not registered in remote mode, so `hub.ts`'s `presentLocally` never
+   * runs. Once `notifications:delivery` became `PROCESS_LOCAL`, a refusal that
+   * reached only a console line would leave `refused` structurally `null` on
+   * every attached client: the pane would report the right machine's
+   * `supported` and be blind about that same machine's refusals, which is the
+   * dishonesty the move was meant to end rather than relocate.
+   */
+  it('records the refusal where notifications:delivery will find it', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    /*
+      A reason unique to this case. `delivery.ts` holds its refusal in module
+      scope — deliberately, since a refusal outlives any one presenter — so it
+      carries across cases in this file, and asserting it starts `null` would
+      make this case depend on running before the log-once one above.
+    */
+    const reason = 'UNErrorDomain error 151 (recorded-by-remote-toast)';
+    expect(notificationDelivery().refused).not.toBe(reason);
+
+    toasts.receive(toast);
+    raised[0]!.fail(reason);
+
+    expect(notificationDelivery().refused).toBe(reason);
     error.mockRestore();
   });
 });

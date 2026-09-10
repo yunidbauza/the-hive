@@ -112,13 +112,16 @@ function localAnswerFor(
  * all, and `notifications/activate-here.ts` reaches `electron`,
  * `../external-links` and `../updates` — nothing back into `ipc/`, so no cycle.
  *
- * It parses again rather than trusting the predicate's own parse. The
- * predicate answers a boolean and cannot hand back what it parsed without
- * becoming two things at once, and `activateOnThisMachine` takes the narrow
+ * It parses again rather than trusting the predicate's own parse. The predicate
+ * answers a boolean and cannot hand back what it parsed without becoming two
+ * things at once, and `activateOnThisMachine` takes the narrow
  * `ThisMachineAction` on purpose — so the second parse is what turns the
- * table's `true` into a value the activation will accept. One pass over a
- * small object, and it is what makes a fleet action unable to reach hardware
- * even if the two tables were ever to disagree.
+ * table's `true` into a value the activation will accept.
+ *
+ * It is a **narrowing**, not a second opinion: both parses call the same
+ * `parseNotificationAction` and the same `isThisMachineAction`, so this one can
+ * only ever repeat the first, never disagree with it. What it buys is that the
+ * hardware call is reached through the narrow type rather than a cast.
  */
 function payloadAnswerFor(channel: Channel): ((payload: unknown) => void) | null {
   if (channel !== CH.notificationsAct) return null;
@@ -443,10 +446,15 @@ export function registerRemoteProxy(deps: {
           Ordered after `WINDOW_BOUND` and `PROCESS_LOCAL` deliberately: those
           two are facts about the *channel* and hold for every payload it can
           carry, so a channel named by either must never reach a payload check
-          that could disagree with them. The contract keeps the three tables
-          disjoint, and this ordering means a future overlap fails safe —
-          towards the coarser, already-proven answer — rather than towards a
-          payload deciding its own machine.
+          that could disagree with them.
+
+          The ordering is belt to the contract's braces, not the guarantee
+          itself. **Disjointness is the guarantee** — asserted in
+          `tests/shared/remote-contract.test.ts` — and it is what makes this
+          ordering unobservable today, since no channel is on two tables for
+          the order to decide between. What the order buys is that a future
+          overlap fails safe, towards the coarser already-proven answer rather
+          than towards a payload choosing its own machine.
 
           A payload the predicate declines falls through to `client.call`
           unchanged, including one that did not parse: the far end runs the

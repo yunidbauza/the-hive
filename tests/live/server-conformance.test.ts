@@ -3704,11 +3704,20 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
 
       await stopApp(serverApp);
       serverApp = undefined;
+      /*
+        Asserted on a status that has actually *arrived*, not on the absence of
+        one. `window.__link151` starts `null`, and `(null)?.state !== 'attached'`
+        is true on the very first poll — so a negated predicate here would be
+        satisfied before any push had landed, and the two calls below would race
+        the client's own socket teardown rather than follow it.
+      */
       await waitForAsync(
-        async () =>
-          (await renderer!.evaluate<RemoteLinkStatus | null>(
+        async () => {
+          const status = await renderer!.evaluate<RemoteLinkStatus | null>(
             'window.__link151 ?? null',
-          ))?.state !== 'attached',
+          );
+          return status !== null && status.state !== 'attached';
+        },
         'the link to notice the server has gone',
         120_000,
       );
@@ -3743,10 +3752,24 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
         'a machine-local action was sent to the socket instead of being answered here',
       ).toBe('resolved');
 
+      /*
+        Put back, and waited for properly. `waitForListener` returns when the
+        port opens, which is up to a backoff interval before the client is
+        attached again — so a case added after this one would inherit a
+        half-reattached client, which is the trap the reboot exists to avoid.
+      */
       const rebooted = spawnApp(['--server'], serverConfigPath, serverUserDataDir);
       serverApp = rebooted.child;
       serverRecord = rebooted.record;
       await waitForListener('127.0.0.1', serverPort, 60_000);
+      await waitForAsync(
+        async () =>
+          (await renderer!.evaluate<RemoteLinkStatus | null>(
+            'window.__link151 ?? null',
+          ))?.state === 'attached',
+        'the client to reattach after this case put the server back',
+        120_000,
+      );
     }, 300_000);
   });
 

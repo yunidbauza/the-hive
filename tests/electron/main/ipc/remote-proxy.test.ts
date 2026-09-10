@@ -5,9 +5,11 @@ import type { CloseCause } from '../../../../electron/remote-client/socket';
 import { CH, type AppInfo } from '../../../../electron/shared/ipc-contract';
 import {
   FRAME_KIND,
+  PAYLOAD_SCOPED,
   PROCESS_LOCAL,
   WINDOW_BOUND,
   isLocalOnlyEvent,
+  payloadScopeFor,
 } from '../../../../electron/shared/remote-contract';
 
 /**
@@ -811,11 +813,23 @@ describe('registerRemoteProxy', () => {
     });
 
     /*
-      Ordering, not merely membership. `WINDOW_BOUND` and `PROCESS_LOCAL` hold
-      for every payload their channel can carry, so a channel on either must
-      never reach a payload check that could disagree with them.
+      Membership, not ordering — and the distinction is worth stating, because
+      this case cannot test the ordering and used to claim it did.
+
+      `config:choose-directory` is not in `PAYLOAD_SCOPED`, so `payloadScopeFor`
+      answers `null` and the payload branch is skipped wherever it sits in the
+      handler. Moving that branch above the `WINDOW_BOUND` check — the exact
+      inversion the old name forbade — left this file green. The mutation
+      survived, so the assertion was vacuous.
+
+      No ordering can be exercised through the public surface while the three
+      tables are disjoint, because no channel is on two of them for an order to
+      decide between. **Disjointness is the real guarantee**, and it is pinned
+      in `tests/shared/remote-contract.test.ts`. What this case does prove is
+      still worth having: a `WINDOW_BOUND` channel is refused, and a payload
+      that would otherwise route locally does not rescue it.
     */
-    it('refuses a WINDOW_BOUND channel ahead of any payload check', async () => {
+    it('refuses a WINDOW_BOUND channel even when handed a this-machine payload', async () => {
       const client = proxy();
 
       await expect(
@@ -823,6 +837,30 @@ describe('registerRemoteProxy', () => {
       ).rejects.toMatchObject({ code: 'window-bound' });
       expect(activateOnThisMachine).not.toHaveBeenCalled();
       expect(client.call).not.toHaveBeenCalled();
+    });
+
+    /*
+      Structural, and the counterpart to the `PROCESS_LOCAL` case above.
+      `payloadAnswerFor` answers `null` for anything but `notifications:act`, so
+      a second entry added to `PAYLOAD_SCOPED` and forgotten there would be
+      proxied whatever its predicate said. That fails safe rather than
+      dangerous — but silently, and "the table said local, the proxy sent it
+      anyway" is precisely the disagreement this shape exists to prevent.
+    */
+    it('answers every PAYLOAD_SCOPED channel locally for a payload its own predicate claims', async () => {
+      const client = proxy();
+
+      for (const channel of Object.keys(PAYLOAD_SCOPED)) {
+        const scope = payloadScopeFor(channel);
+        expect(scope, `${channel} is in PAYLOAD_SCOPED but has no predicate`).not.toBeNull();
+        // The one payload every current member agrees is this machine's.
+        const payload = { type: 'url', url: 'https://example.com' };
+        if (scope?.(payload) !== true) continue;
+        await invoke(channel, trustedEvent, payload);
+      }
+
+      expect(client.call).not.toHaveBeenCalled();
+      expect(activateOnThisMachine).toHaveBeenCalled();
     });
 
     it('leaves every other call channel routed by name alone', async () => {

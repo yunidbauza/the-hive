@@ -12,9 +12,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * locally rather than forwarding, so what they do is worth pinning on its own.
  */
 
-const openExternal = vi.fn();
-const downloadUpdate = vi.fn();
-const installUpdate = vi.fn();
+/*
+  These three return promises because the real ones do, and because
+  `activateOnThisMachine` now attaches a `.catch` to each: an unhandled
+  rejection here would be an exception in main with nobody to catch it, which is
+  fatal under Node 22's default. A `vi.fn()` returning `undefined` would make
+  the module throw on `.catch` rather than exercise it.
+*/
+const openExternal = vi.fn(async (_url: string) => undefined);
+const downloadUpdate = vi.fn(async () => undefined);
+const installUpdate = vi.fn(async () => undefined);
 
 let windows: {
   isDestroyed: () => boolean;
@@ -25,7 +32,7 @@ let windows: {
 
 vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => windows },
-  shell: { openExternal: (...args: unknown[]) => openExternal(...args) },
+  shell: { openExternal: (url: string) => openExternal(url) },
 }));
 
 vi.mock('../../../../electron/main/updates', () => ({
@@ -140,5 +147,34 @@ describe('activateOnThisMachine', () => {
     activateOnThisMachine({ type: 'update.install' });
 
     expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Every branch here is reachable from inside an Electron `click` listener
+   * (`remote-toast.ts`), where an unhandled rejection is an exception in main
+   * with nobody to catch it — fatal under Node 22's default
+   * `--unhandled-rejections=throw`, as `updates/index.ts` says of its own.
+   *
+   * Asserted by driving a real rejection rather than by reading the source: a
+   * missing `.catch` shows up here as an unhandled rejection the runner
+   * reports, which is the failure mode being prevented.
+   */
+  describe('a rejection from the thing it called', () => {
+    it.each([
+      ['update.download', () => { downloadUpdate.mockRejectedValueOnce(new Error('no updater')); }, { type: 'update.download' as const }],
+      ['update.install', () => { installUpdate.mockRejectedValueOnce(new Error('no updater')); }, { type: 'update.install' as const }],
+      ['url', () => { openExternal.mockRejectedValueOnce(new Error('no handler')); }, { type: 'url' as const, url: 'https://example.com' }],
+    ])('is caught for %s rather than left to reach main', async (_name, arrange, action) => {
+      const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      arrange();
+
+      expect(() => { activateOnThisMachine(action); }).not.toThrow();
+      // Let the rejection settle; an uncaught one fails the run from here.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(error).toHaveBeenCalled();
+      error.mockRestore();
+    });
   });
 });
