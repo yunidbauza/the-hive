@@ -174,9 +174,12 @@ vi.mock('../../../../electron/main/config/index', () => ({
 }));
 
 const { CH } = await import('../../../../electron/shared/ipc-contract');
-const { registerIpcHandlers, resetIpcHandlers, isForeground } = await import(
-  '../../../../electron/main/ipc'
-);
+const {
+  registerIpcHandlers,
+  resetIpcHandlers,
+  isForeground,
+  isForegroundEverywhere,
+} = await import('../../../../electron/main/ipc');
 
 /**
  * `assertSender` compares `senderFrame` to `sender.mainFrame` by **identity**,
@@ -291,10 +294,12 @@ describe('ui:foreground', () => {
         old `foregroundTerminalId` the second report overwrote the first and
         `term-1` went false the moment the other device changed tabs.
 
-        This is also the sweep's own question — may this row be dropped because
-        *somebody* is looking at it — so "any surface" is the right reading of
-        it, and the per-surface reading belongs to toast suppression, which is
-        `isForegroundFor`'s job (see the toast router).
+        "Any surface" is the re-arm's reading of it — somebody still watching
+        is reason enough not to nag. The row's own questions — arriving
+        already-read, being swept — moved to `isForegroundEverywhere`
+        (HIVE-154, one describe down), and the per-surface reading belongs to
+        toast suppression, which is `isForegroundFor`'s job (see the toast
+        router).
       */
       expect(isForeground('term-1')).toBe(true);
       expect(isForeground('term-2')).toBe(true);
@@ -319,6 +324,50 @@ describe('ui:foreground', () => {
 
       expect(isForeground('term-1')).toBe(false);
       expect(isForeground('term-2')).toBe(false);
+    });
+  });
+
+  /**
+   * The fleet question (HIVE-154). `isForeground` asks whether *anybody* is
+   * looking — the re-arm's question. This one asks whether *everybody* is —
+   * the row's question: may a notification be written already-read, and may
+   * an arrival row be swept, on the strength of the fleet's attention.
+   */
+  describe('isForegroundEverywhere', () => {
+    it('answers false with no surfaces at all', () => {
+      // `[].every(...)` is vacuously true, and here that is a lie: a headless
+      // server with nothing attached would pre-read every row into an empty
+      // room.
+      expect(isForegroundEverywhere('term-1')).toBe(false);
+    });
+
+    it('answers true when the one surface is watching', () => {
+      report({ terminalId: 'term-1' });
+
+      expect(isForegroundEverywhere('term-1')).toBe(true);
+    });
+
+    it('answers false when one of two surfaces is watching something else', () => {
+      report({ terminalId: 'term-1' });
+      reportFromSecond({ terminalId: 'term-2' });
+
+      expect(isForegroundEverywhere('term-1')).toBe(false);
+    });
+
+    it('answers true when both surfaces watch the same terminal', () => {
+      report({ terminalId: 'term-1' });
+      reportFromSecond({ terminalId: 'term-1' });
+
+      expect(isForegroundEverywhere('term-1')).toBe(true);
+    });
+
+    it('drops to false the moment either surface looks away', () => {
+      report({ terminalId: 'term-1' });
+      reportFromSecond({ terminalId: 'term-1' });
+
+      reportFromSecond({ terminalId: null });
+
+      expect(isForegroundEverywhere('term-1')).toBe(false);
     });
   });
 
