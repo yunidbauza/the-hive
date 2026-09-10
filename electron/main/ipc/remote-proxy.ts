@@ -431,11 +431,14 @@ export function registerRemoteProxy(deps: {
         /*
           Answered here, never forwarded (HIVE-144, Rulings 24 and 28): this
           channel reads or changes *this* process's own identity or attachment
-          — see `isProcessLocal`'s own doc comment — so the far end's answer
-          would be a plausible, wrong one, not merely an unreachable one the
-          way `WINDOW_BOUND`'s channels are. No `client.call` at all, not even
-          a discarded one: the round trip itself would be a socket the client
-          did not need to spend.
+          — see `isProcessLocal`'s own doc comment — so only this process has
+          the true answer. Before HIVE-155 the far end would have given a
+          plausible, wrong one; it now refuses the frame `remote-refused`, so
+          forwarding would fail the way a `WINDOW_BOUND` channel does. Unlike
+          those, this one still has a real answer to give the user, which is
+          why it is answered here rather than refused. No `client.call` at
+          all, not even a discarded one: the round trip itself would be a
+          socket the client did not need to spend.
 
           `payload` is forwarded to the local answer rather than dropped, and
           that is not symmetry for its own sake: `CH.configSetRemote` carries

@@ -635,19 +635,20 @@ export function windowBoundReason(channel: string): string | null {
  * one exists — so the binding counts Task 9 pins do not move when a channel
  * joins this list.
  *
- * **This fence is sender-side, and "never forwarded" above means exactly
- * that.** `registerRemoteProxy` will not put these channels on the wire, which
- * is what closes the defects each of them was added for — every one of those
- * was a client forwarding its own verb and getting the server's answer. It is
- * not a *receiver*-side refusal: `remote-dispatch.ts`'s `refuse()` consults
- * `remoteRefusedReason`, `isClientFrameAllowed` and `windowBoundReason`, never
- * this list, so a credentialed peer that hand-builds the frame still reaches
- * the handler on the far side. That gap is as old as Ruling 28 and grants
- * nothing new — `DEVICE_GRANT` is `execute`, so such a peer already holds
- * `pty:spawn` — but the asymmetry is real and is worth stating rather than
- * being read out of the word "never". Closing it properly means teaching
- * `refuse()` this table for all six channels at once, with the two-real-app
- * suite to prove it; HIVE-155 owns that.
+ * **This fence holds at both ends (HIVE-155).** `registerRemoteProxy` will
+ * not put these channels on the wire, which is what closes the defects each of
+ * them was added for — every one of those was a client forwarding its own verb
+ * and getting the server's answer. That alone was a property of one sender: a
+ * credentialed peer that hand-built the frame reached the handler on the far
+ * side, and a hand-built `remote:forget` cleared the server's own credential.
+ * It granted nothing new, since `DEVICE_GRANT` is `execute` and such a peer
+ * already holds `pty:spawn`, but "never forwarded" read as a property of the
+ * channel while it was a property of the proxy. So each channel now carries
+ * the sentence a server refuses it with, in {@link PROCESS_LOCAL_REFUSALS},
+ * and this list is derived from that table: `remote-dispatch.ts`'s `refuse()`
+ * reaches it through `remoteRefusedReason`, and a channel cannot be answered
+ * locally without also being refused remotely. `tests/live/server-conformance.test.ts`
+ * case 29 proves it against a real attached socket.
  *
  * This is the same problem `WINDOW_BOUND` solves, and it rests on the same
  * observation — proxying some channels wholesale is wrong — but it needs the
@@ -725,14 +726,21 @@ export function windowBoundReason(channel: string): string | null {
  * locally. The hide was the honest thing to do without this channel and is
  * retired by it.
  */
-export const PROCESS_LOCAL: readonly Channel[] = [
-  CH.appInfo,
-  CH.updatesStatus,
-  CH.updatesCheck,
-  CH.configSetRemote,
-  CH.remotePair,
-  CH.remoteForget,
-  CH.configGetRemote,
+export const PROCESS_LOCAL_REFUSALS = {
+  [CH.appInfo]:
+    "app:info describes the process that answers it: its own Electron build, its log path, its binds. A server answering it for a peer would pass its own identity off as the peer's, so the asking machine answers it and a server refuses it.",
+  [CH.updatesStatus]:
+    "updates:status reports the answering machine's own installed version against its own update track. A server's answer describes the server's binary, not the peer's, so the asking machine answers it and a server refuses it.",
+  [CH.updatesCheck]:
+    "updates:check runs the updater of the machine that answers it. A server refuses to check for its own update on a peer's say-so; the asking machine checks its own.",
+  [CH.configSetRemote]:
+    "config:set-remote changes where the answering process attaches, and writes that process's config. A server refuses to switch its own attachment on a peer's say-so; the asking machine changes its own.",
+  [CH.remotePair]:
+    "remote:pair stores the device credential the answering machine dials with. A server refuses to replace its own credential on a peer's say-so; the asking machine pairs itself.",
+  [CH.remoteForget]:
+    "remote:forget discards the device credential the answering machine dials with. A server refuses to forget its own credential on a peer's say-so; the asking machine forgets its own.",
+  [CH.configGetRemote]:
+    "config:get-remote reads the answering process's own attachment settings. A server would describe its own, not the peer's, so the asking machine answers it and a server refuses it.",
   /*
     The eighth (HIVE-151), and the only one that is about neither identity nor
     attachment. `supported` is `Notification.isSupported()` and `refused` is why
@@ -747,8 +755,20 @@ export const PROCESS_LOCAL: readonly Channel[] = [
     here; this one needs nothing so subtle, because every answer it can give is
     about the wrong machine.
   */
-  CH.notificationsDelivery,
-];
+  [CH.notificationsDelivery]:
+    "notifications:delivery reports whether the answering machine's OS raises desktop notifications, and why it last refused one. Toasts are raised on the asking machine, so it answers for itself and a server refuses it.",
+} as const satisfies Partial<Record<Channel, string>>;
+
+/**
+ * The channels {@link PROCESS_LOCAL_REFUSALS} names, as a list (HIVE-155).
+ *
+ * Derived rather than listed a second time, so a channel cannot be answered
+ * locally by the proxy without the dispatcher also refusing it, and cannot join
+ * without a sentence saying why a server will not answer it for a peer.
+ */
+export const PROCESS_LOCAL: readonly Channel[] = Object.keys(
+  PROCESS_LOCAL_REFUSALS,
+) as Channel[];
 
 /** Whether `channel` must be answered by this process itself, never proxied. */
 export function isProcessLocal(channel: string): boolean {
@@ -804,9 +824,11 @@ export function isLocalOnlyEvent(channel: string): boolean {
  * reaches the same conclusion. Answering `true` instead would let a malformed
  * payload pick its own machine, which is the whole class of defect this closes.
  *
- * The **receiving** end does not refuse these, the same way it does not yet
- * refuse `PROCESS_LOCAL`. A well-behaved client never sends one; refusing at
- * both ends is HIVE-155's shape, and it should cover this table when it lands.
+ * The **receiving** end refuses the payloads this table claims (HIVE-155),
+ * with the sentence {@link PAYLOAD_SCOPED_REFUSALS} gives, the same way it
+ * refuses every `PROCESS_LOCAL` channel. A well-behaved client never sends
+ * one; a peer that hand-builds one is not asking the server anything a server
+ * should answer.
  */
 export const PAYLOAD_SCOPED = {
   [CH.notificationsAct]: (payload: unknown): boolean => {
@@ -814,6 +836,19 @@ export const PAYLOAD_SCOPED = {
     return action !== null && isThisMachineAction(action);
   },
 } as const satisfies Partial<Record<Channel, (payload: unknown) => boolean>>;
+
+/**
+ * Why a server refuses a {@link PAYLOAD_SCOPED} payload its own predicate
+ * claims (HIVE-155).
+ *
+ * `Record` over the table's own keys, not `Partial`, so a channel added to
+ * `PAYLOAD_SCOPED` without a sentence here is a compile error rather than a
+ * payload the receiving end forgets to refuse.
+ */
+export const PAYLOAD_SCOPED_REFUSALS = {
+  [CH.notificationsAct]:
+    "notifications:act carrying a url or an update verb is carried out by the machine whose user clicked it. A server refuses to open a browser or drive its own updater on a peer's say-so; the asking machine acts on its own click.",
+} as const satisfies Record<keyof typeof PAYLOAD_SCOPED, string>;
 
 /**
  * The predicate for a channel routed by payload, or `null` when the channel is
@@ -1228,26 +1263,53 @@ export const REMOTE_REFUSED = {
 } as const satisfies Partial<Record<Channel, string>>;
 
 /**
- * The channels {@link REMOTE_REFUSED} names, as a set — kept for
+ * Every channel refused for every remote caller by name, as a set — kept for
  * {@link isClientFrameAllowed}'s own membership check and for the tests that
- * assert a channel is, or is not, in it. Derived from the same object rather
- * than listed a second time, so the two cannot name a different set of
- * channels from each other.
+ * assert a channel is, or is not, in it. Derived from {@link REMOTE_REFUSED}
+ * and {@link PROCESS_LOCAL} rather than listed a third time, so none of the
+ * three can name a channel the others miss.
+ *
+ * `PROCESS_LOCAL` joined this set in HIVE-155. The two tables answer one
+ * question, whether a channel may cross the socket at all, and differ only in
+ * what the near end does instead: `REMOTE_REFUSED` refuses there too, while the
+ * proxy answers a `PROCESS_LOCAL` channel itself. The proxy never reads this
+ * set, so joining it changed nothing on the sending side.
+ *
+ * `PAYLOAD_SCOPED` stays out. Its channel still crosses for most payloads, so
+ * a name-keyed "never" would be false; {@link remoteRefusedReason} refuses it
+ * per payload instead.
  */
-export const REMOTE_REFUSED_CHANNELS: ReadonlySet<Channel> = new Set(
-  Object.keys(REMOTE_REFUSED) as Channel[],
-);
+export const REMOTE_REFUSED_CHANNELS: ReadonlySet<Channel> = new Set([
+  ...(Object.keys(REMOTE_REFUSED) as Channel[]),
+  ...PROCESS_LOCAL,
+]);
 
 /**
- * Why `channel` is refused for every remote caller, or `null` if it is not.
+ * Why a remote caller's frame naming `channel` with `payload` is refused, or
+ * `null` if it is not.
  *
  * The {@link windowBoundReason} of this constant: same shape, same job, same
- * reason a caller wants the sentence and not just the boolean.
+ * reason a caller wants the sentence and not just the boolean. Three tables
+ * feed it, in order: {@link REMOTE_REFUSED}, whose local safety argument does
+ * not survive the wire; {@link PROCESS_LOCAL_REFUSALS}, whose answer is only
+ * true on the machine that asked; and {@link PAYLOAD_SCOPED_REFUSALS}, for the
+ * payloads `PAYLOAD_SCOPED`'s own predicate claims for that machine.
+ *
+ * `payload` is required, not optional, so a caller cannot skip the third
+ * table by forgetting an argument.
  */
-export function remoteRefusedReason(channel: string): string | null {
-  return Object.hasOwn(REMOTE_REFUSED, channel)
-    ? REMOTE_REFUSED[channel as keyof typeof REMOTE_REFUSED]
-    : null;
+export function remoteRefusedReason(channel: string, payload: unknown): string | null {
+  if (Object.hasOwn(REMOTE_REFUSED, channel)) {
+    return REMOTE_REFUSED[channel as keyof typeof REMOTE_REFUSED];
+  }
+  if (Object.hasOwn(PROCESS_LOCAL_REFUSALS, channel)) {
+    return PROCESS_LOCAL_REFUSALS[channel as keyof typeof PROCESS_LOCAL_REFUSALS];
+  }
+  const claimsThisMachine = payloadScopeFor(channel);
+  if (claimsThisMachine !== null && claimsThisMachine(payload)) {
+    return PAYLOAD_SCOPED_REFUSALS[channel as keyof typeof PAYLOAD_SCOPED_REFUSALS];
+  }
+  return null;
 }
 
 /**

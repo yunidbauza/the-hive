@@ -73,6 +73,7 @@ export function createRemoteDispatch(registry: IpcRegistry): RemoteDispatch {
   function refuse(
     kind: 'call' | 'notify',
     channel: unknown,
+    payload: unknown,
   ): { code: DispatchRefusal; message: string } | null {
     /*
       `channel` is typed `string` on the frame and is not one on the wire
@@ -113,7 +114,7 @@ export function createRemoteDispatch(registry: IpcRegistry): RemoteDispatch {
       with a different shape, and no shape fixes a policy refusal. Checking
       the specific reason first is what gives it the true one.
     */
-    const refused = remoteRefusedReason(channel);
+    const refused = remoteRefusedReason(channel, payload);
     if (refused !== null) return { code: 'remote-refused', message: refused };
     if (!isClientFrameAllowed(kind, channel, DEVICE_GRANT)) {
       return {
@@ -128,7 +129,7 @@ export function createRemoteDispatch(registry: IpcRegistry): RemoteDispatch {
 
   return {
     async call(frame, reporter) {
-      const refusal = refuse('call', frame.channel);
+      const refusal = refuse('call', frame.channel, frame.payload);
       if (refusal) return { kind: 'error', id: frame.id, ...refusal };
 
       const handler = registry.call(frame.channel);
@@ -174,7 +175,7 @@ export function createRemoteDispatch(registry: IpcRegistry): RemoteDispatch {
     },
 
     notify(frame, reporter) {
-      const refusal = refuse('notify', frame.channel);
+      const refusal = refuse('notify', frame.channel, frame.payload);
       if (refusal) {
         console.error(`[hive] refused remote ${frame.channel}: ${refusal.code}`);
         return;

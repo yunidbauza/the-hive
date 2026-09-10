@@ -425,7 +425,7 @@ describe('remote contract: channels refused over the wire regardless of grant', 
    * true one, the same way `windowBoundReason` already does for its table.
    */
   it('gives a true reason for skills:file:drop, not the direction refusal\'s message', () => {
-    const reason = remoteRefusedReason(CH.skillsFileDrop);
+    const reason = remoteRefusedReason(CH.skillsFileDrop, undefined);
 
     expect(reason).not.toBeNull();
     expect(reason).not.toMatch(/is not a call channel/);
@@ -433,12 +433,99 @@ describe('remote contract: channels refused over the wire regardless of grant', 
   });
 
   it('answers null for a channel that is not remote-refused', () => {
-    expect(remoteRefusedReason(CH.skillsFileImport)).toBeNull();
-    expect(remoteRefusedReason(CH.skillsFileWrite)).toBeNull();
+    expect(remoteRefusedReason(CH.skillsFileImport, undefined)).toBeNull();
+    expect(remoteRefusedReason(CH.skillsFileWrite, undefined)).toBeNull();
   });
 
   it('answers null for an unknown channel rather than throwing', () => {
-    expect(remoteRefusedReason('not:a:channel')).toBeNull();
+    expect(remoteRefusedReason('not:a:channel', undefined)).toBeNull();
+  });
+});
+
+/**
+ * `PROCESS_LOCAL`, refused at the receiving end as well as the sending one
+ * (HIVE-155).
+ *
+ * The proxy answers these on the machine that asked, so no shipped client
+ * sends one. That used to be the whole fence: a peer that hand-built a
+ * `remote:forget` frame reached the server's handler and cleared the server's
+ * own credential. The refusal shares `skills:file:drop`'s code because both
+ * answer one question, whether this channel may cross the socket at all.
+ */
+describe('remote contract: process-local channels refused at the receiving end (HIVE-155)', () => {
+  it('refuses every PROCESS_LOCAL channel for every remote caller, even at execute', () => {
+    for (const channel of PROCESS_LOCAL) {
+      expect(REMOTE_REFUSED_CHANNELS.has(channel), channel).toBe(true);
+      expect(isClientFrameAllowed('call', channel, 'execute'), channel).toBe(false);
+      expect(remoteRefusedReason(channel, undefined), channel).not.toBeNull();
+    }
+  });
+
+  it('says why a server refuses remote:forget, not only that it does', () => {
+    const reason = remoteRefusedReason(CH.remoteForget, undefined);
+
+    expect(reason).toMatch(/remote:forget/);
+    expect(reason).toMatch(/own credential/);
+  });
+
+  it('gives each channel a reason of its own, naming the channel', () => {
+    const reasons = PROCESS_LOCAL.map((channel) => remoteRefusedReason(channel, undefined));
+
+    expect(new Set(reasons).size).toBe(PROCESS_LOCAL.length);
+    PROCESS_LOCAL.forEach((channel, index) => expect(reasons[index]).toContain(channel));
+  });
+
+  it('refuses the same eight whatever payload a peer attaches', () => {
+    for (const channel of PROCESS_LOCAL) {
+      expect(remoteRefusedReason(channel, { anything: true }), channel).not.toBeNull();
+    }
+  });
+});
+
+/**
+ * `PAYLOAD_SCOPED`, refused at the receiving end for the payloads the proxy
+ * answers locally (HIVE-155).
+ *
+ * The same gap, one table over. `notifications:act` carrying a `url` or an
+ * update verb is carried out by the machine whose user clicked it, so a server
+ * that receives one is being asked to open a browser or drive its own updater
+ * on a peer's say-so. The fleet actions still cross, which is why this cannot
+ * be a name-keyed refusal and `isClientFrameAllowed` still admits the channel.
+ */
+describe('remote contract: this-machine notification actions refused at the receiving end (HIVE-155)', () => {
+  it('refuses the three actions that reach the answering machine\'s hardware', () => {
+    for (const payload of [
+      { type: 'url', url: 'https://example.com' },
+      { type: 'update.download' },
+      { type: 'update.install' },
+    ]) {
+      expect(remoteRefusedReason(CH.notificationsAct, payload), payload.type).toMatch(
+        /notifications:act/,
+      );
+    }
+  });
+
+  it('lets the actions that resolve against fleet state through', () => {
+    expect(remoteRefusedReason(CH.notificationsAct, { type: 'ask', thread: 't1' })).toBeNull();
+    expect(remoteRefusedReason(CH.notificationsAct, { type: 'session', entityId: 's1' })).toBeNull();
+    expect(remoteRefusedReason(CH.notificationsAct, { type: 'agent', name: 'scout' })).toBeNull();
+    expect(remoteRefusedReason(CH.notificationsAct, { type: 'none' })).toBeNull();
+  });
+
+  /*
+    The proxy forwards a payload it cannot parse, on the stated principle that
+    the far end runs the same parse and reaches the same conclusion: nothing
+    happens. Refusing it here would answer that frame differently from the
+    handler, for no gain.
+  */
+  it('lets a payload it cannot parse through, to the handler\'s own parse', () => {
+    expect(remoteRefusedReason(CH.notificationsAct, { type: 'shell', cmd: 'rm -rf /' })).toBeNull();
+    expect(remoteRefusedReason(CH.notificationsAct, null)).toBeNull();
+  });
+
+  it('keeps notifications:act a channel a client may send', () => {
+    expect(REMOTE_REFUSED_CHANNELS.has(CH.notificationsAct)).toBe(false);
+    expect(isClientFrameAllowed('call', CH.notificationsAct, 'execute')).toBe(true);
   });
 });
 

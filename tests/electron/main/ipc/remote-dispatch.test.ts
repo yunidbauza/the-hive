@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { CH } from '../../../../electron/shared/ipc-contract';
 import { createIpcRegistry } from '../../../../electron/main/ipc/registry';
 import { createRemoteDispatch } from '../../../../electron/main/ipc/remote-dispatch';
+import { PROCESS_LOCAL } from '../../../../electron/shared/remote-contract';
 
 const callFrame = (channel: unknown, payload: unknown = null) =>
   ({ kind: 'call', id: 'c1', channel, payload }) as never;
@@ -156,6 +157,55 @@ describe('createRemoteDispatch call', () => {
     await dispatch.call(callFrame(CH.skillsFileDrop), reporter);
 
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  /**
+   * HIVE-155. The proxy answers every `PROCESS_LOCAL` channel on the machine
+   * that asked, and that was the only fence: a peer that hand-built a
+   * `remote:forget` frame reached this handler and cleared the server's own
+   * credential. The proxy guards the sender; this guards the socket.
+   */
+  it('refuses every PROCESS_LOCAL channel and never runs its handler', async () => {
+    for (const channel of PROCESS_LOCAL) {
+      const registry = createIpcRegistry();
+      const handler = vi.fn(() => null);
+      registry.recordCall(channel, handler);
+      const dispatch = createRemoteDispatch(registry);
+
+      const frame = await dispatch.call(callFrame(channel), reporter);
+
+      expect(frame, channel).toMatchObject({ kind: 'error', id: 'c1', code: 'remote-refused' });
+      expect((frame as { message: string }).message, channel).toContain(channel);
+      expect(handler, channel).not.toHaveBeenCalled();
+    }
+  });
+
+  it('refuses a notifications:act that would act on the answering machine', async () => {
+    const registry = createIpcRegistry();
+    const handler = vi.fn(() => null);
+    registry.recordCall(CH.notificationsAct, handler);
+    const dispatch = createRemoteDispatch(registry);
+
+    const frame = await dispatch.call(
+      callFrame(CH.notificationsAct, { type: 'url', url: 'https://example.com' }),
+      reporter,
+    );
+
+    expect(frame).toMatchObject({ kind: 'error', code: 'remote-refused' });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('still answers a notifications:act that resolves against fleet state', async () => {
+    const registry = createIpcRegistry();
+    const handler = vi.fn(() => null);
+    registry.recordCall(CH.notificationsAct, handler);
+    const dispatch = createRemoteDispatch(registry);
+    const payload = { type: 'session', entityId: 's1' };
+
+    const frame = await dispatch.call(callFrame(CH.notificationsAct, payload), reporter);
+
+    expect(frame).toEqual({ kind: 'result', id: 'c1', payload: null });
+    expect(handler).toHaveBeenCalledWith(payload, reporter);
   });
 
   it('reports not-ready for a real channel with no handler recorded yet', async () => {
