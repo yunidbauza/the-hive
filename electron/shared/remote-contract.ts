@@ -707,6 +707,21 @@ export const PROCESS_LOCAL: readonly Channel[] = [
   CH.configSetRemote,
   CH.remotePair,
   CH.remoteForget,
+  /*
+    The seventh (HIVE-151), and the only one that is about neither identity nor
+    attachment. `supported` is `Notification.isSupported()` and `refused` is why
+    *this* OS turned the last notification down — two facts about the machine
+    that answers, on a channel the settings pane polls while it is open.
+
+    Merely odd before HIVE-145 and actively misleading after it: the toast is
+    now raised on the *client's* desktop, so a proxied answer made the switch
+    read "desktop notifications are unavailable" about a machine that is no
+    longer the one raising them. Its sibling `notifications:act` needed the
+    payload-aware shape below, because only some of what it carries belongs
+    here; this one needs nothing so subtle, because every answer it can give is
+    about the wrong machine.
+  */
+  CH.notificationsDelivery,
 ];
 
 /** Whether `channel` must be answered by this process itself, never proxied. */

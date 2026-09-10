@@ -587,7 +587,7 @@ describe('WINDOW_BOUND', () => {
  * admitted and nobody had applied it to.
  */
 describe('PROCESS_LOCAL', () => {
-  it('names exactly six channels', () => {
+  it('names exactly seven channels', () => {
     expect([...PROCESS_LOCAL].sort()).toEqual(
       [
         CH.appInfo,
@@ -596,8 +596,21 @@ describe('PROCESS_LOCAL', () => {
         CH.configSetRemote,
         CH.remotePair,
         CH.remoteForget,
+        CH.notificationsDelivery,
       ].sort(),
     );
+  });
+
+  /*
+    Named on its own for a reason the other six do not share (HIVE-151): it is
+    the only entry about neither identity nor attachment. What makes it
+    process-local is that both fields of its answer — whether this OS supports
+    desktop notifications, and why it last refused one — describe the machine
+    that answers, while since HIVE-145 the toast is raised on the machine that
+    asked. Proxied, the settings pane described the wrong desktop.
+  */
+  it('answers notifications:delivery locally, because it describes this machine\'s OS', () => {
+    expect(isProcessLocal(CH.notificationsDelivery)).toBe(true);
   });
 
   /*

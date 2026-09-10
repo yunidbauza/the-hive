@@ -515,12 +515,13 @@ describe('registerRemoteProxy', () => {
    * `remote:forget` (HIVE-153).
    */
   describe('PROCESS_LOCAL channels (HIVE-144 Rulings 24 and 28, HIVE-153)', () => {
-    it('names exactly six channels', () => {
-      expect(PROCESS_LOCAL.length).toBe(6);
+    it('names exactly seven channels', () => {
+      expect(PROCESS_LOCAL.length).toBe(7);
       expect([...PROCESS_LOCAL].sort()).toEqual(
         [
           'app:info',
           'config:set-remote',
+          'notifications:delivery',
           'remote:forget',
           'remote:pair',
           'updates:check',

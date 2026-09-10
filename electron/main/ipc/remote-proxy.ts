@@ -9,6 +9,7 @@ import {
 } from '@shared/remote-contract';
 
 import { RemoteCallError, type RemoteClient } from '../../remote-client/socket';
+import { notificationDelivery } from '../notifications/delivery';
 import { createRemoteToasts, type RemoteToasts } from '../notifications/remote-toast';
 import { checkForUpdatesInteractively, updateStatus } from '../updates';
 
@@ -84,6 +85,15 @@ function localAnswerFor(
       return (payload) => deps.localRemotePair(payload);
     case CH.remoteForget:
       return () => deps.localRemoteForget();
+    /*
+      The seventh (HIVE-151), and imported rather than handed down for
+      `CH.updatesStatus`'s reason rather than `CH.appInfo`'s: nothing about it
+      is per-registration state, and `notifications/delivery.ts` reaches only
+      `electron` and `@shared/ipc-contract` — nothing back into `ipc/`, so
+      importing it closes no cycle.
+    */
+    case CH.notificationsDelivery:
+      return () => notificationDelivery();
     default:
       return null;
   }

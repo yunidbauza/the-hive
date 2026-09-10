@@ -116,7 +116,6 @@ import {
   type IntegrationsStatus,
   type LoginEnvStatus,
   type NotificationActivateEvent,
-  type NotificationDeliveryStatus,
   type NotificationDismissedEvent,
   type NotificationReadEvent,
   type RemoteLinkStatus,
@@ -243,6 +242,10 @@ import {
   activateOnThisMachine,
   focusThisMachine,
 } from '../notifications/activate-here';
+import {
+  notificationDelivery,
+  recordNotificationRefusal,
+} from '../notifications/delivery';
 import { registerPtyHost } from '../pty-host';
 import {
   pairDevice,
@@ -695,23 +698,6 @@ async function buildAttachSnapshot(
 }
 
 /**
- * Why the OS last refused a desktop notification, or `null`.
- *
- * Module scope rather than a field on the hub, because it is not a fact about
- * notifications — it is a fact about **this operating system's answer to this
- * process**, learned the only way it can be learned, by trying. The hub is
- * deliberately ignorant of how a notification is presented, and giving it
- * somewhere to store a macOS authorization error would be the first crack in
- * that.
- *
- * Never reset. A refusal is not transient in the case that produces it — an
- * unsigned bundle stays unsigned for the life of the process — and clearing it
- * on the next successful send would mean the settings pane flickered between
- * two accounts of the same system.
- */
-let systemNotificationRefusal: string | null = null;
-
-/**
  * The server-mode socket (HIVE-142), constructed unconditionally below but
  * only ever `start()`-ed by `index.ts`, and only in server mode. `null` here
  * means "not yet composed" (before `registerIpcHandlers` runs, or in a test
@@ -1036,10 +1022,10 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  * What each surface has on its centre stage, and whether that surface is
  * focused (HIVE-81, HIVE-145).
  *
- * Module scope for the reason `systemNotificationRefusal` is: it is a fact
- * about who is looking at this process, not about notifications, and the hub is
- * deliberately ignorant of what the user is looking at. The hub asks a
- * predicate; it never holds this.
+ * Module scope for the reason the refusal in `notifications/delivery.ts` is:
+ * it is a fact about who is looking at this process, not about notifications,
+ * and the hub is deliberately ignorant of what the user is looking at. The hub
+ * asks a predicate; it never holds this.
  *
  * **A map, because one value could not be true of two devices.** It was a
  * single `foregroundTerminalId`, and every attached socket sends
@@ -1482,8 +1468,7 @@ export function registerIpcHandlers(
        */
       notification.on('failed', (_event, error) => {
         const reason = String(error);
-        if (systemNotificationRefusal === reason) return;
-        systemNotificationRefusal = reason;
+        if (!recordNotificationRefusal(reason)) return;
         console.error(
           `[hive] the OS refused a desktop notification — the inbox still has it (${reason})`,
         );
@@ -1737,18 +1722,16 @@ export function registerIpcHandlers(
    *
    * `integrationsStatus` carries the same two facts and **executes `gh`** to
    * build the rest of its answer. The Notifications pane has to re-ask this
-   * while it is open — `systemNotificationRefusal` is only knowable once a
-   * delivery has been attempted and turned down — and putting that on the
-   * integrations handler would spawn a process every few seconds to read a
-   * variable.
+   * while it is open — a refusal is only knowable once a delivery has been
+   * attempted and turned down — and putting that on the integrations handler
+   * would spawn a process every few seconds to read a variable.
+   *
+   * Answered by `notifications/delivery.ts` rather than from here, and named
+   * in `PROCESS_LOCAL` (HIVE-151): both facts describe the OS of whichever
+   * process answers, and since HIVE-145 the toast is raised on the *client's*
+   * desktop. Proxied, this told an attached user about the server's OS.
    */
-  handle(
-    CH.notificationsDelivery,
-    (): NotificationDeliveryStatus => ({
-      supported: Notification.isSupported(),
-      refused: systemNotificationRefusal,
-    }),
-  );
+  handle(CH.notificationsDelivery, () => notificationDelivery());
 
   handle(CH.notificationsList, () => hub.list());
   handle(CH.notificationsMarkRead, (_event, payload) =>
