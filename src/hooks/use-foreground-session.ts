@@ -5,7 +5,7 @@ import { isSession, terminalOf } from '@/types/entity';
 
 import { useEditorLayout } from '@stores/appearance-store';
 import { useActiveFileKey } from '@stores/editor-store';
-import { useActiveEntity } from '@stores/hive-store';
+import { useActiveEntity, useReattachEpoch } from '@stores/hive-store';
 import { useActiveTab, usePickerState, useSettingsOpen } from '@stores/ui-store';
 
 /**
@@ -77,8 +77,21 @@ export function useForegroundSession(): void {
         : entity.id
       : null;
 
+  /*
+    Re-announced on every reattach (HIVE-150).
+
+    This record is per *surface* on the machine that answers it, and a
+    reconnect is a new surface: ids are minted from a `WeakMap` on the socket
+    object, so the server gives the returning client a fresh one and released
+    the old one's foreground entry when its socket went away. Nothing here
+    would ever say it again — `terminalId` has not changed, and the renderer
+    never unmounted — so notification suppression would silently target a
+    session nobody is watching, and toast for the one on screen.
+  */
+  const reattachEpoch = useReattachEpoch();
+
   useEffect(() => {
     // No bridge is the browser demo, where there is no main process to tell.
     window.hive?.ui.reportForeground(terminalId);
-  }, [terminalId]);
+  }, [terminalId, reattachEpoch]);
 }
