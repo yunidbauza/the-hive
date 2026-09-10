@@ -12,7 +12,7 @@ import {
 } from 'node:fs';
 import { get as httpGet } from 'node:http';
 import { createRequire } from 'node:module';
-import { connect as netConnect, createServer as createNetServer } from 'node:net';
+import { connect as netConnect, createServer as createNetServer, type Socket } from 'node:net';
 import { homedir, hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -300,6 +300,124 @@ async function waitForListener(host: string, port: number, deadlineMs: number): 
     await delay(200);
   }
   throw new Error(`timed out waiting for ${host}:${String(port)} to accept connections`);
+}
+
+/** A loopback TCP relay in front of a served app, see {@link openRelay}. */
+interface Relay {
+  port: number;
+  /** Destroys every connection through the relay, both halves, and keeps listening. Answers how many it cut. */
+  cut(): number;
+  close(): Promise<void>;
+}
+
+/**
+ * A loopback TCP relay in front of the served app, whose connections a case
+ * can cut without touching either end (HIVE-160).
+ *
+ * Case 21k drops a client by killing the server, which takes every session on
+ * it down too. A case that needs a session to **outlive** the drop, so the
+ * returning client can be asked what it is watching, needs the socket to die
+ * on its own. This is the shape a network blip actually has: both processes
+ * alive, the TCP connection gone.
+ *
+ * Plain byte piping, no parsing. The server's guard compares only the host
+ * part of `Host` (`http-guard.ts`), so `127.0.0.1:<relay port>` is admitted
+ * exactly as the served port would be, and a `ws` client sends no `Origin`.
+ */
+async function openRelay(targetPort: number): Promise<Relay> {
+  const pairs = new Set<{ inbound: Socket; outbound: Socket }>();
+  const server = createNetServer((inbound) => {
+    const outbound = netConnect({ host: '127.0.0.1', port: targetPort });
+    const pair = { inbound, outbound };
+    pairs.add(pair);
+    const drop = (): void => {
+      pairs.delete(pair);
+      inbound.destroy();
+      outbound.destroy();
+    };
+    inbound.on('error', drop);
+    outbound.on('error', drop);
+    inbound.on('close', drop);
+    outbound.on('close', drop);
+    inbound.pipe(outbound);
+    outbound.pipe(inbound);
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => resolve());
+  });
+  const address = server.address();
+  if (address === null || typeof address === 'string') {
+    throw new Error('could not determine the relay port');
+  }
+
+  const cut = (): number => {
+    const count = pairs.size;
+    for (const { inbound, outbound } of [...pairs]) {
+      inbound.destroy();
+      outbound.destroy();
+    }
+    pairs.clear();
+    return count;
+  };
+
+  return {
+    port: address.port,
+    cut,
+    close: () =>
+      new Promise((resolve) => {
+        cut();
+        server.close(() => resolve());
+      }),
+  };
+}
+
+/**
+ * A live session's hook credential, read out of its own pty — the only place
+ * it is ever written down.
+ *
+ * `HIVE_RECEIVER_URL` is the bare origin (`envFor` hands the MCP host
+ * `running.origin`), so the hook route is appended by {@link raiseBlocked},
+ * and it works against whatever loopback port the server bound.
+ */
+async function hookEnvOf(
+  client: LiveClient,
+  sessionId: string,
+): Promise<{ receiverOrigin: string; hookToken: string }> {
+  client.notify(CH.ptyWrite, {
+    sessionId,
+    data: "printf 'HOOKENV=%s=%s\\n' \"$HIVE_RECEIVER_URL\" \"$HIVE_HOOK_TOKEN\"\r",
+  });
+  const envChunk = (await client.collectPtyUntil(sessionId, /HOOKENV=\S+=[0-9a-f]{64}/))
+    .map((frame) => frame.chunk)
+    .join('');
+  const env = /HOOKENV=(\S+?)=([0-9a-f]{64})/.exec(envChunk);
+  assert(env !== null, 'the session carries HIVE_RECEIVER_URL and HIVE_HOOK_TOKEN');
+  const [, receiverOrigin, hookToken] = env;
+  return { receiverOrigin, hookToken };
+}
+
+/** Raises a `PermissionRequest` for `sessionId` through the real hook receiver: a `session.blocked` row. */
+function raiseBlocked(
+  env: { receiverOrigin: string; hookToken: string },
+  sessionId: string,
+  toolUseId: string,
+): Promise<Response> {
+  return fetch(`${env.receiverOrigin}${HOOK_PATH}`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-hive-session': sessionId,
+      'x-hive-token': env.hookToken,
+    },
+    body: JSON.stringify({
+      hook_event_name: 'PermissionRequest',
+      session_id: sessionId,
+      tool_use_id: toolUseId,
+      tool_name: 'Bash',
+      tool_input: { command: 'true' },
+    }),
+  });
 }
 
 /**
@@ -830,22 +948,65 @@ interface RendererDriver {
  * different amount of time on a cold filesystem than on a warm one.
  */
 async function openRenderer(debugPort: number, what: string): Promise<RendererDriver> {
-  interface DevToolsTarget {
-    type?: string;
-    url?: string;
-    webSocketDebuggerUrl?: string;
-  }
+  const driver = await openCdpTarget(
+    debugPort,
+    what,
+    (candidate) => candidate.type === 'page' && (candidate.url ?? '').includes('index.html'),
+    {},
+  );
 
+  /*
+    The page target exists before `contextBridge` has run, so the first
+    `evaluate` can land on a window with no `window.hive` on it at all —
+    measured, as `TypeError: Cannot read properties of undefined (reading
+    'config')`, on the very first run of case 21a. Polled rather than slept
+    on for {@link waitForListener}'s reason, and waited for **here** rather
+    than in each case, so no case has to remember: a driver handed back by
+    this function has a bridge behind it.
+  */
+  const bridgeStart = Date.now();
+  while (Date.now() - bridgeStart < 60_000) {
+    if ((await driver.evaluate<string>('typeof window.hive')) === 'object') return driver;
+    await delay(100);
+  }
+  throw new Error(`${what} loaded a window, but window.hive never appeared on it`);
+}
+
+/**
+ * The same driver onto a spawned app's **main process**, over the Node
+ * inspector its `--inspect` flag opens (HIVE-160).
+ *
+ * For the one thing no renderer can reach: what `BrowserWindow.isFocused()`
+ * answers. A client whose window is not in front reports `focused: false` on
+ * every foreground report — correctly, and fatally for a case that needs it
+ * watching (case 21m). `includeCommandLineAPI` is what puts `require` in scope, so an
+ * expression can reach `electron`'s `app` and `BrowserWindow`.
+ */
+function openMainProcess(inspectPort: number, what: string): Promise<RendererDriver> {
+  return openCdpTarget(inspectPort, what, (candidate) => candidate.type === 'node', {
+    includeCommandLineAPI: true,
+  });
+}
+
+interface DevToolsTarget {
+  type?: string;
+  url?: string;
+  webSocketDebuggerUrl?: string;
+}
+
+async function openCdpTarget(
+  debugPort: number,
+  what: string,
+  pick: (candidate: DevToolsTarget) => boolean,
+  evaluateParams: Record<string, unknown>,
+): Promise<RendererDriver> {
   let target: DevToolsTarget | undefined;
   const start = Date.now();
   while (Date.now() - start < 60_000) {
     try {
       const listed = (await getJson(`http://127.0.0.1:${String(debugPort)}/json/list`)) as DevToolsTarget[];
       target = listed.find(
-        (candidate) =>
-          candidate.type === 'page' &&
-          typeof candidate.webSocketDebuggerUrl === 'string' &&
-          (candidate.url ?? '').includes('index.html'),
+        (candidate) => typeof candidate.webSocketDebuggerUrl === 'string' && pick(candidate),
       );
       if (target !== undefined) break;
     } catch {
@@ -854,7 +1015,7 @@ async function openRenderer(debugPort: number, what: string): Promise<RendererDr
     await delay(200);
   }
   if (target?.webSocketDebuggerUrl === undefined) {
-    throw new Error(`timed out waiting for ${what} to expose a renderer on CDP port ${String(debugPort)}`);
+    throw new Error(`timed out waiting for ${what} to expose a CDP target on port ${String(debugPort)}`);
   }
 
   const socket = new WebSocket(target.webSocketDebuggerUrl, { maxPayload: 64 * 1024 * 1024 });
@@ -904,7 +1065,7 @@ async function openRenderer(debugPort: number, what: string): Promise<RendererDr
           JSON.stringify({
             id,
             method: 'Runtime.evaluate',
-            params: { expression, awaitPromise: true, returnByValue: true },
+            params: { expression, awaitPromise: true, returnByValue: true, ...evaluateParams },
           }),
         );
       });
@@ -927,21 +1088,7 @@ async function openRenderer(debugPort: number, what: string): Promise<RendererDr
     },
   };
 
-  /*
-    The page target exists before `contextBridge` has run, so the first
-    `evaluate` can land on a window with no `window.hive` on it at all —
-    measured, as `TypeError: Cannot read properties of undefined (reading
-    'config')`, on the very first run of case 21a. Polled rather than slept
-    on for {@link waitForListener}'s reason, and waited for **here** rather
-    than in each case, so no case has to remember: a driver handed back by
-    this function has a bridge behind it.
-  */
-  const bridgeStart = Date.now();
-  while (Date.now() - bridgeStart < 60_000) {
-    if ((await driver.evaluate<string>('typeof window.hive')) === 'object') return driver;
-    await delay(100);
-  }
-  throw new Error(`${what} loaded a window, but window.hive never appeared on it`);
+  return driver;
 }
 
 /**
@@ -2785,41 +2932,8 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
 
         const sessionId = `read-state-${String(Date.now())}`;
         await a.spawnSession(seededProjectId, sessionId);
-
-        /*
-          The hook credential is the session's own, read out of its own pty —
-          the only place it is ever written down. `HIVE_RECEIVER_URL` is the
-          bare origin (`envFor` hands the MCP host `running.origin`), so the
-          hook route is appended here, and it works against whatever loopback
-          port the server bound.
-        */
-        a.notify(CH.ptyWrite, {
-          sessionId,
-          data: "printf 'HOOKENV=%s=%s\\n' \"$HIVE_RECEIVER_URL\" \"$HIVE_HOOK_TOKEN\"\r",
-        });
-        const envChunk = (await a.collectPtyUntil(sessionId, /HOOKENV=\S+=[0-9a-f]{64}/))
-          .map((frame) => frame.chunk)
-          .join('');
-        const env = /HOOKENV=(\S+?)=([0-9a-f]{64})/.exec(envChunk);
-        assert(env !== null, 'the session carries HIVE_RECEIVER_URL and HIVE_HOOK_TOKEN');
-        const [, receiverOrigin, hookToken] = env;
-
-        const raiseBlocked = (toolUseId: string): Promise<Response> =>
-          fetch(`${receiverOrigin}${HOOK_PATH}`, {
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              'x-hive-session': sessionId,
-              'x-hive-token': hookToken,
-            },
-            body: JSON.stringify({
-              hook_event_name: 'PermissionRequest',
-              session_id: sessionId,
-              tool_use_id: toolUseId,
-              tool_name: 'Bash',
-              tool_input: { command: 'true' },
-            }),
-          });
+        const env = await hookEnvOf(a, sessionId);
+        const block = (toolUseId: string): Promise<Response> => raiseBlocked(env, sessionId, toolUseId);
 
         /*
           Leg 1 — the bug itself. B is watching the session, A is not. The row
@@ -2832,7 +2946,7 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
         await landed(a);
         await landed(b);
 
-        const first = await raiseBlocked('toolu_live_154_1');
+        const first = await block('toolu_live_154_1');
         expect(first.status).toBe(204);
 
         await waitFor(
@@ -2860,7 +2974,7 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
         await landed(a);
         const seenBefore = rows(eventsA, CH.notificationsNew).length;
         const toastsBefore = rows(eventsA, CH.notificationsToast).length;
-        const second = await raiseBlocked('toolu_live_154_2');
+        const second = await block('toolu_live_154_2');
         expect(second.status).toBe(204);
 
         await waitFor(
@@ -2950,6 +3064,8 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
     let clientApp: ChildProcess | undefined;
     let clientRecord: ProcessRecord | undefined;
     let renderer: RendererDriver | undefined;
+    /** The attaching app's main process, for pinning its window's focus (HIVE-160). */
+    let clientMain: RendererDriver | undefined;
 
     /** The device the server minted for the client, through the real `--pair` CLI. */
     let credential: { id: string; token: string } | null = null;
@@ -3013,18 +3129,23 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       );
 
       const debugPort = await freePort();
+      // `--inspect` is Node's, opened on the main process and ignored by
+      // `parseInvocation` for the same reason the Chromium switch is.
+      const inspectPort = await freePort();
       const spawned = spawnApp(
-        [`--remote-debugging-port=${String(debugPort)}`],
+        [`--remote-debugging-port=${String(debugPort)}`, `--inspect=${String(inspectPort)}`],
         clientConfigPath,
         clientUserDataDir,
       );
       clientApp = spawned.child;
       clientRecord = spawned.record;
       renderer = await openRenderer(debugPort, 'the attaching app');
+      clientMain = await openMainProcess(inspectPort, 'the attaching app’s main process');
     }, 150_000);
 
     afterAll(async () => {
       renderer?.close();
+      clientMain?.close();
       onServer?.close();
       await stopApp(clientApp);
       await stopApp(serverApp);
@@ -4072,6 +4193,263 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
         120_000,
       );
     }, 300_000);
+
+    /**
+     * 21m. A reattached client says again what it has on screen, so a session
+     * every device is watching stays quiet (HIVE-160).
+     *
+     * ## What is being proved
+     *
+     * A reconnect is a new surface. The server released the old socket's
+     * foreground record when it died, and the client's main process starts a
+     * fresh `createForegroundStamp` that has nothing to re-send until its
+     * renderer reports. Since HIVE-154 the inbox row asks whether **every**
+     * surface is watching, so one returning client that stays silent about its
+     * stage turns the quiet path off for the whole fleet: every block on a
+     * session both devices are watching arrives unread and bumps the badge.
+     *
+     * What closes it is `useForegroundSession`, whose report is keyed on the
+     * reattach epoch (HIVE-150). Its unit spec proves the effect fires; only
+     * this proves the report crosses a real reattach — a fresh proxy, a fresh
+     * stamp, a fresh surface id — and lands where the row's question is asked.
+     *
+     * ## How
+     *
+     * Two surfaces, one session. A is a raw socket; B is the attaching app,
+     * routed through {@link openRelay} so its connection can be cut while both
+     * processes and the session stay up. The control leg runs first: with both
+     * watching, a block arrives already-read. Without it a green second leg
+     * could not be told apart from a case that never reached the quiet path at
+     * all — a window that is not in front reads as not watching, by design
+     * (`isForegroundFor`).
+     *
+     * Then the relay cuts B, B reattaches on its own, and a second block must
+     * arrive already-read with nothing clicked in between. (An earlier cut,
+     * before the session is on B's stage, is only how the session reaches B's
+     * store at all — see the comment at that cut.)
+     *
+     * Red with `reattachEpoch` taken out of `useForegroundSession`'s
+     * dependencies, which is the only reason it is worth running.
+     */
+    it('21m. a reattached client re-states its foreground, so the fleet stays quiet (HIVE-160)', async () => {
+      assert(renderer !== undefined, 'the client app must have a renderer');
+      assert(credential !== null, 'case 21b must have paired this client');
+      const view = renderer;
+      assert(clientMain !== undefined, 'the client app must have an inspectable main process');
+      const owner = clientMain;
+
+      const relay = await openRelay(serverPort);
+      // The relay closed if the attach itself fails, since the `finally` below
+      // is only reached once both are open.
+      const a = await openClient(`ws://127.0.0.1:${String(serverPort)}`, credential).catch(
+        async (cause: unknown) => {
+          await relay.close();
+          throw cause;
+        },
+      );
+      const sessionId = `reattach-foreground-${String(Date.now())}`;
+      try {
+        const events = a.collectEvents();
+        const rows = (channel: Channel): EventFrame[] =>
+          events().filter((frame) => frame.channel === channel);
+        // Frames on one socket are handled in order, so a call's answer means
+        // every notify sent before it on that socket has landed (case 28).
+        const landedA = async (): Promise<void> => {
+          expect((await a.call(CH.configGet, undefined)).kind).toBe('result');
+        };
+        const landedB = async (): Promise<void> => {
+          await view.evaluate('window.hive.config.get()');
+        };
+        const nextRow = async (toolUseId: string, what: string): Promise<HiveNotification> => {
+          const before = rows(CH.notificationsNew).length;
+          expect((await raiseBlocked(env, sessionId, toolUseId)).status).toBe(204);
+          await waitFor(() => rows(CH.notificationsNew).length > before, what);
+          return rows(CH.notificationsNew).at(-1)!.payload as HiveNotification;
+        };
+        const cutAndReattach = async (what: string): Promise<void> => {
+          const before = (await view.evaluate<RemoteLinkStatus[]>('window.__link160')).length;
+          expect(relay.cut(), `B’s connection through the relay (${what})`).toBeGreaterThan(0);
+          await waitForAsync(
+            async () => {
+              const since = (await view.evaluate<RemoteLinkStatus[]>('window.__link160')).slice(before);
+              const dropped = since.findIndex((status) => status.state === 'reconnecting');
+              return dropped >= 0 && since.slice(dropped).some((status) => status.state === 'attached');
+            },
+            `${what}: B to drop and reattach through the relay with nobody asking it to`,
+            60_000,
+          );
+        };
+        /*
+          B's window counted as in front, pinned from B's main process.
+          `isForegroundFor` reads a socket's own `focused`, and B's is
+          `BrowserWindow.isFocused()`, which a window behind the terminal
+          running this suite answers `false`. Raising it for real was tried —
+          `app.focus({ steal: true })` — and did not hold through a leg: the
+          window read focused, then not, before the row was raised.
+
+          So the answer is pinned on the window objects instead, and nobody's
+          front app is taken. What is under test is whether a report crosses
+          the reattach at all; how a report is stamped with focus is
+          `remote-foreground.ts`'s own unit spec, and pinning that one input
+          leaves everything this case asserts on real.
+        */
+        const pinFocus = (): Promise<boolean> =>
+          owner.evaluate<boolean>(`(() => {
+            const { BrowserWindow } = require('electron');
+            for (const window of BrowserWindow.getAllWindows()) window.isFocused = () => true;
+            return BrowserWindow.getAllWindows().some((window) => window.isFocused());
+          })()`);
+
+        /*
+          Off the direct port 21l left B on, and back on through the relay.
+          Every link status is kept rather than the last, because a cut goes
+          `reconnecting` → `attached` inside one backoff second, faster than a
+          poll can promise to catch the middle of it.
+        */
+        const local = await view.evaluate<SetRemoteResult>(
+          "window.hive.config.setRemote({ mode: 'local' })",
+        );
+        expect(local.config.remote.mode).toBe('local');
+        await view.evaluate(
+          'window.__link160 = []; window.hive.remote.onLinkStatus((status) => { window.__link160.push(status); }); true',
+        );
+        const viaRelay = await bounded(
+          view.evaluate<SetRemoteResult>(
+            `window.hive.config.setRemote({ mode: 'remote', host: '127.0.0.1', port: ${String(relay.port)} })`,
+          ),
+          60_000,
+          'setRemote through the relay',
+        );
+        expect(viaRelay.switched).toMatchObject({ ok: true });
+
+        /*
+          The session, then a first cut to bring it into B's store. A switch
+          made through the bridge, as above, does not hydrate the renderer:
+          `applyModeChange` runs from the Settings pane that asked for it, and
+          nothing asked here. A reattach does hydrate, from the snapshot its
+          link status carries (`use-remote-link.ts`), with this session marked
+          live. It is also a first run of the path under test, before anything
+          depends on it.
+        */
+        await a.spawnSession(servedProjectId, sessionId);
+        const env = await hookEnvOf(a, sessionId);
+        await cutAndReattach('the first cut, which brings the session into B’s rail');
+
+        /*
+          B puts the session on its stage the way a person does: a click on its
+          row. Clicked until the row says it is current, because the row only
+          exists once the snapshot has hydrated.
+
+          Settings first, closed if open. Case 21h opens it for real, and its
+          own close is best-effort — the first button whose label mentions
+          "close", which need not be Settings' own. An open Settings is a stage
+          with no terminal on it (`resolveView`), so this window would report
+          `null` whatever row was current behind it.
+        */
+        await view.evaluate(
+          `document.querySelector('button[aria-label="Close settings"]')?.click(); true`,
+        );
+        expect(await pinFocus(), 'B’s window pinned as in front').toBe(true);
+        const staged = waitForAsync(
+          () =>
+            view.evaluate<boolean>(`(() => {
+              const row = [...document.querySelectorAll('button')].find((button) =>
+                (button.textContent ?? '').includes(${JSON.stringify(sessionId)}),
+              );
+              if (row === undefined) return false;
+              if (row.getAttribute('aria-current') === 'true') return true;
+              row.click();
+              return false;
+            })()`),
+          'the attaching app to put the session on its stage',
+          60_000,
+        );
+        await staged.catch(async (cause: unknown) => {
+          const page = await view.evaluate<string>('document.body.innerText.slice(0, 1500)');
+          const history = await a.call(CH.sessionHistory, undefined);
+          throw new Error(
+            `${String(cause)}\n--- the server's session:history:\n${JSON.stringify(history)}` +
+              `\n--- the attaching app's page text:\n${page}`,
+          );
+        });
+
+        a.notify(CH.uiForeground, { terminalId: sessionId, focused: true });
+        await landedA();
+        /*
+          The renderer reports from an effect, which runs after the commit that
+          marked the row current. The settle covers that; the call behind it is
+          the ordering barrier on B's own socket.
+        */
+        await delay(500);
+        await landedB();
+
+        // Leg 1, the control: both surfaces watching, so the fleet is quiet.
+        const control = await nextRow('toolu_live_160_1', 'the control row');
+        expect(control.unread, 'with both surfaces watching, the control row arrived unread').toBe(
+          false,
+        );
+
+        // Leg 2: the relay drops B, and B comes back on its own.
+        await cutAndReattach('the second cut');
+
+        // Nothing on B changed: the same row is still current, and nobody clicked.
+        expect(
+          await view.evaluate<boolean>(
+            `[...document.querySelectorAll('button[aria-current="true"]')].some((button) => (button.textContent ?? '').includes(${JSON.stringify(sessionId)}))`,
+          ),
+        ).toBe(true);
+        await delay(500);
+        await landedB();
+
+        const afterReattach = await nextRow('toolu_live_160_2', 'the row raised after the reattach');
+        measurements.push({
+          case: '21m. HIVE-160 foreground after reattach',
+          control: control.unread,
+          afterReattach: afterReattach.unread,
+        });
+        expect(
+          afterReattach.unread,
+          'a block on a session both surfaces are watching arrived unread after B reattached — B never re-stated its foreground',
+        ).toBe(false);
+      } finally {
+        /*
+          Every step guarded, and the relay closed last whatever happened
+          above it. An unguarded step that threw here — B's inspector gone
+          with the app, say — would replace the failure the case actually hit
+          with its own, and skip every step after it.
+        */
+        const quietly = async (step: () => unknown): Promise<void> => {
+          try {
+            await step();
+          } catch {
+            // Cleanup only; the case's own outcome is the one worth reporting.
+          }
+        };
+        await quietly(() =>
+          owner.evaluate(
+            "(() => { for (const window of require('electron').BrowserWindow.getAllWindows()) delete window.isFocused; return true; })()",
+          ),
+        );
+        await quietly(() => a.notify(CH.ptyWrite, { sessionId, data: 'exit\n' }));
+        await quietly(() => a.close());
+        /*
+          Back on the direct port, so a case added after this one inherits the
+          attachment 21l left rather than one through a relay that no longer
+          exists.
+        */
+        await quietly(() => view.evaluate("window.hive.config.setRemote({ mode: 'local' })"));
+        await quietly(() =>
+          bounded(
+            view.evaluate(
+              `window.hive.config.setRemote({ mode: 'remote', host: '127.0.0.1', port: ${String(serverPort)} })`,
+            ),
+            60_000,
+            'setRemote back to the direct port',
+          ),
+        );
+        await relay.close();
+      }
+    }, 240_000);
   });
 
   describe('a call that never settles (HIVE-144)', () => {
