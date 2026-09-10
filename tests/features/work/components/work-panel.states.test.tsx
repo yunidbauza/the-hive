@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { WorkPanel } from '@features/work/components/work-panel';
 import { useHiveStore } from '@stores/hive-store';
+import { useUiStore } from '@stores/ui-store';
 import type { JiraIssue } from '@shared/jira-contract';
 
 /**
@@ -16,6 +17,7 @@ import type { JiraIssue } from '@shared/jira-contract';
  */
 
 const refreshTickets = vi.fn(() => Promise.resolve());
+const searchTickets = vi.fn(() => Promise.resolve());
 
 const issue = (over: Partial<JiraIssue> = {}): JiraIssue => ({
   key: 'HIVE-1',
@@ -42,6 +44,106 @@ beforeEach(() => {
 
 afterEach(() => {
   state().reset();
+  useUiStore.getState().reset();
+});
+
+/**
+ * A mode switch while a search is on screen (HIVE-152).
+ *
+ * The panel's `searching` flag is derived from the **term**, which lives in
+ * `ui-store`, while the results live in `hive-store`. `clearModeEntities` has
+ * to empty both: emptying only the results leaves `searching` true over
+ * `results === null`, `error === null`, `tooShort === false` — the skeleton
+ * branch — and nothing re-issues the search, because the debounce's deps did
+ * not change and the panel never unmounts.
+ *
+ * There is no way out of that state either. After a switch `ticketSource` is
+ * `loading`, which is the state that hides "Try again" and disables
+ * pull-to-refresh, so the search box is the only affordance and it is showing
+ * a term whose answer will never arrive.
+ */
+describe('a mode switch while a search is on screen', () => {
+  // Scoped here, not file-wide: only this case advances the search debounce.
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('does not strand the panel on a skeleton that never resolves', async () => {
+    useHiveStore.setState({ searchTickets });
+    useUiStore.getState().setWorkSearchTerm('hero');
+    useHiveStore.setState({
+      ticketSearch: {
+        term: 'hero',
+        // `Ticket`, not `JiraIssue` — the search slice holds what the panel
+        // renders, already mapped.
+        results: [
+          {
+            key: 'OLD-1',
+            status: 'In Progress',
+            statusCategory: 'in-progress' as const,
+            title: 'from the departed machine',
+          },
+        ],
+        searching: false,
+        error: null,
+        capped: false,
+        tooShort: false,
+      },
+    });
+
+    render(<WorkPanel />);
+    expect(screen.getByText('OLD-1')).toBeInTheDocument();
+
+    // The panel's own mount effect has already swept once, so the assertion
+    // below has to be about a *new* call — without this clear it passes on the
+    // mount's, and the kick could be deleted with the test still green.
+    refreshTickets.mockClear();
+
+    await act(async () => {
+      state().applyModeChange({ to: 'local' });
+      await Promise.resolve();
+    });
+
+    // The departed machine's hit is gone and the search branch is exited, so
+    // the term no longer holds the panel hostage.
+    expect(screen.queryByText('OLD-1')).not.toBeInTheDocument();
+    expect(useUiStore.getState().workSearchTerm).toBe('');
+
+    /*
+      A skeleton is still on screen, and that is the correct state now — but
+      only because a read is genuinely on its way. `applyModeChange` kicks one
+      for the machine just joined, which is the whole reason it drops the
+      in-flight handles.
+
+      The distinction is the entire finding: before the fix the same three
+      pulsing cards meant a search whose answer would never arrive, with no
+      "Try again" and no pull-to-refresh to escape it. Asserting the refresh
+      was requested is what separates "loading" from "stranded" — they are
+      pixel-identical and only one of them ends.
+    */
+    expect(refreshTickets).toHaveBeenCalled();
+
+    /*
+      And a debounce already scheduled when the switch landed does not fire.
+
+      Worth asserting rather than assuming: the search row re-runs its effect
+      when the term changes, so clearing the term both cancels the pending
+      timer in its cleanup and takes the `term === ''` branch. Had only the
+      results been cleared, that timer would still have been out and would
+      have re-asked the departed machine's question 300ms later, writing
+      `searching: true` straight back into the slice this switch just emptied.
+    */
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+      await Promise.resolve();
+    });
+
+    expect(searchTickets).not.toHaveBeenCalled();
+  });
 });
 
 /**
