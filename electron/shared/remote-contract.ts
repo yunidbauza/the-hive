@@ -53,11 +53,11 @@ export const REMOTE_PROTOCOL_VERSION = 2;
  * promote a `notify` to a `call` and the typing path acquires a round trip.
  *
  * - `call` — request/response. The client asks, the server answers with
- *   `result` or `error`. 99 channels.
+ *   `result` or `error`. 100 channels.
  * - `notify` — fire and forget, client to server, ordered per session. 6
  *   channels. Ordering between a `pty:write` and a `pty:resize` is observable,
  *   so a transport may not reorder them.
- * - `event` — server to client push. 25 channels, including `pty:data`, the
+ * - `event` — server to client push. 26 channels, including `pty:data`, the
  *   only hot path.
  * - `attach` — the handshake, and the only frame that may precede a version
  *   check. Exactly one per connection.

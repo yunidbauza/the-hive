@@ -37,7 +37,6 @@ const readLocalRemote = vi.fn(() => ({
 }));
 vi.mock('../../../../electron/main/ipc/get-remote', () => ({ readLocalRemote }));
 
-
 /**
  * `registerRemoteProxy`, the other end of `registerIpcHandlers` (HIVE-144).
  *
@@ -830,7 +829,7 @@ describe('registerRemoteProxy', () => {
 
     resetRemoteProxy();
 
-    // 105 (99 call + 6 notify), the same literal `records every binding`
+    // 106 (100 call + 6 notify), the same literal `records every binding`
     // pins — not `callChannels.length + notifyChannels.length`, which would
     // recompute its own expectation from the same source the code under test
     // reads and could never catch a channel silently lost between the two.

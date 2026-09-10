@@ -1204,7 +1204,19 @@ describe('ServerModeGroup', () => {
       `attachedServerName` arrives a tick late too, so `attached` is false until
       it does — and the correction arrives with the read.
     */
-    it('falls back to the proxied block until the local read lands', () => {
+    /*
+      **Absent, not fallen back, before the read lands.**
+
+      This case asserted the opposite for one review round, on the belief that an
+      attached window's first render has `attached === false` anyway because
+      `attachedServerName` arrived a tick late. That was true of the `app:info`
+      read it used to be, and false since HIVE-150 made `useAttachedServer` a
+      synchronous store read — so `attached` is true on the first render while
+      `localRemote` is still `null`, and a fallback painted the server's `''`
+      host and default port directly under copy claiming they came from this
+      machine. Settings unmounts, so that was every open, not once per launch.
+    */
+    it('shows no address fields, and says so, before the local read lands', () => {
       render(
         <ServerModeGroup
           enabled={false}
@@ -1218,7 +1230,89 @@ describe('ServerModeGroup', () => {
         />,
       );
 
-      expect(screen.getByLabelText(/server address/i)).toHaveValue('server-side.ts.net');
+      expect(screen.queryByLabelText(/server address/i)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/^port$/i)).not.toBeInTheDocument();
+      expect(screen.getByText(/reading this machine/i)).toBeInTheDocument();
+      // And never the server's value, which is the whole point of the absence.
+      expect(screen.queryByDisplayValue('server-side.ts.net')).not.toBeInTheDocument();
+    });
+
+    /*
+      Committing while attached — the behaviour this story newly enables, and
+      which nothing exercised until the whole-branch review pointed out that
+      both of its defects lived here.
+
+      The two blocks are made to disagree on the port in the way that actually
+      happens: this window dials 9000, the server's own `remote.port` is the
+      default 7433, and the user types 7433. Guarded against `remote` that
+      returned early and dropped the write, while the draft kept showing the
+      value the file did not hold.
+    */
+    it('commits a port that matches the server’s but not this machine’s', async () => {
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={{ mode: 'local', host: 'studio.tail1234.ts.net', port: 7433 }}
+          localRemote={{ mode: 'remote', host: 'mini.tail1234.ts.net', port: 9000 }}
+          attachedServer={null}
+          attachedServerName="mini"
+          serving={false}
+        />,
+      );
+
+      const port = screen.getByLabelText(/^port$/i);
+      await userEvent.clear(port);
+      await userEvent.type(port, '7433');
+      await userEvent.tab();
+
+      expect(setRemoteConfig).toHaveBeenCalledWith({ port: 7433 });
+    });
+
+    it('commits an address that matches the server’s but not this machine’s', async () => {
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={{ mode: 'local', host: 'studio.tail1234.ts.net', port: 7433 }}
+          localRemote={{ mode: 'remote', host: 'mini.tail1234.ts.net', port: 9000 }}
+          attachedServer={null}
+          attachedServerName="mini"
+          serving={false}
+        />,
+      );
+
+      const address = screen.getByLabelText(/server address/i);
+      await userEvent.clear(address);
+      await userEvent.type(address, 'studio.tail1234.ts.net');
+      await userEvent.tab();
+
+      expect(setRemoteConfig).toHaveBeenCalledWith({ host: 'studio.tail1234.ts.net' });
+    });
+
+    /* Unchanged against this machine's own block is still inert, as before. */
+    it('writes nothing when the value already matches this machine’s block', async () => {
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={{ mode: 'local', host: 'studio.tail1234.ts.net', port: 7433 }}
+          localRemote={{ mode: 'remote', host: 'mini.tail1234.ts.net', port: 9000 }}
+          attachedServer={null}
+          attachedServerName="mini"
+          serving={false}
+        />,
+      );
+
+      const port = screen.getByLabelText(/^port$/i);
+      await userEvent.clear(port);
+      await userEvent.type(port, '9000');
+      await userEvent.tab();
+
+      expect(setRemoteConfig).not.toHaveBeenCalled();
     });
 
     /**

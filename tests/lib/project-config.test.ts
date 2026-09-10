@@ -16,6 +16,7 @@ import {
   projectContainerised,
   readAppInfo,
   readLocalRemote,
+  setRemoteConfig,
   projectConfigSnapshot,
   reloadProjectConfig,
   renameProjectInConfig,
@@ -736,6 +737,93 @@ describe('story 107 verbs', () => {
       config: { getRemote: vi.fn().mockRejectedValue(new Error('channel gone')) },
     };
     await expect(readLocalRemote()).resolves.toBeNull();
+  });
+});
+
+/**
+ * `setRemoteConfig`, and specifically **which snapshot it publishes** (HIVE-149).
+ *
+ * `config:set-remote` is `PROCESS_LOCAL`, so main answers it here and hands back
+ * *this* machine's `ConfigSnapshot`. Installing that is right when a mode
+ * changed. It is wrong for a write-only commit made while a socket is open —
+ * reachable only since HIVE-149 un-hid the address fields while attached —
+ * because it would republish this Mac's projects, Jira and Slack values as the
+ * whole app's config while every other pane's writes still proxy to the server,
+ * with nothing to put the server's snapshot back until a Reload or a detach.
+ *
+ * The defect was found by the whole-branch review rather than by any test, which
+ * is why these exist.
+ */
+describe('setRemoteConfig', () => {
+  const attachedInfo = { attachedServerName: 'mini' };
+  const localSnapshot = snapshot([{ id: 'on-this-mac', status: 'ok' }]);
+  const serversSnapshot = snapshot([{ id: 'on-the-server', status: 'ok' }]);
+
+  /** A bridge that is attached, and whose `setRemote` answers locally. */
+  function attachedBridge(result: {
+    switched: unknown;
+    config: ConfigSnapshot;
+    changed: unknown;
+  }) {
+    (window as { hive?: unknown }).hive = {
+      appInfo: vi.fn().mockResolvedValue(attachedInfo),
+      config: {
+        get: vi.fn().mockResolvedValue(serversSnapshot),
+        reload: vi.fn().mockResolvedValue(serversSnapshot),
+        setRemote: vi.fn().mockResolvedValue(result),
+      },
+    };
+  }
+
+  it('keeps the server’s snapshot on a write-only commit while attached', async () => {
+    attachedBridge({ switched: { ok: true }, config: localSnapshot, changed: null });
+    // The proxied snapshot, installed the way boot installs it.
+    await loadProjectConfig();
+    expect(projectConfigSnapshot()).toBe(serversSnapshot);
+
+    await setRemoteConfig({ host: 'mini.tail1234.ts.net' });
+
+    // The write happened; what must not happen is republishing this machine's
+    // config as the app's, while the socket is still open.
+    expect(projectConfigSnapshot()).toBe(serversSnapshot);
+  });
+
+  /*
+    The other half of the gate, so it cannot be satisfied by never installing:
+    a switch reports `changed`, and there the local snapshot is exactly what the
+    app should now be looking at.
+  */
+  it('installs the local snapshot when the mode actually changed', async () => {
+    attachedBridge({
+      switched: { ok: true },
+      config: localSnapshot,
+      changed: { to: 'local' },
+    });
+    await loadProjectConfig();
+    expect(projectConfigSnapshot()).toBe(serversSnapshot);
+
+    await setRemoteConfig({ mode: 'local' });
+
+    expect(projectConfigSnapshot()).toBe(localSnapshot);
+  });
+
+  it('installs on a write-only commit when this window is not attached', async () => {
+    (window as { hive?: unknown }).hive = {
+      appInfo: vi.fn().mockResolvedValue({ attachedServerName: null }),
+      config: {
+        get: vi.fn().mockResolvedValue(serversSnapshot),
+        reload: vi.fn().mockResolvedValue(serversSnapshot),
+        setRemote: vi
+          .fn()
+          .mockResolvedValue({ switched: { ok: true }, config: localSnapshot, changed: null }),
+      },
+    };
+    await loadProjectConfig();
+
+    await setRemoteConfig({ host: 'mini.tail1234.ts.net' });
+
+    // Not attached, the returned snapshot is the only one there is.
+    expect(projectConfigSnapshot()).toBe(localSnapshot);
   });
 });
 

@@ -3420,10 +3420,25 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
         `127.0.0.1` because that is what case 21d dialled — read against the
         server's own port rather than a literal, so the two cannot drift.
       */
+      /*
+        Waited for rather than read once: the field is populated by an async
+        `config:get-remote`, and until it answers the pane renders the pending
+        line instead of the fields. It happens to have answered already by this
+        point today, which is exactly the kind of incidental safety worth not
+        depending on.
+      */
+      await untilUi(
+        `${FIELD('Server address')}?.value === '127.0.0.1'`,
+        "the address field to show the host this window dialled, read from its own config",
+      );
+      await untilUi(
+        `${FIELD('Port')}?.value === '${String(serverPort)}'`,
+        'the port field to show the port this window dialled',
+      );
       expect(await ui.evaluate<boolean>(addressField)).toBe(true);
-      expect(await ui.evaluate<string>(`${FIELD('Server address')}.value`)).toBe('127.0.0.1');
-      expect(await ui.evaluate<string>(`${FIELD('Port')}.value`)).toBe(String(serverPort));
-      expect(attachedText).toMatch(/read from this machine/i);
+      expect(await ui.evaluate<string>('document.body.innerText')).toMatch(
+        /read from this machine/i,
+      );
       /*
         **Forget is present while attached, and that is HIVE-153's fix rather
         than a regression in this one.**

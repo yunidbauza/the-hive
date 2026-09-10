@@ -470,7 +470,15 @@ export function useLocalRemote(): RemoteConfig | null {
 
     let cancelled = false;
     void readLocalRemote().then((block) => {
-      if (!cancelled) setLocal(block);
+      /*
+        A failed read keeps the last good block rather than nulling it, which is
+        what `readLocalRemote`'s own doc comment promises ("a caller shows what
+        it already had rather than an address this machine never stated"). This
+        effect re-fires on every new snapshot, so without the `??` one failed
+        *re*-read after a good one would drop the pane back to no answer — and
+        the address fields with it.
+      */
+      if (!cancelled) setLocal((previous) => block ?? previous);
     });
 
     return () => {

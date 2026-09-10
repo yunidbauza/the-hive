@@ -215,7 +215,7 @@ export function AdvancedSection() {
   */
   const serving = useServing();
   /*
-    The fourth, and the only one that is config rather than status (HIVE-149):
+    The only one of these that is config rather than runtime status (HIVE-149):
     this machine's own `remote` block, for the two address fields whose subject
     is this window. `snapshot.remote` below cannot answer them while attached,
     because that snapshot comes from the server.
@@ -397,9 +397,9 @@ export function AdvancedSection() {
         `attachedServerName` comes from the runtime, not the snapshot beside
         it (HIVE-144, Ruling 29) — see `ServerModeGroupProps`' own two doc
         comments for why the attach half needs both sources and which question
-        each one answers, and `useLocalRemote` is the third and newest source
-        (HIVE-149): the address fields describe this window, which
-        `snapshot.remote` cannot say while attached. `useAttachedServer` is the same hook the header chip
+        each one answers. `useLocalRemote` is the newest of them (HIVE-149):
+        the address fields describe this window, which `snapshot.remote` cannot
+        say while attached. `useAttachedServer` is the same hook the header chip
         reads, so the pane and the chip can never disagree about whether a
         socket is open.
       */}

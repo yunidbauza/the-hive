@@ -13,7 +13,6 @@ import { createRemoteToasts, type RemoteToasts } from '../notifications/remote-t
 import { checkForUpdatesInteractively, updateStatus } from '../updates';
 
 
-
 import { createBindings, type Bindings } from './bindings';
 import type { Broadcaster } from './broadcaster';
 import { readLocalRemote } from './get-remote';

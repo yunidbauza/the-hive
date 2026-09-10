@@ -135,6 +135,14 @@ const ATTACH_PORT_INVALID = 'A port from 1 to 65535.';
  */
 const ATTACH_TARGET_HINT =
   "Where this window dials, read from this machine's own config — not the server's. A change applies the next time it attaches.";
+/**
+ * The same two fields, before the read they depend on has answered (HIVE-149).
+ *
+ * Only ever seen while attached, and only for one IPC hop. It says *reading*
+ * rather than showing a value, because the only value available in that window
+ * is the server's, and stating it would contradict the sentence above.
+ */
+const ATTACH_TARGET_PENDING = "Reading this machine's own address…";
 
 /**
  * The interlock's two sentences (HIVE-144 review, I3).
@@ -534,21 +542,29 @@ export function ServerModeGroup({
   }
 
   /*
-    Which block the address fields describe (HIVE-149).
+    Which block the address fields describe (HIVE-149), and `null` while
+    attached until the answer has arrived.
 
-    `localRemote` whenever it has landed, and the proxied `remote` until then.
-    Falling back rather than rendering empty fields is deliberate: in local mode
-    the two are the same file read twice, so the fallback is exact; while
-    attached it is briefly the server's, which is what this pane showed on its
-    first render before this story too, because `attachedServerName` also
-    arrives a tick late and `attached` is false until it does. The correction
-    lands with the read, and the re-seed below applies it to the drafts.
+    **Not `localRemote ?? remote`.** That fallback was written on the belief
+    that an attached window's first render has `attached === false` anyway,
+    because `attachedServerName` arrived a tick late — true when
+    `useAttachedServer` read `app:info`, and false since HIVE-150 rewrote it to
+    a synchronous store read of a link main pushed at attach time. So
+    `attached` is true on the *first* render, and a fallback would paint the
+    server's host and port — `''` and 7433 on a real client — directly under
+    `ATTACH_TARGET_HINT`'s claim that these came from this machine. Settings
+    unmounts, so that is every time the pane is opened, not once per launch.
+
+    While attached the local block is therefore the only authority, and its
+    absence is rendered as absence. Not attached, `remote` *is* this machine's
+    own file (`config:get` is answered here), so there is nothing to wait for
+    and no state where these fields are unavailable.
   */
-  const target = localRemote ?? remote;
+  const target = attached ? localRemote : remote;
 
-  const [remoteHostDraft, setRemoteHostDraft] = useState(target.host);
+  const [remoteHostDraft, setRemoteHostDraft] = useState(target?.host ?? '');
   const [remoteHostInvalid, setRemoteHostInvalid] = useState(false);
-  const [remotePortDraft, setRemotePortDraft] = useState(String(target.port));
+  const [remotePortDraft, setRemotePortDraft] = useState(String(target?.port ?? DEFAULT_REMOTE.port));
   const [remotePortInvalid, setRemotePortInvalid] = useState(false);
   /** The last attach attempt's outcome, or `null` before one has been made. */
   const [switchResult, setSwitchResult] = useState<SwitchOutcome | null>(null);
@@ -560,19 +576,22 @@ export function ServerModeGroup({
     would otherwise show a value that no longer matches the file.
 
     Watches `target` rather than `remote` since HIVE-149, which gives it a
-    second job: `localRemote` arrives asynchronously, so the first render of an
-    attached window seeds from the proxied block and this is what replaces it
-    with this machine's own once the read lands. Same mechanism, one more
-    source.
+    second job: while attached, `target` starts `null` and becomes this
+    machine's block when the read lands, and this is what seeds the drafts from
+    it. A `null` on either side is not a value to seed from — it is the state
+    where the fields are not rendered at all — so it is tracked but never
+    written into a draft.
   */
   const [seenTarget, setSeenTarget] = useState(target);
-  const targetChanged = seenTarget.host !== target.host || seenTarget.port !== target.port;
+  const targetChanged = seenTarget?.host !== target?.host || seenTarget?.port !== target?.port;
   if (targetChanged) {
     setSeenTarget(target);
-    setRemoteHostDraft(target.host);
-    setRemoteHostInvalid(false);
-    setRemotePortDraft(String(target.port));
-    setRemotePortInvalid(false);
+    if (target !== null) {
+      setRemoteHostDraft(target.host);
+      setRemoteHostInvalid(false);
+      setRemotePortDraft(String(target.port));
+      setRemotePortInvalid(false);
+    }
   }
 
   /**
@@ -593,7 +612,19 @@ export function ServerModeGroup({
     }
     setRemoteHostInvalid(false);
     setRemoteHostDraft(next);
-    if (next === remote.host) return;
+    /*
+      Against `target`, never `remote` (HIVE-149).
+
+      This is the "did anything actually change?" guard, so it has to compare
+      the typed value with the one the field was *showing*. While attached those
+      are different blocks: `remote` is the server's, so typing this machine's
+      real address — or, far more likely, typing the server's default 7433 into
+      the port — matched the wrong block and returned early. The write was
+      dropped, and because the draft had already been set the field went on
+      showing a value `config.json` did not hold, which is the exact defect this
+      story set out to remove.
+    */
+    if (target === null || next === target.host) return;
     /*
       Write only, and now actually so (HIVE-144 review, I6).
 
@@ -626,7 +657,9 @@ export function ServerModeGroup({
     }
     setRemotePortInvalid(false);
     setRemotePortDraft(String(next));
-    if (next === remote.port) return;
+    // Against `target` for the reason `commitRemoteHost` states above, and this
+    // is the field where it bites: the server's own port is the default 7433.
+    if (target === null || next === target.port) return;
     void setRemoteConfig({ port: next });
   };
 
@@ -682,6 +715,14 @@ export function ServerModeGroup({
       */
       if (changed) applyModeChange(changed);
       if (!switched.ok) {
+        /*
+          `remote` and not `target` here, and deliberately so (HIVE-149): this
+          handler is only reachable with `attached === false` — Attach is hidden
+          otherwise — and a refused switch leaves it that way, so `remote` is
+          this machine's own file, which is what a refusal should restore the
+          drafts to. `target` would be the same object; naming `remote` says
+          which fact is being relied on.
+        */
         setRemoteHostDraft(remote.host);
         setRemotePortDraft(String(remote.port));
       }
@@ -1003,8 +1044,20 @@ export function ServerModeGroup({
             answered by this process in either mode, so the controls render
             unconditionally — which is what the hide was standing in for.
           */}
-          {attached ? <p className="text-[11.5px] text-muted">{ATTACH_TARGET_HINT}</p> : null}
+          {attached ? (
+            <p className="text-[11.5px] text-muted">
+              {target === null ? ATTACH_TARGET_PENDING : ATTACH_TARGET_HINT}
+            </p>
+          ) : null}
 
+          {/*
+            Absent rather than fallen back, while attached and before the read
+            lands — see `target`'s own comment. The window is one IPC hop and
+            only exists while attached; not attached, `target` is `remote` and
+            is never `null`, so these render on the first frame as they always
+            did.
+          */}
+          {target === null ? null : (
           <div className="grid grid-cols-[1fr_96px] gap-2">
             <TextField
               label="Server address"
@@ -1036,6 +1089,7 @@ export function ServerModeGroup({
               hint={remotePortInvalid ? ATTACH_PORT_INVALID : ATTACH_PORT_HINT}
             />
           </div>
+          )}
 
           {/*
             Fix round 1, item 3 (IMPORTANT). The pairing fields and Forget
