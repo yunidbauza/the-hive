@@ -612,7 +612,11 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
         announceDismissed: () => undefined,
         now: () => Date.now(),
       });
-      const notifier = createNotifier({ hub, isForeground: () => false });
+      const notifier = createNotifier({
+        hub,
+        isForeground: () => false,
+        isForegroundEverywhere: () => false,
+      });
 
       /**
        * A real tracker, one per run. `receiver.ts`'s own `HOOK_STATUS` is a

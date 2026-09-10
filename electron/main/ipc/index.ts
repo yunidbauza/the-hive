@@ -1706,7 +1706,7 @@ export function registerIpcHandlers(
     subjectName: (terminalId) => sessionNames.get(terminalId),
   });
 
-  const notifier = createNotifier({ hub, isForeground });
+  const notifier = createNotifier({ hub, isForeground, isForegroundEverywhere });
 
   /**
    * Ledger entries into inbox cards (HIVE-118).

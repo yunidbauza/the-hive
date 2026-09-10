@@ -69,6 +69,12 @@ import type { NotificationHub } from './hub';
  * the inbox row exists for anyone who scrolls back but the toast, the dock
  * bounce and the unread badge stay quiet. `reevaluateForeground` below is
  * the other half — the re-arm when the user looks away while still blocked.
+ *
+ * With more than one surface attached (HIVE-154) the one predicate became
+ * two. `isForegroundEverywhere` asks whether *every* surface is watching —
+ * the row's question: may it be written already-read, may it be swept.
+ * `isForeground` asks whether *any* surface is — the re-arm's question: is
+ * somebody still attending, so a promotion would nag them.
  */
 
 export interface NotifierOptions {
@@ -83,6 +89,14 @@ export interface NotifierOptions {
    * `createNotificationHub` call site in `ipc/index.ts`.
    */
   isForeground: (entityId: string) => boolean;
+  /**
+   * The fleet question (HIVE-154): is **every** attended surface watching this
+   * session. The drain uses it to tell "the sweep just took this row" from
+   * "some surfaces are watching and some are not" — the first releases a held
+   * arrival row, the second must keep holding it, because the row is still
+   * sitting `unread: false` in an inbox one device has not looked at.
+   */
+  isForegroundEverywhere: (entityId: string) => boolean;
 }
 
 export interface Notifier {
@@ -188,10 +202,10 @@ const PLAIN_COPY: Partial<
  * The kinds that **arriving at the session** finishes.
  *
  * Both say the same thing in two registers — *the session is yours, come
- * back* — so the moment its terminal is in front of the user the row has
- * delivered itself and is nothing but a chore to clear. That is what
- * `isForeground` means, and the hub is asked to sweep them on every foreground
- * change (see `reevaluateForeground`).
+ * back* — so the moment its terminal is in front of every attended surface
+ * the row has delivered itself and is nothing but a chore to clear. That is
+ * what `isForegroundEverywhere` means, and the hub is asked to sweep them on
+ * every foreground change (see `reevaluateForeground`).
  *
  * `session.blocked` is deliberately absent, and the difference is not one of
  * degree. A block says *the session is stopped until you act*, and looking at
@@ -324,7 +338,7 @@ function stillRelevant(
 }
 
 export function createNotifier(options: NotifierOptions): Notifier {
-  const { hub, isForeground } = options;
+  const { hub, isForeground, isForegroundEverywhere } = options;
 
   /*
    * A note on `/clear`, which `observe` does not handle and does not need to.
@@ -712,7 +726,8 @@ export function createNotifier(options: NotifierOptions): Notifier {
 
       /*
         Remember it if, and only if, it was gated — `unread: false` off a raise
-        that happened is the hub saying "kept, but delivered to nobody". No
+        that happened is the hub saying "kept, but delivered to nobody" — that
+        is, every attended surface was already looking (HIVE-154). No
         status test: every kind that reaches here is one of the three the user
         is owed (`session.blocked`, `session.input_needed`, `session.idle`),
         and how long each stays owed is `stillRelevant`'s job, above. Nothing
@@ -807,17 +822,25 @@ export function createNotifier(options: NotifierOptions): Notifier {
       // stays pending so the next focus change tries again, rather than the
       // session going silently un-rearmed for good.
       for (const [entityId, pending] of pendingForeground) {
-        if (isForeground(entityId)) {
+        if (isForegroundEverywhere(entityId)) {
           /*
-            Its row has just been swept, so there is nothing left to promote —
-            and a promotion of a swept id would be a toast about a session the
-            user is standing in. Only for the kinds the sweep actually takes: a
+            Every surface is watching, so the sweep above just took an
+            arrival-kind row — there is nothing left to promote, and a
+            promotion of a swept id would be a toast about a session the fleet
+            is standing in. Only for the kinds the sweep actually takes: a
             pending `session.blocked` survives arriving, and must still promote
-            when the user looks away without answering.
+            when the last watcher looks away without answering.
           */
           if (ARRIVAL_KINDS.includes(pending.kind)) pendingForeground.delete(entityId);
           continue;
         }
+        /*
+          Some watching, some not (HIVE-154): the sweep took nothing, and the
+          fleet has not walked away, so hold the re-arm. Promoting now would
+          flip the row unread — and toast — while a device is looking at the
+          session it is about.
+        */
+        if (isForeground(entityId)) continue;
         if (hub.promote(pending.id)) pendingForeground.delete(entityId);
       }
     },
