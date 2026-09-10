@@ -17,6 +17,7 @@ export type Invocation =
   | { kind: 'pair'; name: string }
   | { kind: 'revoke'; name: string }
   | { kind: 'devices' }
+  | { kind: 'update' }
   | { kind: 'usage'; message: string };
 
 /**
@@ -27,7 +28,7 @@ export type Invocation =
  * named `--devices` is not a real scenario, but neither is one merely
  * *starting* with a dash, so there is no case here worth the extra rule.
  */
-const KNOWN_FLAGS = ['--pair', '--revoke', '--devices', '--server'];
+const KNOWN_FLAGS = ['--pair', '--revoke', '--devices', '--update', '--server'];
 
 /**
  * Trims and validates a device name the same way both other pairing surfaces
@@ -99,6 +100,10 @@ export function parseInvocation(argv: readonly string[], packaged: boolean): Inv
 
   if (args.includes('--devices')) {
     return { kind: 'devices' };
+  }
+
+  if (args.includes('--update')) {
+    return { kind: 'update' };
   }
 
   return { kind: 'app', server: args.includes('--server') };

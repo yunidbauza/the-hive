@@ -1586,6 +1586,14 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       expect(outcome.frame).toMatchObject({ kind: 'attach-refused', code: 'unauthorized' });
     });
 
+    it('refuses --update while the local server is running', async () => {
+      const result = await runOneShot(['--update'], configPath, userDataDir);
+
+      expect(result.code).toBe(1);
+      expect(result.stdout).toMatch(/server.*running/i);
+      expect(result.stderr).toBe('');
+    });
+
     it('6. --pair in a second process is seen by the already-running server, with no restart', async () => {
       // Same `userDataDir` as the already-running `app` — see the header
       // comment's section on why that sharing is load-bearing here.
@@ -1684,6 +1692,27 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       // A, B), so a fifth or a third digest is just as wrong as zero.
       expect(text).toMatch(/"kind":\s*"sha256"/u);
       expect(text.match(/"digest":\s*"[0-9a-f]{64}"/gu)?.length).toBe(4);
+    });
+  });
+
+  describe('the headless update one-shot (HIVE-158)', () => {
+    let configPath: string;
+    let userDataDir: string;
+
+    beforeAll(() => {
+      const dir = mkdtempSync(join(tmpdir(), 'hive-live-update-'));
+      configPath = join(dir, 'config.json');
+      userDataDir = join(dir, 'user-data');
+      assertScratchPath(configPath);
+      scratchConfigPaths.push(configPath);
+    });
+
+    it('exits readably rather than opening a UI when its update channel is unavailable', async () => {
+      const result = await runOneShot(['--update'], configPath, userDataDir);
+
+      expect(result.code).toBe(3);
+      expect(result.stdout).toMatch(/updates are not available|download updates/i);
+      expect(result.stderr).toBe('');
     });
   });
 
