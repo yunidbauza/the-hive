@@ -12,6 +12,7 @@ import { getConfig } from '../config';
 import { isServerMode } from '../server-mode';
 
 import { createWindowBroadcaster, type Broadcaster } from './broadcaster';
+import { applyRemoteForget, applyRemotePair } from './remote-pairing';
 import { registerRemoteProxy, remoteProxyBindingsSize, resetRemoteProxy } from './remote-proxy';
 import { applySetRemote } from './set-remote';
 
@@ -19,6 +20,7 @@ import {
   ipcBindingsSize,
   readRemoteCredential,
   registerIpcHandlers,
+  remoteCredentialStore,
   resetIpcHandlers,
   sessionsLayer,
 } from './index';
@@ -97,6 +99,23 @@ export function registerIpc(mode: IpcMode, options: RegisterIpcOptions = {}): vo
         proxy a function whose job is to tear the proxy down.
       */
       localSetRemote: (payload) => applySetRemote(payload, switchIpcMode, attachedSnapshot),
+      /*
+        `CH.remotePair` and `CH.remoteForget`, answered here rather than over
+        the socket (HIVE-153). While they were proxied, a Forget click on an
+        attached client cleared the *server's* credential — the far machine's
+        own pairing revoked from the near machine's UI, and the clicking
+        user's credential untouched.
+
+        Built fresh at each registration for `localSetRemote`'s reason, and
+        the store with them: `remoteCredentialStore()` is the one function
+        allowed to spell that filename, precisely so a credential paired from
+        the local handler is looked for by the proxy at the same path. Calling
+        it here rather than hoisting a module-scope store also keeps the
+        `app.getPath('userData')` read inside a function that only ever runs
+        after the app is ready.
+      */
+      localRemotePair: (payload) => applyRemotePair(payload, remoteCredentialStore()),
+      localRemoteForget: () => applyRemoteForget(remoteCredentialStore()),
     });
     return;
   }

@@ -548,12 +548,21 @@ describe('WINDOW_BOUND', () => {
  * forwarded to whatever the far end happens to be. See `PROCESS_LOCAL`'s own
  * doc comment for the full test ("does every field describe the running
  * process?") and the sweep across every `'call'` channel that settled on
- * exactly these three.
+ * exactly these three — then on `config:set-remote` (Ruling 28), then on
+ * `remote:pair` and `remote:forget` (HIVE-153), the two the wording already
+ * admitted and nobody had applied it to.
  */
 describe('PROCESS_LOCAL', () => {
-  it('names exactly four channels', () => {
+  it('names exactly six channels', () => {
     expect([...PROCESS_LOCAL].sort()).toEqual(
-      [CH.appInfo, CH.updatesStatus, CH.updatesCheck, CH.configSetRemote].sort(),
+      [
+        CH.appInfo,
+        CH.updatesStatus,
+        CH.updatesCheck,
+        CH.configSetRemote,
+        CH.remotePair,
+        CH.remoteForget,
+      ].sort(),
     );
   });
 
@@ -570,6 +579,23 @@ describe('PROCESS_LOCAL', () => {
   */
   it('answers config:set-remote locally, because attachment cannot live on the far end', () => {
     expect(isProcessLocal(CH.configSetRemote)).toBe(true);
+  });
+
+  /*
+    Named on their own for the same reason, and against a sharper failure
+    (HIVE-153). These two are `mutate` channels a sweep could just as
+    plausibly hand back to the wire, and what forwarding them did was not
+    subtle: a Forget click on an attached client ran on the server and cleared
+    the *server's* credential, revoking the far machine's own pairing from the
+    near machine's UI while the clicking user's credential stayed put.
+
+    A client's device identity and the secret behind it are meaningless on the
+    server, which minted them — that is why the far end can never answer these
+    two, not merely why it should not.
+  */
+  it('answers remote:pair and remote:forget locally, because a credential is this machine\'s identity', () => {
+    expect(isProcessLocal(CH.remotePair)).toBe(true);
+    expect(isProcessLocal(CH.remoteForget)).toBe(true);
   });
 
   it('only ever names a call channel', () => {

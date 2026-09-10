@@ -84,7 +84,6 @@ import {
   parseJiraTransitionsRequest,
   parseSetJiraRequest,
   parseSetJiraTokenRequest,
-  parseRemotePairRequest,
   parseSetReceiverRequest,
   parseSetServerRequest,
   parseSetSlackRequest,
@@ -150,7 +149,6 @@ import {
 import type { UpdateStatus } from '@shared/update-contract';
 
 import {
-  NO_ENCRYPTION_REASON,
   createTokenStore,
   type StoredDeviceCredential,
   type TokenStore,
@@ -267,6 +265,7 @@ import { createBindings } from './bindings';
 import { createWindowBroadcaster, type Broadcaster } from './broadcaster';
 import { createIpcRegistry, type CallHandler, type RemoteReporter } from './registry';
 import { createRemoteDispatch } from './remote-dispatch';
+import { applyRemoteForget, applyRemotePair } from './remote-pairing';
 import { assertSender } from './sender';
 import { applySetRemote, type AttachedSnapshot, type ModeSwitcher } from './set-remote';
 import {
@@ -377,8 +376,16 @@ export function ipcBindingsSize(): number {
  * `remote:pair`'s handler writes through it and {@link readRemoteCredential}
  * reads through it, and a second spelling of that filename is a credential
  * written to one path and looked for at another.
+ *
+ * **Exported since HIVE-153, and the rule above is why.** Both channels are on
+ * `PROCESS_LOCAL` now, so `router.ts` answers them from the proxy — from a
+ * process where the `remoteTokenStore` below no longer exists. It builds its
+ * own store *through this factory* rather than composing one, because the
+ * failure that rule guards against is exactly the one two surfaces invite: a
+ * credential paired from the local handler and looked for by the proxy at
+ * another path. There is still one spelling of the filename, in one function.
  */
-function remoteCredentialStore(): TokenStore {
+export function remoteCredentialStore(): TokenStore {
   return createTokenStore({
     safeStorage,
     filePath: join(app.getPath('userData'), 'remote-credential.bin'),
@@ -3800,14 +3807,16 @@ export function registerIpcHandlers(
    * renderer's only way to learn that. A bare `void` return let a pairing
    * dialog report success over a credential that was never written.
    */
-  handle(
-    CH.remotePair,
-    (_event, payload): { paired: true } | { error: string } => {
-      const { deviceId, token } = parseRemotePairRequest(payload);
-      const stored = remoteTokenStore.write(deviceId, token);
-      if (stored) return { paired: true };
-      return { error: NO_ENCRYPTION_REASON };
-    },
+  /*
+    The bodies of this channel and `remote:forget` below live in
+    `./remote-pairing` since HIVE-153, for the reason `config:set-remote`'s
+    lives in `./set-remote`: both are on `PROCESS_LOCAL`, so the proxy answers
+    them from a process where `remoteTokenStore` is gone. What that fixed is
+    not a hypothetical — while they were proxied, a Forget click on an attached
+    client cleared the *server's* credential.
+  */
+  handle(CH.remotePair, (_event, payload): { paired: true } | { error: string } =>
+    applyRemotePair(payload, remoteTokenStore),
   );
   /**
    * Discard the credential `remote:pair` stored (HIVE-144). Idempotent, and
@@ -3816,7 +3825,7 @@ export function registerIpcHandlers(
    * from `server:revoke` above.
    */
   handle(CH.remoteForget, (): void => {
-    remoteTokenStore.clear();
+    applyRemoteForget(remoteTokenStore);
   });
 
   /**

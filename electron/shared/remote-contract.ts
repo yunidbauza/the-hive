@@ -652,12 +652,32 @@ export function windowBoundReason(channel: string): string | null {
  * neither proxied nor refused — it is **answered here**. `WINDOW_BOUND` would
  * have been the wrong remedy: refusing a detach leaves a client just as stuck
  * as forwarding it did.
+ *
+ * **`CH.remotePair` and `CH.remoteForget` joined under the wording as it
+ * already stood (HIVE-153).** The test was not widened a third time for them;
+ * they were simply the two channels it already admitted and nobody had
+ * applied it to. `config:set-remote` changes *where* this process attaches;
+ * these two change *who this process is when it dials* — the device identity
+ * and the secret behind it — and that is the same half of the test, reached
+ * from the other side. Neither is about the fleet: a client's credential is
+ * meaningless on the server, which minted it.
+ *
+ * What proxying them cost, concretely: a Forget click on an attached client
+ * ran on the server and cleared the *server's* credential, revoking the far
+ * machine's own pairing from the near machine's UI while leaving the clicking
+ * user's credential in place. HIVE-144 hid the button rather than fixing the
+ * routing, which is a UI mitigation for an IPC defect and held only while
+ * `src/` had exactly one caller. The bodies now live in
+ * `electron/main/ipc/remote-pairing.ts`, for the reason `config:set-remote`'s
+ * live in `set-remote.ts`.
  */
 export const PROCESS_LOCAL: readonly Channel[] = [
   CH.appInfo,
   CH.updatesStatus,
   CH.updatesCheck,
   CH.configSetRemote,
+  CH.remotePair,
+  CH.remoteForget,
 ];
 
 /** Whether `channel` must be answered by this process itself, never proxied. */

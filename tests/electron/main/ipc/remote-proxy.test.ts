@@ -365,18 +365,26 @@ describe('registerRemoteProxy', () => {
 
   /**
    * `PROCESS_LOCAL` (HIVE-144, Ruling 24) — the opposite remedy from
-   * `WINDOW_BOUND`'s: these three channels are still bound (the count above
-   * does not move), but answered by *this* process rather than forwarded,
-   * because every field of their payload describes the running process
-   * rather than the fleet. See `isProcessLocal`'s own doc comment
-   * (`@shared/remote-contract`) for the full argument and the sweep that
-   * settled on exactly these three.
+   * `WINDOW_BOUND`'s: these channels are still bound (the count above does not
+   * move), but answered by *this* process rather than forwarded, because every
+   * field of their payload describes the running process rather than the
+   * fleet. See `isProcessLocal`'s own doc comment (`@shared/remote-contract`)
+   * for the full argument and the sweep that settled on the first three, then
+   * on `config:set-remote` (Ruling 28), then on `remote:pair` and
+   * `remote:forget` (HIVE-153).
    */
-  describe('PROCESS_LOCAL channels (HIVE-144, Rulings 24 and 28)', () => {
-    it('names exactly four channels', () => {
-      expect(PROCESS_LOCAL.length).toBe(4);
+  describe('PROCESS_LOCAL channels (HIVE-144 Rulings 24 and 28, HIVE-153)', () => {
+    it('names exactly six channels', () => {
+      expect(PROCESS_LOCAL.length).toBe(6);
       expect([...PROCESS_LOCAL].sort()).toEqual(
-        ['app:info', 'config:set-remote', 'updates:check', 'updates:status'].sort(),
+        [
+          'app:info',
+          'config:set-remote',
+          'remote:forget',
+          'remote:pair',
+          'updates:check',
+          'updates:status',
+        ].sort(),
       );
     });
 
@@ -468,6 +476,80 @@ describe('registerRemoteProxy', () => {
       await expect(
         invoke('config:set-remote', trustedEvent, { mode: 'local' }),
       ).rejects.toThrow(/no localSetRemote supplied/);
+      expect(client.call).not.toHaveBeenCalled();
+    });
+
+    /*
+      HIVE-153. The defect these two close is the one this list exists for,
+      arriving through the credential rather than the config file: while they
+      were proxied, a Forget click on an attached client cleared the
+      *server's* stored credential — the far machine's own pairing revoked
+      from the near machine's UI, and the clicking user's credential left
+      exactly where it was.
+
+      `client.call` is asserted silent in both, because forwarding is the
+      whole defect. A local answer that merely *also* forwarded would clear
+      both credentials, which is worse than what shipped.
+    */
+    it('answers remote:pair from localRemotePair, with the payload, never client.call', async () => {
+      const client = fakeClient();
+      const localRemotePair = vi.fn().mockReturnValue({ paired: true });
+      registerRemoteProxy({
+        client,
+        broadcaster: fakeBroadcaster(),
+        localAppInfo: fakeAppInfo,
+        localRemotePair,
+      });
+
+      await expect(
+        invoke('remote:pair', trustedEvent, { deviceId: 'laptop', token: 'sekret' }),
+      ).resolves.toEqual({ paired: true });
+
+      expect(localRemotePair).toHaveBeenCalledExactlyOnceWith({
+        deviceId: 'laptop',
+        token: 'sekret',
+      });
+      expect(client.call).not.toHaveBeenCalled();
+    });
+
+    it('answers remote:forget from localRemoteForget, never client.call', async () => {
+      const client = fakeClient();
+      const localRemoteForget = vi.fn();
+      registerRemoteProxy({
+        client,
+        broadcaster: fakeBroadcaster(),
+        localAppInfo: fakeAppInfo,
+        localRemoteForget,
+      });
+
+      await expect(invoke('remote:forget', trustedEvent, undefined)).resolves.toBeUndefined();
+
+      expect(localRemoteForget).toHaveBeenCalledOnce();
+      expect(client.call).not.toHaveBeenCalled();
+    });
+
+    /*
+      Loud, or not at all — `noLocalSetRemote`'s reasoning, for a verb whose
+      quiet failure is a pairing dialog reporting success over a credential
+      this machine does not hold.
+    */
+    it('throws rather than forwarding remote:pair when no localRemotePair is supplied', async () => {
+      const client = fakeClient();
+      registerRemoteProxy({ client, broadcaster: fakeBroadcaster() });
+
+      await expect(
+        invoke('remote:pair', trustedEvent, { deviceId: 'laptop', token: 'sekret' }),
+      ).rejects.toThrow(/no localRemotePair supplied/);
+      expect(client.call).not.toHaveBeenCalled();
+    });
+
+    it('throws rather than forwarding remote:forget when no localRemoteForget is supplied', async () => {
+      const client = fakeClient();
+      registerRemoteProxy({ client, broadcaster: fakeBroadcaster() });
+
+      await expect(invoke('remote:forget', trustedEvent, undefined)).rejects.toThrow(
+        /no localRemoteForget supplied/,
+      );
       expect(client.call).not.toHaveBeenCalled();
     });
   });
