@@ -10,6 +10,7 @@ import {
   CHANNEL_AUTHORIZATION,
   FRAME_KIND,
   LOCAL_ONLY_EVENTS,
+  PAYLOAD_SCOPED,
   PROCESS_LOCAL,
   REMOTE_PROTOCOL_VERSION,
   REMOTE_REFUSED_CHANNELS,
@@ -22,6 +23,7 @@ import {
   isClientFrameAllowed,
   isLocalOnlyEvent,
   isProcessLocal,
+  payloadScopeFor,
   remoteRefusedReason,
   windowBoundReason,
 } from '@shared/remote-contract';
@@ -648,5 +650,82 @@ describe('PROCESS_LOCAL', () => {
     for (const channel of PROCESS_LOCAL) expect(isProcessLocal(channel)).toBe(true);
     expect(isProcessLocal(CH.configGet)).toBe(false);
     expect(isProcessLocal('not:a:channel')).toBe(false);
+  });
+});
+
+/**
+ * The fourth routing shape (HIVE-151).
+ *
+ * The three above it decide by channel name, once, when the handler is bound.
+ * This one decides per call, from the payload, because `notifications:act` is
+ * one channel carrying seven verbs of which three reach this machine's
+ * hardware and four resolve against fleet state. Routing the channel either
+ * way is wrong for the other half of its traffic.
+ */
+describe('PAYLOAD_SCOPED', () => {
+  it('names notifications:act and nothing else', () => {
+    expect(Object.keys(PAYLOAD_SCOPED)).toEqual([CH.notificationsAct]);
+  });
+
+  it('only ever names a call channel', () => {
+    for (const channel of Object.keys(PAYLOAD_SCOPED)) {
+      expect(frameKindOf(channel)).toBe('call');
+    }
+  });
+
+  /*
+    Disjoint from both name-keyed tables, for the reason `PROCESS_LOCAL` is
+    disjoint from `WINDOW_BOUND`: those two are facts about the *channel* and
+    hold for every payload it can carry, so a channel on either of them must
+    never reach a payload check that could disagree with them.
+  */
+  it('shares no channel with WINDOW_BOUND or PROCESS_LOCAL', () => {
+    const windowBound = new Set(Object.keys(WINDOW_BOUND));
+    const processLocal = new Set<string>(PROCESS_LOCAL);
+    for (const channel of Object.keys(PAYLOAD_SCOPED)) {
+      expect(windowBound.has(channel)).toBe(false);
+      expect(processLocal.has(channel)).toBe(false);
+    }
+  });
+
+  it('answers true for the three actions that reach this machine\'s hardware', () => {
+    const scope = payloadScopeFor(CH.notificationsAct);
+    expect(scope).not.toBeNull();
+    expect(scope?.({ type: 'url', url: 'https://example.com' })).toBe(true);
+    expect(scope?.({ type: 'update.download' })).toBe(true);
+    expect(scope?.({ type: 'update.install' })).toBe(true);
+  });
+
+  it('answers false for the actions that resolve against fleet state', () => {
+    const scope = payloadScopeFor(CH.notificationsAct);
+    expect(scope?.({ type: 'ask', thread: 't1' })).toBe(false);
+    expect(scope?.({ type: 'session', entityId: 's1' })).toBe(false);
+    expect(scope?.({ type: 'agent', name: 'scout' })).toBe(false);
+    expect(scope?.({ type: 'none' })).toBe(false);
+  });
+
+  /*
+    A payload that does not parse is proxied, not answered here. That is not a
+    shrug: `parseNotificationAction` returns `null` rather than throwing on the
+    stated principle that the worst honest outcome of a click main does not
+    understand is that nothing happens, and the far end runs the same parse and
+    reaches the same conclusion. Answering `true` instead would let a malformed
+    payload pick its own machine.
+  */
+  it('proxies a payload it cannot parse rather than answering it here', () => {
+    const scope = payloadScopeFor(CH.notificationsAct);
+    expect(scope?.({ type: 'url' })).toBe(false);
+    expect(scope?.({ type: 'url', url: 42 })).toBe(false);
+    expect(scope?.(null)).toBe(false);
+    expect(scope?.(undefined)).toBe(false);
+    expect(scope?.('url')).toBe(false);
+    expect(scope?.({})).toBe(false);
+    expect(scope?.({ type: 'not-a-verb' })).toBe(false);
+  });
+
+  it('answers null for a channel routed by name alone', () => {
+    expect(payloadScopeFor(CH.configGet)).toBeNull();
+    expect(payloadScopeFor(CH.appInfo)).toBeNull();
+    expect(payloadScopeFor('not:a:channel')).toBeNull();
   });
 });
