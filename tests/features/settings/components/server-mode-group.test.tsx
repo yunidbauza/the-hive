@@ -152,6 +152,9 @@ describe('ServerModeGroup', () => {
 
     expect(screen.getByRole('switch', { name: 'Serve this machine' })).toBeChecked();
     expect(screen.getByLabelText(/bind address/i)).toHaveValue('100.64.1.2');
+    expect(
+      screen.queryByText(/these are the server's bind settings/i),
+    ).not.toBeInTheDocument();
   });
 
   describe('the bind fields', () => {
@@ -375,6 +378,9 @@ describe('ServerModeGroup', () => {
       expect(
         screen.getByRole('button', { name: /revoke/i }),
       ).toBeInTheDocument();
+      expect(
+        screen.queryByText(/this is the server's device roster/i),
+      ).not.toBeInTheDocument();
     });
 
     it('calls revokeDevice with the device’s name when Revoke is clicked', async () => {
