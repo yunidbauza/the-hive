@@ -15,6 +15,7 @@ import { SettingsGroup } from '@features/settings/components/settings-group';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
 import {
   useAttachedServer,
+  useLocalRemote,
   useProjectConfig,
   useRemoteCapabilities,
   useServing,
@@ -213,6 +214,13 @@ export function AdvancedSection() {
     server's file: see `ServerModeGroupProps.serving`.
   */
   const serving = useServing();
+  /*
+    The fourth, and the only one that is config rather than status (HIVE-149):
+    this machine's own `remote` block, for the two address fields whose subject
+    is this window. `snapshot.remote` below cannot answer them while attached,
+    because that snapshot comes from the server.
+  */
+  const localRemote = useLocalRemote();
   const downloadingPhrase = useSwarmPhrase('loading.update');
   const readyPhrase = useSwarmPhrase('complete.update');
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -389,7 +397,9 @@ export function AdvancedSection() {
         `attachedServerName` comes from the runtime, not the snapshot beside
         it (HIVE-144, Ruling 29) — see `ServerModeGroupProps`' own two doc
         comments for why the attach half needs both sources and which question
-        each one answers. `useAttachedServer` is the same hook the header chip
+        each one answers, and `useLocalRemote` is the third and newest source
+        (HIVE-149): the address fields describe this window, which
+        `snapshot.remote` cannot say while attached. `useAttachedServer` is the same hook the header chip
         reads, so the pane and the chip can never disagree about whether a
         socket is open.
       */}
@@ -398,6 +408,7 @@ export function AdvancedSection() {
         bind={snapshot.server.bind}
         devices={snapshot.server.devices}
         remote={snapshot.remote}
+        localRemote={localRemote}
         attachedServer={snapshot.attachedServer}
         attachedServerName={attachedServerName}
         serving={serving}
