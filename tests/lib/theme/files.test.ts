@@ -63,7 +63,7 @@ describe('the bridge is never consulted', () => {
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:x');
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
 
-    expect(await saveThemeFile('nord.json', '{}')).toBe(true);
+    await expect(saveThemeFile('nord.json', '{}')).resolves.toBeUndefined();
     expect(save).not.toHaveBeenCalled();
   });
 
@@ -284,7 +284,9 @@ describe('without a bridge (the browser target)', () => {
       .mockReturnValue('blob:stub');
     const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
 
-    expect(await saveThemeFile('hive-theme-template.json', '{}')).toBe(true);
+    await expect(
+      saveThemeFile('hive-theme-template.json', '{}'),
+    ).resolves.toBeUndefined();
     expect(create).toHaveBeenCalled();
     expect(revoke).toHaveBeenCalledWith('blob:stub');
   });

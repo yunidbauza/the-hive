@@ -1,6 +1,6 @@
 import { readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 
 import type {
   BrowseDirRequest,
@@ -76,10 +76,14 @@ async function homeRoot(): Promise<string> {
  *
  * A relative path is refused rather than resolved against `process.cwd()`,
  * which in a packaged app is wherever the OS launched the bundle from and has
- * nothing to do with the user. `resolve` also normalises away `..` segments
- * before the containment check sees them, so `~/../etc` collapses to `/etc`
- * and is refused for being outside home rather than by a separate rule about
- * dots.
+ * nothing to do with the user.
+ *
+ * `..` is nobody's special case here. On the absolute branch `resolve`
+ * normalises it away before the containment check sees it, so `/etc/../etc`
+ * is just `/etc`; on the `~/` branch `join` does the same, so `~/../etc`
+ * becomes `dirname(home)/etc`. Either way what reaches {@link contained} is a
+ * real path that either is under home or is not, which is the only question
+ * this module asks. There is deliberately no rule about dots.
  */
 function requested(home: string, path: string): string {
   if (path === '' || path === '~') return home;
@@ -186,7 +190,6 @@ export async function browseHomeDirectory(
       value: {
         path: absolute,
         home,
-        parent: absolute === home ? null : dirname(absolute),
         /**
          * Sorted here, unlike `readDirectory`, which leaves order to
          * `src/lib/explorer/sort.ts`. That module interleaves files and

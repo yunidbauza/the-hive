@@ -294,7 +294,7 @@ describe('CloneRepoView', () => {
       await user.click(button);
 
       expect(
-        await screen.findByRole('dialog', { name: /Choose a project folder/i }),
+        await screen.findByRole("dialog", { name: /Choose where the clone lands/i }),
       ).toBeInTheDocument();
     });
 

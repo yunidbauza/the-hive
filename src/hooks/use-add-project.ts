@@ -48,12 +48,12 @@ export interface AddProject {
  * what to do with the path.
  */
 export function useAddProject(): AddProject {
-  const write = useCallback(
-    (path: string) => addProjectToConfig({ path }),
-    [],
-  );
+  const write = useCallback((path: string) => addProjectToConfig({ path }), []);
   const { choose, choosing, picking, cancelPicking, onPicked } =
     useChooseDirectory(write);
 
-  return { addProject: choose, choosing, picking, cancelPicking, onPicked };
+  // No context to carry: there is only one thing being added.
+  const addProject = useCallback(() => choose(), [choose]);
+
+  return { addProject, choosing, picking, cancelPicking, onPicked };
 }

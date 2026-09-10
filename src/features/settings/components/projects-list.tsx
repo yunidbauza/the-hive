@@ -132,34 +132,25 @@ export function ProjectsList({ entries }: ProjectsListProps) {
   };
 
   /**
-   * Which project a chosen folder is about to be pointed at.
+   * One picker serves every row, so which project a chosen folder belongs to
+   * travels **with** the choice rather than being read back off state. The row
+   * click hands the id to `choose`, and it comes back beside the path.
    *
-   * Held rather than passed, because the picker is one mounted component
-   * shared by every row: the row click records the id, and `onPicked` reads it
-   * back when a path arrives. `null` means nothing is being repointed.
+   * Reading it off a `useState` was the first shape and it is unsound: the
+   * click that sets it also calls `choose`, so `choose` runs before the render
+   * that carries it. `useChooseDirectory`'s own doc has the long version.
    */
-  const [repointing, setRepointing] = useState<string | null>(null);
-
   const {
-    choose: chooseRepointFolder,
+    choose: onRepoint,
     picking,
     cancelPicking,
     onPicked,
-  } = useChooseDirectory(
+  } = useChooseDirectory<string>(
     useCallback(
-      async (path: string) => {
-        if (repointing === null) return;
-        await repointProjectInConfig({ id: repointing, path });
-        setRepointing(null);
-      },
-      [repointing],
+      (path: string, id: string) => repointProjectInConfig({ id, path }),
+      [],
     ),
   );
-
-  const onRepoint = (id: string): void => {
-    setRepointing(id);
-    chooseRepointFolder();
-  };
 
   const onRemove = (id: string): void => {
     if ((liveCounts[id] ?? 0) > 0) {
@@ -270,13 +261,12 @@ export function ProjectsList({ entries }: ProjectsListProps) {
       <DirectoryPicker
         open={picking}
         onOpenChange={(next) => {
-          if (!next) {
-            cancelPicking();
-            setRepointing(null);
-          }
+          if (!next) cancelPicking();
         }}
         onChoose={onPicked}
         serverName={attachedServer ?? 'the server'}
+        title="Choose the project’s new folder"
+        confirmLabel="Move project here"
       />
     </ul>
   );

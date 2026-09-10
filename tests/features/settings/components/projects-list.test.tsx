@@ -319,7 +319,7 @@ describe('ProjectsList', () => {
         await userEvent.click(item);
 
         expect(
-          await screen.findByRole('dialog', { name: /Choose a project folder/i }),
+          await screen.findByRole("dialog", { name: /Choose the project.s new folder/i }),
         ).toBeInTheDocument();
       });
 

@@ -1979,7 +1979,6 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
 
       expect(listing.home).toBe(realpathSync(homedir()));
       expect(listing.path).toBe(listing.home);
-      expect(listing.parent).toBeNull();
       // Every offered path is a directory inside that root — the containment
       // the fence promises, observed on what actually crossed the socket.
       for (const entry of listing.entries) {

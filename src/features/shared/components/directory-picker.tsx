@@ -48,6 +48,16 @@ export interface DirectoryPickerProps {
   onChoose: (path: string) => void;
   /** Named in the header, so the user knows whose disk they are looking at. */
   serverName: string;
+  /**
+   * What the caller is choosing a folder *for*.
+   *
+   * Three surfaces mount this and they mean different things by a folder: the
+   * project to map, a moved project's new home, the parent a clone lands in.
+   * A fixed "Add project" would be wrong on two of the three, so the copy is
+   * the caller's to supply.
+   */
+  title?: string;
+  confirmLabel?: string;
 }
 
 /** What the breadcrumb renders: a label, and the path clicking it browses to. */
@@ -83,6 +93,8 @@ export function DirectoryPicker({
   onOpenChange,
   onChoose,
   serverName,
+  title = 'Choose a folder',
+  confirmLabel = 'Use this folder',
 }: DirectoryPickerProps) {
   const [listing, setListing] = useState<BrowseListing | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -139,13 +151,19 @@ export function DirectoryPicker({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[420px] gap-0 border-border bg-panel p-0">
+      {/*
+        `sm:max-w-[420px]`, not `max-w-[420px]`: `DialogContent`'s own base
+        class already carries `sm:max-w-lg`, and Tailwind emits variant
+        utilities after unprefixed ones — so an unprefixed cap loses above
+        640px and the dialog renders 512px wide.
+      */}
+      <DialogContent className="gap-0 border-border bg-panel p-0 sm:max-w-[420px]">
         <DialogHeader className="gap-[7px] border-b border-border-soft px-3.5 pt-3 pb-2.5">
           <DialogTitle className="text-[13px] font-semibold text-ink">
-            Choose a project folder
+            {title}
           </DialogTitle>
           <DialogDescription className="sr-only">
-            Browse folders on {serverName} and add one as a project.
+            Browse folders on {serverName} and choose one.
           </DialogDescription>
           <span className="flex w-fit items-center gap-1.5 rounded-[3px] border border-border bg-chip px-[7px] py-0.5 text-[11px] text-muted">
             <span aria-hidden="true" className="size-1.5 rounded-full bg-amber" />
@@ -174,52 +192,73 @@ export function DirectoryPicker({
           )}
         </DialogHeader>
 
-        <div
-          role="listbox"
-          aria-label="Folders"
-          aria-busy={busy}
-          className="flex max-h-56 flex-col gap-px overflow-y-auto p-1.5"
-        >
+        {/*
+          A list of navigation controls, not a listbox of options.
+
+          `role="listbox"` was wrong twice over: a listbox may contain only
+          options, so the refusal and empty-state text below — the one string
+          that explains why a click did nothing — would be discarded by
+          assistive tech for sitting in the wrong container; and `role="option"`
+          on the rows overrode the buttons' press semantics to describe a
+          selection that never happens. Clicking a row descends into it. The
+          permanently-false `aria-selected` was the symptom of that mismatch.
+
+          Both messages sit outside the list, where they are read.
+        */}
+        <div aria-busy={busy} className="max-h-56 overflow-y-auto p-1.5">
           {failure !== null && (
-            <p className="px-2 py-1.5 text-[11.5px] text-red">{failure}</p>
+            <p role="status" className="px-2 py-1.5 text-[11.5px] text-red">
+              {failure}
+            </p>
           )}
-          {listing?.entries.map((entry) => {
-            const unreadable = entry.childCount === null;
-            return (
-              <button
-                key={entry.path}
-                type="button"
-                role="option"
-                aria-selected={false}
-                disabled={unreadable}
-                title={unreadable ? 'this folder cannot be read' : undefined}
-                onClick={() => void browse(entry.path)}
-                className="flex w-full items-center gap-2 rounded-[3px] border border-transparent px-2 py-1.5 text-left text-ink hover:bg-hover disabled:opacity-50 disabled:hover:bg-transparent"
-              >
-                <Folder aria-hidden="true" className="size-3.5 shrink-0 text-subtle" />
-                <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-                <span className="shrink-0 text-[11px] text-subtle">
-                  {unreadable
-                    ? 'no access'
-                    : entry.childCount === 0
-                      ? 'empty'
-                      : `${entry.childCount} items`}
-                </span>
-                {!unreadable && (
-                  <CaretRight
-                    aria-hidden="true"
-                    className="size-3 shrink-0 text-subtle"
-                  />
-                )}
-              </button>
-            );
-          })}
           {listing !== null && listing.entries.length === 0 && failure === null && (
             <p className="flex items-center gap-2 px-2 py-1.5 text-[11.5px] text-subtle">
               <FolderOpen aria-hidden="true" className="size-3.5 shrink-0" />
-              No folders here. You can still add this one.
+              No folders here. You can still use this one.
             </p>
           )}
+          <ul aria-label="Folders" className="flex flex-col gap-px">
+            {listing?.entries.map((entry) => {
+              const unreadable = entry.childCount === null;
+              return (
+                /*
+                  Keyed by name, not path. `path` is the **realpath**, so a
+                  symlink pointing at a sibling inside home gives two entries
+                  the same path — two rows with one key, sharing reconciliation
+                  state. `readdir` names are unique within a directory; the
+                  realpath is not.
+                */
+                <li key={entry.name}>
+                  <button
+                    type="button"
+                    disabled={unreadable}
+                    title={unreadable ? 'this folder cannot be read' : undefined}
+                    onClick={() => void browse(entry.path)}
+                    className="flex w-full items-center gap-2 rounded-[3px] border border-transparent px-2 py-1.5 text-left text-ink hover:bg-hover disabled:opacity-50 disabled:hover:bg-transparent"
+                  >
+                    <Folder
+                      aria-hidden="true"
+                      className="size-3.5 shrink-0 text-subtle"
+                    />
+                    <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+                    <span className="shrink-0 text-[11px] text-subtle">
+                      {unreadable
+                        ? 'no access'
+                        : entry.childCount === 0
+                          ? 'empty'
+                          : `${entry.childCount} items`}
+                    </span>
+                    {!unreadable && (
+                      <CaretRight
+                        aria-hidden="true"
+                        className="size-3 shrink-0 text-subtle"
+                      />
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
         </div>
 
         <DialogFooter className="flex-row flex-wrap items-center gap-2.5 border-t border-border-soft px-3.5 py-2.5">
@@ -247,7 +286,7 @@ export function DirectoryPicker({
             }}
             className="rounded-[3px] border border-brand-fill-strong bg-brand-fill-strong px-[11px] py-[5px] text-[12px] text-on-brand hover:border-brand-fill hover:bg-brand-fill disabled:opacity-60"
           >
-            Add project
+            {confirmLabel}
           </button>
         </DialogFooter>
       </DialogContent>

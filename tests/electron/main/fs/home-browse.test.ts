@@ -60,7 +60,6 @@ describe('browseHomeDirectory', () => {
     if (!result.ok) return;
     expect(result.value.path).toBe(home);
     expect(result.value.home).toBe(home);
-    expect(result.value.parent).toBeNull();
     expect(result.value.entries.map((entry) => entry.name)).toEqual(['Projects']);
   });
 
@@ -96,7 +95,7 @@ describe('browseHomeDirectory', () => {
     ]);
   });
 
-  it('reports a parent for a directory below home', async () => {
+  it('lists a directory below home, still reporting home as the root', async () => {
     const nested = join(home, 'Projects', 'app');
     await mkdir(nested, { recursive: true });
 
@@ -104,7 +103,10 @@ describe('browseHomeDirectory', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.parent).toBe(join(home, 'Projects'));
+    expect(result.value.path).toBe(nested);
+    // `home` travels with every listing, however deep: it is what the picker
+    // renders `~` from, and what tells it the breadcrumb's first crumb.
+    expect(result.value.home).toBe(home);
   });
 
   it('sorts entries by name', async () => {

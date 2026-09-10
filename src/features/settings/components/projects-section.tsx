@@ -136,6 +136,8 @@ export function ProjectsSection() {
         }}
         onChoose={onPicked}
         serverName={attachedServer ?? 'the server'}
+        title="Choose a project folder"
+        confirmLabel="Add project"
       />
     </div>
   );

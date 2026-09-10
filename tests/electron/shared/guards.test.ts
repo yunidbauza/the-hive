@@ -485,6 +485,26 @@ describe('parseBrowseDirRequest', () => {
   });
 
   /**
+   * Neither is a containment hole — `browseHomeDirectory` refuses both once it
+   * resolves them — but a NUL only reaches the caller as a flattened
+   * `EUNKNOWN`, and a newline reaches the syscall layer intact and forges a
+   * second line in anything that logs the path. Refused before either happens.
+   */
+  it.each([
+    ['a NUL', '/Users/me\u0000/etc'],
+    ['a newline', '/Users/me\nProjects'],
+    ['a carriage return', '/Users/me\rProjects'],
+    ['a DEL', '/Users/me\u007fProjects'],
+  ])('rejects %s in the path', (_label, path) => {
+    expect(() => parseBrowseDirRequest({ path })).toThrow(/control character/);
+  });
+
+  it('allows the characters a real path actually contains', () => {
+    const path = '/Users/me/Projects/my app (2) — copy.d/ünïcode';
+    expect(parseBrowseDirRequest({ path })).toEqual({ path });
+  });
+
+  /**
    * Traversal is not this guard's job and must not become it. `..` is
    * syntactically a fine path; what refuses it is `browseHomeDirectory`
    * resolving and containing the result. Two validators with different ideas

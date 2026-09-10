@@ -105,12 +105,15 @@ export function CloneRepoView({ onDone }: { onDone: () => void }) {
    * offers and what the native dialog could never have reached (HIVE-146).
    */
   const {
-    choose: onChoose,
+    choose,
     choosing,
     picking,
     cancelPicking,
     onPicked,
   } = useChooseDirectory(useCallback((path: string) => setParentPath(path), []));
+
+  // No context to carry: there is one destination being chosen.
+  const onChoose = useCallback(() => choose(), [choose]);
 
   const onClone = async () => {
     if (!ready || parentPath === null) return;
@@ -281,6 +284,8 @@ export function CloneRepoView({ onDone }: { onDone: () => void }) {
         }}
         onChoose={onPicked}
         serverName={attachedServer ?? 'the server'}
+        title="Choose where the clone lands"
+        confirmLabel="Clone into this folder"
       />
     </div>
   );

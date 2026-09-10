@@ -898,7 +898,7 @@ describe('handlers that dereference the Electron event', () => {
   const REGISTRATION =
     /^\s*(?:handle|on)\(\s*CH\.(\w+)\s*,\s*(?:async\s+)?\(\s*([A-Za-z$][\w$]*)/gm;
 
-  it('is exactly the WINDOW_BOUND four that dereference it, plus the ones adapted for a surface', () => {
+  it('is exactly the WINDOW_BOUND entries that dereference it, plus the ones adapted for a surface', () => {
     const source = readFileSync(
       fileURLToPath(new URL('../../../../electron/main/ipc/index.ts', import.meta.url)),
       'utf8',

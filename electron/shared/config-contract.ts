@@ -1845,14 +1845,20 @@ export interface BrowseEntry {
   childCount: number | null;
 }
 
-/** What `config:browse-directory` answers. */
+/**
+ * What `config:browse-directory` answers.
+ *
+ * Two paths and the entries, and nothing derived from them. A `parent` field
+ * was here and came out unread: the picker builds its whole breadcrumb from
+ * `path` and `home`, so "am I at the root" is `path === home` and "one level
+ * up" is the crumb before the last. A contract field no consumer reads is a
+ * thing later code starts believing in.
+ */
 export interface BrowseListing {
   /** The directory that was listed, absolute and `realpath`'d. */
   path: string;
   /** The answering machine's home directory, so the picker can render `~`. */
   home: string;
-  /** The parent, or `null` when {@link BrowseListing.path} is home itself. */
-  parent: string | null;
   entries: BrowseEntry[];
 }
 

@@ -668,6 +668,19 @@ export function parseBrowseDirRequest(input: unknown): BrowseDirRequest {
   if (path.length > MAX_BROWSE_PATH) {
     return fail(`browseDirectory.path: too long`);
   }
+  /*
+    Control characters are refused here rather than left to the syscall.
+
+    A NUL makes Node throw `ERR_INVALID_ARG_VALUE`, which `asFailure` flattens
+    to `EUNKNOWN` — a correct refusal wearing a useless code. A newline is
+    worse: it reaches the filesystem layer intact and any log line built around
+    the path afterwards carries a forged second line. Neither is a containment
+    hole, and neither should get as far as a syscall to be one.
+  */
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(path)) {
+    return fail('browseDirectory.path: contains a control character');
+  }
   return { path };
 }
 

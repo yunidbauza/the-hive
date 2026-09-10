@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -16,7 +16,6 @@ function listing(over: Partial<BrowseListing> = {}) {
     value: {
       path: HOME,
       home: HOME,
-      parent: null,
       entries: [
         {
           name: 'Projects',
@@ -35,6 +34,17 @@ function listing(over: Partial<BrowseListing> = {}) {
     },
   };
 }
+
+/**
+ * A folder row, scoped to the list.
+ *
+ * Scoped rather than a bare `getByRole('button')` because the breadcrumb holds
+ * a button per path segment, so at `~/Projects/app` a bare query for
+ * `/Projects/` would match the crumb as well as any row.
+ */
+const rows = () => within(screen.getByRole('list', { name: 'Folders' }));
+const row = (name: RegExp) => rows().getByRole('button', { name });
+const findRow = (name: RegExp) => rows().findByRole('button', { name });
 
 function open(onChoose = vi.fn(), onOpenChange = vi.fn()) {
   render(
@@ -64,19 +74,19 @@ describe('DirectoryPicker', () => {
   it('lists the directories it was given, with their child counts', async () => {
     open();
 
-    const row = await screen.findByRole('option', { name: /Projects/ });
-    expect(row).toBeInTheDocument();
-    expect(row).toHaveTextContent('2 items');
+    const projects = await findRow(/Projects/);
+    expect(projects).toBeInTheDocument();
+    expect(projects).toHaveTextContent('2 items');
   });
 
   it('descends into a folder on click', async () => {
     open();
-    await screen.findByRole('option', { name: /Projects/ });
+    await findRow(/Projects/);
     browse.mockResolvedValue(
-      listing({ path: `${HOME}/Projects`, parent: HOME, entries: [] }),
+      listing({ path: `${HOME}/Projects`, entries: [] }),
     );
 
-    await userEvent.click(screen.getByRole('option', { name: /Projects/ }));
+    await userEvent.click(row(/Projects/));
 
     await waitFor(() =>
       expect(browse).toHaveBeenLastCalledWith(`${HOME}/Projects`),
@@ -87,7 +97,6 @@ describe('DirectoryPicker', () => {
     browse.mockResolvedValue(
       listing({
         path: `${HOME}/Projects/app`,
-        parent: `${HOME}/Projects`,
         entries: [],
       }),
     );
@@ -103,7 +112,6 @@ describe('DirectoryPicker', () => {
     browse.mockResolvedValue(
       listing({
         path: `${HOME}/Projects/app`,
-        parent: `${HOME}/Projects`,
         entries: [],
       }),
     );
@@ -123,9 +131,9 @@ describe('DirectoryPicker', () => {
    */
   it('chooses the directory it is standing in', async () => {
     const { onChoose } = open();
-    await screen.findByRole('option', { name: /Projects/ });
+    await findRow(/Projects/);
 
-    await userEvent.click(screen.getByRole('button', { name: /Add project/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Use this folder' }));
 
     expect(onChoose).toHaveBeenCalledWith(HOME);
   });
@@ -133,24 +141,24 @@ describe('DirectoryPicker', () => {
   it('cannot descend into a folder it could not read', async () => {
     open();
 
-    const locked = await screen.findByRole('option', { name: /locked/ });
+    const locked = await findRow(/locked/);
     expect(locked).toBeDisabled();
     expect(locked).toHaveTextContent('no access');
   });
 
   it('shows a refusal without closing, keeping the last good listing', async () => {
     open();
-    await screen.findByRole('option', { name: /Projects/ });
+    await findRow(/Projects/);
     browse.mockResolvedValue({
       ok: false,
       error: { code: 'EOUTSIDE', message: 'cannot browse that path' },
     });
 
-    await userEvent.click(screen.getByRole('option', { name: /Projects/ }));
+    await userEvent.click(row(/Projects/));
 
     expect(await screen.findByText('cannot browse that path')).toBeInTheDocument();
     // Still standing where it was, so the user can simply pick something else.
-    expect(screen.getByRole('option', { name: /Projects/ })).toBeInTheDocument();
+    expect(row(/Projects/)).toBeInTheDocument();
   });
 
   it('says so when a folder is empty, and still offers it', async () => {
@@ -158,7 +166,7 @@ describe('DirectoryPicker', () => {
     open();
 
     expect(await screen.findByText(/No folders here/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Add project/ })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Use this folder' })).toBeEnabled();
   });
 
   it('reports the browser target rather than rendering an empty folder', async () => {
@@ -175,7 +183,7 @@ describe('DirectoryPicker', () => {
    */
   it('ignores a stale response that arrives after a newer one', async () => {
     open();
-    await screen.findByRole('option', { name: /Projects/ });
+    await findRow(/Projects/);
 
     // Descending into Projects is slow and will settle last.
     let settleSlow: (value: unknown) => void = () => {};
@@ -184,7 +192,7 @@ describe('DirectoryPicker', () => {
         settleSlow = resolve;
       }),
     );
-    await userEvent.click(screen.getByRole('option', { name: /Projects/ }));
+    await userEvent.click(row(/Projects/));
 
     // Climbing back home is fast and settles first.
     browse.mockResolvedValue(listing());
@@ -192,17 +200,17 @@ describe('DirectoryPicker', () => {
     await waitFor(() => expect(browse).toHaveBeenLastCalledWith(HOME));
 
     // Now the earlier, slower descent arrives. It must not repaint.
-    settleSlow(listing({ path: `${HOME}/Projects`, parent: HOME, entries: [] }));
+    settleSlow(listing({ path: `${HOME}/Projects`, entries: [] }));
 
     await waitFor(() =>
-      expect(screen.getByRole('option', { name: /Projects/ })).toBeInTheDocument(),
+      expect(row(/Projects/)).toBeInTheDocument(),
     );
     expect(screen.getByText(HOME)).toBeInTheDocument();
   });
 
   it('closes on Cancel without choosing', async () => {
     const { onChoose, onOpenChange } = open();
-    await screen.findByRole('option', { name: /Projects/ });
+    await findRow(/Projects/);
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 

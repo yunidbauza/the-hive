@@ -96,6 +96,8 @@ export function NewProjectLink({
         }}
         onChoose={onPicked}
         serverName={attachedServer ?? 'the server'}
+        title="Choose a project folder"
+        confirmLabel="Add project"
       />
     </>
   );

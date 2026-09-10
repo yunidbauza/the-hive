@@ -23,7 +23,7 @@
  * construction rather than by a check.
  */
 
-import { MAX_THEME_BYTES } from '@shared/theme-contract';
+import { MAX_THEME_BYTES } from '@lib/theme/contract';
 
 /** What `pickThemeFile` resolves on success — the file's name, not its path. */
 export interface PickedThemeFile {
@@ -81,7 +81,7 @@ export async function pickThemeFile(): Promise<PickedThemeFile | null> {
 const DISMISSAL_GRACE_MS = 400;
 
 /**
- * The browser fallback: an `<input type="file">` with no `<form>`, added to
+ * An `<input type="file">` with no `<form>`, added to
  * nothing — clicking it is enough to open the native picker in every engine
  * this app targets, and leaving it out of the document means there is no stray
  * node to clean up afterwards. `change` carries the chosen file; `cancel` fires
@@ -128,7 +128,7 @@ function pickThemeFileFromBrowser(): Promise<PickedThemeFile | null> {
           return;
         }
         /**
-         * Sized before it is read, which is the order `electron/main/theme/`
+         * Sized before it is read, which is the order the deleted `electron/main/theme/`
          * used to check in and the reason its check is not simply gone.
          * `importTheme` (`validate.ts`) caps the contents too, but only once
          * the whole file is in memory; refusing here costs one property read
@@ -186,12 +186,19 @@ const MAX_STEM_LENGTH = 64;
 const FALLBACK_STEM = 'theme';
 
 /**
- * Turn any theme name into a filename main's `/^[\w.-]{1,64}\.json$/`
- * (`electron/main/theme/index.ts`) will accept.
+ * Turn any theme name into a sane download filename.
  *
- * `\w` is ASCII-only, so a theme named "Café" or "日本語" produces a
- * `suggestedName` main refuses outright — Export would throw for those
- * users with no path to a fix. Latin diacritics are transliterated first
+ * The pattern was once main's, enforced by `electron/main/theme/index.ts`,
+ * which refused a `suggestedName` outside `/^[\w.-]{1,64}\.json$/` and made
+ * Export throw for anyone whose theme was called "Café". HIVE-146 deleted that
+ * module, and `<a download>` accepts anything — so nothing rejects a name any
+ * more and this is no longer a gate.
+ *
+ * It stays because the *filename* is still worth getting right: a download
+ * called `日本語.json` or `my theme!!.json` is a worse artefact than
+ * `cafe.json`, on every filesystem the file might land on next.
+ *
+ * `\w` is ASCII-only. Latin diacritics are transliterated first
  * (café → cafe) via Unicode NFKD normalisation, which decomposes the accent
  * into a separate combining mark that then gets stripped; anything still
  * outside `[\w.-]` afterwards — CJK, emoji, punctuation, spaces — becomes a
@@ -221,17 +228,24 @@ export function sanitizeFileName(suggestedName: string): string {
 /**
  * Write `contents` under `suggestedName`, sanitised to a bare `.json` filename.
  *
- * Always resolves `true`: a download has no dialog to cancel. It used to
- * resolve `false` for a cancelled native save dialog, which no longer exists.
+ * Returns nothing. It used to resolve a boolean — `false` meaning the user
+ * cancelled the native save dialog — and there is no dialog left to cancel, so
+ * the value was always `true` and both call sites already discarded it. A
+ * constant return that callers ignore is a question the API is no longer
+ * asking.
+ *
+ * Still `async`: it can reject (a blocked `createObjectURL`, a `click` that
+ * throws), and the gallery's `void` lets that surface as an unhandled
+ * rejection in the console rather than swallowing it.
  */
 export async function saveThemeFile(
   suggestedName: string,
   contents: string,
-): Promise<boolean> {
-  return saveThemeFileInBrowser(sanitizeFileName(suggestedName), contents);
+): Promise<void> {
+  saveThemeFileInBrowser(sanitizeFileName(suggestedName), contents);
 }
 
-function saveThemeFileInBrowser(name: string, contents: string): boolean {
+function saveThemeFileInBrowser(name: string, contents: string): void {
   const url = URL.createObjectURL(
     new Blob([contents], { type: 'application/json' }),
   );
@@ -245,5 +259,4 @@ function saveThemeFileInBrowser(name: string, contents: string): boolean {
     anchor.remove();
     URL.revokeObjectURL(url);
   }
-  return true;
 }
