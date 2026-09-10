@@ -29,14 +29,17 @@ import {
   type RemoteConfig,
   type SetRemoteResult,
 } from '../../electron/shared/config-contract';
+import { HOOK_PATH } from '../../electron/shared/hook-contract';
 import {
   CH,
   REPLAY_BYTES,
   type AppInfo,
   type Channel,
   type DataEvent,
+  type NotificationReadEvent,
   type RemoteLinkStatus,
 } from '../../electron/shared/ipc-contract';
+import { type HiveNotification } from '../../electron/shared/notification-contract';
 import {
   CALL_DEADLINE_MS,
   CALL_TIMEOUT_CODE,
@@ -2686,6 +2689,162 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
           (changesFor(a)[0]?.payload as { projectId: string }).projectId,
         ).toBe(seededProjectId);
       }, 60_000);
+
+      it('28. a row is unread until every attached surface has seen it (HIVE-154)', async () => {
+        /*
+          "Every surface" ranges over every socket the server is tracking, and
+          the cases above leave theirs attached until this block's `afterAll`.
+          Each of those is a surface not watching the session, so the fleet
+          would never be all-watching and leg 2 could not be reached. Closed
+          here so the fleet is exactly A and B; the attaches, the spawn and the
+          pty round-trip below outlast the loopback close handshakes by orders
+          of magnitude, and a straggler shows up as a failure, never a pass.
+        */
+        for (const stale of liveClients.splice(0)) stale.close();
+
+        const a = await attached();
+        const b = await attachedSecond();
+        const eventsA = a.collectEvents();
+        const eventsB = b.collectEvents();
+        const rows = (events: () => EventFrame[], channel: Channel): EventFrame[] =>
+          events().filter((frame) => frame.channel === channel);
+        /*
+          A `notify` has no answer, and the hook POST travels on a different
+          connection, so nothing orders the two. A `call` on the same socket
+          does: frames on one socket are handled in order, so its answer means
+          every foreground report sent before it has landed.
+        */
+        const landed = async (client: LiveClient): Promise<void> => {
+          const barrier = await client.call(CH.configGet, undefined);
+          expect(barrier.kind).toBe('result');
+        };
+
+        const sessionId = `read-state-${String(Date.now())}`;
+        await a.spawnSession(seededProjectId, sessionId);
+
+        /*
+          The hook credential is the session's own, read out of its own pty —
+          the only place it is ever written down. `HIVE_RECEIVER_URL` is the
+          bare origin (`envFor` hands the MCP host `running.origin`), so the
+          hook route is appended here, and it works against whatever loopback
+          port the server bound.
+        */
+        a.notify(CH.ptyWrite, {
+          sessionId,
+          data: "printf 'HOOKENV=%s=%s\\n' \"$HIVE_RECEIVER_URL\" \"$HIVE_HOOK_TOKEN\"\r",
+        });
+        const envChunk = (await a.collectPtyUntil(sessionId, /HOOKENV=\S+=[0-9a-f]{64}/))
+          .map((frame) => frame.chunk)
+          .join('');
+        const env = /HOOKENV=(\S+?)=([0-9a-f]{64})/.exec(envChunk);
+        assert(env !== null, 'the session carries HIVE_RECEIVER_URL and HIVE_HOOK_TOKEN');
+        const [, receiverOrigin, hookToken] = env;
+
+        const raiseBlocked = (toolUseId: string): Promise<Response> =>
+          fetch(`${receiverOrigin}${HOOK_PATH}`, {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'x-hive-session': sessionId,
+              'x-hive-token': hookToken,
+            },
+            body: JSON.stringify({
+              hook_event_name: 'PermissionRequest',
+              session_id: sessionId,
+              tool_use_id: toolUseId,
+              tool_name: 'Bash',
+              tool_input: { command: 'true' },
+            }),
+          });
+
+        /*
+          Leg 1 — the bug itself. B is watching the session, A is not. The row
+          used to be written `unread: false` on the strength of B's attention;
+          it must arrive unread on both, and the toast must still reach only
+          the device that is not looking.
+        */
+        b.notify(CH.uiForeground, { terminalId: sessionId, focused: true });
+        a.notify(CH.uiForeground, { terminalId: null, focused: true });
+        await landed(a);
+        await landed(b);
+
+        const first = await raiseBlocked('toolu_live_154_1');
+        expect(first.status).toBe(204);
+
+        await waitFor(
+          () =>
+            rows(eventsA, CH.notificationsNew).length > 0 &&
+            rows(eventsB, CH.notificationsNew).length > 0,
+          'a notifications:new on both clients',
+        );
+        const firstRowA = rows(eventsA, CH.notificationsNew).at(-1)!.payload as HiveNotification;
+        const firstRowB = rows(eventsB, CH.notificationsNew).at(-1)!.payload as HiveNotification;
+        expect(firstRowA.unread).toBe(true);
+        expect(firstRowB.unread).toBe(true);
+        await waitFor(
+          () => rows(eventsA, CH.notificationsToast).length > 0,
+          'the toast on the device that is not looking',
+        );
+        expect(rows(eventsB, CH.notificationsToast)).toHaveLength(0);
+
+        /*
+          Leg 2 — the quiet foreground survives the widening. A joins B on the
+          session; a second block is the fleet's own business and arrives
+          already-read, exactly as one watching device has always worked.
+        */
+        a.notify(CH.uiForeground, { terminalId: sessionId, focused: true });
+        await landed(a);
+        const seenBefore = rows(eventsA, CH.notificationsNew).length;
+        const toastsBefore = rows(eventsA, CH.notificationsToast).length;
+        const second = await raiseBlocked('toolu_live_154_2');
+        expect(second.status).toBe(204);
+
+        await waitFor(
+          () => rows(eventsA, CH.notificationsNew).length > seenBefore,
+          'the second notifications:new',
+        );
+        const secondRow = rows(eventsA, CH.notificationsNew).at(-1)!.payload as HiveNotification;
+        expect(secondRow.unread).toBe(false);
+
+        /*
+          Leg 3 — the re-arm is the any-surface question. B looks away while A
+          keeps watching: no read flip, no nag, because somebody is still
+          attending. Then A looks away too, and only then does the row promote.
+
+          The settle waits on real time because it asserts an *absence*, which
+          no poll can hurry — case 22's precedent.
+
+          A `session.blocked` row, which the arrival sweep never takes, so this
+          proves the any-surface hold for that kind only. The drain's other
+          change — an idle or input-needed row released only once *every*
+          surface was watching — is the notifier unit spec's ("releases a held
+          arrival-kind row only once every surface is watching").
+        */
+        b.notify(CH.uiForeground, { terminalId: null, focused: true });
+        await landed(b);
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        expect(rows(eventsA, CH.notificationsRead)).toHaveLength(0);
+        expect(rows(eventsA, CH.notificationsToast)).toHaveLength(toastsBefore);
+        expect(rows(eventsB, CH.notificationsToast)).toHaveLength(0);
+
+        a.notify(CH.uiForeground, { terminalId: null, focused: true });
+        await waitFor(
+          () => rows(eventsA, CH.notificationsRead).length > 0,
+          'the re-arm once the last watcher leaves',
+        );
+        const readFlip = rows(eventsA, CH.notificationsRead).at(-1)!
+          .payload as NotificationReadEvent;
+        expect(readFlip).toMatchObject({ id: secondRow.id, unread: true });
+
+        // The promotion toasts the devices that were never interrupted at raise.
+        await waitFor(
+          () => rows(eventsB, CH.notificationsToast).length > 0,
+          'the promoted toast on the device that was watching at raise',
+        );
+
+        measurements.push({ case: '28. HIVE-154 read-state', rowId: secondRow.id });
+        a.notify(CH.ptyWrite, { sessionId, data: 'exit\n' });
+      }, 120_000);
     });
   });
 

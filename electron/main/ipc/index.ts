@@ -1109,13 +1109,35 @@ const isForegroundFor = (surfaceId: SurfaceId, terminalId: string): boolean => {
 /**
  * Is **any** surface already looking at this terminal?
  *
- * The hub's sweep asks this one (`notifications/hub.ts`): may this inbox row be
- * dropped because somebody has seen it. "Any" is its right answer with two
- * devices attached — a row one of them is staring at is a row that has been
- * seen — where "which one" is only the toast's question.
+ * The re-arm's question (`notifications/index.ts`'s `reevaluateForeground`):
+ * is *somebody* still attending this session, making a promotion a nag about a
+ * row an attended device can already see. "Any" is its right answer with two
+ * devices attached; "which one" is only the toast's question
+ * ({@link isForegroundFor}), and "everybody" is the row's
+ * ({@link isForegroundEverywhere}).
  */
 export const isForeground = (terminalId: string): boolean =>
   surfaces.all().some((surface) => isForegroundFor(surface.id, terminalId));
+
+/**
+ * Is **every** surface already looking at this terminal?
+ *
+ * The inbox row's question (HIVE-154): may a notification be written
+ * already-read, and may an arrival row be swept, on the strength of the
+ * fleet's attention. "Every" is the only honest answer with two devices
+ * attached — a row one device is staring at and the other has never seen is
+ * not a seen row.
+ *
+ * Vacuous truth is a lie here: with no surfaces at all — a headless server
+ * before its first attach — the answer must be `false`, or every row would
+ * arrive already-read to an empty room.
+ */
+export const isForegroundEverywhere = (terminalId: string): boolean => {
+  const all = surfaces.all();
+  return (
+    all.length > 0 && all.every((surface) => isForegroundFor(surface.id, terminalId))
+  );
+};
 
 /** Told when foreground state changes, so the re-arm can run (HIVE-81). */
 const foregroundListeners = new Set<() => void>();
@@ -1679,12 +1701,12 @@ export function registerIpcHandlers(
     },
     activate: activateNotification,
     now: () => Date.now(),
-    isForeground: (action) =>
-      action.type === 'session' && isForeground(action.entityId),
+    isForegroundEverywhere: (action) =>
+      action.type === 'session' && isForegroundEverywhere(action.entityId),
     subjectName: (terminalId) => sessionNames.get(terminalId),
   });
 
-  const notifier = createNotifier({ hub, isForeground });
+  const notifier = createNotifier({ hub, isForeground, isForegroundEverywhere });
 
   /**
    * Ledger entries into inbox cards (HIVE-118).
@@ -1943,8 +1965,15 @@ export function registerIpcHandlers(
       on suppressing notifications for the session it last had (HIVE-145).
       Announced, because the hub's re-arm is what re-raises a row this surface's
       presence was holding down.
+
+      Announced even when it never reported a foreground at all (HIVE-154).
+      Under the every-surface reading a silent surface is enough to hold
+      `isForegroundEverywhere` false for the whole fleet, so its departure can
+      be the moment everyone left is watching, and the arrival sweep must run
+      then rather than at the next tab switch.
     */
-    if (foreground.delete(surfaceId)) notifyForegroundChange();
+    foreground.delete(surfaceId);
+    notifyForegroundChange();
   });
 
   /**

@@ -28,7 +28,7 @@ beforeEach(() => {
   } as unknown as NotificationHub;
 });
 
-const notifier = () => createNotifier({ hub, isForeground: () => false });
+const notifier = () => createNotifier({ hub, isForeground: () => false, isForegroundEverywhere: () => false });
 
 const raised = () => raise.mock.calls[0][0] as Record<string, unknown>;
 
@@ -529,6 +529,7 @@ describe('clone', () => {
 describe('foreground re-arm', () => {
   let promote: ReturnType<typeof vi.fn>;
   let isForeground: Mock<(entityId: string) => boolean>;
+  let isForegroundEverywhere: Mock<(entityId: string) => boolean>;
 
   const waitingPermission = (entityId: string) => ({
     entityId,
@@ -540,6 +541,7 @@ describe('foreground re-arm', () => {
     // Succeeds by default; the failure case overrides per-call below.
     promote = vi.fn(() => true);
     isForeground = vi.fn(() => false);
+    isForegroundEverywhere = vi.fn(() => false);
     hub = {
       raise,
       list: () => [],
@@ -551,7 +553,8 @@ describe('foreground re-arm', () => {
     } as unknown as NotificationHub;
   });
 
-  const makeNotifier = () => createNotifier({ hub, isForeground });
+  const makeNotifier = () =>
+    createNotifier({ hub, isForeground, isForegroundEverywhere });
 
   it('promotes a still-waiting session when it leaves the foreground', () => {
     raise.mockReturnValue({ id: 'raised-1', unread: false });
@@ -671,7 +674,9 @@ describe('foreground re-arm', () => {
    */
   it('raises one row for a repeating idle prompt, and clears it on arrival', () => {
     raise.mockReturnValue({ id: 'raised-1', unread: false });
+    // One surface: every and any are the same answer.
     isForeground.mockReturnValue(true);
+    isForegroundEverywhere.mockReturnValue(true);
     const n = makeNotifier();
 
     n.observe(CH.sessionStatus, idlePrompt('sess-04'));
@@ -684,6 +689,7 @@ describe('foreground re-arm', () => {
     expect(promote).not.toHaveBeenCalled();
 
     isForeground.mockReturnValue(false);
+    isForegroundEverywhere.mockReturnValue(false);
     n.reevaluateForeground();
 
     expect(promote).not.toHaveBeenCalled();
@@ -698,14 +704,72 @@ describe('foreground re-arm', () => {
   it('still promotes a gated row when the user leaves without coming back', () => {
     raise.mockReturnValue({ id: 'raised-1', unread: false });
     isForeground.mockReturnValue(true);
+    isForegroundEverywhere.mockReturnValue(true);
     const n = makeNotifier();
 
     n.observe(CH.sessionStatus, idlePrompt('sess-04'));
 
     isForeground.mockReturnValue(false);
+    isForegroundEverywhere.mockReturnValue(false);
     n.reevaluateForeground();
 
     expect(promote).toHaveBeenCalledWith('raised-1');
+  });
+
+  /**
+   * Two surfaces, one watching (HIVE-154). The re-arm is the any-surface
+   * question — somebody is still attending, so a promotion now would nag them —
+   * while the sweep is the every-surface one and has not taken the row. The
+   * pending entry must be held, not promoted and not dropped.
+   */
+  it('holds the re-arm while another surface is still watching (HIVE-154)', () => {
+    raise.mockReturnValue({ id: 'raised-1', unread: false });
+    // Somebody is watching, but not everybody: the fleet has not walked away.
+    isForeground.mockReturnValue(true);
+    isForegroundEverywhere.mockReturnValue(false);
+    const n = makeNotifier();
+
+    n.observe(CH.sessionStatus, waitingPermission('sess-03'));
+    n.reevaluateForeground();
+
+    // A promotion now would nag the device still looking at the session.
+    expect(promote).not.toHaveBeenCalled();
+
+    // Held, not dropped: the last watcher leaving still re-arms.
+    isForeground.mockReturnValue(false);
+    n.reevaluateForeground();
+    expect(promote).toHaveBeenCalledWith('raised-1');
+  });
+
+  it('releases a held arrival-kind row only once every surface is watching (HIVE-154)', () => {
+    raise.mockReturnValue({ id: 'raised-1', unread: false });
+    const n = makeNotifier();
+    n.observe(CH.sessionStatus, idlePrompt('sess-04'));
+
+    // One surface watching, one not: the sweep cannot have taken the row, so
+    // the pending entry must survive — dropping it would orphan the re-arm.
+    isForeground.mockReturnValue(true);
+    isForegroundEverywhere.mockReturnValue(false);
+    n.reevaluateForeground();
+
+    isForeground.mockReturnValue(false);
+    n.reevaluateForeground();
+    expect(promote).toHaveBeenCalledWith('raised-1');
+  });
+
+  it('does not re-arm a row the sweep took once everyone was watching (HIVE-154)', () => {
+    raise.mockReturnValue({ id: 'raised-1', unread: false });
+    const n = makeNotifier();
+    n.observe(CH.sessionStatus, idlePrompt('sess-04'));
+
+    isForeground.mockReturnValue(true);
+    isForegroundEverywhere.mockReturnValue(true);
+    n.reevaluateForeground();
+
+    isForeground.mockReturnValue(false);
+    isForegroundEverywhere.mockReturnValue(false);
+    n.reevaluateForeground();
+    expect(promote).not.toHaveBeenCalled();
   });
 
   it('drops a gated input_needed when the session terminates', () => {
@@ -1146,7 +1210,7 @@ describe('session.idle foreground gating', () => {
    */
   it('does not let a later gated input_needed evict the gated idle row', () => {
     const promote = gatedHub();
-    const n = createNotifier({ hub, isForeground: () => false });
+    const n = createNotifier({ hub, isForeground: () => false, isForegroundEverywhere: () => false });
 
     n.observe(CH.sessionStatus, prompt);
     n.observe(CH.sessionStatus, stop);
@@ -1166,7 +1230,7 @@ describe('session.idle foreground gating', () => {
   /** A toast saying "is yours again" about a session back at work would be a lie. */
   it('drops a gated idle row once the session is no longer idle', () => {
     const promote = gatedHub();
-    const n = createNotifier({ hub, isForeground: () => false });
+    const n = createNotifier({ hub, isForeground: () => false, isForegroundEverywhere: () => false });
 
     n.observe(CH.sessionStatus, prompt);
     n.observe(CH.sessionStatus, stop);
@@ -1191,7 +1255,7 @@ describe('session.idle foreground gating', () => {
       dismissForSession: () => undefined,
       promote,
     } as unknown as NotificationHub;
-    const n = createNotifier({ hub, isForeground: () => false });
+    const n = createNotifier({ hub, isForeground: () => false, isForegroundEverywhere: () => false });
 
     n.observe(CH.sessionStatus, {
       entityId: 'sess-08',
@@ -1270,6 +1334,7 @@ describe('a row dismisses itself once it has been acted on', () => {
     return createNotifier({
       hub,
       isForeground: (entityId) => entityId === foreground,
+      isForegroundEverywhere: (entityId) => entityId === foreground,
     });
   };
 
@@ -1325,6 +1390,7 @@ describe('a row dismisses itself once it has been acted on', () => {
       const n = createNotifier({
         hub,
         isForeground: (entityId) => entityId === foreground,
+        isForegroundEverywhere: (entityId) => entityId === foreground,
       });
 
       foreground = 'sess-05';
@@ -1363,6 +1429,7 @@ describe('a row dismisses itself once it has been acted on', () => {
       const n = createNotifier({
         hub,
         isForeground: (entityId) => entityId === foreground,
+        isForegroundEverywhere: (entityId) => entityId === foreground,
       });
 
       foreground = 'sess-05';
@@ -1482,7 +1549,7 @@ describe('a row dismisses itself once it has been acted on', () => {
         dismissForeground,
         dismissForSession,
       } as unknown as NotificationHub;
-      const n = createNotifier({ hub, isForeground: () => false });
+      const n = createNotifier({ hub, isForeground: () => false, isForegroundEverywhere: () => false });
 
       n.observe(CH.sessionStatus, block('sess-05'));
       // Still `waiting` — the elicitation's block was never paired away.

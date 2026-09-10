@@ -47,12 +47,13 @@ const UPDATE_KINDS: ReadonlySet<NotificationKind> = new Set([
  *
  * ## Why it remembers who it has already told
  *
- * A row raised while some surface is watching is held by the notifier's
- * `pendingForeground` and promoted when that surface looks away. Promotion
- * calls this again with the same notification. Without a record of who has
- * already been interrupted, the surface that was never watching — and was
- * correctly toasted the first time — would be interrupted twice about one
- * event.
+ * Promotion calls this again with a notification it may already have routed:
+ * a row written already-read is held by the notifier's `pendingForeground` and
+ * promoted once no surface is watching. Since HIVE-154 a row is written
+ * already-read only when *every* surface was watching, so on that path the
+ * first call told nobody and the record is empty. The record is still what
+ * guarantees one interruption per surface per event, whichever path calls
+ * twice, and it costs one set per toast.
  */
 export interface ToastRouteOptions {
   /** Who is live, resolved per toast: a client attaches whenever it likes. */
