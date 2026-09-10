@@ -519,8 +519,21 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    * `null` would have traded that guarantee away for one fewer entry here. It
    * takes no payload at all, which is the narrowest a mutating verb can be.
    */
+  /**
+   * `badge` is HIVE-159, and what a page can do with it that it could not
+   * before is **set the number on this machine's dock icon**.
+   *
+   * Nothing more: the payload is a count, and `badgeDock` drops anything that
+   * is not a non-negative integer rather than coercing it, so no string a page
+   * supplies ever reaches `app.dock.setBadge`. It reaches no file, process or
+   * network, and in local mode the handler ignores it outright, because the hub
+   * writes the badge from its own buffer. It exists because an attached client
+   * runs no hub, and the renderer is the only thing there that knows the count.
+   */
   expect(surface.notifications).toEqual([
     'act',
+    // HIVE-159 — this window's unread count, for this machine's dock.
+    'badge',
     'clear',
     'delivery',
     // HIVE-93 — a deliberate widening; see BRIDGE_NOTIFICATIONS_KEYS.

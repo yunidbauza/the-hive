@@ -66,8 +66,12 @@ vi.mock('electron', () => {
   return {
     Notification: FakeNotificationClass,
     BrowserWindow: { getAllWindows: () => windows },
+    app: { dock: { bounce } },
   };
 });
+
+/** This machine's dock, bounced alongside the toast it raises (HIVE-159). */
+const bounce = vi.fn();
 
 /**
  * `activate-here` is mocked for the reason the proxy's own test mocks it: it
@@ -130,6 +134,7 @@ beforeEach(() => {
   windows = [];
   call = vi.fn<(channel: string, payload: unknown) => Promise<unknown>>(async () => undefined);
   activateOnThisMachine.mockClear();
+  bounce.mockClear();
   toasts = createRemoteToasts({ call, activateHere: activateOnThisMachine });
 });
 
@@ -143,6 +148,25 @@ describe('createRemoteToasts', () => {
       body: 'waiting on you',
       shown: true,
     });
+  });
+
+  /*
+    HIVE-159. The local presenter bounces once alongside every toast it raises,
+    and before this the attached client never did: the server's router sends
+    the toast here instead of raising it, so its own presenter, and its bounce,
+    never ran for this machine.
+  */
+  it('bounces this machine\'s dock once, informationally, alongside the toast', () => {
+    toasts.receive(toast);
+
+    expect(bounce).toHaveBeenCalledTimes(1);
+    expect(bounce).toHaveBeenCalledWith('informational');
+  });
+
+  it('does not bounce for a toast it dropped as malformed', () => {
+    toasts.receive({ id: 'n1' });
+
+    expect(bounce).not.toHaveBeenCalled();
   });
 
   it('raises nothing when the OS has no notification daemon', () => {

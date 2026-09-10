@@ -64,7 +64,7 @@ vi.mock('../../../../electron/main/notifications/activate-here', () => ({
  *
  * The three channel lists below are derived from `FRAME_KIND` — the same
  * table `registerRemoteProxy` itself walks — but the counts asserted against
- * them (100, 6, 26, 106) are literals, not read back off the derived lists.
+ * them (101, 6, 26, 107) are literals, not read back off the derived lists.
  * `tests/shared/remote-contract.test.ts:82,125` pins the same four numbers
  * independently. A channel added to the contract without a home in this file
  * fails a count here, which is the point: a self-referential assertion could
@@ -93,6 +93,7 @@ const removeAllListeners = vi.fn((channel: string) => {
  * watches the app-level focus events and reads `BrowserWindow` live.
  */
 const appListeners = new Map<string, Set<() => void>>();
+const setBadge = vi.fn();
 /** Toasts this process raised for the attached server (HIVE-145). */
 const toastsRaised: { title: string; body: string }[] = [];
 let windows: { isDestroyed: () => boolean; isFocused: () => boolean }[] = [
@@ -110,6 +111,8 @@ vi.mock('electron', () => ({
     removeListener: (event: string, listener: () => void) => {
       appListeners.get(event)?.delete(listener);
     },
+    // HIVE-159: the attached client badges its own dock from its renderer's count.
+    dock: { setBadge, bounce: vi.fn() },
   },
   BrowserWindow: { getAllWindows: () => windows },
   /*
@@ -219,7 +222,7 @@ afterEach(() => {
 
 describe('registerRemoteProxy', () => {
   it('binds every call channel to the client', () => {
-    expect(callChannels.length).toBe(100);
+    expect(callChannels.length).toBe(101);
 
     registerRemoteProxy({ client: fakeClient(), broadcaster: fakeBroadcaster() });
 
@@ -529,7 +532,7 @@ describe('registerRemoteProxy', () => {
   it('records every binding, so the mode can be switched back', () => {
     registerRemoteProxy({ client: fakeClient(), broadcaster: fakeBroadcaster() });
 
-    expect(remoteProxyBindingsSize()).toBe(106);
+    expect(remoteProxyBindingsSize()).toBe(107);
   });
 
   /**
@@ -543,13 +546,14 @@ describe('registerRemoteProxy', () => {
    * `remote:forget` (HIVE-153).
    */
   describe('PROCESS_LOCAL channels (HIVE-144 Rulings 24 and 28, HIVE-153, HIVE-149, HIVE-151)', () => {
-    it('names exactly eight channels', () => {
-      expect(PROCESS_LOCAL.length).toBe(8);
+    it('names exactly nine channels', () => {
+      expect(PROCESS_LOCAL.length).toBe(9);
       expect([...PROCESS_LOCAL].sort()).toEqual(
         [
           'app:info',
           'config:get-remote',
           'config:set-remote',
+          'notifications:badge',
           'notifications:delivery',
           'remote:forget',
           'remote:pair',
@@ -588,6 +592,43 @@ describe('registerRemoteProxy', () => {
       }
 
       expect(client.call).not.toHaveBeenCalled();
+    });
+
+    /*
+      HIVE-159. While attached no hub runs in this process, so the renderer's
+      count is the only one describing the inbox on this screen, and the dock
+      it belongs on is this machine's.
+    */
+    it('answers notifications:badge by badging this machine\'s dock, never client.call', async () => {
+      const client = fakeClient();
+      registerRemoteProxy({ client, broadcaster: fakeBroadcaster(), localAppInfo: fakeAppInfo });
+      setBadge.mockClear();
+
+      await invoke('notifications:badge', trustedEvent, 4);
+
+      expect(setBadge).toHaveBeenCalledWith('4');
+      expect(client.call).not.toHaveBeenCalled();
+    });
+
+    /*
+      HIVE-159. macOS keeps the app alive with no window, and with the renderer
+      gone nothing can keep the count current. A stale number is a lie about an
+      inbox nobody is displaying, so the badge goes with the last window.
+    */
+    it('clears the dock badge when the last window closes while attached', () => {
+      registerRemoteProxy({ client: fakeClient(), broadcaster: fakeBroadcaster(), localAppInfo: fakeAppInfo });
+      setBadge.mockClear();
+
+      for (const listener of appListeners.get('window-all-closed') ?? []) listener();
+
+      expect(setBadge).toHaveBeenCalledWith('');
+    });
+
+    it('stops watching for the last window once reset', () => {
+      registerRemoteProxy({ client: fakeClient(), broadcaster: fakeBroadcaster(), localAppInfo: fakeAppInfo });
+      resetRemoteProxy();
+
+      expect(appListeners.get('window-all-closed')?.size ?? 0).toBe(0);
     });
 
     it('answers app:info from localAppInfo, never client.call', async () => {
@@ -979,12 +1020,12 @@ describe('registerRemoteProxy', () => {
 
     resetRemoteProxy();
 
-    // 106 (100 call + 6 notify), the same literal `records every binding`
+    // 107 (101 call + 6 notify), the same literal `records every binding`
     // pins — not `callChannels.length + notifyChannels.length`, which would
     // recompute its own expectation from the same source the code under test
     // reads and could never catch a channel silently lost between the two.
-    expect(removeHandler).toHaveBeenCalledTimes(106);
-    expect(removeAllListeners).toHaveBeenCalledTimes(106);
+    expect(removeHandler).toHaveBeenCalledTimes(107);
+    expect(removeAllListeners).toHaveBeenCalledTimes(107);
     expect(remoteProxyBindingsSize()).toBe(0);
 
     client.emit('pty:data', { seq: 2 });

@@ -182,6 +182,7 @@ export const FRAME_KIND = {
   [CH.notificationsRead]: 'event',
   [CH.notificationsDismissed]: 'event',
   [CH.notificationsDelivery]: 'call',
+  [CH.notificationsBadge]: 'call',
   [CH.notificationsAct]: 'call',
   [CH.ledgerList]: 'call',
   [CH.ledgerPost]: 'call',
@@ -434,6 +435,7 @@ export const CHANNEL_AUTHORIZATION = {
   [CH.notificationsRead]: 'read',
   [CH.notificationsDismissed]: 'read',
   [CH.notificationsDelivery]: 'read',
+  [CH.notificationsBadge]: 'mutate',
   [CH.notificationsAct]: 'execute',
   [CH.ledgerList]: 'read',
   [CH.ledgerPost]: 'execute',
@@ -618,7 +620,7 @@ export function windowBoundReason(channel: string): string | null {
  * and is not wrong, only irrelevant — the same plausible-but-wrong shape a
  * server's own Electron version has when it stands in for the client's.
  *
- * Six channels pass on this branch. `AppInfo` (`CH.appInfo`) and
+ * Nine channels pass on this branch; the first four are these. `AppInfo` (`CH.appInfo`) and
  * `UpdateStatus` (`CH.updatesStatus`, `CH.updatesCheck`) *read* this process's
  * identity — its own Electron/Chrome/Node build, its own log path, its own
  * receiver and server-mode binds, whether it is itself attached, its own
@@ -757,6 +759,15 @@ export const PROCESS_LOCAL_REFUSALS = {
   */
   [CH.notificationsDelivery]:
     "notifications:delivery reports whether the answering machine's OS raises desktop notifications, and why it last refused one. Toasts are raised on the asking machine, so it answers for itself and a server refuses it.",
+  /*
+    The ninth (HIVE-159), and the same shape as the eighth: a fact about the
+    machine that answers, here its dock. The count it carries is the fleet's,
+    but the badge describes one screen, and before this channel an attached
+    client's count was only ever written onto the server's dock, which is
+    nobody's screen on a served mini.
+  */
+  [CH.notificationsBadge]:
+    "notifications:badge writes the unread count onto the answering machine's dock. The count belongs on the dock of the machine showing that inbox, so the asking machine badges its own and a server refuses it.",
 } as const satisfies Partial<Record<Channel, string>>;
 
 /**
