@@ -12,6 +12,7 @@ import { useNotificationActivate } from '@features/settings/hooks/use-notificati
 import { useAgentsSync } from '@features/shared/hooks/use-agents-sync';
 import { useLedgerSync } from '@features/shared/hooks/use-ledger-sync';
 import { useAppChords } from '@hooks/use-app-chords';
+import { useDockBadge } from '@hooks/use-dock-badge';
 import { useForegroundSession } from '@hooks/use-foreground-session';
 import { useNotificationStream } from '@hooks/use-notification-stream';
 import { useRemoteLinkStream } from '@hooks/use-remote-link';
@@ -98,6 +99,11 @@ export function AppShell() {
     mounted would leave the count at zero until someone looked.
   */
   useNotificationStream();
+  /*
+    This machine's dock badge, from the rows the stream above fills (HIVE-159).
+    Only heard while attached; in local mode the hub badges from its own buffer.
+  */
+  useDockBadge();
 
   /*
     What this window's attachment is doing (HIVE-150). Mounted here for the

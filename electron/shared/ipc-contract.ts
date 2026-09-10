@@ -680,6 +680,20 @@ export const CH = {
    */
   notificationsDelivery: 'notifications:delivery',
   /**
+   * The unread count this window's inbox is showing, renderer → main, for this
+   * machine's dock badge (HIVE-159).
+   *
+   * Needed only while attached. There no hub runs in this process, so nothing
+   * in main knows the count; the server's hub computes it from the same rows
+   * the renderer already holds. In local mode the hub writes the badge itself
+   * and the local handler ignores this report.
+   *
+   * `PROCESS_LOCAL`: the badge belongs to the dock of the machine that asked.
+   * Proxied, it would badge the server's dock on the client's behalf, which is
+   * the defect this channel exists to end.
+   */
+  notificationsBadge: 'notifications:badge',
+  /**
    * Do what a clicked notification says to do.
    *
    * The renderer used to handle a clicked row itself, which worked for exactly
@@ -2418,6 +2432,11 @@ export interface HiveBridge {
      */
     delivery(): Promise<NotificationDeliveryStatus>;
     /**
+     * Report the unread count this window is showing, for this machine's dock
+     * badge (HIVE-159). See {@link CH.notificationsBadge}.
+     */
+    badge(count: number): Promise<void>;
+    /**
      * Carry out a notification's action.
      *
      * The renderer still handles `session` itself — only it knows what opening
@@ -3263,6 +3282,9 @@ export const BRIDGE_NOTIFICATIONS_KEYS = [
   // The router for everything a row cannot carry out itself — see
   // `CH.notificationsAct`.
   'act',
+  // HIVE-159. This window's unread count, for this machine's dock — see
+  // `CH.notificationsBadge`.
+  'badge',
 ] as const;
 
 /** The exact key set of `window.hive.ledger` (HIVE-111). */

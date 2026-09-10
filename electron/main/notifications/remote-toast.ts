@@ -1,4 +1,4 @@
-import { Notification } from 'electron';
+import { app, Notification } from 'electron';
 
 import { CH, type Channel } from '@shared/ipc-contract';
 import {
@@ -198,6 +198,19 @@ export function createRemoteToasts(options: RemoteToastOptions): RemoteToasts {
       });
 
       notification.show();
+
+      /*
+        This machine's dock, bounced alongside the toast (HIVE-159).
+
+        The local presenter (`presentLocally` in `ipc/index.ts`) has always
+        bounced once after every toast it raises, because the dock still
+        reaches someone when the OS refuses the toast. While attached that
+        presenter never runs here, and the server's router sends the toast
+        across instead of raising it, so its bounce never ran for this machine
+        at all. `informational` for that presenter's reason: once, not until
+        the app is activated.
+      */
+      app.dock?.bounce('informational');
     },
 
     dispose() {
