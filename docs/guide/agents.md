@@ -24,9 +24,10 @@ last one, so it remembers.
 
 Agents come with The Hive: the app's own `resources/agents/` is copied into
 `~/.hive/agents` on launch, the way shipped skills are ([Custom skills](skills.md)).
-Today that is **shipper**, the PR endgame, **acr**, the reviewer it asks (named after the
+Today that is **builder**, which builds an approved plan in its own worktree and opens
+the draft PR, **shipper**, the PR endgame, **acr**, the reviewer it asks (named after the
 review tool it runs, `acr`, which is a command on the machine, not this agent), and **fixer**,
-which works through a PR's findings on the PR branch; the builder lands next. Your edits win: a definition you changed is left
+which works through a PR's findings on the PR branch. Your edits win: a definition you changed is left
 alone by updates, and one you deleted stays deleted.
 
 ## Create an agent

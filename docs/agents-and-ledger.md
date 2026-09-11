@@ -1913,7 +1913,13 @@ GraphQL mutation, and no glob over it could keep the consent narrow);
 HIVE-166's grant or the fence's card decides each merge, and
 `tests/resources/agents/shipped-agents.test.ts` proves it against the real
 `matches`, and pins every shipped icon to the Settings list so none draws as
-a question mark. The fixer (HIVE-169) takes a PR and its findings by `ledger_ask`,
+a question mark. The builder (HIVE-170) takes a plan by `ledger_ask` from the
+session that planned it, builds it task by task in a worktree under
+`~/.hive/work/builder/` with `execute`'s drift check after each task, opens
+the draft PR, and asks the shipper. A question the plan does not answer goes
+to the job's `reply-to` party, the planning session first, and the live suite
+proves that addressing across two wakes (`asks the party its job named`).
+The fixer (HIVE-169) takes a PR and its findings by `ledger_ask`,
 works on the branch where it is already checked out (git allows one worktree
 per branch, and the builder's may still stand) or in a worktree of its own
 under `~/.hive/work/fixer/` (detached at the branch's tip, since the person's

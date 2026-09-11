@@ -24,8 +24,8 @@ const shippedAgents = readdirSync(join(resources, 'agents'), { withFileTypes: tr
   .map((entry) => entry.name);
 
 describe('shipped agents', () => {
-  it('ships shipper, acr and fixer', () => {
-    expect(shippedAgents.sort()).toEqual(['acr', 'fixer', 'shipper']);
+  it('ships shipper, acr, fixer and builder', () => {
+    expect(shippedAgents.sort()).toEqual(['acr', 'builder', 'fixer', 'shipper']);
   });
 
   it.each(shippedAgents)('%s parses against the shipped skills', (name) => {
