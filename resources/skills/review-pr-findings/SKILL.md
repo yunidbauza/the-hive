@@ -17,9 +17,12 @@ This skill does not announce, watch or merge. That is `ship`.
 `ship` (through the fixer's ask) passes the repository, the PR number and the
 findings. The workspace is yours to make:
 
-- **As the fixer:** `hive:worktree`, agent path, into
-  `~/.hive/work/fixer/<owner>-<repo>-pr<N>` tracking the PR branch, `pull
-  --ff-only` first.
+- **As the fixer:** first `git -C <repo> worktree list --porcelain`. Git
+  allows one worktree per branch, and the builder's may still exist until
+  `merge-pr` removes it: if the PR branch is checked out anywhere, work
+  **there** (`git -C <that path> pull --ff-only`). Otherwise `hive:worktree`,
+  agent path, into `~/.hive/work/fixer/<repo-name>-pr<N>` tracking the PR
+  branch.
 - **In a session:** the PR's own checkout, on its branch.
 
 Confirm `gh pr view <N> --repo <owner>/<repo> --json headRefName` matches
@@ -50,12 +53,12 @@ count as this round's input too.
 
 ## Step 2: the ledger file
 
-`~/.hive/work/fixer/ledgers/<owner>-<repo>-pr<N>.md` (in a session:
-`~/.hive/goals/../work/fixer/…` is fine too; one place per PR). One row per
-finding: `finding → round first seen → verdict → action → resolution`. Read
-it before assessing anything. A finding already assessed in an earlier round
-is not re-fixed: reply pointing at the prior resolution. Update after every
-verdict and every push. `merge-pr` deletes it.
+`~/.hive/work/fixer/ledgers/<owner>-<repo>-pr<N>.md`, the same path from a
+session; one place per PR. One row per finding: `finding → round first seen
+→ verdict → action → resolution`. Read it before assessing anything. A
+finding already assessed in an earlier round is not re-fixed: reply pointing
+at the prior resolution. Update after every verdict and every push.
+`merge-pr`'s teardown removes it.
 
 ## Step 3: adversarial assessment
 
@@ -80,10 +83,13 @@ here.
 
 ## Step 5: reply safely
 
-Bodies through `--body-file - <<'EOF'`; backticks stay plain. Inline replies
-via `gh api "repos/<owner>/<repo>/pulls/<N>/comments/<id>/replies"`; on HTTP
-422 fall back to one top-level comment naming `file:line`. "One pending review
-per pull request": submit or delete the pending review first.
+Top-level comments: `gh pr comment <N> --repo <owner>/<repo> --body-file -
+<<'EOF'`; backticks stay plain. Inline replies go through the API, which has
+no `--body-file`: write the reply to a file, then
+`jq -n --rawfile body reply.md '{body: $body}' | gh api
+"repos/<owner>/<repo>/pulls/<N>/comments/<id>/replies" --input -`. On HTTP
+422 fall back to one top-level comment naming `file:line`. "One pending
+review per pull request": submit or delete the pending review first.
 
 ## Step 6: verify, push once, loop
 
@@ -96,8 +102,8 @@ fixed, what was rejected and why) and report.
 ## Step 7: report
 
 - **As the fixer:** `ledger_answer` the asker: `clean, <rounds> round(s)`, or
-  `blocked: <what waits on whom>`. Release the claim; remove the worktree
-  when clean.
+  `blocked: <what waits on whom>`. Release the claim the fixer took on
+  arrival; remove the worktree when clean and it was the fixer's own.
 - **In a session:** the same two lines, in chat.
 
 "All resolved" describes the moment this skill finished. `merge-pr` reads the

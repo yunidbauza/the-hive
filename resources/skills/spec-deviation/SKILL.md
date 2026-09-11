@@ -12,7 +12,7 @@ missed, and then sibling stories are built on the old spec.
 Session only: step 4 needs a person to confirm. When the builder agent
 discovers a deviation mid-build it does not run this skill; it asks its
 `reply-to` party with the statement and continues on the answer, and the
-person runs `/spec-deviation` when the tickets should be updated.
+person runs `hive:spec-deviation` when the tickets should be updated.
 
 Every Jira write goes through `jira-writer` (the Atlassian MCP tools when it
 is not installed); never raw REST. Workspace-agnostic: nothing here touches a
@@ -22,9 +22,11 @@ branch.
 
 1. **Write the statement once.** Two to five sentences: what the ticket said,
    what was done, why. Reuse it verbatim below.
-2. **PR body.** Add or refresh a `## Deviation from spec` section:
-   `gh api repos/<owner>/<repo>/pulls/<N> -X PATCH --input <file>` with the
-   body written to a file first (`gh pr edit` fails on this token).
+2. **PR body.** Add or refresh a `## Deviation from spec` section. Write the
+   whole new body to a file, then
+   `jq -n --rawfile body pr-body.md '{body: $body}' | gh api
+   repos/<owner>/<repo>/pulls/<N> -X PATCH --input -` (`gh pr edit` needs
+   token scopes a `gh` login may not hold; the API call does not).
 3. **The ticket.** Append a section titled `UPDATED SPECS` with the statement,
    the date and the PR link: `jira-writer update_issue <KEY> '{}' --desc-file
    <file> --append`. Never rewrite the original description.

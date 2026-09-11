@@ -1,37 +1,31 @@
 ---
 name: merge-pr
 description: Use when a PR is approved and green and it is time to merge it, "merge the PR", "squash and merge", or the shipper's merge stage. Re-checks every merge blocker in one reading immediately before merging, squash merges against that exact head, tears down the worktree and the branch, pulls the default branch, and moves the Jira ticket to Done only when the key is confirmed.
-context: fork
-agent: general-purpose
 ---
 
 # Merge a PR
 
-This runs forked, with no conversation. `$ARGUMENTS` is the only input:
-
-```
-arguments: $ARGUMENTS
-```
-
-Form: `merge-pr <owner>/<repo>#<N> [<workspace>] [KEY]`. An empty line, or the
-literal token `$ARGUMENTS` left uninterpolated, means no arguments: resolve
-from cwd as a candidate and verify it (below). Never parse the token itself.
+Whoever runs this reads nothing from the conversation: the arguments are the
+whole input. `hive:merge-pr <owner>/<repo>#<N> [<workspace>] [KEY]`. No
+arguments at all means cwd is a candidate to verify (below), never an answer.
 
 ## Step 0: the target
 
 1. **Repository** from the argument (`<owner>/<repo>#<N>` or a PR URL). Never
-   from cwd when an argument names it.
-2. **Workspace** from the second argument when given. Otherwise the worktree
+   from cwd when an argument names it. `[ -n "$REPO" ]` before any `--repo`:
+   empty falls back to cwd without an error.
+2. **Already merged?** `gh pr view <N> --repo <owner>/<repo> --json
+   state,mergedAt`. `MERGED` → skip to Step 4 (teardown when a workspace was
+   given or can be found, else straight to Step 5). `CLOSED` with no
+   `mergedAt` → stop; transition nothing. This comes before the workspace on
+   purpose: the recovery path in Step 5 re-runs this skill after the branch
+   is gone, and a workspace demand here would refuse it.
+3. **Workspace** from the second argument when given. Otherwise the worktree
    whose branch is the PR's `headRefName` (`git -C <candidate> worktree list
-   --porcelain`), otherwise the checkout on that branch. No such checkout is a
-   missing input: stop and say so.
-3. `[ -n "$REPO" ]` and `[ -n "$WT" ]` before any `--repo` or `-C`. Empty
-   falls back to cwd without an error, and cwd is the thing this skill must
-   not trust.
-4. **Already merged?** `gh pr view <N> --repo <owner>/<repo> --json
-   state,mergedAt`. `MERGED` → skip to Step 4. `CLOSED` with no `mergedAt` →
-   stop; transition nothing.
-5. **The supplied key.** Tokenise the arguments; consume the PR target, then
+   --porcelain`), otherwise the checkout on that branch. Neither, and the PR
+   is still open: a missing input; stop and say so. `[ -n "$WT" ]` before
+   any `-C`.
+4. **The supplied key.** Tokenise the arguments; consume the PR target, then
    the workspace if it is a path; every remaining token matching
    `^[A-Za-z]+-[0-9]+$` is a supplied key. Two or more distinct keys is P0
    (below). Record the literal for the report.
@@ -44,10 +38,24 @@ textually from here on.
 `gh pr checks <N> --repo <owner>/<repo>`. Zero checks is not green until the
 repository is known to have no workflows.
 
-## Step 2: sync with the base
+## Step 2: sync the workspace, then the base
 
-Re-read `BASE` inside every block; it does not survive a call and must never
-be inlined as bare text:
+The workspace may be behind its own branch: a fixer pushed from a worktree of
+its own, and the shipper's checkout still sits where the builder left it.
+Bring it level first, or the gate reports `head moved` for ever:
+
+```bash
+HEAD_REF=$(gh pr view <N> --repo <owner>/<repo> --json headRefName --jq '.headRefName')
+[ -n "$HEAD_REF" ] || { echo "ABORT: head branch not resolved"; exit 1; }
+git -C "<workspace>" fetch origin
+git -C "<workspace>" merge --ff-only "origin/$HEAD_REF"
+```
+
+A refused fast-forward means local commits nobody pushed. Stop and report;
+do not force either side.
+
+Then the base. Re-read `BASE` inside every block; it does not survive a call
+and must never be inlined as bare text:
 
 ```bash
 BASE=$(gh pr view <N> --repo <owner>/<repo> --json baseRefName --jq '.baseRefName')
@@ -103,10 +111,11 @@ printf '%s' "$GATE" | jq -r --arg local "$LOCAL_HEAD" '
   | ($p.latestReviews.nodes | map(select(.state=="CHANGES_REQUESTED") | .author.login)) as $cr
   | [ (if $p.headRefOid != $local then "head moved: PR \($p.headRefOid) != workspace \($local)" else empty end),
       (if $p.state != "OPEN" then "PR state is \($p.state)" else empty end),
-      (if ($open|length) > 0 then "\($open|length) unresolved review thread(s)" else empty end),
+      (if ($open|length) > 0 then "\($open|length) unresolved review thread(s), \(($open|map(select(.isOutdated))|length)) of them outdated" else empty end),
       (if $p.reviewThreads.pageInfo.hasNextPage then "more than 100 review threads: paginate" else empty end),
       (if ($running|length) > 0 then "checks still running: \($running|map(.name // .context)|join(", "))" else empty end),
       (if ($ctx|length) == 0 then "zero checks reported: establish whether this repo has CI" else empty end),
+      (if $p.commits.nodes[0].commit.statusCheckRollup.contexts.pageInfo.hasNextPage then "more than 100 checks: paginate" else empty end),
       (if ($failed|length) > 0 then "checks failed: \($failed|map(.name // .context)|join(", "))" else empty end),
       (if ($pending|length) > 0 then "review still requested from: \($pending|join(", ")); reviewDecision=\($p.reviewDecision // "none")" else empty end),
       (if ($cr|length) > 0 then "CHANGES_REQUESTED standing from: \($cr|join(", "))" else empty end),
@@ -121,7 +130,7 @@ printf '%s' "$GATE" | jq -r --arg local "$LOCAL_HEAD" '
 | HOLD line | Action |
 | --- | --- |
 | unresolved thread(s) | stop; the findings belong to `review-pr-findings`; never resolve a thread to clear the gate |
-| checks still running, or a `[Bot]` reviewer pending | wait, re-run the **whole** gate; bound it at about ten minutes, then report |
+| checks still running, or a `[Bot]` reviewer pending | in a session: wait, then re-run the **whole** gate, bounded at about ten minutes. In a shipper wake: end the wake; the clock re-runs this stage, and nothing sleeps inside a turn |
 | a `[User]` reviewer pending, or CHANGES_REQUESTED | stop and report; nothing here approves for a person |
 | head moved | stop: a wrong repository, or a push mid-run |
 | zero checks | establish whether the repo has CI (`gh api repos/<o>/<r>/actions/workflows`) |
@@ -145,10 +154,12 @@ gh pr view <N> --repo <owner>/<repo> --json state,mergedAt,mergeCommit --jq '{st
 ```
 
 **The fence.** Run by the shipper, `gh pr merge` is granted only for projects
-whose `autoMerge` is on. For any other project the call stops at the Hive's
-permission fence and becomes an inbox card; the run ends `asking`, and the
-answer resumes it here. That card is the checkpoint. Do not route around it
-through `gh api`.
+whose `autoMerge` is on (HIVE-166). For any other project the call stops at
+the Hive's permission fence and becomes an inbox card; the run ends `asking`,
+and the answer wakes a fresh run. That card is the checkpoint, and the wait
+behind it voids the CLEAR like any other wait: **the resumed run re-runs the
+gate block verbatim** and merges on the new CLEAR, which the one-shot grant
+now lets through. Do not route around the fence through `gh api`.
 
 ## Step 4: teardown
 
@@ -169,16 +180,19 @@ while IFS= read -r line; do
 done <<< "$WT_LIST"
 [ -n "$MAIN_WT" ] || { echo "ABORT: main working tree not resolved"; exit 1; }
 if [ -n "$WT_PATH" ] && [ "$WT_PATH" != "$MAIN_WT" ]; then
-  git -C "$MAIN_WT" worktree remove "$WT_PATH" --force   # a squashed branch is never "fully merged" locally
+  # No --force: a refusal means uncommitted files in the worktree, and those
+  # are somebody's. Stop and report rather than delete them.
+  git -C "$MAIN_WT" worktree remove "$WT_PATH" || { echo "ABORT: worktree $WT_PATH holds uncommitted files"; exit 1; }
   git -C "$MAIN_WT" worktree prune
-  git -C "$MAIN_WT" branch -D "$BRANCH"
-else
-  git -C "$MAIN_WT" checkout "$DEFAULT"
-  git -C "$MAIN_WT" branch -D "$BRANCH" 2>/dev/null || true
 fi
+# The main working tree is the person's own checkout and is often dirty. A
+# checkout that fails must stop here: a pull into whatever branch is still
+# checked out would merge the default branch into their work.
+git -C "$MAIN_WT" checkout "$DEFAULT" || { echo "ABORT: could not check out $DEFAULT in $MAIN_WT (dirty tree?)"; exit 1; }
+git -C "$MAIN_WT" branch -D "$BRANCH" 2>/dev/null || true   # -D: a squashed branch is never "fully merged" locally
 git -C "$MAIN_WT" push origin --delete "$BRANCH" 2>/dev/null || true
-git -C "$MAIN_WT" checkout "$DEFAULT"
-git -C "$MAIN_WT" pull origin "$DEFAULT"
+git -C "$MAIN_WT" pull --ff-only origin "$DEFAULT"
+rm -f "$HOME/.hive/work/fixer/ledgers/<owner>-<repo>-pr<N>.md"   # the findings ledger, done with
 echo "main working tree: $MAIN_WT"
 ```
 
@@ -202,16 +216,18 @@ unique); an empty branch name here is a bug, stop. Then exactly one rule:
 | P4 | one | none | remote-link check on that key through `jira-writer get_remote_links`: a link naming this PR or branch confirms; otherwise transition nothing, report the candidate |
 | P5 | two or more | none | transition nothing; report all |
 
-Transition through `jira-writer transition_issue` to **Done**. Print, and
-repeat in the report:
+Transition to **Done**: `jira-writer get_transitions <KEY>` gives the id of
+the Done transition, then `jira-writer transition_issue <KEY> <id>`, then read
+the status back with `jira-writer get_issue <KEY> status`. Print, and repeat
+in the report:
 
 ```
 step 5: rule <P#>: supplied key: <KEY|none>, branch keys: [<K1>, …|none], action: <…>
 ```
 
-An unconfirmed key never blocks the merge. The recovery is `merge-pr
-<owner>/<repo>#<N> <KEY>`, which finds the PR already merged and goes straight
-to the Jira write.
+An unconfirmed key never blocks the merge. The recovery is `hive:merge-pr
+<owner>/<repo>#<N> <KEY>`, which finds the PR already merged in Step 0 and
+goes straight to the Jira write.
 
 ## Report
 
