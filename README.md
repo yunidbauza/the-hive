@@ -49,9 +49,6 @@ Built for Claude Code.
 
 ## What it does
 
-<img src="src/components/ui/swarm/hive.webp" alt="" width="120" align="right">
-
-| | |
 | --- | --- |
 | **Runs the terminals** | One real PTY per session. Start one from a project, a Jira ticket, or the console: `spawn the-hive "fix the lead form"`. [Sessions](docs/guide/sessions.md) |
 | **Notices when one needs you** | Claude Code's hooks report in, so a permission prompt or a finished turn raises an inbox card instead of scrolling past in a tab you were not watching. [Inbox](docs/guide/inbox.md) |
