@@ -8,7 +8,7 @@
  *
  * **It currently has no producer.** The activity feed was its only one, and the
  * project explorer replaced that panel. The module stays because the simulation
- * story owns the next one and `docs/simulation.md` already tells it to stamp
+ * story owns the next one and `docs/state-and-data.md` already tells it to stamp
  * through this rather than introduce a second clock; deleting a documented seam
  * because it is briefly unused is how the second clock gets written.
  *

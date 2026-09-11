@@ -1,0 +1,5 @@
+flowchart TD
+  src[~/.hive/skills · your skill folders] -->|read before every spawn| plug[Generated plugin]
+  builtin[Built-in done skill] --> plug
+  plug -->|passed as plugin-dir| hive[Sessions and agents The Hive starts]
+  own[claude in your own terminal] -.->|no flag, no skills| same[Unchanged]

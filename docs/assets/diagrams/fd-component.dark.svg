@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 558.975 954.1" width="558.975" height="954.1" style="--bg:#10152a;--fg:#e9effc;--line:#6b779f;--accent:#8fa7f2;--muted:#98a3cc;--surface:#141a33;--border:#273159;background:var(--bg)">
+<style>
+
+  text { font-family: 'system-ui', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 30%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="4.8" refX="8" refY="2.4" orient="auto">
+    <polygon points="0 0, 8 2.4, 0 4.8" fill="var(--_arrow)" />
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="4.8" refX="0" refY="2.4" orient="auto-start-reverse">
+    <polygon points="8 0, 0 2.4, 8 4.8" fill="var(--_arrow)" />
+  </marker>
+</defs>
+<polyline points="109.30915064102565,171.35915064102568 109.30915064102565,224.60000000000002 84.60000000000002,224.60000000000002 84.60000000000002,306" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="169.7997583926755,160.35024160732453 169.7997583926755,224.60000000000002 224.10000000000002,224.60000000000002 224.10000000000002,253.1" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="204.19003346296466,374.9900334629647 204.19003346296466,423.40000000000003 185.28750000000002,423.40000000000003 185.28750000000002,526.25" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="262.12746778613496,356.8725322138651 262.12746778613496,423.40000000000003 339.08750000000003,423.40000000000003 339.08750000000003,451.9" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="307.57422662850917,605.0867266285092 307.57422662850917,665.1 276.4875,665.1 276.4875,739.35" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="370.6007733714909,605.0867266285092 370.6007733714909,665.1 401.6875,665.1 401.6875,693.6" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="361.504849596754,780.917349596754 361.504849596754,849.6 244.40000000000003,849.6 244.40000000000003,878.1" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="376.9778286034354,796.3903286034355 376.9778286034354,849.6 343.3,849.6 343.3,878.1" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="426.3971713965646,796.3903286034354 426.3971713965646,849.6 460.07500000000005,849.6 460.07500000000005,878.1" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<rect x="68.02000000000002" y="211.10000000000002" width="33.16" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="84.60000000000002" y="224.60000000000002" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">yes</text>
+<rect x="210.38000000000002" y="211.10000000000002" width="27.44" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="224.10000000000002" y="224.60000000000002" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">no</text>
+<rect x="168.70750000000004" y="409.90000000000003" width="33.16" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="185.28750000000002" y="423.40000000000003" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">yes</text>
+<rect x="325.3675" y="409.90000000000003" width="27.44" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="339.08750000000003" y="423.40000000000003" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">no</text>
+<rect x="259.9075" y="651.6" width="33.16" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="276.4875" y="665.1" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">yes</text>
+<rect x="387.9675" y="651.6" width="27.44" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="401.6875" y="665.1" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">no</text>
+<rect x="216.38000000000002" y="836.1" width="56.04" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="244.40000000000003" y="849.6" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">session</text>
+<rect x="321" y="836.1" width="44.6" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="343.3" y="849.6" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">agent</text>
+<rect x="440.63500000000005" y="836.1" width="38.88" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="460.07500000000005" y="849.6" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">none</text>
+<polygon points="134.05,40 212.10000000000002,118.05000000000001 134.05,196.10000000000002 56,118.05000000000001" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="40.00000000000002" y="306" width="89.2" height="36" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<polygon points="224.10000000000002,253.1 295,324 224.10000000000002,394.9 153.20000000000002,324" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="147.83750000000003" y="526.25" width="74.9" height="36" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<polygon points="339.08750000000003,451.9 431.43750000000006,544.25 339.08750000000003,636.6 246.7375,544.25" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="239.03750000000002" y="739.35" width="74.9" height="36" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<polygon points="401.6875,693.6 465.4375,757.35 401.6875,821.1 337.9375,757.35" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="203.37500000000003" y="878.1" width="82.05000000000001" height="36" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="309.425" y="878.1" width="67.75" height="36" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="401.17500000000007" y="878.1" width="117.80000000000001" height="36" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<text x="134.05" y="118.05000000000001" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">Settings open?</text>
+<text x="84.60000000000002" y="324" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">Settings</text>
+<text x="224.10000000000002" y="324" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">Picker open?</text>
+<text x="185.28750000000002" y="544.25" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">Picker</text>
+<text x="339.08750000000003" y="544.25" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">Editor full-stage?</text>
+<text x="276.4875" y="757.35" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">Editor</text>
+<text x="401.6875" y="757.35" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">Active tab</text>
+<text x="244.40000000000003" y="896.1" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">Session</text>
+<text x="343.3" y="896.1" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">Agent</text>
+<text x="460.07500000000005" y="896.1" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">Orchestrator</text>
+</svg>

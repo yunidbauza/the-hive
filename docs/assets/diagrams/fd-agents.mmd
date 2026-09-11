@@ -1,0 +1,10 @@
+sequenceDiagram
+  participant A as Agent run
+  participant L as Ledger
+  participant I as Inbox
+  participant U as You
+  A->>L: ask a12 to the overmind
+  L->>I: card
+  U->>I: Approve
+  I->>L: answer a12
+  L->>A: wake with the answer

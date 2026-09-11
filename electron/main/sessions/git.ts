@@ -9,8 +9,9 @@ import { runAsync, type RunAsync } from '../integrations/github/run';
  * `session:status` and `session:name` are *reported* — a hook says what the
  * agent is doing, a terminal title says what it calls itself. Nothing reports a
  * branch. So this is the one session fact main has to observe for itself, and
- * `docs/branch-sync-note.md` named the two things that needed solving before it
- * could: a live working directory, and a cadence.
+ * the design note in `docs/desktop-architecture.md` ("The branch a session is on") named the two
+ * things that needed solving before it could: a live working directory, and a
+ * cadence.
  *
  * The first turned out to be free — every hook payload carries `cwd`, so there
  * is no need for the `lsof -a -p <pid> -d cwd` shape that note proposed. This

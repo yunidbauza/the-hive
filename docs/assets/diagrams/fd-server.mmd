@@ -1,0 +1,10 @@
+stateDiagram-v2
+  direction LR
+  [*] --> Local
+  Local --> Dialing: Attach
+  Dialing --> Attached: accepted
+  Dialing --> Refused: unauthorized, revoked, version
+  Attached --> Reconnecting: socket drops
+  Reconnecting --> Attached: redial succeeds
+  Reconnecting --> Local: Work locally
+  Refused --> Local: Work locally

@@ -691,8 +691,9 @@ export interface SessionNameEvent {
  * `spawnSession` used to assign `` `feat/${id}` `` and nothing ever created that
  * branch. The meta bar and the fleet table read `feat/sess-01` off a session
  * sitting on `main`, and kept reading it after the agent moved into a worktree.
- * It was not a stale value — it was never true. `docs/branch-sync-note.md`
- * records the full diagnosis; this event is the fix it asked for.
+ * It was not a stale value — it was never true.
+ * `docs/desktop-architecture.md` records the full diagnosis; this event is the
+ * fix it asked for.
  *
  * ## Why `cwd` rides along rather than travelling separately
  *

@@ -1,0 +1,19 @@
+sequenceDiagram
+  participant T as Trigger
+  participant H as The Hive
+  participant A as Agent (claude -p)
+  participant L as Ledger
+  participant U as You (inbox)
+  T->>H: schedule, message, Run now or Slack
+  H->>A: resume the agent's session
+  A->>L: ledger_read
+  A->>A: do the job in the body
+  alt needs you
+    A->>L: ledger_ask
+    L->>U: inbox card
+    U->>L: answer
+    L->>H: the answer wakes the agent
+  else finished
+    A->>L: ledger_done
+    L->>U: done card
+  end

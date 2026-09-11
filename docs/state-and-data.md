@@ -2,7 +2,25 @@
 
 **Scope:** store shape, actions, selector hooks, and the fixture dataset.
 
-**Owned by story 012** (HIVE, Jira).
+> **TL;DR**
+> - Four stores: `hive-store` (domain), `ui-store` (view), `appearance-store` (preferences),
+>   `editor-store` (buffers).
+> - Only `appearance-store` persists, to `localStorage`.
+> - Components read through named selector hooks, never the store object or `getState()`.
+> - The ledger mirror merges by id and is capped at 500. Notifications cap at 50.
+> - The fleet boots empty; last run's ended sessions arrive from main.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/fd-state.dark.svg">
+  <img src="assets/diagrams/fd-state.light.svg" alt="Four stores feed selector hooks; only appearance-store persists">
+</picture>
+
+**On this page:** [Stores](#stores) ·
+[What persists](#what-persists-and-where) ·
+[Selector hooks](#selector-hooks) · [Caps](#caps) ·
+[The fake clock](#the-fake-clock) ·
+[What the store seeds](#what-the-store-seeds-and-what-it-no-longer-does) ·
+[The console grammar](#the-console-grammar)
 
 ## Stores
 
@@ -45,7 +63,7 @@ What *is* split off it, on purpose: **where** a file renders is
 `appearance-store`'s `editorPlacement`, and which folders the tree has open is
 `ui-store`'s `explorerExpanded` — a fact about a panel, not about a file.
 
-### The ledger slice is a mirror, not a source (HIVE-111)
+### The ledger slice is a mirror, not a source
 
 `hive-store.state.ledger` is a `LedgerEntry[]` — the tail of the append-only log
 that main owns on disk under `~/.hive/ledger/`. It is the one slice in this store
@@ -72,7 +90,7 @@ definitions.
 **The rule cannot drift; the input can, and does.** `useLedgerSync` throws
 away the `openAsks` main computed over the *whole* log and keeps only
 `snapshot.entries`, and both `hydrateLedger` and `ledgerAppend` then trim the
-mirror to the newest `LEDGER_MEMORY_CAP` (500) entries. So an ask that is
+mirror to the newest 500 entries (`LEDGER_MEMORY_CAP`). So an ask that is
 genuinely still open — unanswered, and inside its 24h TTL — but older than the
 500 newest entries has been evicted from the mirror, and `useOpenAsks` /
 `useOpenAskCount` simply will not see it. `useThread(id)` loses an evicted ask
@@ -97,7 +115,7 @@ feature turns on its branches:
 | Buffer | State on disk | Behaviour |
 | --- | --- | --- |
 | clean | changed | **silently reloaded** |
-| dirty | changed | `staleOnDisk`; the banner offers Reload or Keep mine |
+| dirty | changed | `staleOnDisk`; the banner offers Reload, and ignoring it keeps your edits |
 | any | mid-save | skipped |
 | any | the app's own last write | suppressed once, by the mtime the write returned |
 
@@ -111,7 +129,7 @@ a subprocess that would never take one. The buffer sends the mtime it was read
 at; main refuses the write if the file has moved on, and the renderer offers
 Reload or Overwrite rather than resolving it silently.
 
-## What persists, and where (story 105)
+## What persists, and where
 
 The line between `ui-store` and `appearance-store` is persistence, and it is
 structural rather than a matter of taste:
@@ -139,8 +157,8 @@ target (`pnpm dev`) has no bridge at all, so that route would need this fallback
 anyway rather than replacing it. The cost, stated plainly: appearance does not
 follow the user to another machine and cannot be hand-edited.
 
-**One store now receives data it did not create, and it is still not persisted**
-(HIVE-87). `hive-store` gets last run's sessions at boot, through
+**One store receives data it did not create, and it is still not persisted.**
+`hive-store` gets last run's sessions at boot, through
 `hydrateSessions`, and the distinction matters: nothing in the renderer writes
 them. Main owns the file — `sessions.json` under `userData`, see
 [`desktop-architecture.md`](desktop-architecture.md) — and the store is handed a
@@ -160,7 +178,7 @@ oldest row. The fleet lists sort by recency now (`byRecency`, on
 `Session.endedAt`), so today's endings are at the top because they are the most
 recent, and the divider was retired with the problem it was answering.
 
-Two refinements since HIVE-88. First, the renderer is not always the first of
+Two refinements. First, the renderer is not always the first of
 its run — on macOS the window closes and the app lives on, and a reload or a
 crash gives a fresh store in front of the same running ptys — so
 `session:history` marks records whose id main still runs as `live`, and those
@@ -194,17 +212,17 @@ Components never read a store object directly and never call `getState()`.
 | `useNavOrder()` | active session ids, then ended ones |
 | `useActiveSessions()` / `useEndedSessions()` | the two sides of the table's divider |
 | `useProjectSessions(projectId)` | a project's sessions that have not ended |
-| `useOpenEntity()` | open an entity's tab, refusing a `terminated` one (108) |
+| `useOpenEntity()` | open an entity's tab, refusing a `terminated` one |
 | `useTicketPrs(ticketKey)` | PRs reachable from a ticket's sessions |
 | `useUnreadCount()` | inbox unread count |
-| `useNotifs()` | the inbox, newest first (051) |
-| `usePrs()` | every open PR the fleet produced (052) |
-| `useSessionPr(id)` | one row's PR, matched on its branch (HIVE-100) |
+| `useNotifs()` | the inbox, newest first |
+| `usePrs()` | every open PR the fleet produced |
+| `useSessionPr(id)` | one row's PR, matched on its branch |
 | `useHasResumable()` | whether the fleet table reserves its Resume column |
 | `useMarkRead()` | mark one notification read, by index |
 | `usePushNotif()` | push a notification — the simulation's entry point |
 | `useActiveEntity()` | the entity behind `activeTab`, or `null` |
-| `useLedgerEntries(filter?)` | the ledger tail, by the shared query rules (HIVE-111) |
+| `useLedgerEntries(filter?)` | the ledger tail, by the shared query rules |
 | `useOpenAsks()` / `useOpenAskCount()` | asks unanswered and not yet TTL-retired |
 | `useThread(id)` | one conversation: the ask, and everything that named it |
 
@@ -216,9 +234,10 @@ truth for every number on screen.
 Two collections are bounded, because a long-running demo must not grow without
 end:
 
-- **`notifs` at 8** (`NOTIF_CAP`) — `pushNotif` does the same. Eight is what fits
-  the rail without scrolling on a laptop, and an inbox that grows forever stops
-  being an inbox.
+- **`notifs` at 50** (`NOTIF_CAP`, which is `NOTIFICATION_CAP` from
+  `electron/shared/notification-contract.ts`) — `pushNotif` does the same, and
+  main's notification buffer uses the same constant. An inbox that grows forever
+  stops being an inbox.
 - **`ledger` at 500** (`LEDGER_MEMORY_CAP`, in `electron/shared/ledger-contract.ts`)
   — the newest are kept, by both `hydrateLedger` and `ledgerAppend`. Unlike the
   inbox this cap loses nothing: the log on disk is complete, and an older entry is
@@ -230,17 +249,17 @@ second place to get the number right is a second place to get it wrong.
 
 ## The fake clock
 
-`src/lib/fake-clock.ts` — story 053.
+It lives in `src/lib/fake-clock.ts`.
 
 `stamp()` starts at **14:38** and advances one minute per call. Two reasons it
 is not `new Date()`: a demo recorded at 03:11 should not say so, and a wall
 clock makes a store's tests unassertable.
 
 **It currently has no producer.** The activity feed was its only one, and the
-project explorer replaced that panel. The module stays because `simulation.md`
-already tells the simulation story to stamp through it rather than introduce a
-second clock — deleting a documented seam because it is briefly unused is how
-the second clock gets written.
+project explorer replaced that panel. The module stays because simulation
+(below) is meant to stamp through it rather than introduce a second clock —
+deleting a documented seam because it is briefly unused is how the second clock
+gets written.
 
 - **It lives in `lib/`, not in a feature slice.** `stores/` is what will stamp,
   and the import zone forbids `stores/ → features/`. `lib/` is leaf-level,
@@ -250,6 +269,23 @@ the second clock gets written.
   rewinds it.
 - `peek()` reads the current time without advancing it.
 
+### Simulation (not built yet)
+
+Scripted event replay is still a placeholder. What is already in place for it:
+
+- `?sim=1` sets `SIMULATION_ENABLED` in `src/config/env.ts`. Nothing consumes it
+  yet.
+- `appendEntityLines(id, lines, status?)` is the intended write path for replayed
+  events: it appends transcript and optionally moves a session's status in one
+  step. `pushNotif` is the inbox's, and both should stamp through the fake clock
+  above.
+- The browser-target `sendToEntity` path returns its acknowledgement timer as
+  `{ kind: 'demo', timer }` (see [Where a message actually goes](#where-a-message-actually-goes)),
+  so a scripted run can cancel it rather than race a real wait.
+
+What is still to build: the event script format, the driver that feeds events into
+the stores, and the rule for what simulation may and may not mutate.
+
 ## What the store seeds, and what it no longer does
 
 **The app boots with an empty fleet.** Six slices that used to arrive
@@ -258,7 +294,7 @@ pre-populated now start empty in both targets, because each has a real producer:
 | Slice | Comes from |
 | --- | --- |
 | `entities`, `order` | sessions the user starts (PTYs) |
-| `agentOrder` | `AGENT.md` definitions under `~/.hive/agents`, mirrored by `use-agents-sync.ts` (HIVE-114) |
+| `agentOrder` | `AGENT.md` definitions under `~/.hive/agents`, mirrored by `use-agents-sync.ts` |
 | `projects` | the config file, read through `useProjects()` |
 | `tickets` | Jira, via `refreshTickets()` |
 | `orchLines` | what the orchestrator actually does |
@@ -290,7 +326,7 @@ that need entities to assert against. Call `seedDemoFleet()` after `reset()`;
 `seedDemoProjectConfig()` declares the same projects in the config, which is what
 `useProjects()` reads. An import zone stops `src/` and `electron/` reaching it.
 
-### Tickets have one source, and a state before it answers (HIVE-69)
+### Tickets have one source, and a state before it answers
 
 Every ticket is a real Jira issue. `ticketSource` says where the read has got to:
 
@@ -336,21 +372,23 @@ The split is worth keeping for its own sake: the parser catches *shape* errors
 (`send` with no message, an unknown verb) and the store catches *existence*
 errors (no such session, unknown repo). Neither needs the other to be tested.
 
-All six commands are implemented — `help`, `status`, `open`, `send`, `spawn`,
-`clear` — with `usage` and `command not found` for everything else. The
+Sixteen verbs are implemented. `help` lists fifteen of them; `answer` parses but
+is left out, because the inbox's ask card is its intended route. Anything else
+gets `usage` or `command not found`. The user's view of every verb is in
+[The overmind console](guide/overmind-console.md). The
 transcript is capped at 200 lines, oldest dropped first, because it is replayed
 into an xterm on every subscribe.
 
 ### Where a message actually goes
 
-`sendToEntity` is the one branch point in the coordination layer (story 097). On
+`sendToEntity` is the one branch point in the coordination layer. On
 desktop, for a real session, it calls `sendToSession` and returns
 `{ kind: 'routed' }` — **no transcript echo** and **no acknowledgement
-timer**, because status now comes from the process itself (story 096) rather
-than from a timer narrating one.
+timer**, because status comes from the process itself rather than from a timer
+narrating one.
 
 Everything else keeps the prototype's round-trip: the browser target, which has
-no bridge to ask, and agents, which have no project and no pty this epic. That
+no bridge to ask, and agents, which have no project and no pty. That
 is why the timer still exists. It is covered by `tests/stores/` rather than by a
 browser spec — `waiting-session.spec.ts` asserted the acknowledgement directly,
 and was removed along with the seeded fleet it drove.
@@ -373,10 +411,9 @@ transport's lazy path, so main's refusal — "not mapped", "session limit
 reached", "pty host unavailable" — reaches the console transcript verbatim. Both
 routes share one channel, so whoever asks first is the only one who asks.
 
-### What a session claims about itself (HIVE-78)
+### What a session claims about itself
 
-Three fields on `Session` are **observations, not assertions**, and the
-distinction is the whole of HIVE-78.
+Three fields on `Session` are **observations, not assertions**.
 
 `branch` is optional. It used to be assigned ``  `feat/${id}` `` at spawn — a
 branch nothing created, rendered with total confidence beside a session sitting
@@ -384,7 +421,7 @@ on `main`. It now holds only what main read with `git rev-parse`, in the
 directory a Claude Code hook payload named; `cwd` is that directory. Absent
 means nobody has looked yet or there is nothing to see, and `branchLabel()` in
 `src/types/entity.ts` renders an em dash for it at all three surfaces. See
-[`branch-sync-note.md`](branch-sync-note.md).
+[The branch a session is on](desktop-architecture.md#the-branch-a-session-is-on).
 
 `namePinned` is the one place the **app's** label outranks the agent's. A
 session started from a ticket card is named after its issue key, and one the
@@ -408,7 +445,7 @@ Two rules follow, and both are load-bearing:
   the id would turn a cosmetic event into a graph rewrite.
 - **Names are de-duplicated across the whole fleet, ended rows included.**
   `DONE_CAP` keeps finished sessions visible and the WORK card still lists them,
-  so two rows reading `HIVE-73` is exactly the ambiguity `HIVE-73-2` removes —
+  so two rows reading `ABC-123` is exactly the ambiguity `ABC-123-2` removes —
   and it arises in the common case of picking an issue back up, not an exotic
   one.
 
@@ -418,8 +455,8 @@ than a gap: the value it replaces was `feat/sess-01`, a string no PR could ever
 carry, so nothing that worked before stops working — the near-miss is simply
 visible now instead of hidden inside a plausible-looking field.
 
-`useActiveSessions()` / `useDoneSessions()` are two flat selectors rather than
-one returning `{ active, done }`: `useShallow` compares the returned value's own
+`useActiveSessions()` / `useEndedSessions()` are two flat selectors rather than
+one returning `{ active, ended }`: `useShallow` compares the returned value's own
 properties, so an object of two freshly-built arrays never compares equal and the
 component re-renders forever.
 

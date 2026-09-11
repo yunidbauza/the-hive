@@ -6,6 +6,25 @@ and how a running copy finds out about it.
 Load this when working on `electron-builder.yml`, `.github/workflows/release.yml`,
 `electron/main/updates/**`, or anything to do with the app's version or name.
 
+> **TL;DR**
+> - Release with `pnpm version minor` and `git push --follow-tags`.
+> - CI drafts the release, electron-builder uploads, the workflow checks `latest-mac.yml`,
+>   then publishes.
+> - `node-pty` is unpacked from the asar; required peers are checked twice.
+> - Desktop asks twice (download, install); a server installs when idle.
+> - An ad-hoc signature cannot self-update, so it is treated as manual.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/fd-packaging.dark.svg">
+  <img src="assets/diagrams/fd-packaging.light.svg" alt="The release pipeline from a version tag to installed apps">
+</picture>
+
+**On this page:** [Cutting a release](#cutting-a-release) ·
+[What is in the bundle](#what-is-in-the-bundle-and-one-thing-that-is-not) ·
+[Required modules](#the-modules-that-must-be-in-the-bundle-and-one-that-was-not) ·
+[The app's name](#the-apps-name) · [Updating](#updating) ·
+[Where the code lives](#where-the-code-lives)
+
 ## Cutting a release
 
 ```bash
@@ -217,7 +236,7 @@ without a second one (`autoInstallOnAppQuit: false`). The second flag matters
 more than it looks: left at its default, an update the user declined would swap
 itself in at the next quit — including a quit caused by a crash.
 
-**A server is the exception** (HIVE-147): nobody sits at it to say yes. In server
+**A server is the exception**: nobody sits at it to say yes. In server
 mode a found release downloads on its own and installs once no session or agent
 run is live, and launchd rather than Squirrel starts the new version
 (`autoRunAppAfterInstall: false`; `MacUpdater.quitAndInstall` ignores its

@@ -1,0 +1,16 @@
+flowchart LR
+  subgraph host [Your Mac]
+    hive[The Hive]
+    rcv[Receiver · hook · ledger · mcp]
+    gen[App data hive folder · settings · skills]
+  end
+  subgraph box [Your container, already running]
+    cl[claude]
+    ws[Your project, mounted at /work]
+    hd[App data, mounted at /hive]
+  end
+  hive -->|docker exec| cl
+  gen -.->|mount| hd
+  cl -->|status hooks via curl| rcv
+  cl -->|hive MCP over HTTP| rcv
+  cl --- ws

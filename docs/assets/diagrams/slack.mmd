@@ -1,0 +1,8 @@
+flowchart TD
+  m[@hive mention] -->|Socket Mode| h[The Hive]
+  c[Message in #eng] -->|Socket Mode| h
+  h -->|wake| a[Agent · wake.on slack.app_mention]
+  a -->|Slack MCP: read, draft| sl[Slack thread]
+  a -->|ledger_ask with the draft| i[Your inbox]
+  i -->|Approve| a
+  a -->|posts the reply| sl

@@ -172,8 +172,9 @@ export interface Session {
    * **Optional, and that is the fix.** This field used to be assigned
    * `` `feat/${id}` `` at spawn — a branch nothing created, displayed with total
    * confidence next to a session sitting on `main`, and still displayed after
-   * the agent moved into a worktree. `docs/branch-sync-note.md` has the full
-   * diagnosis; the short version is that it was not stale, it was never true.
+   * the agent moved into a worktree. `docs/desktop-architecture.md` has the
+   * full diagnosis; the short version is that it was not stale, it was never
+   * true.
    *
    * Now it is only ever what main *observed*: `git rev-parse` in the directory
    * a hook payload named. Absent means nobody has looked yet, or there is

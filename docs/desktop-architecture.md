@@ -6,6 +6,32 @@ the Electron e2e suite.
 
 Terminals and transports: [`terminal-architecture.md`](terminal-architecture.md).
 
+> **TL;DR**
+> - Electron is the product; the browser build is a fixtures-only demo sharing `src/`.
+> - Main, preload and renderer are fenced by ESLint; `electron/shared` is the only common code.
+> - The bridge exposes verbs, never `ipcRenderer`. Every handler checks its sender and payload.
+> - PTYs live in a `utilityProcess` with a heartbeat and a crash-loop guard.
+> - `pty:data` is batched every 8 ms; output pauses above 512 KB unacked, resumes below 128 KB.
+> - Status comes from output, exit and Claude Code's hooks, paired by `tool_use_id`.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/fd-desktop.dark.svg">
+  <img src="assets/diagrams/fd-desktop.light.svg" alt="Terminal output batching and flow control between claude, the PTY host, main and the renderer">
+</picture>
+
+**On this page:** [Two targets, one renderer](#two-targets-one-renderer) ·
+[Processes](#processes) · [The bridge](#the-bridge) ·
+[The workspace config](#the-workspace-config) ·
+[userData and session history](#what-main-writes-to-userdata-and-the-session-history) ·
+[Where a session's name comes from](#where-a-sessions-name-comes-from) ·
+[The branch a session is on](#the-branch-a-session-is-on) ·
+[The environment](#the-environment-this-process-actually-has) ·
+[The pty host](#the-pty-host) ·
+[Statuses and endings](#the-five-statuses-and-the-three-endings-that-are-not-statuses) ·
+[Leaving waiting](#leaving-waiting-pairing-not-a-single-deterministic-hook) ·
+[ABI facts](#two-abi-facts-that-produce-unreadable-errors-when-forgotten) ·
+[Testing](#testing-three-layers-split-by-what-each-can-prove)
+
 ## Two targets, one renderer
 
 ```
@@ -24,7 +50,7 @@ Terminals and transports: [`terminal-architecture.md`](terminal-architecture.md)
 
 **Electron is the product.** The browser build survives as a fixtures-only demo
 surface, and it must degrade visibly — the `demo` chip and the message-row
-placeholder are how (story 083). It will never have real terminals.
+placeholder are how. It will never have real terminals.
 
 `src/` is not moved, wrapped, or forked. `electron/` is a sibling, which is what
 keeps every ESLint import zone, alias site and `tests/` mirror intact.
@@ -43,7 +69,7 @@ artifact instead of a convention. All three zones are ESLint-enforced and proved
 by `pnpm verify:boundaries`.
 
 That rule used to be written "types and constants only", which was never quite
-what the code did and by HIVE-130 was actively misleading: `guards.ts` exports
+what the code did and had become actively misleading: `guards.ts` exports
 `IpcValidationError` and a few hundred lines of parsing that main and the
 renderer both call at runtime, `ledger-derive.ts` exports nine functions the
 renderer's store calls on every merge, and `mcp-protocol.ts` and `mcp-tools.ts`
@@ -78,8 +104,8 @@ Posture, non-negotiable and asserted in `tests/e2e/electron/security.spec.ts`:
 `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, plus a
 strict CSP applied on the session (not only as a `<meta>` tag).
 
-Server mode reaches this same surface rather than building a second one
-(HIVE-143): `ipc/registry.ts` records which handler answers which channel as
+Server mode reaches this same surface rather than building a second one:
+`ipc/registry.ts` records which handler answers which channel as
 `handle()`/`on()` already register them, since `ipcMain.handle` gives no way to
 ask Electron for that function back. A socket's frames meet those handlers in
 `ipc/remote-dispatch.ts`, which holds every piece of remote-only policy — an
@@ -107,7 +133,7 @@ rather than `node:crypto`.
 shown in the left rail to a real directory on this machine. It is the only thing
 that makes a PTY's `cwd` real; everything else about a project is still fixtures.
 
-`~/.hive/skills/<name>/SKILL.md` is its sibling (HIVE-96): the custom slash
+`~/.hive/skills/<name>/SKILL.md` is its sibling: the custom slash
 commands the app injects into every session it starts. Main reads that tree
 before **every** spawn — a readdir over a handful of small files — which is what
 makes a skill written by hand in a text editor and one saved from Settings the
@@ -138,7 +164,7 @@ Comments in the file are `"//"`-prefixed keys, the same convention
 `package.json` already uses here — JSON has no comment syntax, and the first-run
 template has to explain itself in the file the user opens.
 
-## What main writes to `userData`, and the session history (HIVE-87)
+## What main writes to `userData`, and the session history
 
 `~/.hive/config.json` is the user's; `app.getPath('userData')` is the app's, and
 five things live there. `window-state.json` (geometry, `window-state.ts`), the
@@ -157,7 +183,7 @@ than a wipe: regenerations and spawns interleave, and a wipe would leave a
 window in which a session starting right now reads an empty plugin. Deleting the
 whole directory is safe; the next spawn writes it again.
 
-**A skill is its whole folder, and the plugin directory mirrors it** (HIVE-148).
+**A skill is its whole folder, and the plugin directory mirrors it.**
 It used to receive one string per skill, so a skill carrying `scripts/`,
 `references/` or `assets/` arrived as a lone SKILL.md whose relative references
 dangled — silently, with the pane still reporting it healthy. `readUserSkills`
@@ -211,15 +237,15 @@ Claude, so it never comes back on the title stream main reads names from — and
 `ticketSessionName` de-duplicates across the fleet, so the key does not imply
 the name either. A name on the note is a pinned one by construction, and the
 session history applies the pin over title-stream names exactly as `renameSession` does
-in the store. Without both halves the row read `HIVE-104` while the file
+in the store. Without both halves the row read `ABC-123` while the file
 underneath it went back to the session id on Claude's next repaint, and the next
 launch restored the id.
 
 ## Where a session's name comes from
 
-**Nothing is named on the command line, and that is the feature** (HIVE-108).
+**Nothing is named on the command line, and that is the feature.**
 
-HIVE-61 spawned every session as `claude --name sess-07` so the agent's prompt
+Sessions used to be spawned as `claude --name sess-07` so the agent's prompt
 box, its `/resume` picker and its terminal title agreed with the rail. The cost
 of that agreement turned out to be the name itself: **`--name` suppresses Claude
 Code's own titling entirely.** Two arms of a real `claude`, same prompt, same
@@ -236,12 +262,12 @@ Every session this app had ever spawned carried a `custom-title` and no
 stopping Claude from inferring them.
 
 So a session now opens unnamed, Claude titles it from the conversation, and the
-title arrives on the OSC-0 stream `readTitle` has parsed since HIVE-61 — no new
+title arrives on the OSC-0 stream `readTitle` already parses — no new
 transport and no second inference engine. `hiveNameFromTitle`
 (`electron/shared/session-contract.ts`) spells it the way the rail spells names:
 lower-cased, hyphenated, at most four words, with any ticket key upper-cased and
-hoisted to the front (`back key interception hive-53` →
-`HIVE-53-back-key-interception`).
+hoisted to the front (`back key interception abc-123` →
+`ABC-123-back-key-interception`).
 
 Three things are worth knowing before changing it:
 
@@ -265,7 +291,7 @@ named    ────────────────────── sess
 unnamed  ──────────────────────────────────
 ```
 
-HIVE-108 first recorded this as "its prompt box says `Claude Code`", which is
+An earlier version of this doc recorded this as "its prompt box says `Claude Code`", which is
 wrong and worth naming because it is an easy inference to repeat: `Claude Code`
 is the *terminal title* an unnamed session writes, and the splash banner
 (`Claude Code v2.1.250`) — which prints either way and names the product, not
@@ -288,22 +314,22 @@ Three properties are worth knowing before changing it:
   `runShutdown()` starts every hook body concurrently rather than in order, so a
   flush registered there races the pty teardown, and a crash or SIGKILL runs no
   hook at all. The session history stores the last status it was told — every live
-  status `publishStatus` sends, since HIVE-88, not only the `working` a spawn
+  status `publishStatus` sends, not only the `working` a spawn
   begins with — and the renderer infers the ending. A flush *is* registered on
   shutdown, but only to save a pending debounce — correctness does not depend
   on it.
 - **`session:history` says which records are still running.** The reader may
   not be the first renderer of this run (a window reopened from the dock, a
-  reload), so the handler marks records whose id the registry holds as `live`
-  (HIVE-88); the renderer hydrates those as this run's fleet rather than as
+  reload), so the handler marks records whose id the registry holds as `live`;
+  the renderer hydrates those as this run's fleet rather than as
   history, with no `restored` flag. And a restored row
   opened again is spawned with `resume`, which puts the session history's
   uuid behind `--resume` instead of `--session-id` and keeps the record
   rather than starting it over (`SessionHistory.resumable`, `begin(…, { resume })`). It
-  carries no `--name` — but then **nothing does any more** (HIVE-108), so this
-  is no longer a carve-out. HIVE-107 dropped the flag for a resume, where it
-  renames the stored conversation rather than labelling a new one; HIVE-108
-  dropped the entity-id fallback everywhere, and with no fallback left there is
+  carries no `--name` — but then **nothing does any more**, so this
+  is no longer a carve-out. The flag went first for a resume, where it
+  renames the stored conversation rather than labelling a new one; the
+  entity-id fallback then went everywhere, and with no fallback left there is
   nothing to carve. A resumed conversation repaints the name it already has, and
   a fresh one names itself.
 - **It seeds from the file at construction, and that is load-bearing.** An
@@ -319,7 +345,73 @@ Retention is `HISTORY_CAP` (20) ended records, pruned oldest-first by
 forgetting a process that still exists is a different and much worse bug than
 forgetting one that does not.
 
-## The environment this process actually has (HIVE-84)
+## The branch a session is on
+
+`Session.branch` is **optional**, and only ever holds what main observed.
+`branchLabel()` in `src/types/entity.ts` renders an em dash for the rest, at all
+three surfaces. It used to be assigned ``branch: `feat/${id}` `` at spawn, a
+branch nothing created: the meta bar and the fleet table read `feat/sess-01`
+while the terminal sat on `main`. It was not a stale value; it was never true.
+
+| Piece | Where |
+| --- | --- |
+| `CH.sessionBranch: 'session:branch'` | `electron/shared/ipc-contract.ts` |
+| `SessionBranchEvent { entityId, branch, cwd }` | `electron/shared/session-contract.ts` |
+| `git rev-parse` reader, cached and rate-limited | `electron/main/sessions/git.ts` |
+| Observation and push | `electron/main/sessions/index.ts` (`publishBranch`) |
+| `setSessionBranch(id, branch, cwd)` | `src/stores/hive-store.ts` |
+| `bridge.session.onBranch(...)` | `src/features/sessions/hooks/use-session-status.ts` |
+
+How main observes it:
+
+- **The directory comes free.** The original design note proposed
+  `lsof -a -p <pid> -d cwd` against the pty's process tree. Unnecessary: every
+  Claude Code hook payload carries `cwd`, and it is the *agent's* working
+  directory, so it follows a session into a worktree even when the login shell
+  never moves.
+- **Hook events are the cadence.** They fire when the agent does something,
+  which is when a branch can have changed, and stop when it does not.
+  `sessions/git.ts` adds a 2-second floor per directory and a shared in-flight
+  promise, so a burst of hooks in one turn costs one `git` spawn; `publishBranch`
+  drops anything unchanged, so a quiet fleet produces no IPC.
+- **A spawn-time read** covers the gap before the first hook, and sessions with
+  no hooks at all. That is the honest floor: the branch the session opened on,
+  never one nobody created.
+- **A separate channel from `session:status`.** Status is frequent and
+  machine-driven, a branch change is rare and user-driven; folding them together
+  would make every status tick carry a branch main did not observe on that tick.
+
+### Ticket intent rides the same payload
+
+`UserPromptSubmit` carries the user's prompt, so "work on ABC-123" typed at an
+agent associates the session with that issue and pins the key to the front of
+its name (see [Where a session's name comes from](#where-a-sessions-name-comes-from)).
+Three constraints shape it:
+
+1. **The prompt never leaves main.** `hooks/ticket-intent.ts` matches inside the
+   receiver and emits only the key.
+2. **Main matches a shape; the renderer confirms it.** `HTTP-404` is key-shaped,
+   so the renderer puts the candidate to `jira:issue` and acts only on an issue
+   that exists.
+3. **Intent, not mention.** "work on ABC-123" associates; "the PR for ABC-123
+   broke CI" does not. The verb list is enumerated rather than fuzzy, because a
+   wrong answer files work under someone else's ticket with nothing on screen to
+   explain it.
+
+The explorer follows the same observed `cwd` into a worktree; see
+[`explorer-and-editor.md`](explorer-and-editor.md#it-also-follows-the-session-into-a-worktree).
+
+### What end-to-end tests cannot reach yet
+
+`tests/e2e/electron/session-branch.spec.ts` covers the spawn-time read against a
+real repository on a real branch. It does **not** cover a worktree move, because
+`claudeCommand` is stubbed suite-wide and no hook ever fires; that needs a real
+agent in the loop. Neither e2e target can render a real Jira ticket either: the
+electron target has a bridge but no Jira stub, and `integrations/jira/client.ts`
+builds every request as `https://${site}`, so a stub means an HTTPS server with a
+certificate the app accepts.
+
+## The environment this process actually has
 
 A macOS app launched from Finder, the Dock or Spotlight inherits **launchd's**
 environment, not the one a login shell assembles. In a packaged build `PATH` is
@@ -408,11 +500,11 @@ Supervisor behaviour worth knowing before changing it:
   restarts a session explicitly.
 - **Crash-loop guard.** Four crashes inside 60s stops restarts entirely.
 - **Shutdown asks, then insists.** `shutdown` → wait → `kill()`. Killing first
-  orphans every `claude` the sessions own, which is the bug story 098 asserts
-  against.
+  orphans every `claude` the sessions own, which is the bug the PTY conformance suite
+  asserts against.
 
-Everything above is injected (`fork`, the clock, every timeout), so the whole
-story is asserted with fake timers instead of by killing real processes.
+Everything above is injected (`fork`, the clock, every timeout), so all of it
+is asserted with fake timers instead of by killing real processes.
 
 ### What a session costs in processes
 
@@ -441,7 +533,7 @@ do, so there was nothing to report after sending it — which made "the descenda
 is still running" the one outcome nobody was told about. `sweep` now waits a
 short verify window and returns what outlived the signal, and `teardown` emits an
 `error` on each session in the batch naming the surviving pids. That is the only
-signal HIVE-72's guarantee did not hold; without it a leak arrives as "my machine
+signal the sweep's guarantee did not hold; without it a leak arrives as "my machine
 is slow" a week later instead of as a bug with a pid attached. The report is
 deliberately quiet on the happy path — a warning that fires on ordinary teardowns
 is one nobody reads, and there is a test pinning that.
@@ -472,9 +564,9 @@ A chain rooting at `claude daemon run` is Claude Code's spare pool. A chain
 rooting at a Hive pty's `/bin/sh` is ours — and if one of those outlives its tab,
 the `descendants` group is the test that should have caught it.
 
-### What makes a terminal real (story 092)
+### What makes a terminal real
 
-Not the renderer — xterm.js has been rendering fixtures since story 042. What
+Not the renderer — xterm.js was rendering fixtures long before any pty. What
 was missing is a kernel pty pair with a process whose controlling terminal it
 is. `electron/pty-host/session-manager.ts` owns that. Four things there are load
 bearing and easy to break:
@@ -504,7 +596,7 @@ still shows the transcript, prefixed with a dim truncation marker when output
 was dropped. The buffer is **retained after exit** — a terminal that clears
 itself when a process dies destroys the error the user needed to read.
 
-### Batching and flow control (story 093)
+### Batching and flow control
 
 `pty:data` is the only high-volume channel in the app — a single `pnpm build`
 emits tens of thousands of small writes. Forwarding each as its own IPC message
@@ -542,8 +634,8 @@ the final output, which is usually the error. Per-session counters (bytes in,
 bytes acked, pauses, batches, drops) ride out on `app:info`; flow-control bugs are
 otherwise diagnosed by staring at a slow terminal and guessing.
 
-Main also keeps a bounded ring of each session's already-sent batches
-(HIVE-143), sized to match the pty host's own `SCROLLBACK_BYTES` since both are
+Main also keeps a bounded ring of each session's already-sent batches,
+sized to match the pty host's own `SCROLLBACK_BYTES` since both are
 bounded transcripts of the same stream. A reconnecting socket calls
 `resume(sessionId, lastSeq)` and gets back exactly what it missed, a `gap` once
 the ring can't reach that far, or `null` for a session that never existed —
@@ -555,15 +647,16 @@ reconnect rather than whenever output next happens.
 **A resume point is `{gen, seq}`, never a bare seq.** A seq alone does not name
 a generation, so a session that restarted while a client was away could answer
 `replay` with a *new* process's output stitched contiguously onto the old one's
-transcript — data loss that rendered as success. HIVE-144 closed it by keying
-`ResumePoint` on the generation and bumping `REMOTE_PROTOCOL_VERSION` to 2, and
+transcript — data loss that rendered as success. The fix keys `ResumePoint` on the
+generation and bumps `REMOTE_PROTOCOL_VERSION` to 2, and
 `Sessions.resume` now compares generations *before* it touches the seq ring: a
 restart answers `gap`, never `replay`.
 
-That fix was preparatory until HIVE-150, because nothing populated `resumeFrom`
-in production — `router.ts` dialled without one.
+That fix did nothing on its own until clients reconnected (below): before
+that, nothing populated `resumeFrom` in production and `router.ts` dialled
+without one.
 
-### Reconnecting an attached client (HIVE-150)
+### Reconnecting an attached client
 
 A socket that dies after a successful attach is dialled again, on 1s, 2s, 4s,
 8s, 15s, 30s and then every 30s. It never gives up and never falls back to local
@@ -594,10 +687,10 @@ Three things are worth knowing before touching this:
   that own that state depend on it. Terminals deliberately do not — their
   continuity is what `resumeFrom` buys, and remounting one discards the
   scrollback the resume just saved. The foreground report is the one with
-  fleet-wide stakes: since HIVE-154 a row is read only when *every* surface is
+  fleet-wide stakes: a row is read only when *every* surface is
   watching, so a returning client that never re-reported would make every
   block arrive unread for every device. `useForegroundSession` re-sends on the
-  epoch, and live case 21m proves it across a real cut (HIVE-160). The main
+  epoch, and live case 21m proves it across a real cut. The main
   process's foreground stamp is reset with the proxy and sends nothing, focus
   changes included, until the renderer reports again.
 
@@ -607,7 +700,7 @@ and a byte ceiling, because `ATTACH_FRAME_MAX_BYTES` is 8 KiB and the client
 throws rather than truncating. An evicted session takes a `gap` on its next
 batch, which the terminal already renders.
 
-### Sessions: what actually runs (story 096)
+### Sessions: what actually runs
 
 `electron/main/sessions/` sits between "a pty exists" and "a session is running".
 The PTY layers below it know nothing about projects, bootstraps or attention.
@@ -623,7 +716,7 @@ deliberate:
   middle of a repository they were working in. Written as input it is an ordinary
   interactive command and the shell survives it.
 
-### The picker's choice becomes flags (109)
+### The picker's choice becomes flags
 
 `sessionCommand` appends `--model <alias> --effort <level>` before the `&&`, so
 they bind to `claude` and not to `exit`. Both are optional and **absent means say
@@ -646,7 +739,7 @@ previous generation may have acted on; a model is what the session *is*.
 Two more flags come from **main's own paths** rather than from the renderer, and
 both are `shellQuote`d because `app.getPath('userData')` contains a space on
 macOS: `--settings <path>` (the hook configuration, per theme) and
-`--plugin-dir <path>` (the generated skills plugin, HIVE-96). Neither has a
+`--plugin-dir <path>` (the generated skills plugin). Neither has a
 field in `parseSpawnRequest`, and neither should ever grow one — the renderer
 naming a path main will pass to a shell is the shape this whole layer avoids.
 
@@ -684,7 +777,7 @@ the tail of the conversation the user restarted to be rid of.
 `idle`, exit → `terminated`. In main rather than the renderer because a per-chunk
 store write at firehose rates would re-render the shell continuously.
 
-`terminated`, not `done` (story 108), and the distinction is the same discipline
+`terminated`, not `done`, and the distinction is the same discipline
 `waiting` gets below. An exit is an *observation* — the process is gone. "Done"
 is a claim about the work, and main has no way to evaluate it: `/exit` after an
 abandoned attempt and `/exit` after a merged PR produce byte-identical evidence.
@@ -697,15 +790,16 @@ asked a question and one that is thinking both produce no output; distinguishing
 them by scraping rendered text would be a heuristic that fails silently, and the
 entire inbox and attention model is built on this field.
 
-It is **reported** instead, by Claude Code's hooks (HIVE-62), which are a
+It is **reported** instead, by Claude Code's hooks, which are a
 different observer with a vantage point a pty does not have — hence
 `ObservedStatus`, wider than `DerivedStatus` by exactly this member.
 
 ## The five statuses, and the three endings that are not statuses
 
 The fleet view shows `working`, `waiting` (labelled "needs input"),
-`idle (agents)`, `idle (script)`, and plain `idle`. `done`, `terminated` and
-`closed` are not in that list, on purpose: all three are endings, and an ending
+`working (agents)`, `working (scripts)`, and plain `idle`. `done`, `terminated`
+and a session closed with the app are not in that list, on purpose: all three
+are endings, and an ending
 is a claim about a boundary, not a thing a session is doing moment to moment. `done` arrives
 when the user runs `/clear` — Claude Code reports that as `SessionEnd` with
 `reason: 'clear'`, the pty stays alive, and the fact travels its own channel,
@@ -719,8 +813,9 @@ explicit exception for this one — because `SessionEnd` races the process exit
 and loses: a hook POST from a process that is already gone is not a bet worth
 making.
 
-`closed` is the third ending, and unlike the other two **nothing ever reports
-it** (HIVE-87). It is what a session restored from the session history becomes
+The third ending began as a separate `closed` status and is now `done` with
+`endedBy: 'app-closed'` (`src/types/entity.ts`). Unlike the other two **nothing
+ever reports it**. It is what a session restored from the session history becomes
 when the record says it was still running: the process it describes died with
 the app that owned it, so a record claiming `working` is describing something
 that plainly is not. Main cannot write it — see the session history section
@@ -728,14 +823,14 @@ above for why the quit is not observable — so the renderer infers it in
 `hydrateSessions`, which
 is an inference nothing can race and no crash can interrupt.
 
-It is a separate status rather than a reuse of `terminated` for a reason that
-is about retention rather than vocabulary. `terminated` is never capped, on the
+It is kept apart from `terminated` for a reason that is about retention rather
+than vocabulary. `terminated` is never capped, on the
 grounds that such a row is the only record a process ever existed; had restored
 sessions come back as `terminated`, every launch would have added the entire
 live fleet to a list nothing is allowed to shorten.
 
-`idle (agents)` and `idle (script)` are not new members of `ObservedStatus`
-either. They are plain `idle` with an `IdleDetail` attached, because the
+`working (agents)` and `working (scripts)` are not new members of
+`ObservedStatus` either. They are plain `idle` with an `IdleDetail` attached, because the
 underlying fact is the same either way — the main agent has nothing to say —
 and only the reason differs: a subagent is still running (`SubagentStart` seen,
 no matching `SubagentStop` yet), or a backgrounded shell is (`PostToolUse` with
@@ -787,7 +882,7 @@ with more than one tool in flight: `PostToolUse` fires once per tool, `waiting`
 was one flag per session, and a sibling tool's completion in a parallel batch
 cleared it while the one the user actually had to approve was still blocked. The
 notifier compensated (`status === 'waiting' || event === 'PostToolUse'`) rather
-than fixing the status itself, which is the workaround this story removed.
+than fixing the status itself, which is the workaround the tracker replaced.
 
 The fix is `electron/main/hooks/tracker.ts`: status is now **derived from a
 per-session tracker**, not looked up per event. The tracker pairs blocks to the
@@ -801,7 +896,7 @@ matching `PreToolUse` fires roughly sixty milliseconds earlier, so it is always
 the most recent entry with that name. The walk is a single forward pass over the
 map, keeping the last match rather than reversing a copy of it: insertion order
 makes those identical, and the copy was an allocation of the whole map on every
-permission request (HIVE-86). The walk itself is `O(n)` either way — what went
+permission request. The walk itself is `O(n)` either way — what went
 away is the garbage, not the scan. A block that cannot be resolved this way
 (`Elicitation`, or a `PermissionRequest` with no name match) is held under a
 sentinel, `UNPAIRED`, rather than dropped — losing a block would read as the
@@ -821,8 +916,8 @@ Measured against Claude Code **2.1.238**, real pty, outside the app:
   agents, with an empty `agent_type` and no `SubagentStart` that preceded them —
   which is why the tracker only ever removes an agent it saw announced.
 
-Three more, measured against **2.1.239** for HIVE-86, which is about what the
-tracker never *stops* holding:
+Three more, measured against **2.1.239**, about what the tracker never
+*stops* holding:
 
 - **Escaping a permission prompt emits nothing at all.** No `PostToolUse`, no
   `PermissionDenied`, not even `Stop`, though the TUI cancels the prompt and
@@ -886,7 +981,7 @@ populates. The symptom is `Error: posix_spawnp failed.` on the first spawn,
 | Layer | Runner | ABI / process | Proves |
 |---|---|---|---|
 | **Main-process unit** | Vitest, node env, `node-pty` mocked | plain Node | spawn arguments, cwd, IPC routing, guards, teardown |
-| **PTY conformance** | `ELECTRON_RUN_AS_NODE=1 electron` | Electron ABI, no window | terminal *semantics*: signals, resize, alt-screen, exit codes (story 098) |
+| **PTY conformance** | `ELECTRON_RUN_AS_NODE=1 electron` | Electron ABI, no window | terminal *semantics*: signals, resize, alt-screen, exit codes |
 | **Electron e2e** | Playwright `_electron` | the full app | window chrome, menus, security posture, the UI wired to a live PTY |
 | **Live conformance** | Vitest, env-gated, a **real `claude`** | plain Node | what the binary actually does with what this app generates — hooks (`test:hooks`), the status line (`test:statusline`), custom skills (`test:skills`), `/done` (`test:done`), a hook's response as context (`test:hook-context`) |
 
@@ -902,14 +997,14 @@ asserting it through a browser driver is slow, flaky and indirect.
 `ELECTRON_RUN_AS_NODE=1` runs the Electron binary as a plain Node process — same
 ABI, no window, no Chromium. It is what makes the middle layer possible.
 
-### The conformance suite (story 098)
+### The conformance suite
 
 ```sh
 pnpm test:pty                    # the full matrix
 pnpm test:pty --filter signals   # one property group
 ```
 
-It drives the **real** session manager from story 092, not a reimplementation:
+It drives the **real** session manager, not a reimplementation:
 `electron.vite.config.ts` emits `electron/pty-host/session-manager.ts` as a third
 input on the `main` target, so `out/main/session-manager.js` is an importable ESM
 module built for Electron's ABI with `node-pty` left external. A suite that talked
@@ -941,8 +1036,8 @@ Two traps that cost time when rediscovered, both handled by the harness:
   `session-manager.ts` carries the reasoning.
 - A process the user **explicitly backgrounds** (`pnpm dev &`) gets its own
   process group under an interactive shell's job control, so `kill(-shellPid)`
-  does not reach it. Recorded on HIVE-49 when the suite found it, and **closed
-  by HIVE-72**: the descendant sweep walks `ps` rather than the process group,
+  does not reach it. The suite found it, and it is now **closed**: the
+  descendant sweep walks `ps` rather than the process group,
   so it reaches a job whatever group it escaped into. The `descendants` group
   now measures that on the per-tab `kill` path as well as `killAll` — see
   [What a session costs in processes](#what-a-session-costs-in-processes).
@@ -952,7 +1047,7 @@ Two traps that cost time when rediscovered, both handled by the harness:
 | Command | Runs |
 |---|---|
 | `pnpm test:e2e` | both projects |
-| `pnpm test:e2e:web` | the six browser specs (story 070) |
+| `pnpm test:e2e:web` | the browser specs |
 | `pnpm test:e2e:electron` | the built desktop app |
 
 `globalSetup` builds `out/` when it is missing or stale, so `--project=electron`

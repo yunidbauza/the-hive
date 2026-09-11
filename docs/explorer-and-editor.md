@@ -6,6 +6,21 @@ the filesystem IPC surface underneath both.
 This is the first feature in the app that reads the user's source tree. Most of
 what follows is about the two seams that made necessary.
 
+> **TL;DR**
+> - Every `fs:` verb takes `{ projectId, relPath }`; the renderer never sends a path.
+> - Paths are realpathed and checked for containment; writes also `lstat` the leaf.
+> - One recursive watcher, on the visible project, 300 ms debounce, 2 s ceiling.
+> - The editor seam is fenced like the terminal's, but its colour is CSS (`--cc-code-*`).
+> - Clean buffers reload silently; saves use optimistic concurrency on mtime.
+
+**On this page:** [The filesystem seam](#the-filesystem-seam) ·
+[The watcher](#the-watcher) ·
+[What is hidden](#what-is-hidden-and-why-not-gitignore) ·
+[The tree](#the-tree) · [The editor seam](#the-editor-seam) ·
+[Placement](#placement-and-the-one-rule-that-unifies-it) ·
+[Freshness and saving](#freshness-and-saving) ·
+[Testing](#testing)
+
 ## The filesystem seam
 
 ### The renderer never sends a path
@@ -174,7 +189,7 @@ already names its project, and a second selector would be one more thing to keep
 in sync with the first. The orchestrator tab — which names no session — falls
 back to the last project the tree was rooted at, then to the first mapped one.
 
-### It also follows the session *into a worktree* (HIVE-78)
+### It also follows the session *into a worktree*
 
 A session whose agent has moved into `<project>/.claude/worktrees/<name>` is
 editing files a project-rooted tree does not show, while the tree shows files
@@ -285,7 +300,7 @@ should be mounted.
 | Buffer | State on disk | Behaviour |
 | --- | --- | --- |
 | clean | changed | **silently reloaded** |
-| dirty | changed | `staleOnDisk`; banner offers Reload or Keep mine |
+| dirty | changed | `staleOnDisk`; the banner offers Reload, and ignoring it keeps your edits |
 | any | mid-save | skipped |
 | any | the app's own last write | suppressed once, by mtime |
 
@@ -342,6 +357,6 @@ the coarse case is ever actually hit, and the wrong default.
 - Image and binary previews — refused with a reason, not rendered.
 - Creating, renaming, deleting or moving files. The tree reads; the terminal is
   where the filesystem is mutated, and it already is.
-- Search across files, git status decoration, diff view.
+- Git status decoration and a diff view.
 - Multiple projects in one tree.
 - Restoring open files across launches — `editor-store` is not persisted.

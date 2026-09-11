@@ -1,0 +1,8 @@
+flowchart TD
+  cs[center-stage.tsx · reads the stores] --> rt[resolveTransport]
+  rt -->|browser| st[StaticTransport]
+  rt -->|desktop| pt[PtyTransport]
+  pt -->|window.hive pty verbs| br[Preload bridge]
+  cs -->|ids · palette props| th[TerminalHost]
+  th --> ts[TerminalSurface]
+  ts -->|TerminalTransport| pt

@@ -1,29 +1,53 @@
 # Server mode
 
-The Hive can run on an always-on Mac, a Mac mini on a shelf, and hold the
-sessions, the agents, the ledger and the hook receiver there. The desktop app on
-any other machine attaches to it and becomes a window onto it, from home or from
-a hotel four time zones away.
+The Hive can run on an always-on Mac and hold the sessions, the agents, the
+ledger and the hook receiver there. The desktop app on any other machine
+attaches to it and becomes a window onto it, from home or from a hotel four
+time zones away.
 
-One binary, two modes. The mini runs the same app with a `server` block in its
-config; it opens no window, shows a menu-bar item, and listens on a WebSocket
+One binary, two modes. The server Mac runs the same app with a `server` block
+in its config; it opens no window, shows a menu-bar item, and listens on a WebSocket
 bound to its Tailscale address. The laptop runs the same app with a `remote`
 block and routes every IPC call to that socket instead of to its own process.
 
-This document takes a mini from unboxed to attachable, and to a server that
+This document takes a Mac from fresh out of the box to attachable, and to a server that
 survives a reboot with nobody touching it. Follow it top to bottom once. After
 that the machine looks after itself.
+
+> **TL;DR**
+> - One binary: a `server` block makes a Mac serve on its Tailscale address; a `remote`
+>   block makes a laptop a window onto it.
+> - It needs automatic login plus a LaunchAgent (the Keychain), `pmset autorestart`, and
+>   Tailscale with key expiry off.
+> - `the-hive --pair`, `--devices` and `--revoke` manage device tokens; only hashes are stored.
+> - The hook receiver stays on loopback. Exposure rests on Tailscale first, then tokens.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/fd-server.dark.svg">
+  <img src="assets/diagrams/fd-server.light.svg" alt="The attached client link states">
+</picture>
+
+**On this page:** [Before you start](#before-you-start) ·
+[The keychain requirement](#the-keychain-requirement) ·
+[1. Prepare the server](#1-prepare-the-server) ·
+[2. Write the server block](#2-write-the-server-block) ·
+[3. Start it at login](#3-start-it-at-login-keep-it-running) ·
+[4. Pair each client](#4-pair-each-client) ·
+[5. Check it survives a reboot](#5-check-it-survives-a-reboot) ·
+[Updates](#updates) ·
+[What an attached device can do](#what-an-attached-device-can-do) ·
+[Exposure](#exposure) · [Troubleshooting](#troubleshooting)
 
 ## Before you start
 
 - **The same version on both ends.** The first frame carries
   `REMOTE_PROTOCOL_VERSION` (`electron/shared/remote-contract.ts`). A mismatch
   is refused with a message naming both versions and which side to update.
-- **Tailscale on the mini and on every client, in one tailnet.** It is the
+- **Tailscale on the server and on every client, in one tailnet.** It is the
   primary security control, not a convenience. See [Exposure](#exposure).
-- **Claude Code installed and logged in on the mini.** Sessions run there, so
-  `claude` has to work in the mini's own shell.
-- **Measure the floor first.** `ssh` into the mini over Tailscale from wherever
+- **Claude Code installed and logged in on the server.** Sessions run there, so
+  `claude` has to work in the server's own shell.
+- **Measure the floor first.** `ssh` into the server over Tailscale from wherever
   "remote" actually means for you, and type. Echo in an attached terminal costs
   one round trip over the same link; nothing in this design beats that.
 
@@ -45,7 +69,7 @@ as a true daemon (a Linux box, say), this is the decision to revisit first.
 The paired-device tokens are not affected: the server stores only a SHA-256
 digest of each, in the config file, and needs no keychain to check one.
 
-## 1. Prepare the mini
+## 1. Prepare the server
 
 1. **Install The Hive** from the dmg into `/Applications`, and open it once from
    Finder so Gatekeeper records it. Quit it again; launchd starts it from step 4
@@ -68,15 +92,15 @@ digest of each, in the config file, and needs no keychain to check one.
    (`powerSaveBlocker`'s `prevent-app-suspension`, the same thing
    `caffeinate -i` does), so this line covers the minutes before it starts and
    any time it is not running. `autorestart 1` is the one that matters for a
-   power cut: without it the mini stays off until someone presses the button.
+   power cut: without it the server Mac stays off until someone presses the button.
 4. **Install Tailscale, log in, and let it launch at login.** Then read the
-   mini's tailnet address:
+   server's tailnet address:
 
    ```sh
    /Applications/Tailscale.app/Contents/MacOS/Tailscale ip -4
    ```
 
-   In the Tailscale admin console, **disable key expiry** for the mini, or it
+   In the Tailscale admin console, **disable key expiry** for the server Mac, or it
    drops off the tailnet when its node key expires and every client with it.
 5. **Install the `the-hive` command**, so the one-shot commands below work over
    SSH:
@@ -95,7 +119,7 @@ digest of each, in the config file, and needs no keychain to check one.
 
 ## 2. Write the server block
 
-In the mini's `~/.hive/config.json` (or in Settings, Advanced, *Serve this
+In the server's `~/.hive/config.json` (or in Settings, Advanced, *Serve this
 machine*, from a screen-sharing session):
 
 ```json
@@ -111,7 +135,7 @@ machine*, from a screen-sharing session):
   file, which is for trying it out, not for the deployment. A `--server` run
   does not update itself either: only `enabled: true` means launchd is behind
   the process.
-- **`bind.host`** is the mini's Tailscale address from step 4. `0.0.0.0` is
+- **`bind.host`** is the server's Tailscale address from step 4. `0.0.0.0` is
   refused in every spelling (`0`, `0x0`, `000.000.000.000` included); loopback
   is allowed so the link can be tried on one machine. A refused or malformed
   host does not stop the app, and it does not quietly bind loopback either:
@@ -119,7 +143,7 @@ machine*, from a screen-sharing session):
   and the log says the same once. Fix the block and restart the agent.
 - **Clients must dial the exact string in `bind.host`.** The listener's Host
   guard admits loopback and that one value, nothing else. A MagicDNS name that
-  resolves to the same address is refused with a bare 403, and the mini's log
+  resolves to the same address is refused with a bare 403, and the server's log
   says which name it refused and what it would have admitted. Bind the `100.x`
   literal and have clients use the literal. A `.ts.net` name works too, if both
   sides use the name.
@@ -207,14 +231,14 @@ its own dock.
 
 ## 4. Pair each client
 
-On the mini, over SSH, once per device:
+On the server, over SSH, once per device:
 
 ```sh
 the-hive --pair "MacBook"
 ```
 
 It prints the token once, then the device id and how to revoke it. The token is
-never stored on the mini, only its digest, so copy it now. The command works
+never stored on the server, only its digest, so copy it now. The command works
 while the server is running; the running server sees the new device without a
 restart. The menu-bar item's *Pair a device…* does the same thing.
 
@@ -233,8 +257,8 @@ file. Two refusals you may meet:
 - **Attaching while local sessions are running** is refused and lists them, so
   nothing is left running unseen on the laptop.
 
-Once attached, the whole fleet on the mini shows up in the client, Settings
-edits the mini's config under copy that says so, and a dropped connection
+Once attached, the whole fleet on the server shows up in the client, Settings
+edits the server's config under copy that says so, and a dropped connection
 reconnects by itself. A terminal survives the disconnect: the client names the
 last output it saw and the server replays the rest, or marks a gap when its
 buffer no longer reaches back that far.
@@ -245,8 +269,8 @@ buffer no longer reaches back that far.
 sudo reboot
 ```
 
-Leave the client attached. It says it is reconnecting while the mini is down,
-and reattaches on its own once the mini has logged in, Tailscale is up and the
+Leave the client attached. It says it is reconnecting while the server is down,
+and reattaches on its own once the server Mac has logged in, Tailscale is up and the
 LaunchAgent has started the app. Nobody touches either machine. If it does not
 come back, see [Troubleshooting](#troubleshooting).
 
@@ -306,7 +330,7 @@ the error frame, never a silent change on the server:
 
 - **The native dialogs** (`WINDOW_BOUND`): `config:choose-directory`,
   `skills:file:import`, `skills:import`, `config:reveal`. They would open on a screen nobody is
-  watching. The shipped client browses the mini's folders with
+  watching. The shipped client browses the server's folders with
   `config:browse-directory` and takes skill files by drag and drop instead.
 - **`skills:file:drop`** (`REMOTE_REFUSED`): its safety argument, that preload
   minted every source path from a real drop on this device, cannot cross a
@@ -315,7 +339,7 @@ the error frame, never a silent change on the server:
   `updates:status`, `updates:check`, `config:set-remote`, `config:get-remote`,
   `remote:pair`, `remote:forget`, `notifications:delivery` and
   `notifications:badge`. Each is about the machine that answers it. A shipped
-  client answers them itself, so a hand-built frame asking the mini to forget
+  client answers them itself, so a hand-built frame asking the server to forget
   its credential, change its attachment or run its updater is refused.
 - **`notifications:act` carrying `url`, `update.download` or `update.install`.**
   The fleet actions (`ask`, `session`, `agent`, `none`) still cross.
@@ -334,7 +358,7 @@ The controls, in order of how much they carry:
    not trusted by being there.
 3. **The refusals above.**
 
-What an unauthenticated peer on the tailnet can cost the mini: a first frame is
+What an unauthenticated peer on the tailnet can cost the server: a first frame is
 held to 8 KiB (`ATTACH_FRAME_MAX_BYTES`), but a socket's receiver is built with
 the post-attach ceiling of 8 MiB (`POST_ATTACH_FRAME_MAX_BYTES`), at most eight
 sockets may be mid-handshake at once (more get a 503), and each has 5 s to
@@ -345,7 +369,7 @@ address matters: on the tailnet it is a small exposure, on every interface it
 would not be.
 
 The hook receiver stays on loopback. Everything that calls it (the sessions,
-the agents, any containers) runs on the mini.
+the agents, any containers) runs on the server.
 
 Over a slow link: terminal output is framed as JSON, about 5 % over the raw
 bytes at normal flush sizes.
@@ -355,7 +379,7 @@ bytes at normal flush sizes.
 | Symptom | Cause and fix |
 | --- | --- |
 | The menu reads *Not serving* | Either `bind.host` is not an address of this machine yet (Tailscale still starting), which retries by itself, or the config refused it (a wildcard, or not a valid host), which the reason names and which waits for you to fix the block. If it never lands, check `Tailscale ip -4` against the config. |
-| Client gets a 403 | It dialed a name the server did not bind. Use the exact `bind.host` string. The mini's log names the refused host. |
+| Client gets a 403 | It dialed a name the server did not bind. Use the exact `bind.host` string. The server's log names the refused host. |
 | Client says the versions differ | Update whichever side the message names. |
 | Jira or Slack shows signed out after a reboot | The login keychain is locked: automatic login is off, or the keychain password differs from the account password. |
 | Log says another server is already running for this config | Two copies started. Remove The Hive from Login Items; keep only the LaunchAgent. |

@@ -1,0 +1,14 @@
+flowchart LR
+  subgraph srv [Server Mac · server.enabled]
+    app[The Hive · menu-bar item, no window]
+    lis[Listener · tailnet address :7433]
+    work[Sessions · agents · ledger · inbox]
+  end
+  subgraph net [Your Tailscale network]
+    a[Laptop · remote.mode remote]
+    b[Second device]
+  end
+  app --- lis
+  app --- work
+  a -->|calls · events · terminal stream| lis
+  b -->|same| lis

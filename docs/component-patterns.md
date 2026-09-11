@@ -2,7 +2,25 @@
 
 **Scope:** panels, atoms, the rails, and the center-stage view-state machine.
 
-**Owned by stories 020–053.** The shell (020) has landed; the panels have not.
+> **TL;DR**
+> - `src/components/layout/` is the composition root; feature slices never import each other.
+> - The page never scrolls; rails never flex; `min-h-0` and `min-w-0` are load-bearing.
+> - A pure `resolveView` picks the one thing on stage: settings, picker, editor, then a tab.
+> - Terminals are hidden, never unmounted. The editor unmounts when nothing is open.
+> - The activity rail is a map of Inbox, PRs and Explorer.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/fd-component.dark.svg">
+  <img src="assets/diagrams/fd-component.light.svg" alt="How the centre stage decides what to show">
+</picture>
+
+**On this page:** [The shell](#the-shell) · [The header](#the-header) ·
+[The view-state machine](#the-center-stage-view-state-machine) ·
+[The orchestrator console](#the-orchestrator-console) ·
+[The session / agent view](#the-session--agent-view) ·
+[The picker](#the-new-session-picker) ·
+[The activity rail](#the-activity-rail) ·
+[The editor](#the-editor-on-the-centre-stage)
 
 ## What already holds today
 
@@ -64,12 +82,12 @@ Each region is a landmark element, so tests address them by role
   ui-store is read through `useShowActivityRail()` — deliberately narrower than
   `useRailState()`, so switching rail tabs does not re-render the terminal.
 
-Desktop-width only, by design: no responsive or mobile layout, and the rails are
-not draggable. Both are explicit non-goals of story 020.
+Desktop-width only, by design: no responsive or mobile layout. The rails are
+draggable (`rail-handles.tsx`), and either one collapses to an icon strip.
 
 ## The header
 
-`src/components/layout/header.tsx` (story 021) fills the shell's top region.
+`src/components/layout/header.tsx` fills the shell's top region.
 Anatomy, sub-component contracts, and the two easy-to-get-wrong details live in
 [`../.claude/COMPONENTS.md`](../.claude/COMPONENTS.md). The pattern worth
 repeating in every other region:
@@ -83,7 +101,7 @@ subscribes on behalf of its children re-renders all of them.
 Its corollary in tests: sub-components are asserted in their own files, and the
 container's tests cover only the wiring.
 
-## The center-stage view-state machine (040)
+## The center-stage view-state machine
 
 The stage shows **exactly one thing at a time**, and which one is decided by a
 pure function rather than by nested JSX conditionals:
@@ -112,13 +130,12 @@ Two precedence rules carry the weight:
 entity, and renders `SessionMetaBar` only for the two entity views.
 
 **The picker hides the terminal region; it never unmounts it.** Unmounting would
-dispose every live xterm instance and throw away the scrollback story 042 exists
-to preserve. The region is hidden with a class, and `activeId` is passed as
+dispose every live xterm instance and throw away its scrollback. The region is hidden with a class, and `activeId` is passed as
 `null` so each surface marks itself invisible — which also means closing the
 picker re-reveals the previous surface and refits it through machinery that
 already exists.
 
-`overflow-hidden` on the stage enforces the story's rule that the stage never
+`overflow-hidden` on the stage enforces the rule that the stage never
 scrolls as a whole; only the terminal region does.
 
 ### A consequence worth knowing
@@ -129,7 +146,7 @@ would silently show the middle of it. `TerminalSurface` therefore applies the
 bottom-stick rule to fits as well as to writes — see
 [`terminal-architecture.md`](terminal-architecture.md).
 
-## The orchestrator console (041)
+## The orchestrator console
 
 Three surfaces stacked inside the orchestrator view, in this order:
 
@@ -137,8 +154,7 @@ Three surfaces stacked inside the orchestrator view, in this order:
    clickable and focusable, which terminal text cannot be. Eight active
    sessions, an `ENDED` divider, then the ones that have finished or
    terminated. A `terminated` row is `disabled`: it still reads and still
-   selects, but its pty is gone and entering it would show a dead rectangle
-   (story 108).
+   selects, but its pty is gone and entering it would show a dead rectangle.
 2. **The transcript** — an ordinary `TerminalSurface` bound to the `'orch'`
    pseudo-entity, so the console gets real ANSI colour and selection for free.
 3. **`ConsoleInput`** — the command row and the hint bar beneath it.
@@ -173,8 +189,8 @@ unbounded array would make opening the orchestrator slower over time.
 
 ### Selectors and the re-render trap
 
-The table's two groups come from `useActiveSessions()` and `useDoneSessions()` —
-two flat selectors, deliberately **not** one returning `{ active, done }`.
+The table's two groups come from `useActiveSessions()` and `useEndedSessions()` —
+two flat selectors, deliberately **not** one returning `{ active, ended }`.
 
 `useShallow` compares the returned value's own properties. An object holding two
 freshly-built arrays is never shallow-equal to the previous one, so the component
@@ -183,14 +199,14 @@ depth exceeded". Flat arrays are compared element by element, which is what make
 them stable. This cost a debugging cycle; it is written down so it costs nobody
 another.
 
-## The session / agent view (043)
+## The session / agent view
 
 Meta bar, terminal, and — over a **recording** — a message row. The row is
 `MessageInput`, mounted by `CenterStage` and **keyed by entity id** — switching
 sessions remounts it, which both clears a half-typed message meant for somebody
 else and re-runs its autofocus.
 
-### A live session has no message row (108)
+### A live session has no message row
 
 The row is mounted only where the surface above it cannot be typed into: the
 browser demo and the agent tabs, both replays. A live desktop session already
@@ -206,16 +222,12 @@ instances are created lazily and kept alive hidden, so the two coincide only
 once. Read-only surfaces are excluded, which is what keeps the orchestrator
 console's own command row focused.
 
-There is no `session-view.tsx` wrapper, though story 043 names one. The terminal
-belongs to the shared `TerminalHost`, so a component wrapping meta bar +
-terminal + input would have to reach into it; composition happens in the stage
-instead.
+There is no `session-view.tsx` wrapper. The terminal belongs to the shared
+`TerminalHost`, so a component wrapping meta bar + terminal + input would have
+to reach into it; composition happens in the stage instead.
 
-The authority for that is the **UPDATED SPECS block on Jira ticket HIVE-20**
-("mount feature panels directly from this region's component in
-`src/components/layout/` … no composition module inside a feature slice"). Note
-that block exists only in Jira — story 040 in this repo had
-not been synced with it, so do not go looking for it there.
+The rule: mount feature panels directly from the region's component in
+`src/components/layout/`, with no composition module inside a feature slice.
 
 ### Send is one action with an origin
 
@@ -237,7 +249,7 @@ only just made. Over a live terminal the stage steps aside entirely and the
 surface focuses itself, which is the same guard duplicated rather than assumed:
 it is the same bug in both places.
 
-## The new-session picker (044)
+## The new-session picker
 
 Keyboard-first: New session → type a query → Enter → a live terminal, hands
 never leaving the keyboard. Pinned pills for the first four projects, two
@@ -250,7 +262,7 @@ fixed-position card. This picker **fills the center stage** — rails and header
 stay visible, as the concept shows — so it composes `Dialog.Root` and
 `Dialog.Content` from `radix-ui` directly and renders in place.
 
-What the story actually asks for is Radix's *behaviour*, and the parts that
+What the picker needs from Radix is its *behaviour*, and the parts that
 matter are kept: the focus trap, Escape, and `aria-modal` — all of which live in
 `Content`. `onOpenAutoFocus` is intercepted so focus lands on the search box
 rather than the container.
@@ -278,12 +290,12 @@ survives closing and reopening the picker.
 
 `spawnSession` asks main for the process itself and writes main's refusal to
 the console, so every caller — the `spawn` command, the picker, a daemon event
-later — gets the same line. It does **not** announce a successful spawn
-(HIVE-91): at that moment the session has nothing but its id, which is the one
+later — gets the same line. It does **not** announce a successful spawn:
+at that moment the session has nothing but its id, which is the one
 label the user never sees anywhere else, and the session lists already show
 what launched.
 
-## The activity rail (050–053)
+## The activity rail
 
 Structurally the left rail's twin, and deliberately so: a `Record<TabId,
 ComponentType>` panel map, a pinned `<TabBar />`, and a `role="tabpanel"`
@@ -307,7 +319,7 @@ silently renders nothing.
 
 ### Scroll position resets on switch
 
-Story 050 asks for an explicit choice, so: **reset**. Preserving per-panel
+The choice is explicit: **reset**. Preserving per-panel
 `scrollTop` means either keeping all three mounted or mirroring offsets into the
 ui-store. Neither earns its complexity for three short lists, and a stale offset
 into a list the simulation just prepended to is worse than starting at the top.
@@ -371,6 +383,8 @@ editor is the other way round — it is unmounted when nothing is open, because
 `editor-store` still holds the text and a hidden editor would keep a document
 and a `ResizeObserver` alive to show nothing.
 
-## What later stories add here
+## Not built yet
 
-Keyboard navigation (060) and simulation mode (061).
+Keyboard navigation beyond the global chords in `src/hooks/use-app-chords.ts`,
+and simulation mode (see
+[`state-and-data.md`](state-and-data.md#simulation-not-built-yet)).

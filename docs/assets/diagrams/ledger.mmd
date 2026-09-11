@@ -1,0 +1,7 @@
+flowchart TD
+  o[You, the overmind] -->|console · inbox · agent view| L[(Ledger · ~/.hive/ledger)]
+  s[Sessions] -->|hive MCP tools| L
+  a[Agents] -->|hive MCP tools| L
+  L -->|to you| i[Inbox card]
+  L -->|to an agent| w[Wakes it]
+  L -->|to a live session| n[Nudge at its prompt · 📒 a12]

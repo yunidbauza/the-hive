@@ -190,7 +190,8 @@ describe('AGENTS.md', () => {
       'docs/explorer-and-editor.md',
       'docs/state-and-data.md',
       'docs/component-patterns.md',
-      'docs/simulation.md',
+      'docs/architecture.md',
+      'docs/README.md',
       '.claude/DESIGN-SYSTEM.md',
       '.claude/COMPONENTS.md',
     ]) {

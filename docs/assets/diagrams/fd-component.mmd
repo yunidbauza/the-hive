@@ -1,0 +1,10 @@
+flowchart TD
+  s{Settings open?} -->|yes| vs[Settings]
+  s -->|no| p{Picker open?}
+  p -->|yes| vp[Picker]
+  p -->|no| e{Editor full-stage?}
+  e -->|yes| ve[Editor]
+  e -->|no| t{Active tab}
+  t -->|session| vse[Session]
+  t -->|agent| va[Agent]
+  t -->|none| vo[Orchestrator]

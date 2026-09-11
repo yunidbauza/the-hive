@@ -1,0 +1,5 @@
+flowchart TD
+  t[Jira ticket ABC-123] -->|new session| p[Picker, key prefilled]
+  p -->|choose a project| s[Session ABC-123-…]
+  s -->|pushes a branch| pr[Pull request]
+  pr -.->|gh matches the branch| s
