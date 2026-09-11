@@ -180,16 +180,22 @@ describe('createRemoteDispatch call', () => {
     }
   });
 
-  it('refuses a notifications:act that would act on the answering machine', async () => {
+  /*
+    All three this-machine actions, not only `url` (HIVE-140 audit): the
+    contract test names all three, and this is where the server acts on that
+    table. `update.install` is the dangerous one, a peer quitting the server.
+  */
+  it.each([
+    { type: 'url', url: 'https://example.com' },
+    { type: 'update.download' },
+    { type: 'update.install' },
+  ])('refuses a notifications:act that would act on the answering machine: %o', async (action) => {
     const registry = createIpcRegistry();
     const handler = vi.fn(() => null);
     registry.recordCall(CH.notificationsAct, handler);
     const dispatch = createRemoteDispatch(registry);
 
-    const frame = await dispatch.call(
-      callFrame(CH.notificationsAct, { type: 'url', url: 'https://example.com' }),
-      reporter,
-    );
+    const frame = await dispatch.call(callFrame(CH.notificationsAct, action), reporter);
 
     expect(frame).toMatchObject({ kind: 'error', code: 'remote-refused' });
     expect(handler).not.toHaveBeenCalled();

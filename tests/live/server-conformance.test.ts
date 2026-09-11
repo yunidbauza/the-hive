@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -14,7 +15,7 @@ import { get as httpGet } from 'node:http';
 import { createRequire } from 'node:module';
 import { connect as netConnect, createServer as createNetServer, type Socket } from 'node:net';
 import { homedir, hostname, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -3755,6 +3756,17 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       expect(attachedText).toContain(hostname());
 
       /*
+        The header chip, read off the page rather than a component test
+        (HIVE-140 audit, gap 4): HIVE-144's acceptance asked for it present
+        while attached and absent in local mode, in a real window.
+      */
+      const HEADER_CHIPS = `document.querySelector('[data-testid="header-chips"]')?.innerText ?? ''`;
+      await untilUi(
+        `(${HEADER_CHIPS}).includes('attached · ${hostname()}')`,
+        'the header chip to name the attached server',
+      );
+
+      /*
         **The address field is present and correct here, and HIVE-149 is what
         changed that.** This asserted its absence, and the copy explaining the
         absence, for as long as the field could only read the proxied block:
@@ -3826,6 +3838,11 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
         60_000,
       );
       expect(await ui.evaluate<string | null>(`${SWITCH}.getAttribute('aria-checked')`)).toBe('false');
+      // And the chip goes with the socket: nothing in the header claims a link.
+      // Every state of the chip names the server, so the name's absence is the
+      // test, not the word "attached": a "disconnected" chip left standing after
+      // a deliberate detach is the regression this guards.
+      await untilUi(`!(${HEADER_CHIPS}).includes('· ${hostname()}')`, 'the header chip to go once detached');
 
       const info = await ui.evaluate<AppInfo>('window.hive.appInfo()');
       expect(info.attachedServerName).toBeNull();
@@ -3930,7 +3947,7 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
      * rebinds them — none of which a socket on the *server* can see. The
      * renderer is the only caller that can.
      */
-    it('21k. reattaches on its own after the server disappears, and resumes the transcript', async () => {
+    it('21k. reattaches on its own after the server disappears, and rebinds the surface to it', async () => {
       assert(renderer !== undefined, 'the client app must have a renderer');
       assert(credential !== null, 'case 21b must have paired this client');
 
@@ -4460,6 +4477,257 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
           ),
         );
         await relay.close();
+      }
+    }, 240_000);
+
+    /**
+     * 21n. HIVE-146's two e2e acceptance items, driven through the Settings pane
+     * of a real attached client (HIVE-140 audit, gap 4). Until this, both were
+     * proven only by component tests and channel-level cases.
+     *
+     * A project is added **on the server**, through the server's own folder
+     * browser: the scratch folder exists only because this case made it under
+     * the home the served app lists, and the project must land in the server's
+     * config file and nowhere in the client's. A theme is imported **on this
+     * machine**: the renderer reads the file itself, so the server's config must
+     * not change by a byte.
+     *
+     * The file chooser is the one seam: a CDP renderer cannot answer a native
+     * chooser, so `HTMLInputElement.prototype.click` is replaced for one file
+     * input to set the fixture and fire `change`, exactly what a chosen file
+     * does. Everything before and after it is the shipped path.
+     */
+    it('21n. adds a project on the server through its browser, and imports a theme on this machine only', async () => {
+      assert(renderer !== undefined, 'the client app must have a renderer');
+      const ui = renderer;
+      const scratch = join(homedir(), `hive-live-146-${String(process.pid)}`);
+      const name = basename(scratch);
+      mkdirSync(scratch, { recursive: true });
+
+      const until = (expression: string, what: string, timeoutMs = 30_000): Promise<void> =>
+        waitForAsync(
+          async () => {
+            try {
+              return await ui.evaluate<boolean>(expression);
+            } catch {
+              // Mid-switch the bridge has no handlers at all — see 21h's `untilUi`.
+              return false;
+            }
+          },
+          what,
+          timeoutMs,
+        );
+      const clickButton = (text: string, scope = 'document'): Promise<unknown> =>
+        ui.evaluate(
+          `[...${scope}.querySelectorAll('button')].find((b) => b.textContent.trim() === ${JSON.stringify(text)}).click()`,
+        );
+      // Section buttons are scoped to the Settings nav: the window has other
+      // buttons with the same words, and `find` takes the first.
+      const NAV = `document.querySelector('[aria-label="Settings sections"]')`;
+      const hasButton = (text: string, scope = 'document'): string =>
+        `[...${scope}.querySelectorAll('button')].some((b) => b.textContent.trim() === ${JSON.stringify(text)})`;
+
+      try {
+        if ((await ui.evaluate<AppInfo>('window.hive.appInfo()')).attachedServerName === null) {
+          await waitForAsync(
+            async () => {
+              const result = await ui.evaluate<SetRemoteResult>(
+                `window.hive.config.setRemote({ mode: 'remote', host: '127.0.0.1', port: ${String(serverPort)} })`,
+              );
+              if (result.switched.ok) return true;
+              if (result.switched.reason !== 'live-sessions') {
+                throw new Error(`the attach was refused: ${JSON.stringify(result.switched)}`);
+              }
+              return false;
+            },
+            'the attach this case starts from',
+            90_000,
+          );
+        }
+
+        await ui.evaluate(`document.querySelector('button[aria-label="Settings"]').click()`);
+        await until(hasButton('Advanced'), 'the Settings overlay');
+        // A bridge-driven attach does not hydrate the store; Reload is the
+        // control that does, answered by the server (see 21h).
+        await clickButton('Advanced', NAV);
+        await until(hasButton('Reload'), 'the Reload control');
+        await clickButton('Reload');
+        await until(`/Reloaded —/.test(document.body.innerText)`, 'a Reload answered by the server');
+
+        // HIVE-146, first item: add a project on the mini from the laptop.
+        await clickButton('Projects', NAV);
+        await until(hasButton('Add project'), 'the Add project control');
+        await clickButton('Add project');
+        // By its title: the Settings overlay is a dialog too, and comes first.
+        const DIALOG = `[...document.querySelectorAll('[role="dialog"]')].find((d) => d.innerText.includes('Choose a project folder'))`;
+        await until(`/not this Mac/.test(${DIALOG}?.innerText ?? '')`, 'the picker, reading the server');
+        const ROWS = `[...${DIALOG}.querySelectorAll('ul[aria-label="Folders"] button')]`;
+        await until(
+          `${ROWS}.some((b) => b.textContent.includes(${JSON.stringify(name)}))`,
+          'the scratch folder in the server’s listing',
+        );
+        await ui.evaluate(`${ROWS}.find((b) => b.textContent.includes(${JSON.stringify(name)})).click()`);
+        await until(
+          `[...${DIALOG}.querySelectorAll('nav[aria-label="Path"] button')].some((b) => b.getAttribute('aria-current') === 'true' && b.textContent.trim() === ${JSON.stringify(name)})`,
+          'the picker to descend into the scratch folder',
+        );
+        await clickButton('Add project', DIALOG);
+
+        const pathsIn = (file: string): string[] =>
+          ((JSON.parse(readFileSync(file, 'utf8')) as { projects?: { path?: string }[] }).projects ?? [])
+            .map((project) => project.path ?? '');
+        await waitForAsync(
+          () => Promise.resolve(pathsIn(serverConfigPath).some((path) => path.endsWith(`/${name}`))),
+          'the project to land in the server’s own config',
+          30_000,
+        );
+        expect(pathsIn(clientConfigPath).some((path) => path.endsWith(`/${name}`))).toBe(false);
+        const answered = await ui.evaluate<ConfigSnapshot>('window.hive.config.get()');
+        expect(answered.projects.some((project) => project.path?.endsWith(`/${name}`) === true)).toBe(true);
+
+        // HIVE-146, second item: a theme file on this machine, imported while attached.
+        const serverBefore = readFileSync(serverConfigPath, 'utf8');
+        const theme = readFileSync(
+          join(import.meta.dirname, '../e2e/fixtures/nord.hive-theme.json'),
+          'utf8',
+        );
+        await ui.evaluate(`(() => {
+          const original = HTMLInputElement.prototype.click;
+          // Kept where \`finally\` can reach it, should the import never click.
+          globalThis.__hive21nClick = original;
+          HTMLInputElement.prototype.click = function () {
+            if (this.type !== 'file') return original.call(this);
+            HTMLInputElement.prototype.click = original;
+            const chosen = new DataTransfer();
+            chosen.items.add(new File([${JSON.stringify(theme)}], 'nord.hive-theme.json', { type: 'application/json' }));
+            this.files = chosen.files;
+            this.dispatchEvent(new Event('change', { bubbles: true }));
+          };
+          return true;
+        })()`);
+        await clickButton('Appearance', NAV);
+        await until(hasButton('Import theme…'), 'the Import theme control');
+        await clickButton('Import theme…');
+        await until(`/imported and activated/.test(document.body.innerText)`, 'the theme to import and activate here');
+        expect(readFileSync(serverConfigPath, 'utf8')).toBe(serverBefore);
+      } finally {
+        rmSync(scratch, { recursive: true, force: true });
+        await ui
+          .evaluate(
+            'if (globalThis.__hive21nClick) HTMLInputElement.prototype.click = globalThis.__hive21nClick; true',
+          )
+          .catch(() => undefined);
+      }
+    }, 240_000);
+
+    /**
+     * 21o. The three proofs the HIVE-140 audit found only in mocks, all from one
+     * row raised on the server while nobody watches its session:
+     *
+     * - HIVE-143: a server-pushed event reaches the attached client's store. Read
+     *   back through the client's own dock badge, which its renderer computes
+     *   from nothing but that store's unread count (`use-dock-badge.ts`).
+     * - HIVE-159: the badge lands on the dock of the machine the user is looking
+     *   at, the client, through `notifications:badge` answered on that machine.
+     * - HIVE-145: the client raises a real OS notification for it: Electron's own
+     *   `Notification.show` in the client's main process, wrapped to record the
+     *   call and then let it through, rather than a mocked constructor.
+     *
+     * The serving half of HIVE-159, that the server's own dock stays blank, is
+     * not read here: the served app in this block has no inspector, and the hub
+     * no longer badging a serving machine is proven by its unit spec.
+     */
+    it('21o. a row raised on the server badges the client’s dock and raises its OS notification', async () => {
+      assert(renderer !== undefined, 'the client app must have a renderer');
+      assert(credential !== null, 'case 21b must have paired this client');
+      assert(clientMain !== undefined, 'the client app must have an inspectable main process');
+      const view = renderer;
+      const owner = clientMain;
+      const sessionId = `audit-140-${String(Date.now())}`;
+      const a = await openClient(`ws://127.0.0.1:${String(serverPort)}`, credential);
+
+      try {
+        if ((await view.evaluate<AppInfo>('window.hive.appInfo()')).attachedServerName === null) {
+          await waitForAsync(
+            async () => {
+              const result = await view.evaluate<SetRemoteResult>(
+                `window.hive.config.setRemote({ mode: 'remote', host: '127.0.0.1', port: ${String(serverPort)} })`,
+              );
+              if (result.switched.ok) return true;
+              if (result.switched.reason !== 'live-sessions') {
+                throw new Error(`the attach was refused: ${JSON.stringify(result.switched)}`);
+              }
+              return false;
+            },
+            'the attach this case starts from',
+            90_000,
+          );
+        }
+        // An open Settings would be a stage with no terminal; nothing here
+        // needs it, and nothing here stages the session either.
+        await view.evaluate(`document.querySelector('button[aria-label="Close settings"]')?.click(); true`);
+
+        await owner.evaluate(`(() => {
+          const { Notification, app } = require('electron');
+          app.dock.setBadge('');
+          globalThis.__audit140Shown = [];
+          globalThis.__audit140Show = Notification.prototype.show;
+          Notification.prototype.show = function () {
+            globalThis.__audit140Shown.push({ title: String(this.title), body: String(this.body) });
+            return globalThis.__audit140Show.call(this);
+          };
+          return true;
+        })()`);
+
+        await a.spawnSession(servedProjectId, sessionId);
+        const env = await hookEnvOf(a, sessionId);
+        // Nobody reports this session in front — not A, which never sends a
+        // foreground, and not B, which never staged it — so the row arrives
+        // unread for every surface, which is what badges and toasts.
+        expect((await raiseBlocked(env, sessionId, 'toolu_live_140_audit')).status).toBe(204);
+
+        await waitForAsync(
+          async () => (await owner.evaluate<string>("require('electron').app.dock.getBadge()")) !== '',
+          'the client’s own dock to badge the row its store now holds',
+          30_000,
+        );
+        /*
+          Tied to this row, not to any toast: the hub titles a toast
+          "<session> <title>" (`toastTitle`), and an unnamed session is named by
+          its id, so a notification left over from an earlier case cannot
+          satisfy this wait.
+        */
+        const ours = `globalThis.__audit140Shown.some((shown) => shown.title.includes(${JSON.stringify(sessionId)}))`;
+        await waitForAsync(
+          async () => owner.evaluate<boolean>(ours),
+          'the client to raise a real OS notification for this row',
+          30_000,
+        );
+        const shown = await owner.evaluate<{ title: string; body: string }[]>('globalThis.__audit140Shown');
+        expect(shown.some((notification) => notification.title.includes(sessionId))).toBe(true);
+        measurements.push({
+          case: '21o. a server row on the client’s dock and OS',
+          badge: await owner.evaluate<string>("require('electron').app.dock.getBadge()"),
+          shown,
+        });
+      } finally {
+        const quietly = async (step: () => unknown): Promise<void> => {
+          try {
+            await step();
+          } catch {
+            // Best effort: a failed restore must not hide the failure above.
+          }
+        };
+        await quietly(() =>
+          owner.evaluate(`(() => {
+            const { Notification, app } = require('electron');
+            if (globalThis.__audit140Show) Notification.prototype.show = globalThis.__audit140Show;
+            app.dock.setBadge('');
+            return true;
+          })()`),
+        );
+        await quietly(() => a.notify(CH.ptyWrite, { sessionId, data: 'exit\n' }));
+        await quietly(() => a.close());
       }
     }, 240_000);
   });

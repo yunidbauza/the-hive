@@ -329,6 +329,33 @@ describe('a ticket sweep that outlives the mode switch it started under', () => 
     expect(state().ticketSource).toEqual({ kind: 'loading' });
     expect(searchJiraIssues).not.toHaveBeenCalled();
   });
+
+  /**
+   * The sixth exit, `reportTicketsUnconfigured`, which had no case of its own
+   * (HIVE-140 audit): the departed machine's "no Jira here" must not become the
+   * attached machine's answer. The PR sweep's twin is above.
+   */
+  it('cannot claim the attached machine is unconfigured', async () => {
+    const jira = deferred<JiraStatus | null>();
+    readJiraStatus.mockReturnValueOnce(jira.promise).mockReturnValue(never());
+
+    const sweep = state().refreshTickets();
+    state().applyModeChange({ to: 'local' });
+
+    const unconfigured: JiraStatus = {
+      site: null,
+      email: null,
+      siteSource: null,
+      emailSource: null,
+      credential: { kind: 'none' },
+      encryptionAvailable: true,
+    };
+    jira.settle(unconfigured);
+    await sweep;
+
+    // Without the epoch guard this would read `unconfigured`.
+    expect(state().ticketSource).toEqual({ kind: 'loading' });
+  });
 });
 
 /**
