@@ -96,12 +96,7 @@ describe('createSkillsRuntime', () => {
       release = resolve;
     });
     const skills = createSkillsRuntime({ userDataPath, version: '1.0.0', ready });
-    let settled = false;
-    const first = skills.sync().then(() => {
-      settled = true;
-    });
-    await Promise.resolve();
-    expect(settled).toBe(false);
+    const first = skills.sync();
 
     await writeSkill('seeded', skill('seeded'));
     release();

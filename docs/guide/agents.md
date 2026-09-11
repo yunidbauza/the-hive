@@ -22,10 +22,10 @@ last one, so it remembers.
 
 ## Agents the app ships
 
-The workflow agents (`builder`, `shipper`, `fixer`) come with The Hive and are copied into
-`~/.hive/agents` on launch, the way shipped skills are ([Custom skills](skills.md)). Your
-edits win: a definition you changed is left alone by updates, and one you deleted comes back
-only if you had never edited it.
+Agents can come with The Hive: the app's own `resources/agents/` is copied into
+`~/.hive/agents` on launch, the way shipped skills are ([Custom skills](skills.md)). The
+workflow agents land there as they ship. Your edits win: a definition you changed is left
+alone by updates, and one you deleted stays deleted.
 
 ## Create an agent
 

@@ -1850,11 +1850,14 @@ switching between them cannot change a byte.
 `resources/agents/<name>/AGENT.md` and `resources/skills/<name>/` ship with the
 app and are copied into `~/.hive` at registration by `electron/main/seed/`.
 The rule is one line and every branch of `seed.ts` serves it: **the user's
-edits win.** A file is copied when absent, overwritten only when the copy on
-disk is byte-identical to what the last seed wrote (`~/.hive/.seed.json`
-holds that hash per file), and otherwise left alone. A shipped file that is
-later dropped from `resources/` is never deleted. A destination folder that is
-a symlink is skipped whole rather than written through.
+edits win.** A file is copied when absent and never seeded before, left absent
+when the manifest says it was seeded once (a deletion is an edit), overwritten
+only when the copy on disk is byte-identical to what the last seed wrote
+(`~/.hive/.seed.json` holds that hash per file), and otherwise left alone. A
+shipped file that is later dropped from `resources/` is never deleted. Nothing
+is written through a symlink at any depth below `~/.hive`; a linked `skills/`,
+a linked skill folder or a linked folder inside one each stop the write. A
+file's mode travels with it.
 
 The seed is started, not awaited, in `registerIpcHandlers`: the skills runtime
 waits for it before its first regeneration (`ready` in `createSkillsRuntime`),

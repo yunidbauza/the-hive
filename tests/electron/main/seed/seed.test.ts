@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -125,6 +125,29 @@ describe('seedShipped', () => {
     expect(await onDisk('skills/old/SKILL.md')).toBe(skill('old'));
   });
 
+  it('keeps the mode of a shipped script, so it stays executable', async () => {
+    await ship('skills/worktree/SKILL.md', skill('worktree'));
+    await ship('skills/worktree/scripts/add.sh', '#!/bin/sh\n');
+    await chmod(join(source, 'skills/worktree/scripts/add.sh'), 0o755);
+
+    await seed();
+
+    const seeded = await stat(join(target, 'skills/worktree/scripts/add.sh'));
+    expect(seeded.mode & 0o777).toBe(0o755);
+  });
+
+  it('leaves a shipped file the user deleted absent, instead of bringing it back', async () => {
+    await ship('skills/worktree/SKILL.md', skill('worktree'));
+    await seed();
+    await rm(join(target, 'skills/worktree'), { recursive: true });
+
+    const report = await seed();
+
+    expect(report.created).toEqual([]);
+    expect(report.kept).toEqual(['skills/worktree/SKILL.md']);
+    await expect(onDisk('skills/worktree/SKILL.md')).rejects.toThrow();
+  });
+
   it('skips a destination folder that is a symlink rather than writing through it', async () => {
     const elsewhere = join(base, 'elsewhere');
     await mkdir(elsewhere, { recursive: true });
@@ -137,6 +160,34 @@ describe('seedShipped', () => {
 
     expect(report.skipped).toEqual(['skills/worktree']);
     expect(await readFile(join(elsewhere, 'SKILL.md'), 'utf8')).toBe('linked\n');
+  });
+
+  it('never writes through a linked skills root', async () => {
+    const elsewhere = join(base, 'elsewhere');
+    await mkdir(elsewhere, { recursive: true });
+    await mkdir(target, { recursive: true });
+    await symlink(elsewhere, join(target, 'skills'));
+    await ship('skills/worktree/SKILL.md', skill('worktree'));
+
+    const report = await seed();
+
+    expect(report.skipped).toEqual(['skills/worktree']);
+    expect(await readdir(elsewhere)).toEqual([]);
+  });
+
+  it('never writes through a linked folder inside a skill', async () => {
+    const elsewhere = join(base, 'elsewhere');
+    await mkdir(elsewhere, { recursive: true });
+    await mkdir(join(target, 'skills/worktree'), { recursive: true });
+    await symlink(elsewhere, join(target, 'skills/worktree/scripts'));
+    await ship('skills/worktree/SKILL.md', skill('worktree'));
+    await ship('skills/worktree/scripts/run.sh', '#!/bin/sh\n');
+
+    const report = await seed();
+
+    expect(report.created).toEqual(['skills/worktree/SKILL.md']);
+    expect(report.kept).toEqual(['skills/worktree/scripts/run.sh']);
+    expect(await readdir(elsewhere)).toEqual([]);
   });
 
   it('never seeds the reserved done skill, which is generated', async () => {

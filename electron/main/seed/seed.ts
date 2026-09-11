@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 import {
+  chmod,
   lstat,
   mkdir,
   readdir,
   readFile,
+  stat,
   writeFile,
 } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -15,25 +17,29 @@ import { RESERVED_SKILL_NAME } from '@shared/skills-contract';
  * Seeding the skills and agents the app ships into `~/.hive` (HIVE-162).
  *
  * `~/.hive/skills` and `~/.hive/agents` are the **user's** folders: Settings
- * writes them, a text editor writes them, dotfiles back them up. The app now
- * ships a workflow's worth of skills and three agents, and they have to land
- * in those same folders — a session gets its skills from the generated plugin
+ * writes them, a text editor writes them, dotfiles back them up. The app
+ * ships skills and agent definitions of its own (`resources/skills`,
+ * `resources/agents`; the workflow lands there story by story), and they have
+ * to land in those same folders — a session gets its skills from the generated plugin
  * that mirrors `~/.hive/skills`, and an agent is a file the registry watches
  * there. So the app writes into a folder it does not own, and the whole of
  * this module is the rule that makes that safe: **the user's edits win.**
  *
- * ## The three outcomes per file
+ * ## The four outcomes per file
  *
- * | The file on disk | The seed does |
- * | --- | --- |
- * | absent | copies it |
- * | byte-identical to what the last seed wrote | overwrites it with the new shipped content |
- * | anything else | leaves it alone |
+ * | The file on disk | The manifest | The seed does |
+ * | --- | --- | --- |
+ * | absent | no entry | copies it |
+ * | absent | has an entry | leaves it absent: the user deleted it |
+ * | byte-identical to what the last seed wrote | | overwrites it with the new shipped content |
+ * | anything else | | leaves it alone |
  *
  * "What the last seed wrote" is a hash per file in `~/.hive/.seed.json`. It
- * is what tells an untouched copy from an edited one: without it the second
- * row is indistinguishable from the third, and the choice would be between
- * clobbering edits on every update and never updating at all.
+ * is what tells an untouched copy from an edited one, and a deleted copy from
+ * a never-seeded one: without it the rows are indistinguishable, and the
+ * choice would be between clobbering edits on every update and never updating
+ * at all. A deletion is an edit. Settings offers the button, and a folder that
+ * came back on the next launch would make it a lie.
  *
  * A file the app used to ship and no longer does is **left alone**. Deleting
  * from a folder the user hand-edits, on the strength of a manifest, is a
@@ -42,11 +48,17 @@ import { RESERVED_SKILL_NAME } from '@shared/skills-contract';
  *
  * ## What it refuses to write through
  *
- * A destination *folder* that is a symlink is treated as the user's and
- * skipped whole. The skills tree is symlink-friendly by design (`read.ts`
- * admits linked skill folders because dotfile managers link them in), and a
- * seed that followed the link would write into whatever it points at.
- * `lstat`, never `stat`, for every existence check here.
+ * Nothing under `<target>` is written through a symlink. The skills tree is
+ * symlink-friendly by design (`read.ts` admits linked skill folders because
+ * dotfile managers link them in), and a seed that followed a link would write
+ * into whatever it points at, anywhere on disk. So every path component
+ * between `<target>` and the file is `lstat`ed: a linked `skills/`, a linked
+ * skill folder, or a linked folder inside one all stop the write. `<target>`
+ * itself may be a link; relocating `~/.hive` whole is the user's business.
+ *
+ * A file's mode travels with it. `writeFile` creates at 0644, and a shipped
+ * script that lands non-executable fails the first session that runs it, the
+ * same failure `import-skill.ts` and `plugin.ts` each already guard against.
  *
  * `done` is never seeded: it is generated into the plugin directly and is
  * reserved in `~/.hive/skills` (`RESERVED_SKILL_NAME`).
@@ -134,6 +146,23 @@ const isSymlink = async (path: string): Promise<boolean> => {
 };
 
 /**
+ * Whether any component of `rel`, taken from `root` downwards, is a symlink.
+ *
+ * `lstat` answers for the last component only and follows every parent, so
+ * a check on the leaf alone writes through a linked `skills/` or a linked
+ * folder inside a skill. Walking the components is what makes "never through
+ * a link" true rather than one level deep.
+ */
+async function throughLink(root: string, rel: string): Promise<boolean> {
+  let path = root;
+  for (const segment of rel.split('/')) {
+    path = join(path, segment);
+    if (await isSymlink(path)) return true;
+  }
+  return false;
+}
+
+/**
  * The folders the seed would write, each as `<kind>/<name>`.
  *
  * Agents are one file each and skills are a folder each, but the seed treats
@@ -167,7 +196,7 @@ export async function seedShipped(options: SeedOptions): Promise<SeedReport> {
 
   for (const folder of await shippedFolders(options.source)) {
     const destinationDir = join(options.target, folder);
-    if (await isSymlink(destinationDir)) {
+    if (await throughLink(options.target, folder)) {
       report.skipped.push(folder);
       continue;
     }
@@ -185,8 +214,11 @@ export async function seedShipped(options: SeedOptions): Promise<SeedReport> {
       const to = join(destinationDir, file);
       const bytes = await readFile(from);
       const shippedHash = sha256(bytes);
+      const mode = (await stat(from)).mode & 0o777;
 
-      if (await isSymlink(to)) {
+      // The file's own parents inside the skill, plus the file itself. The
+      // folder's own components were checked once above.
+      if (await throughLink(destinationDir, file)) {
         report.kept.push(rel);
         continue;
       }
@@ -199,8 +231,14 @@ export async function seedShipped(options: SeedOptions): Promise<SeedReport> {
       }
 
       if (existing === null) {
+        if (rel in manifest.files) {
+          // Seeded once, gone now. The user deleted it, and that is theirs.
+          report.kept.push(rel);
+          continue;
+        }
         await mkdir(dirname(to), { recursive: true });
         await writeFile(to, bytes);
+        await chmod(to, mode);
         next[rel] = shippedHash;
         report.created.push(rel);
         continue;
@@ -215,6 +253,7 @@ export async function seedShipped(options: SeedOptions): Promise<SeedReport> {
 
       if (manifest.files[rel] === existingHash) {
         await writeFile(to, bytes);
+        await chmod(to, mode);
         next[rel] = shippedHash;
         report.upgraded.push(rel);
         continue;

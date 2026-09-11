@@ -69,15 +69,14 @@ A skill that fails validation shows in Settings with its reason and is not injec
 
 ## Skills the app ships
 
-Some skills come with The Hive: the implementation workflow (`/work-on`, `/goal-on`, `/ship`
-and the rest) lives in the app's own `resources/skills/` and is copied into `~/.hive/skills`
-when the app starts. They are ordinary skills once they are there. Edit one in Settings and
-your version stays; an update changes only files you have not touched. A skill the app stops
-shipping is never deleted from your folder.
+Some skills come with The Hive: the app's own `resources/skills/` is copied into
+`~/.hive/skills` when the app starts (`/worktree` today; the implementation workflow lands
+there story by story). They are ordinary skills once they are there. Edit one in Settings and
+your version stays; an update changes only files you have not touched. Delete one and it
+stays deleted. A skill the app stops shipping is never removed from your folder.
 
-The record of what was seeded is `~/.hive/.seed.json`. Delete a shipped skill's folder and
-it comes back on the next launch; to keep it away, leave the folder with your own `SKILL.md`
-in it.
+The record of what was seeded is `~/.hive/.seed.json`. To get a deleted shipped skill back,
+remove its lines from that file and relaunch.
 
 ## Rules
 
