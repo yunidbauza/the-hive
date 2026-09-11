@@ -14,7 +14,7 @@ const entry = (over: Partial<LedgerEntry>): LedgerEntry => ({
   ...over,
 });
 
-const harness = () => {
+const harness = (extra: Partial<Parameters<typeof createLedgerNotifier>[0]> = {}) => {
   const raise = vi.fn();
   const markRead = vi.fn();
   const dismiss = vi.fn();
@@ -23,6 +23,7 @@ const harness = () => {
     markRead,
     dismiss,
     isAgent: (id: string) => id !== OVERMIND && !id.startsWith('sess-'),
+    ...extra,
   });
   return { raise, markRead, dismiss, onEntry };
 };
@@ -242,6 +243,53 @@ describe('createLedgerNotifier', () => {
   it('ignores a goal receipt written by an agent, which has no goal to hold', () => {
     const { raise, onEntry } = harness();
     onEntry({ id: 'e1', ts: 1, from: 'watcher', kind: 'event', body: 'goal ACTIVE', meta: { goal: 'watcher', status: 'ACTIVE' } });
+    expect(raise).not.toHaveBeenCalled();
+  });
+
+  it('raises the ask\'s own card, keyed on the ask, when main re-surfaces a question its session left open (HIVE-167)', () => {
+    const asks: Record<string, LedgerEntry> = {
+      a12: entry({ id: 'a12', to: 'sess-1', kind: 'ask', body: 'which colour?\nRed or blue.', meta: { options: ['red', 'blue'] } }),
+      a13: entry({ id: 'a13', to: 'sess-1', kind: 'ask', body: 'may I?', meta: { kind: 'permission', tool: 'Bash' } }),
+    };
+    const { raise, onEntry } = harness({ ask: (id) => asks[id] });
+    const redirect = (id: string, redirected: string) =>
+      onEntry({
+        id,
+        ts: 5,
+        from: OVERMIND,
+        to: OVERMIND,
+        kind: 'event',
+        thread: redirected,
+        body: 'sess-1 ended with this question open; it is yours now',
+        meta: { redirected, redirectedFrom: 'sess-1' },
+      });
+
+    redirect('e7', 'a12');
+    redirect('e8', 'a13');
+
+    // The ask's id, the ask's words, the asker as subject: everything that
+    // later marks, dismisses or expires the ask by its id finds this row.
+    expect(raise).toHaveBeenCalledWith({
+      kind: 'agent.ask',
+      id: 'a12',
+      title: 'which colour?',
+      body: 'Red or blue.',
+      subject: 'drone',
+      action: { type: 'ask', thread: 'a12' },
+      createdAt: 5,
+    });
+    expect(raise).toHaveBeenCalledWith(expect.objectContaining({ kind: 'agent.permission', id: 'a13' }));
+  });
+
+  it('raises nothing for a redirect naming an ask it cannot find', () => {
+    const { raise, onEntry } = harness({ ask: () => undefined });
+    onEntry({ id: 'e9', ts: 5, from: OVERMIND, kind: 'event', body: 'x', meta: { redirected: 'nope' } });
+    expect(raise).not.toHaveBeenCalled();
+  });
+
+  it('ignores a redirect event any party but the overmind wrote', () => {
+    const { raise, onEntry } = harness();
+    onEntry({ id: 'e8', ts: 5, from: 'drone', kind: 'event', body: 'x', meta: { redirected: 'a12' } });
     expect(raise).not.toHaveBeenCalled();
   });
 

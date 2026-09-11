@@ -22,6 +22,13 @@ export interface LedgerNotifierDeps {
   dismiss: (id: string) => void;
   /** Whether a party id names a registered agent rather than a session. */
   isAgent: (id: string) => boolean;
+  /**
+   * The ask an id names, if it names one (HIVE-167). Only the redirect branch
+   * reads it: the card it raises has to be the *ask's* card, keyed on the
+   * ask's id, or nothing that later marks, dismisses or expires that ask by
+   * its id would find the row. Optional so every existing harness stands.
+   */
+  ask?: (id: string) => LedgerEntry | undefined;
 }
 
 /** Run outcomes that mean the agent was stopped rather than finished. */
@@ -186,6 +193,41 @@ export function createLedgerNotifier(
         */
         subject: entry.from,
         action: { type: 'ask', thread: entry.id },
+        createdAt: entry.ts,
+      });
+      return;
+    }
+
+    /*
+      HIVE-167. An ask that was waiting on a session that has ended is
+      re-surfaced by main as an `event` on the ask's own thread. The card it
+      raises is the ask's card: `action.thread` names the ask, so answering
+      goes into the original thread and wakes the asker. Only the overmind
+      writes these, and the author check is what keeps a party from raising
+      cards for questions that were never its to redirect.
+    */
+    const redirected = str(meta.redirected);
+    if (entry.kind === 'event' && entry.from === OVERMIND && redirected !== undefined) {
+      /*
+        The ask's own card, keyed on the ask: `markRead(entry.thread)` on its
+        answer, `dismiss` on its close and on expiry all look the row up by
+        the ask's id (the invariant stated at the top of this file), so a card
+        keyed on the event could never be cleared. The hub's `seen` set is
+        also what makes a second redirect of the same ask a no-op rather than
+        a second card. Presented exactly as the ask would have been had it
+        been addressed to the overmind: title and body from the question,
+        `subject` the asker, and `agent.permission` when that is what it is.
+      */
+      const ask = deps.ask?.(redirected);
+      if (ask === undefined || ask.kind !== 'ask') return;
+      const [first, rest] = split(ask.body);
+      deps.raise({
+        kind: ask.meta?.kind === 'permission' ? 'agent.permission' : 'agent.ask',
+        id: ask.id,
+        title: first,
+        body: rest,
+        subject: ask.from,
+        action: { type: 'ask', thread: ask.id },
         createdAt: entry.ts,
       });
       return;

@@ -1754,6 +1754,9 @@ export function registerIpcHandlers(
     markRead: (id) => hub.markRead(id),
     dismiss: (id) => hub.dismiss(id),
     isAgent: (id) => knownAgents.has(id),
+    // HIVE-167. `ledger` is bound a few lines below; the notifier runs only
+    // from inside its `onChange`, which cannot fire before it exists.
+    ask: (id) => ledger.read({}).entries.find((entry) => entry.id === id && entry.kind === 'ask'),
   });
 
   // The re-arm (HIVE-81): whatever is still blocked when the user looks away
@@ -1913,7 +1916,63 @@ export function registerIpcHandlers(
       */
       knownAgents.has(id) ||
       history?.resumable(id) !== undefined,
+    /*
+      HIVE-167. A session the ledger knows, that is not an agent, and that has
+      no terminal right now. `entities()` is the live register; a resumable
+      ended session is a party (so its own late writes are accepted) but it
+      cannot read a marker, and an ask to it is what this redirects.
+    */
+    isGoneSession: (id) =>
+      id !== OVERMIND &&
+      !knownAgents.has(id) &&
+      !(sessions?.entities().includes(id) ?? false) &&
+      /*
+        A session this app has *had*, not merely an id nobody knows. An agent
+        whose definition is mid-edit drops out of `knownAgents` while its
+        folder still exists; a typo'd `to` matches nothing at all. Neither is
+        a session that closed, and neither should land in the inbox on the
+        strength of it: the first is read on that agent's next wake as it
+        always was, the second expires as it always did.
+      */
+      history?.resumable(id) !== undefined,
   });
+
+  /**
+   * The other half of HIVE-167: asks that were open when their session ended.
+   *
+   * Each is re-surfaced to the overmind as an `event` on the ask's own
+   * thread, so the card the notifier raises answers into the original ask and
+   * the answer still wakes the asker. Nothing is re-posted as the asker; the
+   * party rule forbids main writing as anyone but `OVERMIND`, and the thread
+   * already holds the question.
+   */
+  const redirectOpenAsks = (entityId: string): void => {
+    const { entries, openAsks } = ledger.read({});
+    // The log is the dedup, as it is for the expiry sweep: an ask already
+    // re-surfaced once is not re-surfaced by a later ending of the same id.
+    const surfaced = new Set(
+      entries
+        .filter((entry) => entry.kind === 'event' && entry.from === OVERMIND)
+        .map((entry) => entry.meta?.['redirected'])
+        .filter((id): id is string => typeof id === 'string'),
+    );
+    for (const ask of openAsks) {
+      if (ask.to !== entityId || surfaced.has(ask.id)) continue;
+      const result = ledger.append({
+        from: OVERMIND,
+        to: OVERMIND,
+        kind: 'event',
+        thread: ask.id,
+        body: `${entityId} ended with this question open; it is yours now`,
+        meta: { redirected: ask.id, redirectedFrom: entityId },
+      });
+      if (!result.ok) {
+        console.warn(
+          `[ledger] could not re-surface ${ask.id} after ${entityId} ended: ${result.reason}`,
+        );
+      }
+    }
+  };
 
   /**
    * Delivery — what happens to an entry after it is written (HIVE-113).
@@ -2930,6 +2989,8 @@ export function registerIpcHandlers(
     */
     onIdle: (entityId) => deliver.onIdle(entityId),
     onReady: (entityId) => deliver.onReady(entityId),
+    // HIVE-167: the asks that were waiting on this terminal go to the inbox.
+    onEnded: (entityId) => redirectOpenAsks(entityId),
     /*
       The same register the ledger authenticates a party against (HIVE-115),
       and deliberately not a second one: an agent that may write to the log is

@@ -882,7 +882,10 @@ describe('identity: the renderer only ever sees entity ids', () => {
  * capture, and reading status back by entity is exactly what `on()` already
  * does for the suite's default instance.
  */
-function harness(onIdle?: (entityId: string) => void): {
+function harness(
+  onIdle?: (entityId: string) => void,
+  onEnded?: (entityId: string) => void,
+): {
   hook: (
     event: { entityId: string; event: HookStatusEvent['event'] } & Partial<
       Omit<HookStatusEvent, 'entityId' | 'event' | 'status'>
@@ -906,6 +909,7 @@ function harness(onIdle?: (entityId: string) => void): {
     userDataPath: USER_DATA_PATH,
     newSessionUuid: () => TEST_UUID,
     ...(onIdle === undefined ? {} : { onIdle }),
+    ...(onEnded === undefined ? {} : { onEnded }),
     hooks: {
       settingsPathFor: () => undefined,
       envFor: () => ({}),
@@ -918,6 +922,9 @@ function harness(onIdle?: (entityId: string) => void): {
         return Promise.resolve();
       },
       stop: () => Promise.resolve(),
+      // A restart writes the container session files through this; the
+      // harness never containerises, so `null` is the honest answer.
+      writeContainerSession: () => Promise.resolve(null),
     } as unknown as Parameters<typeof createSessions>[0]['hooks'],
   });
 
@@ -2501,6 +2508,40 @@ describe('/done', () => {
  * consumer a prompt just came free — and `isIdle` is the pull, for a caller
  * that arrives between events and has to ask.
  */
+describe('the ended signal (HIVE-167)', () => {
+  it('fires from the exit funnel, after the session has left the register', () => {
+    const seen: Array<{ id: string; live: boolean }> = [];
+    let instance: Sessions | null = null;
+    const h = harness(undefined, (entityId) => {
+      seen.push({ id: entityId, live: instance?.entities().includes(entityId) ?? true });
+    });
+    instance = h.sessions;
+    h.sessions.open(OPEN);
+
+    emitExit({ sessionId: mintedFor('hero-refresh'), exitCode: 0 });
+    vi.advanceTimersByTime(8);
+
+    expect(seen).toEqual([{ id: 'hero-refresh', live: false }]);
+  });
+});
+
+describe('the ended signal on a restart (HIVE-167)', () => {
+  it('stays quiet: the same entity id is about to come back', async () => {
+    const onEnded = vi.fn();
+    const h = harness(undefined, onEnded);
+    h.sessions.open(OPEN);
+    const first = mintedFor('hero-refresh');
+
+    const restarted = h.sessions.restart(OPEN);
+    await Promise.resolve();
+    emitExit({ sessionId: first, exitCode: 0 });
+    vi.advanceTimersByTime(8);
+    await restarted;
+
+    expect(onEnded).not.toHaveBeenCalled();
+  });
+});
+
 describe('the idle signal', () => {
   it('fires when a session goes idle with nothing running behind it', () => {
     const onIdle = vi.fn();
