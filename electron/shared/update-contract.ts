@@ -157,3 +157,14 @@ export const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
  * the startup burst.
  */
 export const UPDATE_FIRST_CHECK_DELAY_MS = 30_000;
+
+/**
+ * How often an unattended server looks again for a quiet moment to install an
+ * update it has already downloaded (HIVE-147).
+ *
+ * An install quits the app, and quitting a server ends every session and agent
+ * run on it, so a served machine installs only when nothing is live. Five
+ * minutes is long enough to be free and short enough that a fleet which goes
+ * quiet at night is on the new version before anyone attaches in the morning.
+ */
+export const UNATTENDED_INSTALL_RETRY_MS = 5 * 60 * 1000;

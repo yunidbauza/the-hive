@@ -13,6 +13,8 @@ export interface UpdateOneShotDeps {
   releasesUrl: string;
   print: (line: string) => void;
   onInstallFailure: (cause: unknown) => void;
+  /** Whether the app starts itself after the swap; `false` under launchd (HIVE-147). */
+  relaunch: boolean;
 }
 
 function errorMessage(cause: unknown): string {
@@ -29,6 +31,7 @@ export async function runUpdateOneShot(deps: UpdateOneShotDeps): Promise<number 
     releasesUrl,
     print,
     onInstallFailure,
+    relaunch,
   } = deps;
 
   let release: (() => void) | undefined;
@@ -60,7 +63,11 @@ export async function runUpdateOneShot(deps: UpdateOneShotDeps): Promise<number 
     await engine.download((percent) => {
       print(`Downloading The Hive ${found.version}: ${percent.toFixed(0)}%`);
     });
-    print(`Installing The Hive ${found.version}; the app will relaunch.`);
+    print(
+      relaunch
+        ? `Installing The Hive ${found.version}; the app will relaunch.`
+        : `Installing The Hive ${found.version}; start the server again to run it.`,
+    );
     void engine.install().catch((cause: unknown) => {
       print(`Could not update The Hive: ${errorMessage(cause)}`);
       onInstallFailure(cause);

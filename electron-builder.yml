@@ -53,6 +53,13 @@ files:
 asarUnpack:
   - '**/node_modules/node-pty/**'
 
+# The server-mode menu-bar icon (HIVE-147), read at runtime by `trayIconPath`.
+# `nativeImage` decodes PNG and JPEG only, so the `.icns` below is no use to a
+# `Tray`; this puts the template pair at `Contents/Resources/tray/`.
+extraResources:
+  - from: resources/tray
+    to: tray
+
 mac:
   category: public.app-category.developer-tools
   icon: resources/icon.icns

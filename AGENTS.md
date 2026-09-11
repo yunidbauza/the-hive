@@ -100,6 +100,7 @@ implementation hours inside the review chain. These rules follow from both:
 | The project explorer, the editor, the fs IPC surface | [`docs/explorer-and-editor.md`](docs/explorer-and-editor.md) |
 | The main process, IPC, native modules | [`docs/desktop-architecture.md`](docs/desktop-architecture.md) |
 | Installers, releases, auto-update, the app name | [`docs/packaging-and-updates.md`](docs/packaging-and-updates.md) |
+| Server mode: the Mac mini deployment, pairing, the LaunchAgent, what a socket may call | [`docs/server-mode.md`](docs/server-mode.md) |
 | Store shape, actions, selectors, fixture data | [`docs/state-and-data.md`](docs/state-and-data.md) |
 | Panels, atoms, rails, the view-state machine | [`docs/component-patterns.md`](docs/component-patterns.md) |
 | Simulation script and the fake clock | [`docs/simulation.md`](docs/simulation.md) |

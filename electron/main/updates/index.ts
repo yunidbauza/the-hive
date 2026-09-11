@@ -41,6 +41,24 @@ let updater: Updater | null = null;
 let starting: Promise<Updater> | null = null;
 
 /**
+ * Set by a server before the updater is built (HIVE-147) — see
+ * `UpdaterDeps.unattended`. Null on every other launch.
+ */
+let unattended: { isIdle: () => boolean } | null = null;
+
+/**
+ * Make this run's updater unattended: download on its own, install when
+ * `isIdle` says the fleet is quiet, and leave the relaunch to launchd.
+ *
+ * Must be called before anything reaches {@link ensureUpdater}, which reads it
+ * once when it builds the updater. `index.ts` calls it during boot, well ahead
+ * of `whenReady`.
+ */
+export function runUnattended(isIdle: () => boolean): void {
+  unattended = { isIdle };
+}
+
+/**
  * What `status()` answers before the probe has landed.
  *
  * `canCheck: false` is the honest placeholder: at this instant the app really
@@ -83,9 +101,10 @@ export async function ensureUpdater(): Promise<Updater> {
     const capability = await probeUpdateCapability();
     const currentVersion = app.getVersion();
     const built = createUpdater({
-      engine: createElectronUpdaterEngine(currentVersion),
+      engine: createElectronUpdaterEngine(currentVersion, { relaunch: unattended === null }),
       capability,
       currentVersion,
+      ...(unattended === null ? {} : { unattended }),
       /**
        * Wired at call time through the hub the IPC layer owns, rather than
        * captured here. `registerIpcHandlers` builds the hub, and this module is
@@ -212,18 +231,23 @@ export async function installUpdate(): Promise<void> {
  * The updater engine needs Electron's initialized app object, but no normal
  * boot service does: this path intentionally does not call `ensureUpdater()`,
  * whose interactive collaborators include dialogs and opening a browser.
+ *
+ * `relaunch` is `false` on a machine whose config serves (HIVE-147): launchd
+ * starts the new version there, and a copy Squirrel started too would be a
+ * second server launchd cannot see — see `createElectronUpdaterEngine`.
  */
-export async function runHeadlessUpdate(): Promise<void> {
+export async function runHeadlessUpdate({ relaunch }: { relaunch: boolean }): Promise<void> {
   const currentVersion = app.getVersion();
   const code = await runUpdateOneShot({
     capability: await probeUpdateCapability(),
     currentVersion,
-    engine: createElectronUpdaterEngine(currentVersion),
+    engine: createElectronUpdaterEngine(currentVersion, { relaunch }),
     acquireLock: () => claimServerLock(serverLockPath()),
     releaseUrlFor,
     releasesUrl: RELEASES_URL,
     print: (line) => console.log(line),
     onInstallFailure: () => app.exit(1),
+    relaunch,
   });
   if (code !== null) app.exit(code);
 }
@@ -237,6 +261,7 @@ export function resetUpdater(): void {
   updater = null;
   starting = null;
   notifySink = null;
+  unattended = null;
 }
 
 export { createUpdater } from './updater';

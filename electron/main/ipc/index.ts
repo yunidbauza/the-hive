@@ -1288,6 +1288,15 @@ export function sessionsLayer(): Sessions | null {
 }
 
 /**
+ * Whether nothing on this machine would be cut off by the app quitting: no
+ * live session and no agent run in flight. What a server asks before it
+ * installs an update on its own (HIVE-147).
+ */
+export function fleetIsIdle(): boolean {
+  return (sessions?.entities().length ?? 0) === 0 && (runs?.live().length ?? 0) === 0;
+}
+
+/**
  * Starts the server-mode socket (HIVE-142). Resolves the bound `ws://` URL,
  * or `null` on bind failure — see {@link createRemoteListener}'s own `start`.
  *

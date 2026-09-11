@@ -48,8 +48,16 @@ function isNewer(
   return result.updateInfo.version !== currentVersion;
 }
 
+/**
+ * @param options.relaunch Whether Squirrel starts the new version itself after
+ * the swap. `false` on a server-configured install (HIVE-147): launchd owns that
+ * process's lifetime, and a copy Squirrel relaunched would be one launchd does
+ * not know about — launchd would start its own copy beside it, that copy would
+ * lose the single-instance lock and quit, and launchd would retry it forever.
+ */
 export function createElectronUpdaterEngine(
   currentVersion: string,
+  { relaunch = true }: { relaunch?: boolean } = {},
 ): UpdateEngine {
   const { autoUpdater } = electronUpdater;
 
@@ -66,7 +74,23 @@ export function createElectronUpdaterEngine(
    * version when they say so.
    */
   autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = false;
+  /**
+   * A server is the one exception (HIVE-147), and both properties are the
+   * switch, not `quitAndInstall`'s arguments: `MacUpdater.quitAndInstall()`
+   * takes none, so what it passes Squirrel is read from these instead.
+   *
+   * - `autoRunAppAfterInstall` decides whether Squirrel relaunches after the
+   *   swap or the app simply quits. On a server launchd relaunches it.
+   * - `autoInstallOnAppQuit` also decides *when Squirrel fetches* the staged
+   *   zip. Off, the fetch and its signature check happen inside
+   *   `quitAndInstall`, so seconds pass between the updater's idle check and the
+   *   quit, in which a scheduled agent run can start and then be cut off. On,
+   *   `download()` resolves only once Squirrel holds the update, and the quit
+   *   follows the idle check at once. The cost, acceptable on an unattended
+   *   machine and nowhere else: any quit with an update staged installs it.
+   */
+  autoUpdater.autoRunAppAfterInstall = relaunch;
+  autoUpdater.autoInstallOnAppQuit = !relaunch;
 
   return {
     async check() {
@@ -141,11 +165,11 @@ export function createElectronUpdaterEngine(
           reject(cause);
         });
         /**
-         * `isSilent: false`, `isForceRunAfter: true`.
-         *
-         * The second matters: without it a macOS update quits the app and
-         * leaves the user staring at a desktop, which reads as a crash rather
-         * than an update.
+         * `isSilent: false`, `isForceRunAfter: true` — read by the other
+         * platforms' updaters only. On macOS the relaunch is
+         * `autoRunAppAfterInstall`, set above: without it an update quits the
+         * app and leaves the user staring at a desktop, which reads as a crash
+         * rather than an update. Except on a server, where launchd relaunches it.
          */
         autoUpdater.quitAndInstall(false, true);
       });

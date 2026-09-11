@@ -1,4 +1,6 @@
 // @vitest-environment node
+import { fileURLToPath } from 'node:url';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ServerDevice } from '../../../electron/shared/config-contract';
@@ -45,6 +47,7 @@ const writeText = vi.fn();
 // (it does not) — `devIconPath` branches on `app.isPackaged`.
 const appMock = { isPackaged: true };
 const setTemplateImage = vi.fn();
+const createFromPath = vi.fn((_path: string) => ({ isEmpty: () => false, setTemplateImage }));
 
 vi.mock('electron', () => ({
   app: appMock,
@@ -54,11 +57,7 @@ vi.mock('electron', () => ({
   clipboard: { writeText },
   nativeImage: {
     createEmpty: vi.fn(() => ({ isEmpty: () => true })),
-    createFromPath: vi.fn(() => ({
-      isEmpty: () => false,
-      setTemplateImage,
-      resize: vi.fn(() => ({ isEmpty: () => false, setTemplateImage })),
-    })),
+    createFromPath,
   },
 }));
 
@@ -119,9 +118,14 @@ function makeDeps(overrides: {
   };
 }
 
+/** The repo's `resources/`, laid out as a packaged `Contents/Resources/` is. */
+const REPO_RESOURCES = fileURLToPath(new URL('../../../resources', import.meta.url));
+
 beforeEach(() => {
   FakeTray.instances.length = 0;
-  appMock.isPackaged = true; // the default: no icon resolves, per `devIconPath`.
+  // The default: a packaged build whose `tray/` went missing, so no icon resolves.
+  appMock.isPackaged = true;
+  Object.assign(process, { resourcesPath: '/nonexistent/Resources' });
   vi.clearAllMocks();
   showMessageBox.mockResolvedValue({ response: 1 });
 });
@@ -411,21 +415,37 @@ describe('createServerTray', () => {
     expect(tray.popUpContextMenu).toHaveBeenCalledTimes(2);
   });
 
-  it('falls back to a text title when no icon could be resolved (packaged)', () => {
-    appMock.isPackaged = true; // `devIconPath` answers `undefined` once packaged.
+  it('falls back to a text title when no icon could be resolved', () => {
     createServerTray(makeDeps());
 
     const tray = FakeTray.instances[0]!;
+    expect(createFromPath).not.toHaveBeenCalled();
     expect(tray.title).toBe('Hive');
   });
 
-  it('uses a template image and sets no fallback title when an icon resolves (dev)', () => {
-    appMock.isPackaged = false; // `devIconPath` resolves the real `resources/icon.png`.
+  /**
+   * The gap HIVE-142 left owed (HIVE-147): a packaged build used to have no
+   * PNG to load, so every served mini showed the text fallback.
+   */
+  it('loads the shipped template from Resources/tray when packaged', () => {
+    Object.assign(process, { resourcesPath: REPO_RESOURCES });
     createServerTray(makeDeps());
 
+    expect(createFromPath).toHaveBeenCalledWith(
+      `${REPO_RESOURCES}/tray/trayTemplate.png`,
+    );
     expect(setTemplateImage).toHaveBeenCalledWith(true);
-    const tray = FakeTray.instances[0]!;
-    expect(tray.title).toBeUndefined();
+    expect(FakeTray.instances[0]!.title).toBeUndefined();
+  });
+
+  it('loads the same template from the tree in dev', () => {
+    appMock.isPackaged = false;
+    createServerTray(makeDeps());
+
+    expect(createFromPath).toHaveBeenCalledWith(
+      `${REPO_RESOURCES}/tray/trayTemplate.png`,
+    );
+    expect(FakeTray.instances[0]!.title).toBeUndefined();
   });
 
   it('destroy() destroys the underlying Tray', () => {

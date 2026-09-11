@@ -30,10 +30,12 @@ function harness({
   capability = SELF_INSTALL,
   found = { version: '0.2.0' } as { version: string } | null,
   serverActive = false,
+  relaunch = true,
 }: {
   capability?: UpdateCapability;
   found?: { version: string } | null;
   serverActive?: boolean;
+  relaunch?: boolean;
 } = {}) {
   const lines: string[] = [];
   const installFailure = vi.fn();
@@ -55,6 +57,7 @@ function harness({
     releasesUrl: 'https://releases.example.test',
     print: (line) => lines.push(line),
     onInstallFailure: installFailure,
+    relaunch,
   };
   return { acquireLock, deps, engine, installFailure, lines, release };
 }
@@ -106,6 +109,20 @@ describe('runUpdateOneShot', () => {
     expect(h.engine.download).toHaveBeenCalledOnce();
     expect(h.engine.install).toHaveBeenCalledOnce();
     expect(h.lines.join('\n')).toMatch(/installing/i);
+  });
+
+  it('says it will relaunch only when it will', async () => {
+    const laptop = harness();
+    await runUpdateOneShot(laptop.deps);
+    expect(laptop.lines.at(-1)).toBe('Installing The Hive 0.2.0; the app will relaunch.');
+
+    // A server-configured machine is relaunched by launchd, after the user
+    // bootstraps the agent again (HIVE-147, docs/server-mode.md).
+    const server = harness({ relaunch: false });
+    await runUpdateOneShot(server.deps);
+    expect(server.lines.at(-1)).toBe(
+      'Installing The Hive 0.2.0; start the server again to run it.',
+    );
   });
 
   it('reports check failures as a failed update', async () => {

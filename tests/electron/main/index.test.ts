@@ -79,3 +79,41 @@ describe('the boot path chooses an IPC mode', () => {
     ).toMatch(/^\s*\.catch\(/m);
   });
 });
+
+/**
+ * A served machine runs with nobody at it (HIVE-147). Each rule below is a
+ * call that must happen on a server and nowhere else, so each is asserted by
+ * where it sits in the file as well as that it exists.
+ */
+describe('the boot path of a served machine', () => {
+  /** The `whenReady` half of server mode: from hiding the dock to the tray. */
+  const servedBlock = source.slice(
+    source.indexOf('app.dock?.hide()'),
+    source.indexOf('serverTray = createServerTray'),
+  );
+  const count = (needle: string): number => source.split(needle).length - 1;
+
+  it('holds off idle sleep only while serving', () => {
+    expect(servedBlock).toContain("powerSaveBlocker.start('prevent-app-suspension')");
+    expect(count('powerSaveBlocker.start(')).toBe(1);
+  });
+
+  it('keeps retrying the bind instead of trying it once', () => {
+    expect(servedBlock).toContain('onShutdown(bindUntilBound(startRemoteListener))');
+    expect(source).not.toMatch(/void startRemoteListener\(\)/);
+  });
+
+  it('makes the updater unattended behind the server lock, before the updater is built', () => {
+    // The config decides, not `--server`: a one-off trial run has a person at
+    // it and no launchd behind it.
+    const call = source.indexOf('if (getConfig().server.enabled) runUnattended(fleetIsIdle)');
+    expect(call).toBeGreaterThan(-1);
+    expect(count('runUnattended(')).toBe(1);
+    expect(call).toBeGreaterThan(source.indexOf('claimServerLock()'));
+    expect(call).toBeLessThan(source.indexOf('startUpdateChecks()'));
+  });
+
+  it('leaves the relaunch after a headless update to launchd when the config serves', () => {
+    expect(source).toContain('runHeadlessUpdate({ relaunch: !getConfig().server.enabled })');
+  });
+});
