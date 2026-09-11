@@ -5,6 +5,34 @@ configuration, and how live instances are kept alive across tab switches.
 
 **Owned by story 042** (HIVE, Jira).
 
+> **TL;DR**
+> - Terminal components speak only `TerminalTransport` (`write`, `onData`, `resize`,
+>   `reportPrompt`) and cannot import features, data or stores.
+> - `onData`'s `parsed` callback is the flow-control ack, called once xterm has parsed a chunk.
+> - Terminal colour comes from JS (the theme's `terminal` group), never CSS.
+> - One xterm per entity, kept alive and hidden; one WebGL context on the visible surface.
+> - A hidden surface is never fitted. Auto-scroll fires only at the bottom.
+
+```mermaid
+flowchart LR
+  CS["center-stage.tsx<br/>(reads stores)"] --> RT["resolveTransport"]
+  RT -->|"browser"| ST["StaticTransport"]
+  RT -->|"desktop"| PT["PtyTransport"]
+  PT <-->|"window.hive pty verbs"| B["preload bridge"]
+  CS -->|"ids, palette props"| TH["TerminalHost"] --> TS["TerminalSurface"]
+  TS <-->|"TerminalTransport"| PT
+```
+
+**On this page:** [The seam](#the-seam) ·
+[Sending text into a session](#sending-text-into-a-session) ·
+[Colour](#colour) ·
+[Renderers](#renderers-which-terminal-paints-how) ·
+[Instance strategy](#instance-strategy) ·
+[Fitting](#fitting) ·
+[The bottom-stick rule](#the-bottom-stick-rule) ·
+[Testing](#testing) ·
+[Reading Claude Code's screen](#reading-claude-codes-screen-hive-79)
+
 ## The seam
 
 Everything the terminal renders, and every keystroke it produces, crosses one

@@ -101,9 +101,10 @@ implementation hours inside the review chain. These rules follow from both:
 | The main process, IPC, native modules | [`docs/desktop-architecture.md`](docs/desktop-architecture.md) |
 | Installers, releases, auto-update, the app name | [`docs/packaging-and-updates.md`](docs/packaging-and-updates.md) |
 | Server mode: the Mac mini deployment, pairing, the LaunchAgent, what a socket may call | [`docs/server-mode.md`](docs/server-mode.md) |
-| Store shape, actions, selectors, fixture data | [`docs/state-and-data.md`](docs/state-and-data.md) |
+| Store shape, actions, selectors, fixture data, the fake clock | [`docs/state-and-data.md`](docs/state-and-data.md) |
 | Panels, atoms, rails, the view-state machine | [`docs/component-patterns.md`](docs/component-patterns.md) |
-| Simulation script and the fake clock | [`docs/simulation.md`](docs/simulation.md) |
+| The map: processes, fences, which deep dive owns what | [`docs/architecture.md`](docs/architecture.md) |
+| What a feature does for the user (the guides, indexed) | [`docs/README.md`](docs/README.md) |
 | The ledger, parties, asks and claims; agent definitions | [`docs/agents-and-ledger.md`](docs/agents-and-ledger.md) |
 | Any UI task — tokens and type scale, then atoms and props | [`.claude/DESIGN-SYSTEM.md`](.claude/DESIGN-SYSTEM.md) · [`.claude/COMPONENTS.md`](.claude/COMPONENTS.md) |
 

@@ -37,7 +37,7 @@ import { launchHive, startSession, writeProjectConfig } from './fixtures/hive-ap
  * this a test of the spawn-time read, and of the honest floor the feature
  * promises for sessions with no hooks at all. Driving a worktree move
  * end-to-end needs a real agent in the loop, which this suite has no way to
- * stand up; `docs/branch-sync-note.md` records that gap.
+ * stand up; `docs/desktop-architecture.md` records that gap.
  */
 
 const BRANCH = 'feat/e2e-observed-branch';

@@ -4,6 +4,32 @@
 
 **Owned by stories 020–053.** The shell (020) has landed; the panels have not.
 
+> **TL;DR**
+> - `src/components/layout/` is the composition root; feature slices never import each other.
+> - The page never scrolls; rails never flex; `min-h-0` and `min-w-0` are load-bearing.
+> - A pure `resolveView` picks the one thing on stage: settings, picker, editor, then a tab.
+> - Terminals are hidden, never unmounted. The editor unmounts when nothing is open.
+> - The activity rail is a map of Inbox, PRs and Explorer.
+
+```mermaid
+flowchart TD
+  S{"settings?"} -->|yes| VS[settings]
+  S -->|no| P{"picker?"} -->|yes| VP[picker]
+  P -->|no| E{"editor full-stage?"} -->|yes| VE[editor]
+  E -->|no| T{"active tab"}
+  T -->|session| VSe[session]
+  T -->|agent| VA[agent]
+  T -->|none| VO[orchestrator]
+```
+
+**On this page:** [The shell](#the-shell) · [The header](#the-header) ·
+[The view-state machine](#the-center-stage-view-state-machine-040) ·
+[The orchestrator console](#the-orchestrator-console-041) ·
+[The session / agent view](#the-session--agent-view-043) ·
+[The picker](#the-new-session-picker-044) ·
+[The activity rail](#the-activity-rail-050053) ·
+[The editor](#the-editor-on-the-centre-stage)
+
 ## What already holds today
 
 - Chrome lives in `src/components/layout/`, shared atoms in
@@ -64,8 +90,9 @@ Each region is a landmark element, so tests address them by role
   ui-store is read through `useShowActivityRail()` — deliberately narrower than
   `useRailState()`, so switching rail tabs does not re-render the terminal.
 
-Desktop-width only, by design: no responsive or mobile layout, and the rails are
-not draggable. Both are explicit non-goals of story 020.
+Desktop-width only, by design: no responsive or mobile layout, an explicit
+non-goal of story 020. The rails were fixed-width then; they are draggable now
+(HIVE-105, `rail-handles.tsx`), and either one collapses to an icon strip.
 
 ## The header
 
@@ -173,8 +200,8 @@ unbounded array would make opening the orchestrator slower over time.
 
 ### Selectors and the re-render trap
 
-The table's two groups come from `useActiveSessions()` and `useDoneSessions()` —
-two flat selectors, deliberately **not** one returning `{ active, done }`.
+The table's two groups come from `useActiveSessions()` and `useEndedSessions()` —
+two flat selectors, deliberately **not** one returning `{ active, ended }`.
 
 `useShallow` compares the returned value's own properties. An object holding two
 freshly-built arrays is never shallow-equal to the previous one, so the component

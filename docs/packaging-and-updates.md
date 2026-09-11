@@ -6,6 +6,29 @@ and how a running copy finds out about it.
 Load this when working on `electron-builder.yml`, `.github/workflows/release.yml`,
 `electron/main/updates/**`, or anything to do with the app's version or name.
 
+> **TL;DR**
+> - Release with `pnpm version minor` and `git push --follow-tags`.
+> - CI drafts the release, electron-builder uploads, the workflow checks `latest-mac.yml`,
+>   then publishes.
+> - `node-pty` is unpacked from the asar; required peers are checked twice.
+> - Desktop asks twice (download, install); a server installs when idle.
+> - An ad-hoc signature cannot self-update, so it is treated as manual.
+
+```mermaid
+flowchart LR
+  V["pnpm version minor<br/>git push --follow-tags"] --> CI["CI: lint, type-check, test"]
+  CI --> D["draft release"] --> U["upload dmg, zip, latest-mac.yml"]
+  U --> Y{"latest-mac.yml present?"}
+  Y -->|yes| Pub["publish"] --> App["apps check 30 s after launch, every 6 h"]
+  Y -->|no| Stay["stays draft"]
+```
+
+**On this page:** [Cutting a release](#cutting-a-release) ·
+[What is in the bundle](#what-is-in-the-bundle-and-one-thing-that-is-not) ·
+[Required modules](#the-modules-that-must-be-in-the-bundle-and-one-that-was-not) ·
+[The app's name](#the-apps-name) · [Updating](#updating) ·
+[Where the code lives](#where-the-code-lives)
+
 ## Cutting a release
 
 ```bash

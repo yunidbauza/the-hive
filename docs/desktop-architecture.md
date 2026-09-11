@@ -6,6 +6,44 @@ the Electron e2e suite.
 
 Terminals and transports: [`terminal-architecture.md`](terminal-architecture.md).
 
+> **TL;DR**
+> - Electron is the product; the browser build is a fixtures-only demo sharing `src/`.
+> - Main, preload and renderer are fenced by ESLint; `electron/shared` is the only common code.
+> - The bridge exposes verbs, never `ipcRenderer`. Every handler checks its sender and payload.
+> - PTYs live in a `utilityProcess` with a heartbeat and a crash-loop guard.
+> - `pty:data` is batched every 8 ms; output pauses above 512 KB unacked, resumes below 128 KB.
+> - Status comes from output, exit and Claude Code's hooks, paired by `tool_use_id`.
+
+```mermaid
+sequenceDiagram
+  participant P as claude in pty
+  participant H as pty host
+  participant M as main
+  participant R as renderer (xterm)
+  P->>H: many small writes
+  H->>M: output
+  M->>R: pty:data batch (8 ms, 64 KB)
+  R-->>M: ack after xterm parses
+  alt over 512 KB unacked
+    M->>H: pause reading
+  else under 128 KB
+    M->>H: resume
+  end
+```
+
+**On this page:** [Two targets, one renderer](#two-targets-one-renderer) ·
+[Processes](#processes) · [The bridge](#the-bridge) ·
+[The workspace config](#the-workspace-config) ·
+[userData and session history](#what-main-writes-to-userdata-and-the-session-history-hive-87) ·
+[Where a session's name comes from](#where-a-sessions-name-comes-from) ·
+[The branch a session is on](#the-branch-a-session-is-on-hive-78) ·
+[The environment](#the-environment-this-process-actually-has-hive-84) ·
+[The pty host](#the-pty-host) ·
+[Statuses and endings](#the-five-statuses-and-the-three-endings-that-are-not-statuses) ·
+[Leaving waiting](#leaving-waiting-pairing-not-a-single-deterministic-hook) ·
+[ABI facts](#two-abi-facts-that-produce-unreadable-errors-when-forgotten) ·
+[Testing](#testing-three-layers-split-by-what-each-can-prove)
+
 ## Two targets, one renderer
 
 ```
@@ -318,6 +356,72 @@ Retention is `HISTORY_CAP` (20) ended records, pruned oldest-first by
 `endedAt ?? createdAt`. Live records are exempt and are not counted against it:
 forgetting a process that still exists is a different and much worse bug than
 forgetting one that does not.
+
+## The branch a session is on (HIVE-78)
+
+`Session.branch` is **optional**, and only ever holds what main observed.
+`branchLabel()` in `src/types/entity.ts` renders an em dash for the rest, at all
+three surfaces. It used to be assigned ``branch: `feat/${id}` `` at spawn, a
+branch nothing created: the meta bar and the fleet table read `feat/sess-01`
+while the terminal sat on `main`. It was not a stale value; it was never true.
+
+| Piece | Where |
+| --- | --- |
+| `CH.sessionBranch: 'session:branch'` | `electron/shared/ipc-contract.ts` |
+| `SessionBranchEvent { entityId, branch, cwd }` | `electron/shared/session-contract.ts` |
+| `git rev-parse` reader, cached and rate-limited | `electron/main/sessions/git.ts` |
+| Observation and push | `electron/main/sessions/index.ts` (`publishBranch`) |
+| `setSessionBranch(id, branch, cwd)` | `src/stores/hive-store.ts` |
+| `bridge.session.onBranch(...)` | `src/features/sessions/hooks/use-session-status.ts` |
+
+How main observes it:
+
+- **The directory comes free.** The original design note proposed
+  `lsof -a -p <pid> -d cwd` against the pty's process tree. Unnecessary: every
+  Claude Code hook payload carries `cwd`, and it is the *agent's* working
+  directory, so it follows a session into a worktree even when the login shell
+  never moves.
+- **Hook events are the cadence.** They fire when the agent does something,
+  which is when a branch can have changed, and stop when it does not.
+  `sessions/git.ts` adds a 2-second floor per directory and a shared in-flight
+  promise, so a burst of hooks in one turn costs one `git` spawn; `publishBranch`
+  drops anything unchanged, so a quiet fleet produces no IPC.
+- **A spawn-time read** covers the gap before the first hook, and sessions with
+  no hooks at all. That is the honest floor: the branch the session opened on,
+  never one nobody created.
+- **A separate channel from `session:status`.** Status is frequent and
+  machine-driven, a branch change is rare and user-driven; folding them together
+  would make every status tick carry a branch main did not observe on that tick.
+
+### Ticket intent rides the same payload
+
+`UserPromptSubmit` carries the user's prompt, so "work on ABC-123" typed at an
+agent associates the session with that issue and pins the key to the front of
+its name (see [Where a session's name comes from](#where-a-sessions-name-comes-from)).
+Three constraints shape it:
+
+1. **The prompt never leaves main.** `hooks/ticket-intent.ts` matches inside the
+   receiver and emits only the key.
+2. **Main matches a shape; the renderer confirms it.** `HTTP-404` is key-shaped,
+   so the renderer puts the candidate to `jira:issue` and acts only on an issue
+   that exists.
+3. **Intent, not mention.** "work on ABC-123" associates; "the PR for ABC-123
+   broke CI" does not. The verb list is enumerated rather than fuzzy, because a
+   wrong answer files work under someone else's ticket with nothing on screen to
+   explain it.
+
+The explorer follows the same observed `cwd` into a worktree; see
+[`explorer-and-editor.md`](explorer-and-editor.md#it-also-follows-the-session-into-a-worktree-hive-78).
+
+### What end-to-end tests cannot reach yet
+
+`tests/e2e/electron/session-branch.spec.ts` covers the spawn-time read against a
+real repository on a real branch. It does **not** cover a worktree move, because
+`claudeCommand` is stubbed suite-wide and no hook ever fires; that needs a real
+agent in the loop. Neither e2e target can render a real Jira ticket either: the
+electron target has a bridge but no Jira stub, and `integrations/jira/client.ts`
+builds every request as `https://${site}`, so a stub means an HTTPS server with a
+certificate the app accepts.
 
 ## The environment this process actually has (HIVE-84)
 
@@ -704,8 +808,9 @@ different observer with a vantage point a pty does not have — hence
 ## The five statuses, and the three endings that are not statuses
 
 The fleet view shows `working`, `waiting` (labelled "needs input"),
-`idle (agents)`, `idle (script)`, and plain `idle`. `done`, `terminated` and
-`closed` are not in that list, on purpose: all three are endings, and an ending
+`working (agents)`, `working (scripts)`, and plain `idle`. `done`, `terminated`
+and a session closed with the app are not in that list, on purpose: all three
+are endings, and an ending
 is a claim about a boundary, not a thing a session is doing moment to moment. `done` arrives
 when the user runs `/clear` — Claude Code reports that as `SessionEnd` with
 `reason: 'clear'`, the pty stays alive, and the fact travels its own channel,
@@ -719,8 +824,9 @@ explicit exception for this one — because `SessionEnd` races the process exit
 and loses: a hook POST from a process that is already gone is not a bet worth
 making.
 
-`closed` is the third ending, and unlike the other two **nothing ever reports
-it** (HIVE-87). It is what a session restored from the session history becomes
+The third ending began as a separate `closed` status and is now `done` with
+`endedBy: 'app-closed'` (`src/types/entity.ts`). Unlike the other two **nothing
+ever reports it** (HIVE-87). It is what a session restored from the session history becomes
 when the record says it was still running: the process it describes died with
 the app that owned it, so a record claiming `working` is describing something
 that plainly is not. Main cannot write it — see the session history section
@@ -728,14 +834,14 @@ above for why the quit is not observable — so the renderer infers it in
 `hydrateSessions`, which
 is an inference nothing can race and no crash can interrupt.
 
-It is a separate status rather than a reuse of `terminated` for a reason that
-is about retention rather than vocabulary. `terminated` is never capped, on the
+It is kept apart from `terminated` for a reason that is about retention rather
+than vocabulary. `terminated` is never capped, on the
 grounds that such a row is the only record a process ever existed; had restored
 sessions come back as `terminated`, every launch would have added the entire
 live fleet to a list nothing is allowed to shorten.
 
-`idle (agents)` and `idle (script)` are not new members of `ObservedStatus`
-either. They are plain `idle` with an `IdleDetail` attached, because the
+`working (agents)` and `working (scripts)` are not new members of
+`ObservedStatus` either. They are plain `idle` with an `IdleDetail` attached, because the
 underlying fact is the same either way — the main agent has nothing to say —
 and only the reason differs: a subagent is still running (`SubagentStart` seen,
 no matching `SubagentStop` yet), or a backgrounded shell is (`PostToolUse` with

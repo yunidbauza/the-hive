@@ -14,6 +14,37 @@ two ledger routes, the renderer's mirrors of either (`use-ledger-sync.ts`,
 `hive-store.ts`), the `ledger` / `ask` / `answer` console verbs, Settings ›
 Agents, or the agents rail and `src/features/agents/`.
 
+> **TL;DR**
+> - The ledger is one append-only log, `~/.hive/ledger/YYYY-MM-DD.jsonl`, one file per day.
+> - Every party posts, asks, answers, claims and releases by appending; nothing is edited.
+> - `from` is never read from a request; identity comes from IPC or the session token.
+> - An entry to a live session arrives as a `📒` marker at an idle, empty prompt.
+> - An agent is `~/.hive/agents/<name>/AGENT.md`; each wake is one resumed `claude -p`.
+> - `tools:` is a fence: anything else becomes a permission ask in the inbox.
+
+```mermaid
+sequenceDiagram
+  participant A as Agent run
+  participant L as Ledger
+  participant I as Inbox
+  participant U as You
+  A->>L: ask a12 (to overmind)
+  L->>I: card
+  U->>I: Approve
+  I->>L: answer a12
+  L->>A: wake with the answer
+```
+
+**On this page:** [What the ledger is](#what-the-ledger-is) ·
+[On disk](#on-disk) · [The two ids](#the-two-ids) ·
+[The party rule](#the-party-rule) · [Delivery](#delivery) ·
+[The console verbs](#the-console-verbs) ·
+[Derived state](#derived-state) · [The routes](#the-routes) ·
+[Who reaches it](#who-reaches-it-and-how) ·
+[The MCP host](#the-mcp-host-hive-112) ·
+[Agent definitions](#agent-definitions) ·
+[The agent on screen](#the-agent-on-screen-hive-116)
+
 ## What the ledger is
 
 The overmind (the renderer, voiced through the coordinator identity

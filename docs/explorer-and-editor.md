@@ -6,6 +6,32 @@ the filesystem IPC surface underneath both.
 This is the first feature in the app that reads the user's source tree. Most of
 what follows is about the two seams that made necessary.
 
+> **TL;DR**
+> - Every `fs:` verb takes `{ projectId, relPath }`; the renderer never sends a path.
+> - Paths are realpathed and checked for containment; writes also `lstat` the leaf.
+> - One recursive watcher, on the visible project, 300 ms debounce, 2 s ceiling.
+> - The editor seam is fenced like the terminal's, but its colour is CSS (`--cc-code-*`).
+> - Clean buffers reload silently; saves use optimistic concurrency on mtime.
+
+```mermaid
+flowchart TD
+  Req["fs:write-file {projectId, relPath, baseMtimeMs}"] --> G{"relative, no .., no NUL?"}
+  G -->|no| Rej["rejected"]
+  G -->|yes| C{"inside the project root?<br/>(realpath + lstat)"}
+  C -->|no| Out["EOUTSIDE"]
+  C -->|yes| M{"mtime still baseMtimeMs?"}
+  M -->|no| Conf["conflict, nothing written"]
+  M -->|yes| W["write, return new mtime"]
+```
+
+**On this page:** [The filesystem seam](#the-filesystem-seam) ·
+[The watcher](#the-watcher) ·
+[What is hidden](#what-is-hidden-and-why-not-gitignore) ·
+[The tree](#the-tree) · [The editor seam](#the-editor-seam) ·
+[Placement](#placement-and-the-one-rule-that-unifies-it) ·
+[Freshness and saving](#freshness-and-saving) ·
+[Testing](#testing)
+
 ## The filesystem seam
 
 ### The renderer never sends a path
@@ -342,6 +368,6 @@ the coarse case is ever actually hit, and the wrong default.
 - Image and binary previews — refused with a reason, not rendered.
 - Creating, renaming, deleting or moving files. The tree reads; the terminal is
   where the filesystem is mutated, and it already is.
-- Search across files, git status decoration, diff view.
+- Git status decoration and a diff view.
 - Multiple projects in one tree.
 - Restoring open files across launches — `editor-store` is not persisted.

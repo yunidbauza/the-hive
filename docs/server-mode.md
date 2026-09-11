@@ -14,6 +14,37 @@ This document takes a mini from unboxed to attachable, and to a server that
 survives a reboot with nobody touching it. Follow it top to bottom once. After
 that the machine looks after itself.
 
+> **TL;DR**
+> - One binary: a `server` block makes the mini serve on its Tailscale address; a `remote`
+>   block makes a laptop a window onto it.
+> - It needs automatic login plus a LaunchAgent (the Keychain), `pmset autorestart`, and
+>   Tailscale with key expiry off.
+> - `the-hive --pair`, `--devices` and `--revoke` manage device tokens; only hashes are stored.
+> - The hook receiver stays on loopback. Exposure rests on Tailscale first, then tokens.
+
+```mermaid
+stateDiagram-v2
+  [*] --> Local
+  Local --> Dialing: Attach
+  Dialing --> Attached: accepted
+  Dialing --> Refused: unauthorized, revoked, version
+  Attached --> Reconnecting: socket drops
+  Reconnecting --> Attached: redial ok
+  Reconnecting --> Local: Work locally
+  Refused --> Local: Work locally
+```
+
+**On this page:** [Before you start](#before-you-start) ·
+[The keychain requirement](#the-keychain-requirement) ·
+[1. Prepare the mini](#1-prepare-the-mini) ·
+[2. Write the server block](#2-write-the-server-block) ·
+[3. Start it at login](#3-start-it-at-login-keep-it-running) ·
+[4. Pair each client](#4-pair-each-client) ·
+[5. Check it survives a reboot](#5-check-it-survives-a-reboot) ·
+[Updates](#updates) ·
+[What an attached device can do](#what-an-attached-device-can-do) ·
+[Exposure](#exposure) · [Troubleshooting](#troubleshooting)
+
 ## Before you start
 
 - **The same version on both ends.** The first frame carries

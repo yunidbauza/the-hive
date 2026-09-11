@@ -4,6 +4,31 @@
 
 **Owned by story 012** (HIVE, Jira).
 
+> **TL;DR**
+> - Four stores: `hive-store` (domain), `ui-store` (view), `appearance-store` (preferences),
+>   `editor-store` (buffers).
+> - Only `appearance-store` persists, to `localStorage`.
+> - Components read through named selector hooks, never the store object or `getState()`.
+> - The ledger mirror merges by id and is capped at 500. Notifications cap at 50.
+> - The fleet boots empty; last run's ended sessions arrive from main.
+
+```mermaid
+flowchart LR
+  Main["main (IPC)"] --> HS["hive-store"]
+  Main --> ES["editor-store"]
+  UIS["ui-store"]
+  AS["appearance-store"] <--> LS[("localStorage")]
+  HS & UIS & AS & ES --> Sel["selector hooks"] --> Comp["components"]
+  Comp -->|"actions"| HS
+```
+
+**On this page:** [Stores](#stores) ·
+[What persists](#what-persists-and-where-story-105) ·
+[Selector hooks](#selector-hooks) · [Caps](#caps) ·
+[The fake clock](#the-fake-clock) ·
+[What the store seeds](#what-the-store-seeds-and-what-it-no-longer-does) ·
+[The console grammar](#the-console-grammar)
+
 ## Stores
 
 Four, split along what the system *knows*, what the user is *looking at*, what
@@ -216,9 +241,10 @@ truth for every number on screen.
 Two collections are bounded, because a long-running demo must not grow without
 end:
 
-- **`notifs` at 8** (`NOTIF_CAP`) — `pushNotif` does the same. Eight is what fits
-  the rail without scrolling on a laptop, and an inbox that grows forever stops
-  being an inbox.
+- **`notifs` at 50** (`NOTIF_CAP`, which is `NOTIFICATION_CAP` from
+  `electron/shared/notification-contract.ts`) — `pushNotif` does the same, and
+  main's notification buffer uses the same constant. An inbox that grows forever
+  stops being an inbox.
 - **`ledger` at 500** (`LEDGER_MEMORY_CAP`, in `electron/shared/ledger-contract.ts`)
   — the newest are kept, by both `hydrateLedger` and `ledgerAppend`. Unlike the
   inbox this cap loses nothing: the log on disk is complete, and an older entry is
@@ -237,10 +263,10 @@ is not `new Date()`: a demo recorded at 03:11 should not say so, and a wall
 clock makes a store's tests unassertable.
 
 **It currently has no producer.** The activity feed was its only one, and the
-project explorer replaced that panel. The module stays because `simulation.md`
-already tells the simulation story to stamp through it rather than introduce a
-second clock — deleting a documented seam because it is briefly unused is how
-the second clock gets written.
+project explorer replaced that panel. The module stays because the simulation
+story (below) is told to stamp through it rather than introduce a second clock —
+deleting a documented seam because it is briefly unused is how the second clock
+gets written.
 
 - **It lives in `lib/`, not in a feature slice.** `stores/` is what will stamp,
   and the import zone forbids `stores/ → features/`. `lib/` is leaf-level,
@@ -249,6 +275,23 @@ the second clock gets written.
   hive-store's own `reset()`, so the next consumer inherits a store that
   rewinds it.
 - `peek()` reads the current time without advancing it.
+
+### Simulation (story 061, not built)
+
+Scripted event replay is still a placeholder. What is already in place for it:
+
+- `?sim=1` sets `SIMULATION_ENABLED` in `src/config/env.ts`. Nothing consumes it
+  yet.
+- `appendEntityLines(id, lines, status?)` is the intended write path for replayed
+  events: it appends transcript and optionally moves a session's status in one
+  step. `pushNotif` is the inbox's, and both should stamp through the fake clock
+  above.
+- The browser-target `sendToEntity` path returns its acknowledgement timer as
+  `{ kind: 'demo', timer }` (see [Where a message actually goes](#where-a-message-actually-goes)),
+  so a scripted run can cancel it rather than race a real wait.
+
+What story 061 adds: the event script format, the driver that feeds events into
+the stores, and the rule for what simulation may and may not mutate.
 
 ## What the store seeds, and what it no longer does
 
@@ -336,8 +379,10 @@ The split is worth keeping for its own sake: the parser catches *shape* errors
 (`send` with no message, an unknown verb) and the store catches *existence*
 errors (no such session, unknown repo). Neither needs the other to be tested.
 
-All six commands are implemented — `help`, `status`, `open`, `send`, `spawn`,
-`clear` — with `usage` and `command not found` for everything else. The
+Sixteen verbs are implemented. `help` lists fifteen of them; `answer` parses but
+is left out, because the inbox's ask card is its intended route. Anything else
+gets `usage` or `command not found`. The user's view of every verb is in
+[The overmind console](guide/overmind-console.md). The
 transcript is capped at 200 lines, oldest dropped first, because it is replayed
 into an xterm on every subscribe.
 
@@ -384,7 +429,7 @@ on `main`. It now holds only what main read with `git rev-parse`, in the
 directory a Claude Code hook payload named; `cwd` is that directory. Absent
 means nobody has looked yet or there is nothing to see, and `branchLabel()` in
 `src/types/entity.ts` renders an em dash for it at all three surfaces. See
-[`branch-sync-note.md`](branch-sync-note.md).
+[The branch a session is on](desktop-architecture.md#the-branch-a-session-is-on-hive-78).
 
 `namePinned` is the one place the **app's** label outranks the agent's. A
 session started from a ticket card is named after its issue key, and one the
@@ -418,8 +463,8 @@ than a gap: the value it replaces was `feat/sess-01`, a string no PR could ever
 carry, so nothing that worked before stops working — the near-miss is simply
 visible now instead of hidden inside a plausible-looking field.
 
-`useActiveSessions()` / `useDoneSessions()` are two flat selectors rather than
-one returning `{ active, done }`: `useShallow` compares the returned value's own
+`useActiveSessions()` / `useEndedSessions()` are two flat selectors rather than
+one returning `{ active, ended }`: `useShallow` compares the returned value's own
 properties, so an object of two freshly-built arrays never compares equal and the
 component re-renders forever.
 
