@@ -70,9 +70,9 @@ A skill that fails validation shows in Settings with its reason and is not injec
 ## Skills the app ships
 
 Some skills come with The Hive: the app's own `resources/skills/` is copied into
-`~/.hive/skills` when the app starts: the implementation workflow, `/work-on` and `/goal-on` at
-the front, `/brainstorm`, `/plan`, `/execute`, `/tdd`, `/debug`, `/verify` and `/worktree`
-behind them, with the PR tail landing story by story. They are ordinary skills once they are there. Edit one in Settings and
+`~/.hive/skills` when the app starts: the implementation workflow, `/work-on` and
+`/goal-on` at the front, `/brainstorm`, `/plan`, `/execute`, `/tdd`, `/debug`, `/verify`
+and `/worktree` behind them, with the PR tail landing story by story. They are ordinary skills once they are there. Edit one in Settings and
 your version stays; an update changes only files you have not touched. Delete one and it
 stays deleted. A skill the app stops shipping is never removed from your folder.
 

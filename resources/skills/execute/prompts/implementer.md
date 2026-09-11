@@ -43,7 +43,7 @@ Test: <command> → <last line of output>
 Concerns: <one line each, or none>
 ```
 
-## Fix round
+## Fix round (present only on a re-dispatch; the first dispatch ends above)
 
 The findings below came from a reviewer. For each: fix it, and name the test
 that fails without the fix (write it if it does not exist). Say which test

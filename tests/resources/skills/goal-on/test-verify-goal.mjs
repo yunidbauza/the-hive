@@ -377,7 +377,7 @@ test('Copilot keeps its agentStop shape unchanged', () => {
 
 // A brief the verifier cannot locate is indistinguishable from no goal at all, and
 // the filename is written by a model. Every drift below was observed in a real
-// ~/.claude/workstream/goal-on directory.
+// ~/.hive/goals directory.
 
 const dirWith = (files) => {
   const dir = mkdtempSync(join(tmpdir(), 'goal-on-'));
@@ -539,6 +539,20 @@ test('receiptFor: one event per written status, naming the goal and its budget',
   assert.equal(r.kind, 'event');
   assert.equal(r.body, 'goal ACTIVE: Make the cache invalidate on write. (turn 2/8)');
   assert.deepEqual(r.meta, { goal: 'sess-1', status: 'ACTIVE', turns_used: 2, turn_budget: 8 });
+});
+
+test('receiptFor: silent when neither the status nor the turn count moved', () => {
+  const md = '---\nstatus: DONE\nturns_used: 2\nturn_budget: 8\nlast_verified: a\n---\n\n## Task\nx\n';
+  const restamped = md.replace('last_verified: a', 'last_verified: b');
+  assert.equal(receiptFor(restamped, 's', md), null);
+  assert.notEqual(receiptFor(restamped.replace('turns_used: 2', 'turns_used: 3'), 's', md), null);
+  assert.notEqual(receiptFor(restamped.replace('status: DONE', 'status: FAILED'), 's', md), null);
+});
+
+test('hasEvidence: a parenthetical placeholder of any wording is not evidence', () => {
+  assert.equal(hasEvidence('(appended as work proceeds; the verifier reads this section)'), false);
+  assert.equal(hasEvidence('(none yet)\n\n'), false);
+  assert.equal(hasEvidence('$ pnpm test\nTests 3 passed (3)'), true);
 });
 
 test('receiptFor: nothing to post for a brief with no header or no status', () => {

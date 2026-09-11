@@ -40,9 +40,9 @@ the behaviour broke, structure that follows the repo's own patterns.
 ```
 Spec: ✅ | ❌ | ⚠️
 Strengths: <one or two lines>
-Critical: file:line — what — why — how
-Important: file:line — what — why — how
-Minor: file:line — what
+Critical: file:line: what; why; how
+Important: file:line: what; why; how
+Minor: file:line: what
 Verdict: Approved | Needs fixes
 ```
 

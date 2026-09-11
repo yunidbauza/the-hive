@@ -60,9 +60,10 @@ way: complexity found mid-task upgrades the path; nothing downgrades.
    session for the same information one call gathers.)
 4. **Two or three approaches**, trade-offs, your recommendation first, YAGNI
    applied to each.
-5. **The design, in sections** scaled to their weight: architecture,
-   components, data flow, error handling, testing. Ask after each section
-   whether it holds.
+5. **The design, whole,** in sections scaled to their weight: architecture,
+   components, data flow, error handling, testing. One message, one
+   approval; questions it raises go out in one batched call, not one per
+   section.
 6. **A UI surface** gets one browser-rendered HTML mockup of the recommended
    design through the Artifact tool. Variants, two or three, only for a
    surface the app has no pattern for, or on request. Never ASCII. Show them

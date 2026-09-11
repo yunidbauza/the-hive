@@ -221,8 +221,12 @@ export function checkboxItems(outcome) {
 
 /** Evidence is "present" only if it has real content beyond the placeholder. */
 export function hasEvidence(evidence) {
+  // A line that is only a parenthetical is the template's own placeholder,
+  // whatever it says: "(appended during Phase 2)", "(none yet)", or the
+  // wording SKILL.md happens to carry this month. Counting one as evidence
+  // wrote a false DONE the first time the two strings drifted apart.
   const stripped = evidence
-    .replace(/^\s*\(appended during Phase 2\)\s*$/gim, '')
+    .replace(/^\s*\(.*\)\s*$/gm, '')
     .replace(/^\s*#+.*$/gm, '')
     .trim();
   return stripped.length > 0;
@@ -441,20 +445,32 @@ export function decide(md, opts = {}) {
 }
 
 /**
- * The ledger receipt (HIVE-163). One `event` per status the floor writes, so the
- * overmind sees ACTIVE turns, DONE and FAILED without opening the file. Posted to
- * the Hive's own receiver with the session's token, both exported into every hook
- * process by the app. Fire-and-forget by construction: a receiver that is not
- * there, a token that is wrong, a body the receiver refuses, all cost nothing and
- * never delay the turn. The floor's decision was already made.
+ * The ledger receipt (HIVE-163). One `event` per status or turn the floor
+ * changes, so the overmind sees ACTIVE turns, DONE and FAILED without opening
+ * the file. Posted to the Hive's own receiver with the session's token, both
+ * exported into every hook process by the app. Fire-and-forget: a receiver
+ * that is not there, a token that is wrong, a body the receiver refuses, none
+ * of them change the decision, which is already on stdout. What they can cost
+ * is the process lingering on a dead socket, which the exit timer bounds.
  */
-export function receiptFor(md, sessionId) {
+export function receiptFor(md, sessionId, previous = null) {
   const split = splitFrontmatter(md);
   if (!split) return null;
   const status = headerValue(split.header, 'status');
   if (!status) return null;
   const turnsUsed = Number.parseInt(headerValue(split.header, 'turns_used') ?? '0', 10) || 0;
   const turnBudget = Number.parseInt(headerValue(split.header, 'turn_budget') ?? '8', 10) || 8;
+  // One event per status the floor *changes*, not per turn end: the stamp
+  // alone is rewritten on every Stop for the life of the session, and a
+  // receipt for each would fill the ledger's memory cap with copies.
+  if (previous !== null) {
+    const before = splitFrontmatter(previous);
+    if (before) {
+      const prevStatus = headerValue(before.header, 'status');
+      const prevTurns = Number.parseInt(headerValue(before.header, 'turns_used') ?? '0', 10) || 0;
+      if (prevStatus === status && prevTurns === turnsUsed) return null;
+    }
+  }
   const task = /^## Task\s*\n+([^\n]+)/m.exec(split.body)?.[1]?.trim() ?? '';
   return {
     kind: 'event',
@@ -463,12 +479,12 @@ export function receiptFor(md, sessionId) {
   };
 }
 
-function postReceipt(md, sessionId, env = process.env) {
+function postReceipt(md, sessionId, previous, env = process.env) {
   const url = env.HIVE_RECEIVER_URL;
   const token = env.HIVE_HOOK_TOKEN;
   const session = env.HIVE_SESSION_ID || sessionId;
   if (!url || !token || typeof fetch !== 'function') return;
-  const receipt = receiptFor(md, sessionId);
+  const receipt = receiptFor(md, sessionId, previous);
   if (!receipt) return;
   try {
     const controller = new AbortController();
@@ -485,6 +501,11 @@ function postReceipt(md, sessionId, env = process.env) {
     })
       .catch(() => {})
       .finally(() => clearTimeout(timer));
+    // Measured on Node 22: an aborted fetch to a black-holed address leaves a
+    // referenced socket in undici's pool until the OS connect timeout, ten
+    // seconds and more. The decision is already on stdout by then; nothing
+    // is owed to the receiver. Unref'd, so a fast exit is not delayed by it.
+    setTimeout(() => process.exit(0), 2000).unref();
   } catch {
     /* never the floor's problem */
   }
@@ -517,7 +538,7 @@ function main() {
 
     if (result.write) {
       writeAtomic(briefPath, result.write);
-      postReceipt(result.write, sessionId);
+      postReceipt(result.write, sessionId, md);
     }
     if (result.action === 'block') return emit('block', result.reason, harness);
     return emit('allow', undefined, harness);

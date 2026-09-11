@@ -20,6 +20,9 @@ describe('goal-on verifier', () => {
       env: { ...process.env, HIVE_GOALS_DIR: '', HIVE_RECEIVER_URL: '' },
     });
 
+    // `# fail 0` and exit 0 are also what an empty file prints; the pass count
+    // is what says the suite ran.
+    expect(run.stdout).toMatch(/^# pass [1-9]\d*$/m);
     expect(run.stdout).toMatch(/^# fail 0$/m);
     expect(run.status).toBe(0);
   }, 60_000);

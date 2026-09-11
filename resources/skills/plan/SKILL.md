@@ -11,8 +11,9 @@ with "add appropriate error handling". Every task carries what they need:
 which files, what code, what test, how to run it. DRY. YAGNI. TDD. A commit per
 task.
 
-Save to `<repo>/.hive/plans/YYYY-MM-DD-<slug>.md` (`.hive/` self-ignored, see
-`brainstorm`).
+Save to `<repo>/.hive/plans/YYYY-MM-DD-<slug>.md`. `.hive/` is a working
+folder: write `<repo>/.hive/.gitignore` with the single line `*` if it is not
+there, whichever skill gets there first.
 
 ## Scope check first
 

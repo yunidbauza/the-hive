@@ -14,10 +14,11 @@ terminal.
 The lifecycle: reconcile → gate → brainstorm → plan → build (builder agent, or
 inline) → draft PR → shipper agent → merged, ticket Done.
 
-**The reconciliation report is the one stop.** The go-ahead there authorises
-everything after it. Nothing downstream ends the turn to ask "shall I
-continue?": brainstorm decisions go out in one batch, the draft PR opens with
-no menu, and the shipper is asked in the same turn the PR exists.
+**Two stops, and no others.** The reconciliation report, and the design
+approval inside `brainstorm` (the in-chat design for a bounded change, the
+spec for an architectural one). Nothing else ends the turn to ask "shall I
+continue?": brainstorm's questions go out in one batch, the draft PR opens
+with no menu, and the shipper is asked in the same turn the PR exists.
 
 ## Inputs
 
@@ -73,7 +74,15 @@ new to the app or the user asks. Show variants before writing any code.
 
 **5. Dispatch.** The plan is approved; the terminal's job is done.
 
-*Default: the builder agent.* Post one ask and stay on the line:
+Call `mcp__hive__agents` first. The builder path below needs `builder`
+listed, and the shipper handoff needs `shipper`; a machine without them
+(they ship in later stories) runs inline, and an ask to a party that does
+not exist wakes nothing.
+
+*Default when `builder` exists: the builder agent.* Release the claim first
+(`ledger_release <KEY>`; the builder re-claims), then post one ask and stay
+on the line. The ask ends your turn, so nothing after it runs until you are
+woken:
 
 ```
 ledger_ask
@@ -93,33 +102,37 @@ ledger_ask
 
 A plan split into independent PRs is one ask per PR; each builder run takes
 its own worktree and branch. That is the only parallel writing there is.
-Then `ledger_release <KEY>`: the builder re-claims it.
 
 *Attached (default).* Stay open. A `📒` marker from the builder is a question.
 Answer it with `ledger_answer` when the spec, the plan or this conversation
 already holds the answer, and say so in the answer ("per spec §3"). Otherwise
 `AskUserQuestion`; the Hive flags the session input-needed, and you relay the
 answer. Never invent a decision the spec did not make. When the shipper's
-final ask arrives ("PR merged, close?"), answer it and run `/done handoff`.
+final ask arrives ("PR merged, close?"), answer it and run `/done`.
 Closing the terminal earlier is fine: an ask to a session that is gone falls
 back to the overmind.
 
-*Detached (`--detach`).* `reply-to: overmind`, then `/done handoff` now.
+*Detached (`--detach`).* `reply-to: overmind`, then `/done` now.
 
-*Inline (`--inline`, or a plan of one task).* `hive:worktree` on
-`feat/<key>-<slug>`, Jira → In Progress (`jira-writer transition_issue`,
-checking the current status first), `hive:execute`, `hive:verify`, then:
+*Inline (`--inline`, no `builder` on this machine, or a plan of one task).*
+`hive:worktree` on `feat/<key>-<slug>`, Jira → In Progress (read the current
+status with `jira-writer get_issue <KEY> status`; if it is still To Do, take
+the In Progress id from `jira-writer get_transitions <KEY>` and call
+`jira-writer transition_issue <KEY> <id>`), `hive:execute`, `hive:verify`,
+then:
 
 1. The full gate on the exact tree you will push: lint, type-check, the unit
    suite, and e2e or a browser drive when the change has a UI surface.
 2. `git push -u origin <branch>`.
 3. `gh pr create --draft` with what changed and how it was verified.
-4. `ledger_ask to: shipper` (see `ship` for the intake shape) with
-   `reply-to: <this session>` and `key-confirmed: yes` (the key came from this
-   invocation), then stay for the shipper's final ask, or `/done handoff`.
+4. `shipper` listed by `mcp__hive__agents`: `ledger_ask to: shipper` (see
+   `ship` for the intake shape) with `reply-to: <this session>` and
+   `key-confirmed: yes` (the key came from this invocation), then stay for
+   the shipper's final ask, or `/done`. No shipper on this machine: say the
+   draft PR is ready and stop.
 
-Never open the PR ready. Never present a merge menu. The shipper owns the
-tail.
+Never open the PR ready. Never present a merge menu. The tail is the
+shipper's, or the person's.
 
 ## The branch carries the key, the ask carries the truth
 

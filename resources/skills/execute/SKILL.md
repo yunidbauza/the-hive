@@ -9,7 +9,9 @@ One skill, two modes, one set of prompts. The rules come from two audits of
 real sessions (AGENTS.md, "Working a ticket"): the hours went to a serial
 implement-review-re-review chain, and the whole-branch review at ship still
 found what fifteen per-task reviews missed. So: inline by default, review only
-where risk lives, two fix rounds, no re-review agent, and the seams are acr's.
+where risk lives, two fix rounds, no re-review agent, and the seams belong to
+ship's self review (the `pr-review` skill, run by the shipper's reviewer agent
+once it ships, or by the person until then).
 
 ## Setup
 
@@ -17,7 +19,10 @@ where risk lives, two fix rounds, no re-review agent, and the seams are acr's.
    critically first: a gap that stops you is raised now, not at task six.
 2. `ledger_claim <ticket or plan slug>`. Progress lines go to
    `<repo>/.hive/sdd/<plan-basename>/progress.md`, one line per task and one
-   per ruling: `Ruling: <what> — <why> — <cost if wrong>`.
+   per ruling: `Ruling: <what>; <why>; <cost if wrong>`. Make sure
+   `<repo>/.hive/.gitignore` exists with the single line `*` before the first
+   commit; `brainstorm` writes it, but not every path runs brainstorm, and a
+   per-task `git add` would otherwise sweep the progress file into the PR.
 3. Pre-flight conflict scan: one row per pair of tasks that share a file or
    an interface, and one per task's own consistency. Rulings, never questions.
 
@@ -74,7 +79,8 @@ After every task, one cheap, non-blocking call with `prompts/drift-check.md`
 (sonnet): does the diff do what the task block says, and does anything in it
 contradict the spec? A spec ❌ stops the run for one fix round; a task-2 misread
 is what tasks 3 to 8 build on, and one short call is what it costs to know.
-Notes go to `progress.md`; `ship` hands those lines to acr. Inline mode skips
+Notes go to `progress.md`; `ship` hands those lines to the whole-branch
+review. Inline mode skips
 the drift check: a person is reading the diffs.
 
 ## Re-split rule
@@ -99,7 +105,7 @@ logged.
 - Dispatch a scoped re-review agent. The implementer proves its fix; you
   adjudicate the proof.
 - Fan reviewers out by category on one task's diff.
-- Run a final whole-branch review here. That is acr's, at ship.
+- Run a final whole-branch review here. That is ship's self review.
 - Fix a reviewer's finding in the controller when an implementer holds the
   task.
 

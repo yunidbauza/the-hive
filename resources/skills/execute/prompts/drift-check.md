@@ -16,7 +16,7 @@ questions and nothing else.
    spec forbids? ❌ only when the diff skips something the task requires or
    does something the spec rules out. Name the line and the sentence of the
    spec.
-2. `Notes:` up to five one-line quality observations, `file:line — what`.
+2. `Notes:` up to five one-line quality observations, `file:line: what`.
    They are recorded for the whole-branch review, not acted on now.
 
 A ❌ costs the builder a fix round; be sure. A note costs nothing; be generous.

@@ -101,8 +101,11 @@ What must not change; what must be preserved.
 Stop and report if verification fails after 8 turns, or on an unresolvable conflict.
 
 ## Verification evidence
-(appended as work proceeds; the verifier reads this section)
+(none yet)
 ```
+
+A line that is only a parenthetical is a placeholder to the verifier, never
+evidence. Replace it with command output as work proceeds.
 
 `turn_budget` stays at 8: `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` defaults to 8
 consecutive blocks and the harness abandons the loop above it.
@@ -151,17 +154,23 @@ writes `DONE`.
 2. `hive:worktree` (or, for `current`, `git checkout -b goal/<slug>
    origin/<default>`). Record `branch:`, `repo:` and `worktree:` as absolute
    paths: the verifier's PR check runs `gh` from `worktree:` or `repo:`.
-3. Big enough to plan? `hive:brainstorm` (bounded path, questions already
-   asked) and `hive:plan`, then `hive:execute` inline. Otherwise implement.
+3. Big enough to plan? `hive:plan` straight from the brief (no brainstorm:
+   the brief is the design, and every question was asked in Phase 1), then
+   `hive:execute` inline. Otherwise implement.
 4. `hive:verify`: the repository's gates, a browser drive for any UI surface.
-5. Append the output. Push. `gh pr create --draft`.
-6. `ledger_ask to: shipper` with the intake shape from `ship`, `reply-to`
-   this session, `ticket: none`. Record the ask id in the evidence.
-7. Tick the items. **Do not write `status: DONE` yourself.** The verifier
-   writes it once the boxes, the evidence and a real PR on `branch:` agree.
+5. Append the output. Push. `gh pr create --draft`. Record the PR URL in
+   the evidence and **tick the items now**: `ledger_ask` ends the turn, so
+   anything written after it waits for the next one, and the Stop hook
+   would block on the unticked boxes in between. **Do not write
+   `status: DONE` yourself.** The verifier writes it once the boxes, the
+   evidence and a real PR on `branch:` agree.
+6. `mcp__hive__agents` lists `shipper`: `ledger_ask to: shipper` with the
+   intake shape from `ship`, `reply-to` this session, `ticket: none`. It
+   does not: say the draft PR is ready and stop; the tail is the person's.
 
-The goal is met at draft PR raised plus shipper woken. A `goal/<slug>` branch
-carries no key, and the shipper's Jira steps skip; that is correct.
+The goal is met at draft PR raised, plus the shipper woken when there is one.
+A `goal/<slug>` branch carries no key, and the shipper's Jira steps skip;
+that is correct.
 
 ## The ledger receipt
 
@@ -181,7 +190,14 @@ is not there costs nothing.
 | `DONE` | verifier confirmed the Outcome | report what was produced |
 | `FAILED` | budget spent, or an unresolvable conflict | report what was achieved and the gap |
 | `NEEDS-DECISION` | a decision blocks progress | verifier releases; ask, set `ACTIVE`, continue |
-| `CLEARED` | the goal is abandoned | `/goal-on clear` |
+| `CLEARED` | the goal is abandoned | `hive:goal-on clear` |
+
+## Clearing a goal
+
+`hive:goal-on clear` sets `status: CLEARED` on this session's brief and
+reports it; the same happens when the person says the goal is off. The hook
+stays registered for the rest of the session and short-circuits on the
+terminal status, one cheap read per turn end. A new session starts clean.
 
 ## Red flags
 
