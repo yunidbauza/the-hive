@@ -5,6 +5,7 @@ import {
   dropIntoSkill,
   frontmatterName,
   importIntoSkill,
+  importNewSkill,
   loadSkills,
   makeSkillDir,
   moveSkillFile,
@@ -531,5 +532,14 @@ describe('the bundle verbs', () => {
     await importIntoSkill('graphify', '');
 
     expect(calls).toEqual(['mkdir', 'remove', 'move', 'import']);
+  });
+
+  it('imports a whole skill through its own verb, carrying nothing', async () => {
+    const importVerb = vi.fn(() => Promise.resolve(snapshot(['pr-review'])));
+    bridge({ import: importVerb });
+
+    expect(await importNewSkill()).toBeNull();
+    expect(importVerb).toHaveBeenCalledWith();
+    expect(skillsSnapshot()?.skills.map((entry) => entry.name)).toEqual(['pr-review']);
   });
 });

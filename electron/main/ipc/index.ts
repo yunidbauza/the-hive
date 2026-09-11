@@ -4263,6 +4263,23 @@ export function registerIpcHandlers(
     return skills?.dropFiles(request.name, request.dir, request.sources);
   });
 
+  /*
+    Import a whole skill — a zip, or a folder with SKILL.md at its root. No
+    payload: main opens the picker and chooses, for the reason `import` above
+    gives, and it is `WINDOW_BOUND` for the same one.
+  */
+  handle(CH.skillsImport, (event) =>
+    skills?.importSkill(async () => {
+      const window = BrowserWindow.fromWebContents(event.sender);
+      if (window === null) return [];
+      const result = await dialog.showOpenDialog(window, {
+        properties: ['openFile', 'openDirectory'],
+        filters: [{ name: 'Skill', extensions: ['zip'] }],
+      });
+      return result.canceled ? [] : result.filePaths;
+    }),
+  );
+
   /**
    * Agent definitions (HIVE-114).
    *

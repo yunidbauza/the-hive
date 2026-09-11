@@ -101,6 +101,7 @@ export const isDesktop = (): boolean =>
 export interface RemoteCapabilities {
   chooseDirectory: boolean;
   importSkillFiles: boolean;
+  importSkill: boolean;
   revealConfig: boolean;
 }
 
@@ -118,6 +119,7 @@ export function canFor(remote: Pick<RemoteConfig, 'mode'>): RemoteCapabilities {
   return {
     chooseDirectory: !attached,
     importSkillFiles: !attached,
+    importSkill: !attached,
     revealConfig: !attached,
   };
 }
@@ -132,6 +134,7 @@ export function canFor(remote: Pick<RemoteConfig, 'mode'>): RemoteCapabilities {
 export const REMOTE_DISABLED_REASON = {
   chooseDirectory: WINDOW_BOUND[CH.configChooseDirectory],
   importSkillFiles: WINDOW_BOUND[CH.skillsFileImport],
+  importSkill: WINDOW_BOUND[CH.skillsImport],
   revealConfig: WINDOW_BOUND[CH.configReveal],
 } as const;
 
@@ -193,6 +196,7 @@ export const can = {
    */
   chooseDirectory: (): boolean => canFor(currentRemote()).chooseDirectory,
   importSkillFiles: (): boolean => canFor(currentRemote()).importSkillFiles,
+  importSkill: (): boolean => canFor(currentRemote()).importSkill,
   revealConfig: (): boolean => canFor(currentRemote()).revealConfig,
 } as const;
 

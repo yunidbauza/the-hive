@@ -73,6 +73,17 @@ interface SkillBundleProps {
   /** Which file is open, so its row reads as selected. */
   openPath: string | null;
   /**
+   * The folder the user last clicked, or `null` when a file is selected
+   * instead. Marked like an open file, because it is what `+ Add` targets.
+   */
+  selectedDir: string | null;
+  /**
+   * A folder row was clicked. Expansion is this component's own business and
+   * happens regardless; selecting it is the section's, because selecting a
+   * folder empties the editor and that is behind the dirty guard.
+   */
+  onSelectDir: (path: string) => void;
+  /**
    * Is the open buffer unsaved?
    *
    * Shown on the crumb rather than on a row, because the crumb is the control
@@ -84,15 +95,10 @@ interface SkillBundleProps {
   onBack: () => void;
   onOpen: (path: string) => void;
   /*
-    No `dir` parameter (HIVE-148 review). `+ Add` is a single footer button,
-    not a per-row menu, so there was never a folder for these three to target
-    — every call site passed `''` and nothing else could reach them. A
-    parameter every call site passes the same literal for is not a parameter;
-    it is a lie about what the caller decides. Root-targeting is the
-    legitimate choice here: the New file / New folder prompt already accepts
-    a full path (`SkillPathPrompt`'s `hint` says so), so typing
-    `scripts/build.py` reaches the same place a per-row "new file here" would
-    have.
+    No `dir` parameter: the section already knows the target, because it owns
+    `selectedDir` and `openPath` — the folder clicked last, or the open file's
+    own folder. Passing it back up from here would be a second copy of a value
+    the caller holds.
   */
   onNewFile: () => void;
   onNewFolder: () => void;
@@ -113,6 +119,8 @@ interface SkillBundleProps {
 export function SkillBundle({
   skill,
   openPath,
+  selectedDir,
+  onSelectDir,
   dirty,
   onBack,
   onOpen,
@@ -128,6 +136,29 @@ export function SkillBundle({
   const [adding, setAdding] = useState(false);
   /** The folder a drag is currently over, for the drop target's outline. */
   const [over, setOver] = useState<string | null>(null);
+  /** The open file whose folders were last expanded for it. */
+  const [revealed, setRevealed] = useState<string | null>(null);
+
+  /*
+    Open every folder above the open file, once per file. A file created in
+    `scripts/` while `scripts` is collapsed would otherwise be open in the
+    editor with no row in the tree. Adjusted during render rather than in an
+    effect — React's documented pattern for state that follows a prop — and
+    only when the file changes, so the user can still collapse its folder.
+  */
+  if (openPath !== revealed) {
+    setRevealed(openPath);
+    const segments = openPath?.split('/').slice(0, -1) ?? [];
+    if (segments.length > 0) {
+      setOpen((current) => {
+        const next = new Set(current);
+        segments.forEach((_, index) => {
+          next.add(segments.slice(0, index + 1).join('/'));
+        });
+        return next;
+      });
+    }
+  }
 
   /**
    * The manifest, grouped by parent path.
@@ -249,16 +280,23 @@ export function SkillBundle({
           const name = entry.path.slice(entry.path.lastIndexOf('/') + 1);
           const excluded = entry.excluded;
           const folder = entry.kind === 'directory';
+          const selected = folder
+            ? entry.path === selectedDir
+            : entry.path === openPath;
 
           return (
             <button
               key={entry.path}
               type="button"
               aria-expanded={folder ? open.has(entry.path) : undefined}
-              aria-current={entry.path === openPath ? 'true' : undefined}
+              aria-current={selected ? 'true' : undefined}
               onClick={() => {
-                if (folder) toggle(entry.path);
-                else onOpen(entry.path);
+                if (folder) {
+                  toggle(entry.path);
+                  onSelectDir(entry.path);
+                } else {
+                  onOpen(entry.path);
+                }
               }}
               onDragOver={
                 folder
@@ -277,7 +315,7 @@ export function SkillBundle({
               }
               style={{ paddingLeft: `${String(10 + depth * 10)}px` }}
               className={`flex items-center justify-between gap-1.5 border-b border-border-soft py-1.5 pr-2.5 text-left text-[12.5px] last:border-b-0 hover:bg-hover ${
-                entry.path === openPath ? 'bg-active text-ink' : 'text-muted'
+                selected ? 'bg-active text-ink' : 'text-muted'
               } ${over === entry.path ? 'bg-active' : ''}`}
             >
               <span

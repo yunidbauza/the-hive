@@ -125,6 +125,7 @@ describe('can', () => {
       const c = canFor({ mode: 'local' });
       expect(c.chooseDirectory).toBe(true);
       expect(c.importSkillFiles).toBe(true);
+      expect(c.importSkill).toBe(true);
       expect(c.revealConfig).toBe(true);
     });
 
@@ -132,6 +133,7 @@ describe('can', () => {
       const c = canFor({ mode: 'remote' });
       expect(c.chooseDirectory).toBe(false);
       expect(c.importSkillFiles).toBe(false);
+      expect(c.importSkill).toBe(false);
       expect(c.revealConfig).toBe(false);
     });
 

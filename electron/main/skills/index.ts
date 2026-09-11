@@ -19,6 +19,7 @@ import {
 } from '@shared/skills-contract';
 
 import { copyInto } from './import';
+import { importSkill as importPackage, isSkillPackage } from './import-skill';
 import { PLUGIN_DIR, isSkillManifest, resolveInSkill, skillsRoot } from './paths';
 import { writePluginDir } from './plugin';
 import { readUserSkills, type SkillsRead } from './read';
@@ -133,6 +134,12 @@ export interface SkillsRuntime {
    * why the renderer cannot forge one of its own.
    */
   dropFiles(name: string, dir: string, sources: string[]): Promise<SkillsSnapshot>;
+  /**
+   * Import whatever a native picker returns as new skills — each a zip, or a
+   * folder with `SKILL.md` at its root — regenerate, and answer with the fresh
+   * snapshot. See `import-skill.ts`.
+   */
+  importSkill(pick: () => Promise<string[]>): Promise<SkillsSnapshot>;
 }
 
 export interface SkillsRuntimeOptions {
@@ -297,6 +304,46 @@ export function createSkillsRuntime({
     }
 
     return real === root;
+  };
+
+  /**
+   * Import skill packages as new skills, one at a time.
+   *
+   * Each import is total on its own. A later one failing leaves the earlier
+   * ones in place, so the plugin is regenerated before the refusal is passed
+   * on — otherwise a skill already on disk would be missing from sessions
+   * until something else happened to sync.
+   */
+  const importPackages = async (sources: string[]): Promise<void> => {
+    try {
+      for (const source of sources) await importPackage(source);
+    } catch (cause) {
+      await sync();
+      throw cause;
+    }
+  };
+
+  /**
+   * What `import` and `drop` do with what they were handed.
+   *
+   * A whole skill — a zip, or a folder with `SKILL.md` at its root — becomes
+   * a new skill rather than a folder nested inside this one, where Claude
+   * Code would never load it as a command. Anything else is copied in as
+   * before. A mix is refused: half of it would land here and half in the
+   * list, and one gesture should not produce both.
+   */
+  const addTo = async (name: string, dir: string, sources: string[]): Promise<void> => {
+    const packages = await Promise.all(sources.map(isSkillPackage));
+    if (packages.every(Boolean)) {
+      await importPackages(sources);
+      return;
+    }
+    if (packages.some(Boolean)) {
+      throw new Error(
+        'A skill (a zip, or a folder with SKILL.md) is imported on its own — add it without other files. Nothing was added.',
+      );
+    }
+    await copyInto(name, dir, sources);
   };
 
   return {
@@ -527,12 +574,17 @@ export function createSkillsRuntime({
       // would flash the pane for a user who changed their mind.
       if (sources.length === 0) return snapshot(await sync());
 
-      await copyInto(name, dir, sources);
+      await addTo(name, dir, sources);
       return snapshot(await sync());
     },
 
     async dropFiles(name: string, dir: string, sources: string[]): Promise<SkillsSnapshot> {
-      await copyInto(name, dir, sources);
+      await addTo(name, dir, sources);
+      return snapshot(await sync());
+    },
+
+    async importSkill(pick: () => Promise<string[]>): Promise<SkillsSnapshot> {
+      await importPackages(await pick());
       return snapshot(await sync());
     },
   };

@@ -1187,3 +1187,81 @@ describe('createSkillsRuntime file verbs — boundaries', () => {
     expect(info.mode & 0o777).toBe(0o644);
   });
 });
+
+describe('createSkillsRuntime — whole skills', () => {
+  const skillFolder = async (dir: string, name: string): Promise<string> => {
+    const path = join(hiveDir, '..', dir);
+    await mkdir(path, { recursive: true });
+    await writeFile(join(path, 'SKILL.md'), skill(name), 'utf8');
+    return path;
+  };
+
+  it('turns a skill folder dropped onto a skill into a new skill, not a nested folder', async () => {
+    await writeSkill('host', skill('host'));
+    const guest = await skillFolder('guest-src', 'guest');
+
+    const snap = await runtime().dropFiles('host', '', [guest]);
+
+    expect(snap.skills.map((entry) => entry.name)).toEqual(['guest', 'host']);
+    expect(await readdir(join(hiveDir, 'skills', 'host'))).toEqual(['SKILL.md']);
+  });
+
+  it('routes a picked skill folder the same way', async () => {
+    await writeSkill('host', skill('host'));
+    const guest = await skillFolder('guest-src', 'guest');
+
+    const snap = await runtime().importFiles('host', 'scripts', () => Promise.resolve([guest]));
+
+    expect(snap.skills.map((entry) => entry.name)).toEqual(['guest', 'host']);
+  });
+
+  it('refuses a skill package mixed with plain files, adding neither', async () => {
+    await writeSkill('host', skill('host'));
+    const guest = await skillFolder('guest-src', 'guest');
+    const plain = join(hiveDir, '..', 'notes.txt');
+    await writeFile(plain, 'notes', 'utf8');
+
+    await expect(runtime().dropFiles('host', '', [guest, plain])).rejects.toThrow(
+      /imported on its own/,
+    );
+    expect(await readdir(join(hiveDir, 'skills'))).toEqual(['host']);
+    expect(await readdir(join(hiveDir, 'skills', 'host'))).toEqual(['SKILL.md']);
+  });
+
+  it('still copies plain files into the target folder', async () => {
+    await writeSkill('host', skill('host'));
+    const plain = join(hiveDir, '..', 'notes.txt');
+    await writeFile(plain, 'notes', 'utf8');
+
+    await runtime().dropFiles('host', 'refs', [plain]);
+
+    expect(await readFile(join(hiveDir, 'skills', 'host', 'refs', 'notes.txt'), 'utf8')).toBe(
+      'notes',
+    );
+  });
+
+  it('imports what the picker returns, and ships it', async () => {
+    const guest = await skillFolder('guest-src', 'guest');
+
+    const snap = await runtime().importSkill(() => Promise.resolve([guest]));
+
+    expect(snap.skills.map((entry) => entry.name)).toEqual(['guest']);
+    expect(await pluginSkills()).toContain('guest');
+  });
+
+  it('changes nothing for a cancelled picker', async () => {
+    const snap = await runtime().importSkill(() => Promise.resolve([]));
+
+    expect(snap.skills).toEqual([]);
+  });
+
+  it('regenerates before passing on a later refusal, so an earlier import still ships', async () => {
+    const first = await skillFolder('first-src', 'first');
+    const taken = await skillFolder('second-src', 'first');
+
+    await expect(
+      runtime().importSkill(() => Promise.resolve([first, taken])),
+    ).rejects.toThrow(/already exists/);
+    expect(await pluginSkills()).toContain('first');
+  });
+});

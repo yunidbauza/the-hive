@@ -480,6 +480,7 @@ const bridge: HiveBridge = {
       ipcRenderer.invoke(CH.skillsFileMove, request),
     fileImport: (request: SkillImportRequest): Promise<SkillsSnapshot> =>
       ipcRenderer.invoke(CH.skillsFileImport, request),
+    import: (): Promise<SkillsSnapshot> => ipcRenderer.invoke(CH.skillsImport),
     /**
      * Resolve each token back to the real path it was minted for, consuming
      * it, and only then call main (HIVE-148).

@@ -245,6 +245,7 @@ export const FRAME_KIND = {
   [CH.skillsFileMove]: 'call',
   [CH.skillsFileImport]: 'call',
   [CH.skillsFileDrop]: 'call',
+  [CH.skillsImport]: 'call',
   [CH.agentsList]: 'call',
   [CH.agentsRead]: 'call',
   [CH.agentsWrite]: 'call',
@@ -282,7 +283,7 @@ export const FRAME_KIND = {
  * `pty:ack` and `pty:prompt` above. Grading a channel by the tone of its name is
  * how both of those came out wrong on the first pass.
  *
- * The thirty-one `execute` entries, each with its reason. The list is long
+ * The thirty-three `execute` entries, each with its reason. The list is long
  * because the rule was applied by reading each handler rather than by trusting
  * the channel's name, and a surprising number of innocuously-named reads spawn a
  * process:
@@ -298,7 +299,7 @@ export const FRAME_KIND = {
  *   A forged report therefore delivers text into a session of the caller's
  *   choosing, which is the same capability `ledger:post` is graded for.
  * - `fs:write-file`, `skills:write`, `agents:write`, `skills:file:write`,
- *   `skills:file:import`, `skills:file:drop` (HIVE-148) — write content the
+ *   `skills:file:import`, `skills:file:drop` (HIVE-148), `skills:import` — write content the
  *   host later executes. A skill file and an `AGENT.md` are instructions a
  *   model follows with tools in hand; they are code with a friendlier
  *   extension, and that holds for any file inside a skill's bundle, not only
@@ -498,6 +499,7 @@ export const CHANNEL_AUTHORIZATION = {
   [CH.skillsFileMove]: 'mutate',
   [CH.skillsFileImport]: 'execute',
   [CH.skillsFileDrop]: 'execute',
+  [CH.skillsImport]: 'execute',
   [CH.agentsList]: 'read',
   [CH.agentsRead]: 'read',
   [CH.agentsWrite]: 'execute',
@@ -560,7 +562,9 @@ export const CHANNEL_AUTHORIZATION = {
  * the *server's* files rather than the user's, which is not a worse version
  * of the feature but a different and wrong one. `skills:file:drop` already
  * carries files from the machine the user is sitting at, so the refusal names
- * it.
+ * it. `skills:import` is the same case for a whole skill, and a zip or folder
+ * dragged onto any skill's files is imported the same way, so its refusal
+ * names the drag too.
  *
  * `configReveal` is the fifth, and the first refused for a reason other than
  * the event (HIVE-144, Ruling 25). While attached, Settings is already
@@ -582,6 +586,8 @@ export const WINDOW_BOUND = {
     'Choosing a directory opens a dialog on the server, which has no window. Browse the server’s folders with config:browse-directory instead.',
   [CH.skillsFileImport]:
     'Adding files to a skill opens a dialog on the server, which has no window — and would copy the server’s files, not yours. Drag them onto the skill instead.',
+  [CH.skillsImport]:
+    'Importing a skill opens a dialog on the server, which has no window — and would import the server’s files, not yours. Drag the zip or folder onto any skill’s files instead.',
   [CH.configReveal]:
     'Revealing the config file opens Finder on the server, which nobody is sitting at — and while attached, Settings is already showing the server’s config, not this machine’s.',
 } as const satisfies Partial<Record<Channel, string>>;

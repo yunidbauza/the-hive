@@ -113,6 +113,7 @@ export function useRemoteCapabilities(): RemoteCapabilities {
   return {
     chooseDirectory: can.chooseDirectory(),
     importSkillFiles: can.importSkillFiles(),
+    importSkill: can.importSkill(),
     revealConfig: can.revealConfig(),
   };
 }

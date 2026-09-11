@@ -376,6 +376,13 @@ export const importIntoSkill = (
   mutate((bridge) => bridge.skills.fileImport({ name, dir }));
 
 /**
+ * Open the picker in main and import what the user chose — a zip, or a folder
+ * with SKILL.md at its root — as a new skill.
+ */
+export const importNewSkill = (): Promise<string | null> =>
+  mutate((bridge) => bridge.skills.import());
+
+/**
  * Copy dropped files, named by ids rather than paths.
  *
  * `tokens` is the whole reason this verb is safe: the renderer never holds a
