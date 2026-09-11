@@ -8,8 +8,9 @@ import { secretEquals } from '../hooks/http-guard';
  * Minting, verifying and revoking paired devices (HIVE-142).
  *
  * Pure logic over an in-memory `ServerDevice[]` — no file I/O, no stdout, no
- * Electron import. A later story wires `mintDevice`'s output to the config
- * file and to stdout, and `verifyDevice` to the server's request path.
+ * Electron import. `server/one-shot.ts` wires `mintDevice`'s output to the config
+ * file and to stdout (HIVE-142), and `remote-host/listener.ts` wires
+ * `verifyDevice` to the server's request path.
  *
  * The design decision that shapes this module: the server stores a digest,
  * never the token. A server verifying a credential does not need to hold one.
@@ -17,7 +18,7 @@ import { secretEquals } from '../hooks/http-guard';
  * `safeStorage` (the macOS Keychain) is measurably unavailable before
  * `app.whenReady()`, even in a GUI session. The token's plaintext exists in
  * exactly two places: stdout at mint time, and the client's own `safeStorage`
- * in a later story. This module never writes either.
+ * (`remote-client/token-store.ts`, HIVE-144). This module never writes either.
  */
 
 /**

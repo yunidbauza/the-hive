@@ -100,12 +100,31 @@ describe('secretEquals', () => {
     expect(secretEquals('', 'expected')).toBe(false);
   });
 
-  it('is the same compare the receiver uses, not a second copy', async () => {
+  /*
+    Every caller, not only the receiver (HIVE-140 audit): HIVE-142's promise was
+    one timing-safe compare and one Origin/Host guard, reused by the server
+    rather than rewritten. A second copy in either server file would pass every
+    behavioural test and quietly split the two apart.
+  */
+  it.each(['hooks/receiver.ts', 'server/devices.ts'])(
+    'is the same compare %s uses, not a second copy',
+    async (file) => {
+      const source = await readFile(
+        new URL(`../../../../electron/main/${file}`, import.meta.url),
+        'utf8',
+      );
+      expect(source).toContain('secretEquals(');
+      expect(source).not.toMatch(/timingSafeEqual\s*\(/);
+    },
+  );
+
+  it('is the same Origin and Host guard the server listener uses, not a second copy', async () => {
     const source = await readFile(
-      new URL('../../../../electron/main/hooks/receiver.ts', import.meta.url),
+      new URL('../../../../electron/remote-host/listener.ts', import.meta.url),
       'utf8',
     );
-    expect(source).toContain('secretEquals(');
-    expect(source).not.toMatch(/timingSafeEqual\s*\(/);
+    expect(source).toMatch(/import \{[^}]*\bcreateOriginGuard\b[^}]*\} from '[^']*http-guard'/);
+    expect(source).toContain('createOriginGuard(');
+    expect(source).not.toMatch(/headers\[['"]origin['"]\]/);
   });
 });

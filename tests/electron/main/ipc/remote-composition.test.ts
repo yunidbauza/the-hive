@@ -14,6 +14,52 @@ import type { ResumeResult } from '../../../../electron/main/ipc/pty';
 import type { AttachedSocket } from '../../../../electron/main/ipc/socket-broadcaster';
 
 /**
+ * The three per-surface releases a dropped surface owes (HIVE-145), spied on
+ * where `ipc/index.ts` wires them to `surfaces.onGone` (HIVE-140 audit, gap 2).
+ * The layers themselves stay real: `fsWatch` and `deliver` are wrapped, not
+ * replaced, and `sessions` is this file's fake with one more method.
+ */
+const surfaceReleases = vi.hoisted(() => ({
+  watcher: vi.fn(),
+  delivery: vi.fn(),
+  flowControl: vi.fn(),
+}));
+
+vi.mock('../../../../electron/main/fs', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../../electron/main/fs')>();
+  return {
+    ...real,
+    createFsWatchLayer: (...args: Parameters<typeof real.createFsWatchLayer>) => {
+      const layer = real.createFsWatchLayer(...args);
+      return {
+        ...layer,
+        release: (surfaceId: Parameters<typeof layer.release>[0]) => {
+          surfaceReleases.watcher(surfaceId);
+          layer.release(surfaceId);
+        },
+      };
+    },
+  };
+});
+
+vi.mock('../../../../electron/main/ledger/deliver', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../../electron/main/ledger/deliver')>();
+  return {
+    ...real,
+    createDeliver: (...args: Parameters<typeof real.createDeliver>) => {
+      const deliver = real.createDeliver(...args);
+      return {
+        ...deliver,
+        onSurfaceGone: (surfaceId: Parameters<typeof deliver.onSurfaceGone>[0]) => {
+          surfaceReleases.delivery(surfaceId);
+          deliver.onSurfaceGone(surfaceId);
+        },
+      };
+    },
+  };
+});
+
+/**
  * The composition HIVE-143 exists for: the module-scope registry `handle` and
  * `on` record into, and the socket half of the fan-out.
  *
@@ -370,6 +416,7 @@ vi.mock('../../../../electron/main/sessions', () => ({
     containerRemoval: async () => {},
     diagnostics: () => [],
     dispose: vi.fn(),
+    releaseSurface: (surfaceId: string) => surfaceReleases.flowControl(surfaceId),
   }),
 }));
 
@@ -702,6 +749,39 @@ describe('the attach replay loop (HIVE-143)', () => {
     expect(b.sent).toEqual([
       { kind: 'event', channel: CH.ledgerChanged, payload: { id: 'after' } },
     ]);
+  });
+
+  /**
+   * HIVE-140 audit, gap 2: each release was proved on its own unit, and
+   * nothing dropped a surface and checked all three happen — for that surface,
+   * and not for the one still attached beside it. Losing the watcher line is
+   * the mini accumulating a recursive watcher per device that ever attached;
+   * losing the delivery line is HIVE-135's nudge-hold regression, arriving
+   * through a second client.
+   */
+  it('releases a dropped surface everywhere, and leaves the one beside it alone', () => {
+    registerIpcHandlers();
+    surfaceReleases.watcher.mockClear();
+    surfaceReleases.delivery.mockClear();
+    surfaceReleases.flowControl.mockClear();
+    const staying = recordingSocket();
+    const leaving = recordingSocket();
+    onAttach()(staying.socket, undefined);
+    onAttach()(leaving.socket, undefined);
+
+    onDetach()(leaving.socket);
+
+    expect(surfaceReleases.watcher).toHaveBeenCalledTimes(1);
+    const [gone] = surfaceReleases.watcher.mock.calls[0] as [string];
+    expect(surfaceReleases.delivery.mock.calls).toEqual([[gone]]);
+    expect(surfaceReleases.flowControl.mock.calls).toEqual([[gone]]);
+
+    // The surface still attached keeps everything until it goes too.
+    onDetach()(staying.socket);
+    const [second] = surfaceReleases.watcher.mock.calls[1] as [string];
+    expect(second).not.toBe(gone);
+    expect(surfaceReleases.delivery.mock.calls).toEqual([[gone], [second]]);
+    expect(surfaceReleases.flowControl.mock.calls).toEqual([[gone], [second]]);
   });
 
   it('removes a socket through onDetach even with no lifetime of its own', () => {
