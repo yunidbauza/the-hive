@@ -59,6 +59,8 @@ const manifest: BundleManifest = {
 
 const props = {
   openPath: null,
+  selectedDir: null,
+  onSelectDir: vi.fn(),
   dirty: false,
   onBack: vi.fn(),
   onOpen: vi.fn(),
@@ -105,6 +107,56 @@ describe('SkillBundle', () => {
     expect(
       screen.getByRole('button', { name: /big\.bin/ }),
     ).toHaveTextContent('too large');
+  });
+
+  it('selects a folder as it opens it', () => {
+    const onSelectDir = vi.fn();
+    render(
+      <SkillBundle {...props} skill={skill(manifest)} onSelectDir={onSelectDir} />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /scripts/ }));
+
+    expect(onSelectDir).toHaveBeenCalledWith('scripts');
+    expect(screen.getByRole('button', { name: /scripts/ })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+  });
+
+  it('marks the selected folder, not the open file', () => {
+    render(
+      <SkillBundle
+        {...props}
+        skill={skill(manifest)}
+        openPath={null}
+        selectedDir="scripts"
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /scripts/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    );
+    expect(screen.getByRole('button', { name: /SKILL\.md/ })).not.toHaveAttribute(
+      'aria-current',
+    );
+  });
+
+  it('opens the folders above a file opened inside them, and lets them close again', () => {
+    const { rerender } = render(<SkillBundle {...props} skill={skill(manifest)} />);
+    expect(screen.queryByRole('button', { name: /build\.py/ })).toBeNull();
+
+    rerender(
+      <SkillBundle {...props} skill={skill(manifest)} openPath="scripts/build.py" />,
+    );
+    expect(screen.getByRole('button', { name: /build\.py/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /scripts/ }));
+    expect(screen.queryByRole('button', { name: /build\.py/ })).toBeNull();
   });
 
   it('opens a file rather than toggling it', () => {

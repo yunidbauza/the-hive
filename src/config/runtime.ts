@@ -69,7 +69,7 @@ export const isDesktop = (): boolean =>
  * encounters it.
  */
 /**
- * The three capabilities `WINDOW_BOUND` (`electron/shared/remote-contract.ts`)
+ * The four capabilities `WINDOW_BOUND` (`electron/shared/remote-contract.ts`)
  * refuses while this window is attached to someone else's Hive (HIVE-144,
  * narrowed by HIVE-146).
  *
@@ -101,6 +101,7 @@ export const isDesktop = (): boolean =>
 export interface RemoteCapabilities {
   chooseDirectory: boolean;
   importSkillFiles: boolean;
+  importSkill: boolean;
   revealConfig: boolean;
 }
 
@@ -118,6 +119,7 @@ export function canFor(remote: Pick<RemoteConfig, 'mode'>): RemoteCapabilities {
   return {
     chooseDirectory: !attached,
     importSkillFiles: !attached,
+    importSkill: !attached,
     revealConfig: !attached,
   };
 }
@@ -132,6 +134,7 @@ export function canFor(remote: Pick<RemoteConfig, 'mode'>): RemoteCapabilities {
 export const REMOTE_DISABLED_REASON = {
   chooseDirectory: WINDOW_BOUND[CH.configChooseDirectory],
   importSkillFiles: WINDOW_BOUND[CH.skillsFileImport],
+  importSkill: WINDOW_BOUND[CH.skillsImport],
   revealConfig: WINDOW_BOUND[CH.configReveal],
 } as const;
 
@@ -186,13 +189,14 @@ export const can = {
   spawnSessionIn: (projectId: string): boolean =>
     projectAccess(projectId).spawnable,
   /**
-   * The three `WINDOW_BOUND` predicates (HIVE-144, HIVE-146). See {@link canFor} for the
-   * pure rule, {@link RemoteCapabilities} for why there are exactly three, and
+   * The four `WINDOW_BOUND` predicates (HIVE-144, HIVE-146). See {@link canFor} for the
+   * pure rule, {@link RemoteCapabilities} for why there are exactly four, and
    * {@link currentRemote} for why the answer comes off the runtime rather
    * than the config snapshot.
    */
   chooseDirectory: (): boolean => canFor(currentRemote()).chooseDirectory,
   importSkillFiles: (): boolean => canFor(currentRemote()).importSkillFiles,
+  importSkill: (): boolean => canFor(currentRemote()).importSkill,
   revealConfig: (): boolean => canFor(currentRemote()).revealConfig,
 } as const;
 

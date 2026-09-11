@@ -305,7 +305,7 @@ A few calls are refused to every remote caller, each with its own reason in
 the error frame, never a silent change on the server:
 
 - **The native dialogs** (`WINDOW_BOUND`): `config:choose-directory`,
-  `skills:file:import`, `config:reveal`. They would open on a screen nobody is
+  `skills:file:import`, `skills:import`, `config:reveal`. They would open on a screen nobody is
   watching. The shipped client browses the mini's folders with
   `config:browse-directory` and takes skill files by drag and drop instead.
 - **`skills:file:drop`** (`REMOTE_REFUSED`): its safety argument, that preload

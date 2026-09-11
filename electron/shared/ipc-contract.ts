@@ -947,14 +947,16 @@ export const CH = {
    * This block used to say that five verbs lived here and not one of them
    * took a path. That was true while a skill was one file. A skill is now a
    * folder, and a pane that can author every file in one cannot address them
-   * by anything but a path — so five of the **twelve channels** below still
+   * by anything but a path — so five of the **thirteen channels** below still
    * name only a **skill** (`list`, `read`, `write`, `remove`, `rename`, the
    * original set, stricter than the `fs` block above because
    * `SKILL_NAME_PATTERN` makes traversal unrepresentable rather than merely
    * filtered) and **seven carry a path**: skill-relative, or, for
    * `skillsFileDrop` alone, an absolute one. (`pathToken` — the sixth of
-   * `BRIDGE_SKILLS_KEYS`'s thirteen bridge keys — is not a channel at all; it
-   * never crosses IPC, so it does not appear in this list.)
+   * `BRIDGE_SKILLS_KEYS`'s fourteen bridge keys — is not a channel at all; it
+   * never crosses IPC, so it does not appear in this list.) The thirteenth,
+   * `skillsImport`, carries nothing at all: main opens the picker, and what it
+   * creates is named by the imported SKILL.md.
    *
    * The bound for those seven is not the shape of the payload: `assertSkillPath`
    * (five of them) and `assertSkillDir` (`skillsFileImport`, `skillsFileDrop`)
@@ -986,6 +988,7 @@ export const CH = {
   skillsFileMove: 'skills:file:move',
   skillsFileImport: 'skills:file:import',
   skillsFileDrop: 'skills:file:drop',
+  skillsImport: 'skills:import',
   /**
    * Agent definitions — the same five verbs as `skills`, and one more thing
    * (HIVE-114).
@@ -2170,7 +2173,7 @@ export interface HiveBridge {
    * The custom skills The Hive injects into the sessions it starts (HIVE-96,
    * HIVE-148).
    *
-   * Five of the thirteen verbs still name only a skill, none of them a path:
+   * Five of the fourteen verbs still name only a skill, none of them a path:
    * `fs` above must accept a project-relative path and defend containment on
    * the resolved result; here `list`, `read`, `write`, `remove` and `rename`
    * take `SKILL_NAME_PATTERN`, which cannot express a separator or a dot
@@ -2184,6 +2187,8 @@ export interface HiveBridge {
    * in main is the other half, and neither substitutes for the other. See
    * `skills-contract.ts` for the full argument and `BRIDGE_SKILLS_KEYS` for
    * why `pathToken` is what keeps the renderer from naming a path of its own.
+   *
+   * The fourteenth, `import`, carries nothing: main opens the picker.
    *
    * Every mutating verb answers with the fresh snapshot rather than `void`, so
    * the pane never has to follow a mutation with a read, and the two can never
@@ -2234,6 +2239,11 @@ export interface HiveBridge {
      * `SkillDropRequest` does.
      */
     fileDrop(request: { name: string; dir: string; tokens: string[] }): Promise<SkillsSnapshot>;
+    /**
+     * Import a whole skill — a zip, or a folder with SKILL.md at its root —
+     * through a native open dialog main owns. Carries nothing.
+     */
+    import(): Promise<SkillsSnapshot>;
     /**
      * Mint an opaque, one-shot id for a `File` a real drop produced, or `null`
      * for one the page constructed itself (HIVE-148).
@@ -2829,6 +2839,13 @@ export const BRIDGE_KEYS = [
  * accepts a `File` and answers an opaque id, which is what keeps `fileDrop`
  * from being a read-anywhere primitive: the renderer never holds a path, so it
  * cannot name one it was not handed.
+ *
+ * ## `import`, the fourteenth
+ *
+ * Takes nothing and names nothing. Main opens the picker, and the skill it
+ * creates is named by the imported SKILL.md's frontmatter under the same
+ * `SKILL_NAME_PATTERN` every other verb is bound by, refusing a name already
+ * taken — so it cannot reach or replace anything `write` could not.
  */
 export const BRIDGE_SKILLS_KEYS = [
   'list',
@@ -2844,6 +2861,7 @@ export const BRIDGE_SKILLS_KEYS = [
   'fileMove',
   'fileImport',
   'fileDrop',
+  'import',
 ] as const;
 
 /**

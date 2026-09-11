@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -31,6 +31,7 @@ const writeSkillFile = vi.fn();
 const removeSkillFile = vi.fn();
 const moveSkillFile = vi.fn();
 const makeSkillDir = vi.fn();
+const importNewSkill = vi.fn();
 
 vi.mock('@/lib/skills', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/skills')>();
@@ -53,6 +54,7 @@ vi.mock('@/lib/skills', async (importOriginal) => {
     moveSkillFile: (name: string, from: string, to: string) =>
       moveSkillFile(name, from, to),
     makeSkillDir: (name: string, path: string) => makeSkillDir(name, path),
+    importNewSkill: () => importNewSkill(),
   };
 });
 
@@ -123,6 +125,7 @@ beforeEach(() => {
   removeSkillFile.mockResolvedValue(null);
   moveSkillFile.mockResolvedValue(null);
   makeSkillDir.mockResolvedValue(null);
+  importNewSkill.mockResolvedValue(null);
   /*
     Every file in a bundle now comes through one verb (HIVE-148). Opening a
     skill is opening its SKILL.md, so these tests reach the editor exactly as
@@ -169,6 +172,28 @@ describe('SkillsSection', () => {
     expect(
       screen.getByRole('button', { name: '+ New skill' }),
     ).toBeInTheDocument();
+  });
+
+  it('imports a whole skill from the empty state, and shows why it could not', async () => {
+    setSkillsForTest(snapshot());
+    importNewSkill.mockResolvedValue('"x.zip" has no SKILL.md at its root — nothing was imported.');
+
+    render(<SkillsSection />);
+    await userEvent.click(screen.getByRole('button', { name: 'Import skill' }));
+
+    expect(importNewSkill).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole('alert')).toHaveTextContent('no SKILL.md at its root');
+    // Re-read, so skills imported before the refusal still reach the list.
+    expect(loadSkills).toHaveBeenCalledTimes(2);
+  });
+
+  it('imports a whole skill from beside + New skill in the list', async () => {
+    setSkillsForTest(withSkills('standup'));
+
+    render(<SkillsSection />);
+    await userEvent.click(screen.getByRole('button', { name: 'Import skill' }));
+
+    expect(importNewSkill).toHaveBeenCalledTimes(1);
   });
 
   it('lists one row per skill, each named as its command', () => {
@@ -395,6 +420,171 @@ describe('SkillsSection', () => {
         '"SKILL.md" already exists in this skill.',
       );
     });
+
+    it('hides the editor footer while a confirm is open, and brings it back on Keep editing', async () => {
+      setSkillsForTest(bundled());
+      await openBuildPy();
+
+      await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+      const ask = screen.getByRole('alertdialog', { name: /Delete build\.py/ });
+
+      // The confirm's own two are the only answers on screen.
+      expect(screen.getAllByRole('button', { name: 'Delete' })).toHaveLength(1);
+      expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Rename' })).toBeNull();
+
+      await userEvent.click(within(ask).getByRole('button', { name: 'Keep editing' }));
+
+      expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Rename' })).toBeInTheDocument();
+    });
+
+    describe('a selected folder', () => {
+      const withFolder = () =>
+        snapshot({
+          skills: [
+            {
+              name: 'graphify',
+              description: 'does a thing',
+              valid: true as const,
+              manifest: {
+                entries: [
+                  { path: 'SKILL.md', kind: 'file', size: 10, executable: false, excluded: null },
+                  { path: 'scripts', kind: 'directory', size: 0, executable: false, excluded: null },
+                  { path: 'scripts/run.sh', kind: 'file', size: 10, executable: true, excluded: null },
+                ],
+                capped: null,
+              },
+            },
+          ],
+        });
+
+      const selectScripts = async (): Promise<void> => {
+        render(<SkillsSection />);
+        await userEvent.click(screen.getByRole('button', { name: '/graphify' }));
+        await screen.findByLabelText('Skill source');
+        await userEvent.click(screen.getByRole('button', { name: /scripts/ }));
+      };
+
+      const add = async (item: string): Promise<void> => {
+        await userEvent.click(screen.getByRole('button', { name: '+ Add' }));
+        await userEvent.click(screen.getByRole('button', { name: item }));
+      };
+
+      it('clears the editor and marks the folder as the selection', async () => {
+        setSkillsForTest(withFolder());
+        await selectScripts();
+
+        expect(screen.queryByLabelText('Skill source')).toBeNull();
+        expect(screen.getByText('Select a file, or add one.')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /scripts/ })).toHaveAttribute(
+          'aria-current',
+          'true',
+        );
+        expect(screen.getByRole('button', { name: /SKILL\.md/ })).not.toHaveAttribute(
+          'aria-current',
+        );
+      });
+
+      it('creates a new file inside it', async () => {
+        setSkillsForTest(withFolder());
+        await selectScripts();
+        await add('New file');
+
+        await userEvent.type(
+          screen.getByRole('textbox', { name: 'New file in scripts/' }),
+          'build.py',
+        );
+        await userEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+        expect(writeSkillFile).toHaveBeenCalledWith('graphify', 'scripts/build.py', '');
+      });
+
+      it('refuses a new file over one already in it, by its full path', async () => {
+        setSkillsForTest(withFolder());
+        await selectScripts();
+        await add('New file');
+
+        await userEvent.type(
+          screen.getByRole('textbox', { name: 'New file in scripts/' }),
+          'run.sh',
+        );
+        await userEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+        expect(writeSkillFile).not.toHaveBeenCalled();
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+          '"scripts/run.sh" already exists in this skill.',
+        );
+      });
+
+      it('creates a new folder inside it', async () => {
+        setSkillsForTest(withFolder());
+        await selectScripts();
+        await add('New folder');
+
+        await userEvent.type(
+          screen.getByRole('textbox', { name: 'New folder in scripts/' }),
+          'lib',
+        );
+        await userEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+        expect(makeSkillDir).toHaveBeenCalledWith('graphify', 'scripts/lib');
+      });
+
+      it('imports from the computer into it', async () => {
+        setSkillsForTest(withFolder());
+        await selectScripts();
+        await add('Add from your computer');
+
+        expect(importIntoSkill).toHaveBeenCalledWith('graphify', 'scripts');
+      });
+
+      it("targets the open file's own folder, so opening SKILL.md targets the root", async () => {
+        setSkillsForTest(withFolder());
+        await selectScripts();
+        await userEvent.click(screen.getByRole('button', { name: /run\.sh/ }));
+        await screen.findByLabelText('Skill source');
+        await add('Add from your computer');
+        expect(importIntoSkill).toHaveBeenLastCalledWith('graphify', 'scripts');
+
+        await userEvent.click(screen.getByRole('button', { name: /SKILL\.md/ }));
+        await screen.findByLabelText('Skill source');
+        await add('Add from your computer');
+        expect(importIntoSkill).toHaveBeenLastCalledWith('graphify', '');
+      });
+
+      it('backs out to the list when the skill disappears under a selected folder', async () => {
+        setSkillsForTest(withFolder());
+        await selectScripts();
+
+        act(() => {
+          setSkillsForTest(withSkills('other'));
+        });
+
+        expect(await screen.findByRole('button', { name: '/other' })).toBeInTheDocument();
+        expect(screen.queryByText('Select a file, or add one.')).toBeNull();
+      });
+
+      it('asks before a dirty buffer is closed by a folder click, and keeps it on cancel', async () => {
+        setSkillsForTest(withFolder());
+        render(<SkillsSection />);
+        await userEvent.click(screen.getByRole('button', { name: '/graphify' }));
+        await screen.findByLabelText('Skill source');
+        appendSurfaceText('Skill source', 'more');
+
+        await userEvent.click(screen.getByRole('button', { name: /scripts/ }));
+        const ask = screen.getByRole('alertdialog', { name: /Discard changes/ });
+        await userEvent.click(within(ask).getByRole('button', { name: 'Keep editing' }));
+
+        expect(surfaceText('Skill source')).toContain('more');
+        expect(screen.getByRole('button', { name: /scripts/ })).not.toHaveAttribute(
+          'aria-current',
+        );
+        await add('Add from your computer');
+        expect(importIntoSkill).toHaveBeenCalledWith('graphify', '');
+      });
+    });
   });
 
   /**
@@ -446,7 +636,7 @@ describe('SkillsSection', () => {
     // The empty-state placeholder, not a stale editor over a file that
     // failed to load.
     expect(
-      screen.getByText('Select a skill, or write a new one.'),
+      screen.getByText('Select a file, or add one.'),
     ).toBeInTheDocument();
   });
 
@@ -475,7 +665,7 @@ describe('SkillsSection', () => {
     await userEvent.click(screen.getByRole('button', { name: '/graphify' }));
     await screen.findByRole('alert');
     expect(
-      screen.getByText('Select a skill, or write a new one.'),
+      screen.getByText('Select a file, or add one.'),
     ).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: '+ Add' }));
@@ -1297,5 +1487,19 @@ describe('SkillsSection — attached to a remote server', () => {
 
     await userEvent.click(button);
     expect(importIntoSkill).not.toHaveBeenCalled();
+  });
+
+  it('disables Import skill with its own reason, and never opens the picker', async () => {
+    setProjectConfigForTest({ ...emptySnapshot('/tmp/hive/config.json') });
+    setAttachedServerForTest('mini.tail1234.ts.net');
+    setSkillsForTest(withSkills('standup'));
+
+    render(<SkillsSection />);
+    const button = screen.getByRole('button', { name: 'Import skill' });
+
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('title', REMOTE_DISABLED_REASON.importSkill);
+    await userEvent.click(button);
+    expect(importNewSkill).not.toHaveBeenCalled();
   });
 });

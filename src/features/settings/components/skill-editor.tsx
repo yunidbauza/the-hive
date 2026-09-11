@@ -43,6 +43,12 @@ interface SkillEditorProps {
    * never been saved.
    */
   onRename?: (() => void) | undefined;
+  /**
+   * A question is open below the editor, so its buttons are the only ones on
+   * offer. Showing Delete and Save beside "Keep editing" and "Delete" read as
+   * four answers to one question; they come back when it is answered.
+   */
+  actionsHidden?: boolean;
 }
 
 /**
@@ -94,6 +100,7 @@ export function SkillEditor({
   onSave,
   onDelete,
   onRename,
+  actionsHidden = false,
 }: SkillEditorProps) {
   const appearance = useEditorAppearance();
 
@@ -255,7 +262,7 @@ export function SkillEditor({
             : (problem ??
               'The name in the frontmatter names the folder and the command.')}
         </span>
-        <div className="flex shrink-0 gap-1.5">
+        <div className="flex shrink-0 gap-1.5" hidden={actionsHidden}>
           {onRename === undefined ? null : (
             <button
               type="button"

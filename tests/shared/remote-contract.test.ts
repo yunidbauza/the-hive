@@ -81,7 +81,7 @@ const MAIN_ONLY: ReadonlyMap<string, FrameKind> = new Map([
 
 describe('remote contract: coverage', () => {
   it('classifies every channel exactly once for frame kind', () => {
-    expect(entries).toHaveLength(133);
+    expect(entries).toHaveLength(134);
     expect(Object.keys(FRAME_KIND).sort()).toEqual([...Object.values(CH)].sort());
   });
 
@@ -120,11 +120,11 @@ describe('remote contract: frame kinds match the preload bridge', () => {
     expect(frameKindOf(channel)).toBe(expected);
   });
 
-  it('splits 101 call, 6 notify and 26 event', () => {
+  it('splits 102 call, 6 notify and 26 event', () => {
     const tally = { call: 0, notify: 0, event: 0 };
     for (const kind of Object.values(FRAME_KIND)) tally[kind] += 1;
 
-    expect(tally).toEqual({ call: 101, notify: 6, event: 26 });
+    expect(tally).toEqual({ call: 102, notify: 6, event: 26 });
   });
 
   /**
@@ -197,11 +197,11 @@ describe('remote contract: authorization', () => {
     expect(authorizationOf(channel)).toBe('execute');
   });
 
-  it('grades the 133 as 57 read, 44 mutate and 32 execute', () => {
+  it('grades the 134 as 57 read, 44 mutate and 33 execute', () => {
     const tally = { read: 0, mutate: 0, execute: 0 };
     for (const authz of Object.values(CHANNEL_AUTHORIZATION)) tally[authz] += 1;
 
-    expect(tally).toEqual({ read: 57, mutate: 44, execute: 32 });
+    expect(tally).toEqual({ read: 57, mutate: 44, execute: 33 });
   });
 
   /**
@@ -594,11 +594,12 @@ describe('remote contract: an unclassified channel is a compile error', () => {
 });
 
 describe('WINDOW_BOUND', () => {
-  it('names exactly the three refused channels', () => {
+  it('names exactly the four refused channels', () => {
     expect(Object.keys(WINDOW_BOUND).sort()).toEqual(
       [
         CH.configChooseDirectory,
         CH.skillsFileImport,
+        CH.skillsImport,
         CH.configReveal,
       ].sort(),
     );
@@ -637,6 +638,9 @@ describe('WINDOW_BOUND', () => {
       /config:browse-directory/,
     );
     expect(WINDOW_BOUND[CH.skillsFileImport]).toMatch(/drag/i);
+    // Not "drag" — a drop is REMOTE_REFUSED, so that would be a dead end.
+    expect(WINDOW_BOUND[CH.skillsImport]).toMatch(/machine that holds/);
+    expect(WINDOW_BOUND[CH.skillsImport]).not.toMatch(/drag/i);
     expect(WINDOW_BOUND[CH.configReveal]).toMatch(/already/i);
   });
 

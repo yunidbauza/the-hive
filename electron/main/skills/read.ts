@@ -77,7 +77,7 @@ export interface SkillsRead {
  * half-typed state, and Claude Code reads the whole thing as prose, so the
  * skill is silently lost rather than loudly broken.
  */
-function frontmatter(body: string): Record<string, string> | null {
+export function frontmatter(body: string): Record<string, string> | null {
   const lines = body.split('\n');
   if (lines[0]?.trim() !== '---') return null;
 

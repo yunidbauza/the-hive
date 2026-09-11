@@ -469,10 +469,11 @@ const noModeSwitcher: ModeSwitcher = () => {
  * dependency has to be tracked at attach instead.
  *
  * What is still absent is a **window**, and that is the fence that matters:
- * five call channels dereference the event to resolve a parent `BrowserWindow`
- * for a native dialog or to reach the server's own desktop, and all five are in
- * `WINDOW_BOUND`, refused before `remote-dispatch` ever reaches a handler. A
- * sixth growing that dependency must be added to that table in the same commit.
+ * every call channel that dereferences the event to resolve a parent
+ * `BrowserWindow` for a native dialog, or that reaches the server's own
+ * desktop, is in `WINDOW_BOUND`, refused before `remote-dispatch` ever reaches
+ * a handler. One more growing that dependency must be added to that table in
+ * the same commit.
  *
  * **And the rule is checked, not merely stated (HIVE-143 review).**
  * `remote-composition.test.ts` reads this file as source text, finds every
@@ -4262,6 +4263,23 @@ export function registerIpcHandlers(
     const request = parseSkillDropRequest(payload);
     return skills?.dropFiles(request.name, request.dir, request.sources);
   });
+
+  /*
+    Import a whole skill — a zip, or a folder with SKILL.md at its root. No
+    payload: main opens the picker and chooses, for the reason `import` above
+    gives, and it is `WINDOW_BOUND` for the same one.
+  */
+  handle(CH.skillsImport, (event) =>
+    skills?.importSkill(async () => {
+      const window = BrowserWindow.fromWebContents(event.sender);
+      if (window === null) return [];
+      const result = await dialog.showOpenDialog(window, {
+        properties: ['openFile', 'openDirectory'],
+        filters: [{ name: 'Skill', extensions: ['zip'] }],
+      });
+      return result.canceled ? [] : result.filePaths;
+    }),
+  );
 
   /**
    * Agent definitions (HIVE-114).

@@ -1,7 +1,8 @@
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { strToU8, zipSync } from 'fflate';
 
 import { launchHive } from './fixtures/hive-app';
 
@@ -396,6 +397,104 @@ test('adds a file to a skill bundle, on disk beside its SKILL.md', async ({}, te
     expect(
       readFileSync(join(skillsDir, 'graphify', 'SKILL.md'), 'utf8'),
     ).toContain('name: graphify');
+  } finally {
+    await app.close();
+  }
+});
+
+test('adds a new file inside the folder selected in a skill', async ({}, testInfo) => {
+  const { app, page, configPath } = await launchWithConfig(
+    (name) => testInfo.outputPath(name),
+    EMPTY_CONFIG,
+  );
+  const skillsDir = join(dirname(configPath), 'skills');
+  mkdirSync(join(skillsDir, 'graphify', 'scripts'), { recursive: true });
+  writeFileSync(
+    join(skillsDir, 'graphify', 'SKILL.md'),
+    '---\nname: graphify\ndescription: Build a graph\n---\nRun it.\n',
+  );
+
+  try {
+    await openSettings(page);
+    await page.getByRole('button', { name: 'Skills' }).click();
+    await page.getByRole('button', { name: '/graphify' }).click();
+    await expect(page.getByLabel('Skill source')).toBeVisible();
+
+    // Selecting the folder empties the editor rather than leaving SKILL.md up.
+    const tree = page.getByLabel('Files in graphify');
+    await tree.getByRole('button', { name: 'scripts' }).click();
+    await expect(page.getByLabel('Skill source')).toBeHidden();
+    await expect(tree.getByRole('button', { name: 'scripts' })).toHaveAttribute(
+      'aria-current',
+      'true',
+    );
+
+    await page.getByRole('button', { name: '+ Add' }).click();
+    await page.getByRole('button', { name: 'New file' }).click();
+    await page.getByRole('textbox', { name: 'New file in scripts/' }).fill('build.py');
+    await page.getByRole('button', { name: 'Create' }).click();
+
+    await expect
+      .poll(() => readdirSync(join(skillsDir, 'graphify', 'scripts')))
+      .toEqual(['build.py']);
+    expect(readdirSync(join(skillsDir, 'graphify')).sort()).toEqual(['SKILL.md', 'scripts']);
+    // And its row is on screen under the folder, opened in the editor.
+    await expect(tree.getByRole('button', { name: 'build.py' })).toHaveAttribute(
+      'aria-current',
+      'true',
+    );
+  } finally {
+    await app.close();
+  }
+});
+
+test('imports a zip as a new skill, and a delete confirm is the only set of buttons', async ({}, testInfo) => {
+  const { app, page, configPath } = await launchWithConfig(
+    (name) => testInfo.outputPath(name),
+    EMPTY_CONFIG,
+  );
+  const skillsDir = join(dirname(configPath), 'skills');
+  const zipPath = testInfo.outputPath('pr-review.zip');
+  writeFileSync(
+    zipPath,
+    zipSync({
+      'pr-review': {
+        'SKILL.md': strToU8('---\nname: pr-review\ndescription: Review a PR\n---\nReview it.\n'),
+        scripts: { 'run.sh': strToU8('#!/bin/sh\necho hi\n') },
+      },
+    }),
+  );
+
+  try {
+    await stubDirectoryDialog(app, [zipPath]);
+    await openSettings(page);
+    await page.getByRole('button', { name: 'Skills' }).click();
+
+    // From the empty state: nothing exists yet.
+    await page.getByRole('button', { name: 'Import skill' }).click();
+    await expect(page.getByRole('button', { name: '/pr-review' })).toBeVisible();
+
+    expect(readdirSync(join(skillsDir, 'pr-review')).sort()).toEqual(['SKILL.md', 'scripts']);
+    expect(statSync(join(skillsDir, 'pr-review', 'scripts', 'run.sh')).mode & 0o777).toBe(
+      0o755,
+    );
+    // Nothing staged was left behind beside the skills folder.
+    expect(
+      readdirSync(dirname(configPath)).filter((name) => name.startsWith('.skill-import-')),
+    ).toEqual([]);
+
+    // Deleting asks, and while it asks the editor's own buttons step aside.
+    await page.getByRole('button', { name: '/pr-review' }).click();
+    await expect(page.getByLabel('Skill source')).toBeVisible();
+    await page.getByRole('button', { name: 'Delete' }).click();
+    const ask = page.getByRole('alertdialog', { name: /Delete \/pr-review/ });
+    await expect(ask).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Save' })).toBeHidden();
+    await expect(page.getByRole('button', { name: 'Delete' })).toHaveCount(1);
+
+    await ask.getByRole('button', { name: 'Keep editing' }).click();
+    await expect(page.getByRole('button', { name: 'Save' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Delete' })).toBeVisible();
   } finally {
     await app.close();
   }
