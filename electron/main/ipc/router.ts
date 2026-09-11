@@ -326,8 +326,10 @@ let lostSinceHeld = 0;
 
 /** Push a link status, recording it for whoever opens a window next. */
 function pushLink(broadcaster: Broadcaster, status: Omit<RemoteLinkStatus, 'lost'> | null): void {
-  // A link that holds again, or no link at all, starts the count over.
-  if (status === null || status.state === 'attached') lostSinceHeld = 0;
+  // Only a window that goes local starts the count over. A reattach keeps it,
+  // because that is the moment the chip tells the user to redo what it lists;
+  // the chip clears it on a click (HIVE-140 audit, review round 1).
+  if (status === null) lostSinceHeld = 0;
   lastLinkStatus = status === null ? null : { ...status, lost: lostSinceHeld };
   broadcaster.emit(CH.remoteLinkStatus, lastLinkStatus);
 }

@@ -135,7 +135,7 @@ vi.mock('electron', () => ({
   },
 }));
 
-const { lostToTheLink, registerRemoteProxy, remoteProxyBindingsSize, resetRemoteProxy } = await import(
+const { countsAsAction, lostToTheLink, registerRemoteProxy, remoteProxyBindingsSize, resetRemoteProxy } = await import(
   '../../../../electron/main/ipc/remote-proxy'
 );
 const { createResumeTracker } = await import('../../../../electron/main/ipc/resume-tracker');
@@ -1005,7 +1005,7 @@ describe('registerRemoteProxy', () => {
    */
   describe('counting what the link lost', () => {
     it('tells a dead link from a server refusal', () => {
-      expect(lostToTheLink(new Error('Cannot call config:get: the connection to mini is closed.'))).toBe(true);
+      expect(lostToTheLink(new Error('Cannot call config:reload: the connection to mini is closed.'))).toBe(true);
       expect(lostToTheLink(new RemoteCallError('connection-closed', 'closed'))).toBe(true);
       expect(lostToTheLink(new RemoteCallError('window-bound', 'no window'))).toBe(false);
       expect(lostToTheLink(new RemoteCallError('frame-too-large', 'too big'))).toBe(false);
@@ -1014,13 +1014,39 @@ describe('registerRemoteProxy', () => {
 
     it('counts a call the closed link rejected, and still rejects it', async () => {
       const client = fakeClient();
-      const lost = new Error('Cannot call config:get: the connection to mini is closed.');
+      const lost = new Error('Cannot call config:reload: the connection to mini is closed.');
       client.call.mockRejectedValue(lost);
       const onLinkLoss = vi.fn();
       registerRemoteProxy({ client, broadcaster: fakeBroadcaster(), onLinkLoss });
 
-      await expect(invoke(CH.configGet, trustedEvent, {})).rejects.toBe(lost);
+      await expect(invoke(CH.configReload, trustedEvent, {})).rejects.toBe(lost);
       expect(onLinkLoss).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * Review round 1: the PR and ticket sweeps poll every minute whether or not
+     * the link is up, and counting their failures told an idle user that a
+     * sleeping server had eaten ten of their "actions".
+     */
+    it('counts only what the user did: no reads, no background polls, no acks', () => {
+      expect(countsAsAction(CH.configReload, 'call')).toBe(true);
+      expect(countsAsAction(CH.ledgerPost, 'call')).toBe(true);
+      expect(countsAsAction(CH.configGet, 'call')).toBe(false);
+      expect(countsAsAction(CH.jiraSearch, 'call')).toBe(false);
+      expect(countsAsAction(CH.githubPrs, 'call')).toBe(false);
+      expect(countsAsAction(CH.ptyWrite, 'notify')).toBe(true);
+      expect(countsAsAction(CH.ptyAck, 'notify')).toBe(false);
+      expect(countsAsAction(CH.ptyResize, 'notify')).toBe(false);
+    });
+
+    it('does not count a read the closed link rejected', async () => {
+      const client = fakeClient();
+      client.call.mockRejectedValue(new Error('Cannot call config:get: the connection to mini is closed.'));
+      const onLinkLoss = vi.fn();
+      registerRemoteProxy({ client, broadcaster: fakeBroadcaster(), onLinkLoss });
+
+      await expect(invoke(CH.configGet, trustedEvent, {})).rejects.toThrow(/is closed/);
+      expect(onLinkLoss).not.toHaveBeenCalled();
     });
 
     it('does not count a call the server refused', async () => {
@@ -1029,7 +1055,7 @@ describe('registerRemoteProxy', () => {
       const onLinkLoss = vi.fn();
       registerRemoteProxy({ client, broadcaster: fakeBroadcaster(), onLinkLoss });
 
-      await expect(invoke(CH.configGet, trustedEvent, {})).rejects.toBeInstanceOf(RemoteCallError);
+      await expect(invoke(CH.configReload, trustedEvent, {})).rejects.toBeInstanceOf(RemoteCallError);
       expect(onLinkLoss).not.toHaveBeenCalled();
     });
 

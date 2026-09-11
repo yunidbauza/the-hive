@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import { AttachedChip } from '@components/layout/attached-chip';
@@ -47,11 +48,42 @@ describe('AttachedChip', () => {
 
     render(<AttachedChip />);
 
-    const chip = screen.getByText(/reconnecting · mini · 3 lost/);
-    expect(chip).toBeInTheDocument();
-    expect(chip.closest('[title]')?.getAttribute('title')).toContain(
-      '3 actions (clicks or keystrokes) did not reach mini; redo them once it is back.',
+    const count = screen.getByRole('button', { name: '3 lost — clear' });
+    expect(count).toHaveTextContent('· 3 lost');
+    expect(count.closest('[title]')?.textContent).toMatch(/^reconnecting · mini· 3 lost$/);
+    expect(count.closest('[title]')?.getAttribute('title')).toContain(
+      '3 actions (clicks or keystrokes) did not reach mini; redo them once it is back. Click the count to clear it.',
     );
+  });
+
+  /**
+   * Review round 1: main keeps the count through a reattach, so the click is
+   * the one way to say "done" — and a loss after the click is new news.
+   */
+  it('clears the count on a click, and shows only losses that came after it', async () => {
+    showing(link({ lost: 3 }));
+    const { rerender } = render(<AttachedChip />);
+
+    await userEvent.click(screen.getByRole('button', { name: '3 lost — clear' }));
+    expect(screen.queryByRole('button', { name: /lost/ })).not.toBeInTheDocument();
+
+    showing(link({ state: 'reconnecting', lost: 4 }));
+    rerender(<AttachedChip />);
+    expect(screen.getByRole('button', { name: '1 lost — clear' })).toBeInTheDocument();
+  });
+
+  it('forgets the acknowledgement when the window goes local', async () => {
+    showing(link({ lost: 3 }));
+    const { rerender } = render(<AttachedChip />);
+    await userEvent.click(screen.getByRole('button', { name: '3 lost — clear' }));
+
+    showing(null);
+    rerender(<AttachedChip />);
+    // Main resets its count on the same transition; a fresh loss of 2 is 2.
+    showing(link({ lost: 2 }));
+    rerender(<AttachedChip />);
+
+    expect(screen.getByRole('button', { name: '2 lost — clear' })).toBeInTheDocument();
   });
 
   it('says nothing about losses when there were none', () => {

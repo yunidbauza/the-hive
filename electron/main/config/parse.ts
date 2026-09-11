@@ -881,20 +881,6 @@ function optionalReceiver(
 const HEX_SHA256 = /^[0-9a-f]{64}$/;
 
 /**
- * HIVE-142's nested `server.bind` block.
- *
- * Structurally {@link optionalBind}'s twin, with two differences the shape
- * forces: `host` is checked against {@link isServerBindHost}, not
- * {@link isHostAlias}, and `0.0.0.0` gets its own message naming the value
- * rather than the generic "expected a hostname" — see
- * {@link isServerBindHost}'s doc comment for why the wildcard is refused here
- * and not for the receiver. `port` gets the same treatment for `0`: unlike
- * {@link ReceiverBindConfig.port}, `server.bind.port` cannot be OS-assigned —
- * see {@link ServerBindConfig.port}'s own doc comment for why — so `0` is
- * refused here rather than the generic "using the default" salvage
- * `optionalPort` would otherwise apply.
- */
-/**
  * Why the configured `server.bind` host was refused, or `null` when it was not
  * (HIVE-140 audit, gap 3) — read by the server listener off
  * `ConfigSnapshot.errors`, so a refused host makes it bind nothing rather than
@@ -915,6 +901,20 @@ export function serverBindRefusal(errors: readonly string[]): string | null {
   );
 }
 
+/**
+ * HIVE-142's nested `server.bind` block.
+ *
+ * Structurally {@link optionalBind}'s twin, with two differences the shape
+ * forces: `host` is checked against {@link isServerBindHost}, not
+ * {@link isHostAlias}, and `0.0.0.0` gets its own message naming the value
+ * rather than the generic "expected a hostname" — see
+ * {@link isServerBindHost}'s doc comment for why the wildcard is refused here
+ * and not for the receiver. `port` gets the same treatment for `0`: unlike
+ * {@link ReceiverBindConfig.port}, `server.bind.port` cannot be OS-assigned —
+ * see {@link ServerBindConfig.port}'s own doc comment for why — so `0` is
+ * refused here rather than the generic "using the default" salvage
+ * `optionalPort` would otherwise apply.
+ */
 function optionalServerBind(
   record: Record<string, unknown>,
   label: string,
@@ -949,7 +949,12 @@ function optionalServerBind(
     } else if (isServerBindHost(host)) {
       bind.host = host;
     } else {
-      errors.push(`${at}.host: expected a hostname or an IPv4 address — using the default`);
+      // No "using the default" here, unlike its siblings: a refused host makes
+      // the server listen nowhere (`serverBindRefusal`), and this line is the
+      // reason the tray shows for it.
+      errors.push(
+        `${at}.host: expected a hostname or an IPv4 address — the server will not listen until it is fixed`,
+      );
     }
   }
 

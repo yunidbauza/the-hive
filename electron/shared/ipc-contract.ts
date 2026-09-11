@@ -1553,9 +1553,13 @@ export interface RemoteLinkStatus {
    * swallow a rejected call, and a keystroke into a still-focused terminal
    * ended at a `console.error` in main. The reattach replays the *server's*
    * transcript, which never held them, so nothing anywhere recorded that the
-   * input existed. Counted in main, where every proxied call and notify passes,
-   * and reset to 0 whenever the link holds again. Refusals the server itself
-   * answered are not counted: those reached it.
+   * input existed. Counted in main, where every proxied call and notify passes.
+   * Only what the user did counts — a keystroke, or a call that changes
+   * something — and nothing the server itself refused, which reached it.
+   *
+   * Kept through a reattach, which is exactly when the chip tells the user to
+   * redo them, and reset to 0 only when the window goes local. The chip hides
+   * what the user has already acknowledged with a click.
    */
   lost: number;
 }

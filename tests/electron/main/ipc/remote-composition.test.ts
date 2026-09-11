@@ -1427,9 +1427,10 @@ describe('the mode switch (HIVE-144)', () => {
     /**
      * HIVE-140 audit, gap 1, through the real router and the real proxy: what
      * the dead link swallowed is counted onto the pushed status while it is
-     * down, and the count starts over once the link holds again.
+     * down, and kept through the reattach, which is exactly when the chip tells
+     * the user to redo it (review round 1). Only going local clears it.
      */
-    it('counts what the dropped link swallowed, and starts over on reattach', async () => {
+    it('counts what the dropped link swallowed, and keeps it through the reattach', async () => {
       boundLocally();
       const first = fakeClient();
       const second = fakeClient();
@@ -1438,12 +1439,12 @@ describe('the mode switch (HIVE-144)', () => {
       connect.mockResolvedValueOnce(first).mockResolvedValue(second);
       await switchIpcMode('remote', opts({ connect, broadcaster }));
 
-      first.call.mockRejectedValue(new Error('Cannot call config:get: the connection to mini is closed.'));
+      first.call.mockRejectedValue(new Error('Cannot call config:reload: the connection to mini is closed.'));
       first.drop();
       broadcaster.emit.mockClear();
 
-      await expect(invoke(CH.configGet)).rejects.toThrow(/is closed/);
-      await expect(invoke(CH.configGet)).rejects.toThrow(/is closed/);
+      await expect(invoke(CH.configReload)).rejects.toThrow(/is closed/);
+      await expect(invoke(CH.configReload)).rejects.toThrow(/is closed/);
 
       const pushed = broadcaster.emit.mock.calls
         .filter(([channel]) => channel === CH.remoteLinkStatus)
@@ -1460,7 +1461,16 @@ describe('the mode switch (HIVE-144)', () => {
       const last = broadcaster.emit.mock.calls
         .filter(([channel]) => channel === CH.remoteLinkStatus)
         .at(-1)?.[1] as { state: string; lost: number };
-      expect(last).toMatchObject({ state: 'attached', lost: 0 });
+      expect(last).toMatchObject({ state: 'attached', lost: 2 });
+
+      // Going local is the reset: the next attachment starts from nothing.
+      await switchIpcMode('local', { broadcaster });
+      broadcaster.emit.mockClear();
+      await switchIpcMode('remote', opts({ connect: () => Promise.resolve(fakeClient()), broadcaster }));
+      expect(broadcaster.emit).toHaveBeenCalledWith(
+        CH.remoteLinkStatus,
+        expect.objectContaining({ state: 'attached', lost: 0 }),
+      );
     });
 
     it('rebinds the surface to the new client without unbinding local twice', async () => {

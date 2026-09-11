@@ -4,6 +4,7 @@ import { parseNotificationAction } from '@shared/guards';
 import { CH, type AppInfo, type Channel } from '@shared/ipc-contract';
 import { isThisMachineAction } from '@shared/notification-contract';
 import {
+  CHANNEL_AUTHORIZATION,
   FRAME_KIND,
   isLocalOnlyEvent,
   isProcessLocal,
@@ -339,6 +340,30 @@ export function lostToTheLink(cause: unknown): boolean {
   return cause instanceof Error;
 }
 
+/**
+ * Calls a timer makes rather than a person — the PR sweep polls `github:prs`
+ * every minute, and grading alone would count it, since shelling out to `gh` is
+ * `execute`. Never an action the user has to redo.
+ */
+const BACKGROUND_CALLS: ReadonlySet<string> = new Set([CH.githubPrs]);
+
+/**
+ * Whether a lost frame on `channel` is something the user did and must redo
+ * (HIVE-140 audit, gap 1, review round 1): a keystroke, or a call that changes
+ * something. A read the next render asks again, an ack or a resize the
+ * terminal sends on its own, and a background poll are not, and counting them
+ * told an idle user that a sleeping server had eaten ten of their "actions".
+ *
+ * Not counted either, and inherent to TCP rather than fixable here: on a
+ * half-open link a call times out rather than failing closed, and a keystroke
+ * sits in the socket's buffer without an error until the close finally comes.
+ */
+export function countsAsAction(channel: string, kind: 'call' | 'notify'): boolean {
+  if (kind === 'notify') return channel === CH.ptyWrite;
+  const grade = (CHANNEL_AUTHORIZATION as Record<string, string | undefined>)[channel];
+  return grade !== undefined && grade !== 'read' && !BACKGROUND_CALLS.has(channel);
+}
+
 export function registerRemoteProxy(deps: {
   client: RemoteClient;
   broadcaster: Broadcaster;
@@ -393,7 +418,7 @@ export function registerRemoteProxy(deps: {
     try {
       return await client.call(channel, payload);
     } catch (cause) {
-      if (lostToTheLink(cause)) onLinkLoss();
+      if (lostToTheLink(cause) && countsAsAction(channel, 'call')) onLinkLoss();
       throw cause;
     }
   };
@@ -587,7 +612,7 @@ export function registerRemoteProxy(deps: {
           }
           client.notify(channel as Channel, outgoing);
         } catch (cause) {
-          if (lostToTheLink(cause)) onLinkLoss();
+          if (lostToTheLink(cause) && countsAsAction(channel, 'notify')) onLinkLoss();
           console.error(`[hive] rejected ${channel}:`, cause);
         }
       });
