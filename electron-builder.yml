@@ -59,6 +59,13 @@ asarUnpack:
 extraResources:
   - from: resources/tray
     to: tray
+  # The skills and agents the app ships (HIVE-162), seeded into `~/.hive` on
+  # boot by `electron/main/seed/`. Read at runtime like the tray icon, so they
+  # ride the same block; `shippedRoot` in `seed/paths.ts` names both locations.
+  - from: resources/skills
+    to: skills
+  - from: resources/agents
+    to: agents
 
 mac:
   category: public.app-category.developer-tools

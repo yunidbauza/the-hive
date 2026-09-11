@@ -67,6 +67,18 @@ skill is named by its frontmatter; a `SKILL.md` with no frontmatter or no `name`
 
 A skill that fails validation shows in Settings with its reason and is not injected.
 
+## Skills the app ships
+
+Some skills come with The Hive: the implementation workflow (`/work-on`, `/goal-on`, `/ship`
+and the rest) lives in the app's own `resources/skills/` and is copied into `~/.hive/skills`
+when the app starts. They are ordinary skills once they are there. Edit one in Settings and
+your version stays; an update changes only files you have not touched. A skill the app stops
+shipping is never deleted from your folder.
+
+The record of what was seeded is `~/.hive/.seed.json`. Delete a shipped skill's folder and
+it comes back on the next launch; to keep it away, leave the folder with your own `SKILL.md`
+in it.
+
 ## Rules
 
 | Rule | Detail |

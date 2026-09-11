@@ -88,6 +88,35 @@ describe('createSkillsRuntime', () => {
     expect(skills.pluginDirPath()).toBe(join(userDataPath, 'hive', 'plugin'));
   });
 
+  it('waits for `ready` before its first regeneration, and shrugs off its rejection', async () => {
+    // HIVE-162: the seed writes into the tree this runtime mirrors, and a
+    // spawn that raced it would mirror a half-copied folder.
+    let release: () => void = () => {};
+    const ready = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const skills = createSkillsRuntime({ userDataPath, version: '1.0.0', ready });
+    let settled = false;
+    const first = skills.sync().then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await writeSkill('seeded', skill('seeded'));
+    release();
+    await first;
+
+    expect(await pluginSkills()).toEqual(['done', 'seeded']);
+
+    const failing = createSkillsRuntime({
+      userDataPath,
+      version: '1.0.0',
+      ready: Promise.reject(new Error('seed failed')),
+    });
+    expect((await failing.sync()).skills.map((s) => s.name)).toEqual(['seeded']);
+  });
+
   it('picks up a skill added after the first sync', async () => {
     // The whole reason sync runs per spawn: a skill saved from Settings thirty
     // seconds ago has to be on the next command line, with nothing to notify.

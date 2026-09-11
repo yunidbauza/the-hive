@@ -250,6 +250,7 @@ import {
 } from '../notifications/delivery';
 import { badgeDock, clearDockBadge } from '../notifications/dock-badge';
 import { registerPtyHost } from '../pty-host';
+import { seedShippedIntoHive } from '../seed';
 import {
   pairDevice,
   pairOutcomeMessage,
@@ -2364,6 +2365,16 @@ export function registerIpcHandlers(
   */
   onShutdown(() => remoteListener?.stop());
 
+  /*
+    The shipped skills and agents land in `~/.hive` before anything reads them
+    (HIVE-162). Started here, not awaited here: this function is synchronous.
+    The skills runtime waits for it before its first regeneration, and the
+    agents registry below watches its folder, so a definition the seed writes
+    after `refreshKnownAgents()` ran reaches the party set through the same
+    `onChange` a hand-written one does.
+  */
+  const seeded = seedShippedIntoHive();
+
   skills = createSkillsRuntime({
     userDataPath: app.getPath('userData'),
     version: app.getVersion(),
@@ -2373,6 +2384,7 @@ export function registerIpcHandlers(
       app. `sync()` happens before every spawn, which is always afterwards.
     */
     doneUrl: () => hooks.doneUrl(),
+    ready: seeded,
   });
 
   /*
