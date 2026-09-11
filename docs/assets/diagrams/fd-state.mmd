@@ -1,0 +1,11 @@
+flowchart LR
+  main[Main via IPC] --> hs[hive-store · domain]
+  main --> es[editor-store · buffers]
+  ui[ui-store · view state]
+  as[appearance-store · preferences] -->|persist| ls[(localStorage)]
+  hs --> sel[Selector hooks]
+  ui --> sel
+  as --> sel
+  es --> sel
+  sel --> comp[Components]
+  comp -->|actions| hs

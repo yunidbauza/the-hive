@@ -50,24 +50,14 @@ spaces needs quotes. `<session>` is an id or a name, in any case.
 ```text
 overmind ❯ spawn hive fix the flaky login test
 overmind ❯ spawn "The Hive" add a dark-mode toggle to settings
-overmind ❯ send HIVE-73 run the e2e suite again
-routed → HIVE-73
-overmind ❯ open HIVE-73
-opened HIVE-73
+overmind ❯ send ABC-123 run the e2e suite again
+routed → ABC-123
+overmind ❯ open ABC-123
+opened ABC-123
 overmind ❯ ask pr-patrol is PR 1234 safe to merge?
 asked pr-patrol (a12)
 overmind ❯ run pr-patrol review PR 1234
 overmind ❯ ledger --open -n 10
-```
-
-```mermaid
-flowchart LR
-  I["overmind ❯ input"] --> P["parse<br/>checks the shape"]
-  P -->|"missing a part: usage line"| X["error line"]
-  P --> R["run<br/>checks the target exists"]
-  R -->|"unknown project: X"| X
-  R --> S["session / agent / ledger"]
-  S --> T["result line in the transcript"]
 ```
 
 ## Errors you may see

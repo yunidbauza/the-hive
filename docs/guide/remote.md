@@ -1,44 +1,32 @@
 # Server mode and remote attach
 
-Run The Hive on an always-on Mac (a Mac mini) and drive its sessions from your laptop. The
+Run The Hive on an always-on Mac and drive its sessions from your laptop. The
 sessions, agents, ledger and inbox all live on the server; the laptop is a window onto them.
 
 This page is the overview. The step-by-step runbook is [Server mode](../server-mode.md).
 
 **On this page:** [How it fits together](#how-it-fits-together) ·
-[Serve from a Mac mini](#serve-from-a-mac-mini) · [Pair a device](#pair-a-device) ·
+[Serve from an always-on Mac](#serve-from-an-always-on-mac) · [Pair a device](#pair-a-device) ·
 [Attach from a laptop](#attach-from-a-laptop) · [When the connection drops](#when-the-connection-drops) ·
 [What a remote device cannot do](#what-a-remote-device-cannot-do)
 
 ## How it fits together
 
-```mermaid
-flowchart LR
-  subgraph Mini["Mac mini: server.enabled"]
-    App["The Hive<br/>no window, menu-bar item"]
-    L["Listener on the tailnet address :7433"]
-    S["Sessions, agents, ledger"]
-    App --- L
-    App --- S
-  end
-  subgraph Tailnet["Tailscale"]
-    A["Laptop: remote.mode = remote"]
-    B["Second laptop"]
-  end
-  A <-- "calls, events, terminal stream" --> L
-  B <-- "same" --> L
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/remote-topology.dark.svg">
+  <img src="../assets/diagrams/remote-topology.light.svg" alt="A server Mac holds sessions, agents and the ledger; laptops attach to its listener over Tailscale">
+</picture>
 
 Same version on both ends, one Tailscale network. Tailscale is the first line of defence;
 device tokens are the second.
 
-## Serve from a Mac mini
+## Serve from an always-on Mac
 
 Short version (the runbook has every command):
 
-1. Keep the mini awake and logged in: automatic login, `pmset` sleep off, Tailscale key
-   expiry off.
-2. Add a `server` block to its config with the mini's Tailscale address:
+1. Keep the server Mac awake and logged in: automatic login, `pmset` sleep off, Tailscale
+   key expiry off.
+2. Add a `server` block to its config with the server's Tailscale address:
 
 ```json
 "server": {
@@ -54,7 +42,7 @@ Short version (the runbook has every command):
 
 ## Pair a device
 
-On the mini, over SSH:
+On the server, over SSH:
 
 ```sh
 the-hive --pair "MacBook"     # prints a one-time token and a device id
@@ -69,22 +57,6 @@ the config.
 
 **Settings › Advanced › Attach to a server**: enter the server address, port, device id and
 token, then **Attach**. The token is stored in the laptop's Keychain.
-
-```mermaid
-sequenceDiagram
-  participant M as Mini (SSH)
-  participant L as Laptop
-  participant S as Server
-  M->>M: the-hive --pair "MacBook"
-  M-->>L: token + device id (you copy them)
-  L->>S: attach (version, device id, token)
-  alt accepted
-    S-->>L: snapshot: sessions, agents, ledger, inbox, PRs, config
-    L->>S: open, type, spawn … as if local
-  else refused
-    S-->>L: reason: version mismatch, unauthorized, revoked
-  end
-```
 
 You cannot attach while sessions are running locally; the refusal lists them.
 

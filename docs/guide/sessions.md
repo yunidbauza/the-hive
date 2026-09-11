@@ -34,8 +34,8 @@ noise until Claude is ready.
 To type into a session without opening it, use the console:
 
 ```text
-overmind ❯ send hive-3 run the tests again
-routed → hive-3
+overmind ❯ send sess-03 run the tests again
+routed → sess-03
 ```
 
 ## Status
@@ -52,18 +52,10 @@ Every session shows a coloured dot and a word.
 | **done** | ended on purpose (`/done`, `/clear`, or the app closed) | resume it if you want |
 | **terminated** | the process is gone (`/exit`, `Ctrl+D`, a crash) | read the scrollback |
 
-```mermaid
-stateDiagram-v2
-  [*] --> working: spawn or Resume
-  working --> needs_input: permission prompt or question
-  needs_input --> working: answered
-  working --> idle: turn ends
-  idle --> working: you type
-  idle --> done: /done or /clear
-  working --> terminated: process exits
-  idle --> terminated: process exits
-  done --> working: Resume
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/session-status.dark.svg">
+  <img src="../assets/diagrams/session-status.light.svg" alt="Session status: working, needs input, idle, done and terminated, and what moves a session between them">
+</picture>
 
 Status comes from Claude Code's own hooks, so "needs input" is exact rather than guessed.
 
@@ -72,9 +64,9 @@ Status comes from Claude Code's own hooks, so "needs input" is exact rather than
 - Every session gets an id like `sess-07` that never changes.
 - Claude titles the session from its conversation. The Hive tidies that into a short
   hyphenated name, at most four words.
-- A ticket key always leads the name. Typing `work on HIVE-53` links the session to
+- A ticket key always leads the name. Typing `work on ABC-123` links the session to
   that Jira issue once Jira confirms it exists:
-  `back key interception hive-53` becomes `HIVE-53-back-key-interception`.
+  `back key interception abc-123` becomes `ABC-123-back-key-interception`.
 - The console and rails accept either the id or the name, in any case.
 - The branch is whatever git reports in the session's folder. A dash means none has been
   seen yet.

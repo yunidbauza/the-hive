@@ -7,23 +7,17 @@ you, so you never have to watch every tab.
 [Card types](#card-types) · [Choosing what reaches you](#choosing-what-reaches-you) ·
 [What clears a card](#what-clears-a-card)
 
-![Two cards: a permission ask with a scope ladder, and a question with two options](../assets/guide/05-inbox-asks.png)
+<img src="../assets/guide/05-inbox-asks.png" alt="Two cards: a permission ask with a scope ladder, and a question with two options" width="360">
 
 ## How a notification is born
 
 The Hive writes a small hooks file for every session it starts. Claude Code then reports
 what it is doing to a receiver inside the app, over loopback, with a per-session token.
 
-```mermaid
-flowchart LR
-  A["claude in its terminal"] -- "hook: PermissionRequest, Stop, …" --> B["Receiver<br/>(inside The Hive)"]
-  B --> C["Status tracker"] --> D["Status dot and header counts"]
-  B --> E["Notifier<br/>picks a kind"] --> F{"Your setting<br/>for that kind"}
-  F -- "inbox" --> G["Inbox card + red badge"]
-  F -- "both" --> G
-  F -- "both" --> H["Desktop notification"]
-  F -- "off" --> Z["nothing"]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/inbox.dark.svg">
+  <img src="../assets/diagrams/inbox.light.svg" alt="A hook event reaches the receiver; the status tracker updates the dot, and the notifier raises a card or a desktop notification per your setting">
+</picture>
 
 | What Claude did | Kind raised |
 | --- | --- |

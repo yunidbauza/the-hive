@@ -60,13 +60,10 @@ skill is named by its frontmatter; a `SKILL.md` with no frontmatter or no `name`
 
 ## How skills reach a session
 
-```mermaid
-flowchart LR
-  A["~/.hive/skills/*/"] -->|"read before every spawn"| G["Generated plugin<br/>(app data folder)"]
-  D["/done (built in)"] --> G
-  G -->|"claude --plugin-dir …"| S["Sessions and agents<br/>The Hive starts"]
-  X["claude in your own terminal"] -. "no flag, no skills" .-> N["unaffected"]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/skills.dark.svg">
+  <img src="../assets/diagrams/skills.light.svg" alt="Skill folders are read before every spawn into a generated plugin passed with --plugin-dir; claude started elsewhere is unchanged">
+</picture>
 
 A skill that fails validation shows in Settings with its reason and is not injected.
 

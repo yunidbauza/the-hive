@@ -8,13 +8,12 @@ and editor preferences stay on this machine.
 [Agents](#agents) · [Appearance](#appearance) · [Editor](#editor) ·
 [Integrations](#integrations) · [Notifications](#notifications) · [Advanced](#advanced)
 
-```mermaid
-flowchart LR
-  S["Settings"] --> C[("~/.hive/config.json<br/>projects, runtime, jira,<br/>notifications, server…")]
-  S --> K[("Keychain<br/>Jira token, Slack tokens,<br/>remote token")]
-  S --> F[("~/.hive/skills · ~/.hive/agents")]
-  S --> P[("This machine only<br/>appearance, editor")]
-```
+| Where it is stored | What |
+| --- | --- |
+| `~/.hive/config.json` | projects, runtime, Jira site and email, notifications, Slack, server and remote |
+| Encrypted with the Keychain, in the app's data folder | the Jira API token, the Slack tokens, the remote device token |
+| `~/.hive/skills/`, `~/.hive/agents/` | skills and agents |
+| This machine only | appearance and editor preferences |
 
 ## Projects
 

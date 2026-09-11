@@ -3,8 +3,6 @@
 **Scope:** the terminal surface, the transport seam, ANSI colour handling, xterm
 configuration, and how live instances are kept alive across tab switches.
 
-**Owned by story 042** (HIVE, Jira).
-
 > **TL;DR**
 > - Terminal components speak only `TerminalTransport` (`write`, `onData`, `resize`,
 >   `reportPrompt`) and cannot import features, data or stores.
@@ -13,15 +11,10 @@ configuration, and how live instances are kept alive across tab switches.
 > - One xterm per entity, kept alive and hidden; one WebGL context on the visible surface.
 > - A hidden surface is never fitted. Auto-scroll fires only at the bottom.
 
-```mermaid
-flowchart LR
-  CS["center-stage.tsx<br/>(reads stores)"] --> RT["resolveTransport"]
-  RT -->|"browser"| ST["StaticTransport"]
-  RT -->|"desktop"| PT["PtyTransport"]
-  PT <-->|"window.hive pty verbs"| B["preload bridge"]
-  CS -->|"ids, palette props"| TH["TerminalHost"] --> TS["TerminalSurface"]
-  TS <-->|"TerminalTransport"| PT
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/fd-terminal.dark.svg">
+  <img src="assets/diagrams/fd-terminal.light.svg" alt="The terminal seam: center-stage resolves a transport; TerminalSurface only speaks TerminalTransport">
+</picture>
 
 **On this page:** [The seam](#the-seam) ·
 [Sending text into a session](#sending-text-into-a-session) ·
@@ -31,7 +24,7 @@ flowchart LR
 [Fitting](#fitting) ·
 [The bottom-stick rule](#the-bottom-stick-rule) ·
 [Testing](#testing) ·
-[Reading Claude Code's screen](#reading-claude-codes-screen-hive-79)
+[Reading Claude Code's screen](#reading-claude-codes-screen)
 
 ## The seam
 
@@ -49,9 +42,8 @@ export interface TerminalTransport {
 }
 ```
 
-**`parsed` is the one thing this interface gained when the real backend arrived**
-(story 094), and it is worth stating plainly rather than leaving to be
-discovered. A pty can produce output faster than xterm can parse it; batching
+**`parsed` is the one thing this interface gained when the real backend arrived**,
+and it is worth stating plainly rather than leaving to be discovered. A pty can produce output faster than xterm can parse it; batching
 does not fix that, and only an acknowledgement does. But an ack is only
 meaningful if it means *parsed* rather than *received* — and the two facts
 needed to say so live in different layers. The transport knows the sequence
@@ -63,7 +55,7 @@ has no backpressure to apply.
 The alternative — a fourth method — was rejected. This is one optional argument
 to an existing callback, and every caller that ignores it still compiles.
 
-**`reportPrompt` is the second thing it gained** (HIVE-135), and it is a method
+**`reportPrompt` is the second thing it gained**, and it is a method
 because the fact it carries does not ride on a chunk: the surface learns what
 the input box holds from its own buffer, on reveal and after each parsed
 chunk, and pushes `empty` / `draft` / `unfocused` on change. Main uses it as a
@@ -79,7 +71,7 @@ import `features/`, `data/`, or `stores/` — the import zone in
 | --- | --- | --- |
 | `lib/terminal/terminal-transport.ts` | nothing | the interface |
 | `lib/terminal/static-transport.ts` | the store | recorded transcripts |
-| `lib/terminal/pty-transport.ts` | the bridge | a real pty (story 094) |
+| `lib/terminal/pty-transport.ts` | the bridge | a real pty |
 | `lib/terminal/resolve-transport.ts` | the store, the target | which of the two |
 | `lib/terminal/ansi.ts` | both palettes | `TermColor` → indexed SGR; theme → xterm theme |
 | `lib/terminal/signals.ts` | nothing | signal number → name |
@@ -93,23 +85,23 @@ looks them up. The lint zone permits a store import in either, so this is a
 review rule rather than an enforced one — and it is the reason the transport can
 be tested against nothing but a stubbed bridge.
 
-**The rule that keeps it honest:** if a future story needs the terminal
-component to read the store, that story is wrong — the data belongs in a
+**The rule that keeps it honest:** if a future change needs the terminal
+component to read the store, that change is wrong — the data belongs in a
 transport.
 
 ### Did the seam hold?
 
-Story 094 was written as the audit of that claim, so the answer belongs here.
+The real pty backend was the test of that claim.
 **Mostly, and the exception is instructive.** Swapping the backend needed no
 change to `terminal-host.tsx`, no change to `center-stage.tsx`, and no new prop
 naming a domain concept. What it did need was the `parsed` argument above and
-the three lines in `terminal-surface.tsx` that call it — because story 093 built
-a flow-control loop whose acknowledgement had no path back from the only layer
+the three lines in `terminal-surface.tsx` that call it — because the pty's
+flow-control loop needed an acknowledgement that had no path back from the only layer
 that could produce it. The fence held; the contract was one signal short.
 
 ## Sending text into a session
 
-`src/lib/terminal/session-input.ts` is the whole coordination layer (story 097).
+`src/lib/terminal/session-input.ts` is the whole coordination layer.
 Both call sites that mean "say something to a session" — the console's
 `send <id> <msg>` and, over a recorded transcript, the message row under a
 terminal — collapse to:
@@ -185,8 +177,8 @@ property declared on `:root` has no path to a terminal cell.
 
 > **A correction worth keeping.** Earlier revisions of these docs justified this
 > with "xterm paints to a canvas". That reason was wrong even though the
-> conclusion holds: xterm 6 core ships the **DOM** renderer by default. Story
-> 095 has since installed `@xterm/addon-webgl`, so *some* terminals really do
+> conclusion holds: xterm 6 core ships the **DOM** renderer by default. The app
+> has since installed `@xterm/addon-webgl`, so *some* terminals really do
 > paint to a canvas now — see below — but the palette has to be JS either way,
 > which is why the conclusion never depended on the reason.
 
@@ -198,9 +190,9 @@ The light palette is the one place a terminal colour and a CSS token hold the
 same value — deliberately, and enforced by a test rather than by convention.
 See **Theming** below.
 
-### Slots 30 and 90 are surfaces (HIVE-82)
+### Slots 30 and 90 are surfaces
 
-A palette decides what the *named* colours mean. Until HIVE-82 it named eleven
+A palette decides what the *named* colours mean. It once named eleven
 text colours and one ground, and `xtermThemeFor` bound ANSI `black` to
 `palette.black` and `brightBlack` to `palette.dim` — both text.
 
@@ -212,8 +204,8 @@ mismatch made an `AskUserQuestion` unreadable at **1.05:1**.
 
 The palette now carries two surface roles, `surface` and `surfaceAlt`, and the
 two slots resolve to them. They are **optional** in a theme file — `surfacesOf`
-blends them out of `bg` when absent — so every theme exported under HIVE-80
-imports unchanged.
+blends them out of `bg` when absent — so every theme exported before the
+roles existed imports unchanged.
 
 The rule this replaced had a real reason: a CLI that detects a light terminal
 picks slot 30 for body text, and against a light surface that text disappears.
@@ -280,20 +272,20 @@ populated; the transcript lives in canvases. Two things follow:
 - **Assistive technology cannot read it either.** xterm's answer is
   `screenReaderMode`, which maintains a separate accessibility buffer at a
   performance cost. It is **not** enabled, and that is an open gap rather than a
-  decision this story was equipped to make — it trades against the exact
+  settled decision — it trades against the exact
   throughput the renderer was introduced to get.
 
 ### Theming
 
-**The terminal follows the app theme** — and since HIVE-80 it does so without
-knowing that. The surface takes a `palette` prop, exactly as it takes a font
+**The terminal follows the app theme** — and it does so without knowing
+that. The surface takes a `palette` prop, exactly as it takes a font
 stack, and `xtermThemeFor(palette)` maps any eleven-colour palette into xterm's
 sixteen slots, so two palettes can differ in colour but never in structure.
 Which one arrives is the composition root's decision: `center-stage.tsx` reads
 `useTerminalAppearance()` and passes `palette` down. `TERM` and `TERM_LIGHT` are
 the built-in theme's two `terminal` groups under a name.
 
-This reverses stories 011 and 042, which pinned the terminal dark in both themes
+This reverses an earlier design that pinned the terminal dark in both themes
 and allowed only selection and cursor to vary. That reasoning — a terminal is
 dark because that is what a terminal is — describes a terminal *emulator*, whose
 window is the whole application. Here the terminal shares the centre stage with
@@ -346,10 +338,10 @@ There is deliberately **no** fit in the mount effect. A surface that mounts
 hidden has no geometry to measure, and one that mounts visible would otherwise
 be fitted twice.
 
-Ancestors need `min-width: 0` / `min-height: 0` (story 020) or a long line
+Ancestors need `min-width: 0` / `min-height: 0` or a long line
 widens the column and the fit addon grows into it.
 
-### Never fit a hidden surface (108)
+### Never fit a hidden surface
 
 **A hidden terminal must not be fitted, and its size must not be reported.** Both
 halves are load-bearing, and getting this wrong destroyed transcripts.
@@ -377,7 +369,7 @@ Visibility is the condition with a guaranteed follow-up — the visibility effec
 ### The keyboard follows the fit
 
 The same effect focuses the terminal when it becomes visible, if it is
-interactive. A live session is the only input on its screen (story 108), so a
+interactive. A live session is the only input on its screen, so a
 reveal that did not take the keyboard would make every newly opened session
 demand a click first. Read-only surfaces are excluded: the orchestrator console
 owns a separate command row that autofocuses itself.
@@ -392,8 +384,7 @@ The predicate is measured *before* the write: afterwards `baseY` has already
 advanced to include the new lines, so every append would look like "the user is
 at the bottom".
 
-Story 042 sketches the signature as `(viewportY, baseY, rows)`. The row count is
-omitted deliberately — in xterm's buffer model `baseY` is already the
+There is deliberately no `rows` argument — in xterm's buffer model `baseY` is already the
 viewport-height-adjusted maximum scroll offset, so the height is baked into the
 comparison.
 
@@ -421,7 +412,7 @@ Two gotchas worth knowing before writing a spec:
   lines), so a spec that needs scrollback must shrink the viewport *before* the
   terminal mounts.
 
-## Reading Claude Code's screen (HIVE-79)
+## Reading Claude Code's screen
 
 One rule in `lib/terminal/keymap.ts` is a screen-scrape of a UI this app does not
 own: `claimBareBack`, which decides whether a bare `←` at a live terminal belongs
@@ -430,8 +421,8 @@ session everywhere else in the app, and Claude binds the same key to open *its*
 agent list, which is a second fleet view inside the fleet view.
 
 Everything about it is shaped by one lesson: **a claim about what Claude Code
-draws is not proven until a real `claude` has drawn it.** The rule that shipped
-before HIVE-79 was written against a staged xterm buffer, passed every unit test,
+draws is not proven until a real `claude` has drawn it.** An earlier version of
+the rule was written against a staged xterm buffer, passed every unit test,
 and was wrong in both directions in production. Two assumptions cost the most:
 
 - **Claude writes a faint placeholder into its empty input.** `❯ Try "write a
@@ -469,7 +460,7 @@ a desktop e2e that drives a real `claude` and asserts the overmind, not Claude's
 agent list, is what `←` reaches. Only the last one could have caught either
 assumption above.
 
-The same read has a second customer (HIVE-135). `isEmptyClaudePrompt` — the
+The same read has a second customer. `isEmptyClaudePrompt` — the
 boolean half of `claimBareBack` — is what the visible surface evaluates to
 tell main whether a ledger nudge may be written into this session. `claim`
 becomes `empty`; `declined` and `foreign` both become `draft`, because the

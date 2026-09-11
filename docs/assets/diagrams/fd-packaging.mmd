@@ -1,0 +1,8 @@
+flowchart TD
+  v[pnpm version minor · git push --follow-tags] --> ci[CI · lint · type-check · test]
+  ci --> d[Draft release]
+  d --> u[Upload dmg · zip · latest-mac.yml]
+  u --> y{latest-mac.yml present?}
+  y -->|yes| pub[Publish]
+  y -->|no| stay[Stays draft]
+  pub --> app[Apps check 30 s after launch, then every 6 h]

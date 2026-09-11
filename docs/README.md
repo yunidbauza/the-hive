@@ -36,7 +36,7 @@ New here? Start with [Getting started](guide/getting-started.md), then
 | [The ledger](guide/ledger.md) | The shared log sessions and agents talk through |
 | [Slack](guide/slack.md) | Let agents read Slack, and command them from it |
 | [Containers](guide/containers.md) | Run sessions and agents inside a Docker container |
-| [Server mode and remote attach](guide/remote.md) | Serve from a Mac mini, drive it from a laptop |
+| [Server mode and remote attach](guide/remote.md) | Serve from an always-on Mac, drive it from another |
 
 ### Setup and reference
 
@@ -62,14 +62,7 @@ part you are changing. [Contributing](contributing.md) has the commands and test
 | [State and data](state-and-data.md) | The four stores, selectors, caps, the console grammar |
 | [Component patterns](component-patterns.md) | The shell, the view-state machine, rails |
 | [Agents and the ledger](agents-and-ledger.md) | Ledger format, delivery, the MCP host, agent definitions |
-| [Server mode](server-mode.md) | The full Mac mini runbook: LaunchAgent, pairing, exposure |
+| [Server mode](server-mode.md) | The full server runbook: LaunchAgent, pairing, exposure |
 | [Packaging and updates](packaging-and-updates.md) | Releases, signing, the bundle, the updater |
 | [Design system](../.claude/DESIGN-SYSTEM.md) · [Components](../.claude/COMPONENTS.md) | Tokens, type scale, atoms |
 
-```mermaid
-flowchart TD
-  R["README<br/>what it is, quick start"] --> G["Guides<br/>how to use it"]
-  R --> I["Internals<br/>how it is built"]
-  G --> GS["getting-started → tour → the page for your task"]
-  I --> A["architecture.md → the deep dive for the part you change"]
-```

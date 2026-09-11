@@ -59,7 +59,7 @@ Built for Claude Code.
 | **Opens the repository** | A project explorer over the active session's checkout, opening files into a CodeMirror editor. [Files](docs/guide/explorer.md) |
 | **Carries your skills** | Skill folders under `~/.hive/skills` reach every session The Hive starts, and no other `claude`. [Skills](docs/guide/skills.md) |
 | **Runs agents in the background** | Headless `claude` runs that wake on a schedule, a message or a Slack mention, and ask you before they act. [Agents](docs/guide/agents.md) |
-| **Reaches your Mac mini** | Serve sessions from one machine and drive them from another over Tailscale. [Remote](docs/guide/remote.md) |
+| **Serves from another Mac** | Run sessions on one always-on Mac and drive them from another over Tailscale. [Remote](docs/guide/remote.md) |
 | **Follows a theme all the way down** | Chrome, terminal and editor all take their colours from one theme file. [Themes](docs/guide/themes.md) |
 | **Ends cleanly** | `/done` finishes a session and closes its terminal. The row stays readable, with Resume. [Sessions](docs/guide/sessions.md#finish-with-done) |
 
@@ -97,18 +97,10 @@ Building from source also needs Node 22 ([`.nvmrc`](.nvmrc)) and pnpm (pinned in
 
 ## How it fits together
 
-```mermaid
-flowchart LR
-  you((You)) --> ui["The Hive window<br/>rails, console, inbox"]
-  ui --> main["Main process<br/>config, ledger, receiver"]
-  main --> pty["PTY host"]
-  pty --> c1["claude<br/>session 1"]
-  pty --> c2["claude<br/>session 2"]
-  c1 -- "hooks: blocked, idle, done" --> main
-  c2 -- "hooks" --> main
-  main --> agents["Agents<br/>headless claude -p"]
-  main -- "gh, Jira" --> ext[("GitHub, Jira")]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/diagrams/overview.dark.svg">
+  <img src="docs/assets/diagrams/overview.light.svg" alt="You drive The Hive; its main process runs claude sessions through the PTY host, wakes agents, and hears back through hooks">
+</picture>
 
 Sessions report their state back through Claude Code's hooks. That is how the inbox knows
 which one needs you. The long version is in [Architecture](docs/architecture.md).

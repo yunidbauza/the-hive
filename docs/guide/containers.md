@@ -9,23 +9,10 @@ inside it.
 
 ## How it works
 
-```mermaid
-flowchart LR
-  subgraph Host["Your Mac"]
-    Hive["The Hive"]
-    Rcv["Receiver<br/>/hook · /ledger · /mcp"]
-    Gen["App data: hive/<br/>settings, MCP config, skills"]
-  end
-  subgraph Box["Container (yours, already running)"]
-    Cl["claude"]
-    Ws["/work = your project"]
-    Hd["/hive = mounted app data"]
-  end
-  Hive -- "docker exec -it … devbox claude" --> Cl
-  Gen -. "mount" .-> Hd
-  Cl -- "status hooks (curl)" --> Rcv
-  Cl -- "hive MCP over HTTP" --> Rcv
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/containers.dark.svg">
+  <img src="../assets/diagrams/containers.light.svg" alt="The Hive runs claude inside your container with docker exec; the container reports back to the receiver over HTTP">
+</picture>
 
 The container reaches the app through a host alias: `host.docker.internal` for Docker
 Desktop, OrbStack and Rancher; `host.containers.internal` for Podman. Set it in

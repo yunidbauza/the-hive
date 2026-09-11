@@ -1,0 +1,24 @@
+flowchart TB
+  subgraph renderer [Renderer · src, sandboxed]
+    ui[React · Zustand stores · xterm]
+  end
+  pre[Preload · window.hive verbs]
+  subgraph mainp [Main · electron/main]
+    ipc[IPC handlers · sender and payload guards]
+    rcv[Hook receiver · hook · ledger · mcp]
+    led[(Ledger)]
+    rh[Remote listener · server mode only]
+  end
+  pty[PTY host · utilityProcess · node-pty]
+  cl[claude in a login shell]
+  mcp[MCP host · stdio]
+  ui --> pre
+  pre --> ipc
+  ipc -->|MessagePort| pty
+  pty --> cl
+  cl -->|hooks · status line| rcv
+  cl -->|spawns| mcp
+  mcp -->|POST ledger| rcv
+  rcv --> led
+  ipc --> led
+  rh -->|same handlers| ipc

@@ -18,29 +18,10 @@ sides import.
 
 ## Processes
 
-```mermaid
-flowchart TB
-  subgraph Renderer["Renderer · src/ (sandboxed)"]
-    UI["React + Zustand stores + xterm"]
-  end
-  Preload["Preload · window.hive verbs"]
-  subgraph Main["Main · electron/main (policy point)"]
-    IPC["IPC handlers<br/>assertSender + payload guards"]
-    Recv["Hook receiver (loopback HTTP)<br/>/hook /ledger /mcp"]
-    Ledger[("Ledger")]
-    RH["Remote listener<br/>(server mode only)"]
-  end
-  PtyHost["PTY host · utilityProcess · node-pty"]
-  Claude["claude (in a login shell)"]
-  Mcp["MCP host · stdio"]
-  UI <--> Preload <--> IPC
-  IPC <-- "MessagePort" --> PtyHost --> Claude
-  Claude -- "hooks, status line" --> Recv
-  Claude -- "spawns" --> Mcp -- "POST /ledger" --> Recv
-  Recv --> Ledger
-  IPC --> Ledger
-  RH -- "same handlers" --> IPC
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/processes.dark.svg">
+  <img src="assets/diagrams/processes.light.svg" alt="Renderer, preload, main with the hook receiver and ledger, the PTY host, claude and its MCP host">
+</picture>
 
 | Process | Deep dive |
 | --- | --- |

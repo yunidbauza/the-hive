@@ -1,0 +1,9 @@
+flowchart TD
+  claude[claude in its terminal] -->|hook event| rcv[Receiver in The Hive]
+  rcv --> trk[Status tracker]
+  trk --> dot[Status dot and header counts]
+  rcv --> ntf[Notifier picks a kind]
+  ntf --> pref{Your setting for that kind}
+  pref -->|Inbox or Both| card[Inbox card and red badge]
+  pref -->|Both| toast[Desktop notification]
+  pref -->|Off| none[Nothing]

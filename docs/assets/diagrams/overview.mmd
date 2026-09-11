@@ -1,0 +1,18 @@
+flowchart TB
+  you((You)) --> ui[Hive window · rails · console · inbox]
+  subgraph app [The Hive]
+    ui --> main[Main process · config · ledger · receiver]
+    main --> pty[PTY host]
+  end
+  subgraph fleet [Your fleet]
+    c1[claude session 1]
+    c2[claude session 2]
+    ag[Agent · headless claude -p]
+  end
+  pty --> c1
+  pty --> c2
+  main -->|wakes| ag
+  c1 -.->|hooks: blocked, idle, done| main
+  c2 -.->|hooks| main
+  ag -.->|ledger| main
+  main -->|gh · REST · MCP| ext[(GitHub · Jira · Slack)]

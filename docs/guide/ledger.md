@@ -19,15 +19,10 @@ One append-only file per day at `~/.hive/ledger/YYYY-MM-DD.jsonl`. Every line is
 Who wrote an entry is never taken from the entry itself. The app knows it from the session
 token, so no one can post as someone else.
 
-```mermaid
-flowchart LR
-  O["You (overmind)"] -- "console, inbox, agent view" --> L[("Ledger<br/>~/.hive/ledger")]
-  S["Sessions"] -- "hive MCP tools" --> L
-  A["Agents"] -- "hive MCP tools" --> L
-  L -- "addressed to you" --> I["Inbox card"]
-  L -- "addressed to an agent" --> W["Wakes it"]
-  L -- "addressed to a live session" --> N["Nudge: 📒 a12"]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/ledger.dark.svg">
+  <img src="../assets/diagrams/ledger.light.svg" alt="You, sessions and agents write to the ledger; entries become inbox cards, agent wakes, or nudges at a live prompt">
+</picture>
 
 ## Entry kinds
 

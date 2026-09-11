@@ -1,0 +1,14 @@
+sequenceDiagram
+  participant P as claude in pty
+  participant H as PTY host
+  participant M as Main
+  participant R as Renderer (xterm)
+  P->>H: many small writes
+  H->>M: output
+  M->>R: pty:data batch (8 ms, 64 KB)
+  R-->>M: ack after xterm parses
+  alt over 512 KB unacked
+    M->>H: pause reading
+  else under 128 KB
+    M->>H: resume
+  end

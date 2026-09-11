@@ -36,13 +36,6 @@ Run one spec with `pnpm exec vitest run <path>`; `pnpm test -- <path>` runs ever
 
 ## Test layers
 
-```mermaid
-flowchart LR
-  U["Unit · Vitest<br/>stores, components, main<br/>xterm and node-pty mocked"] --> E["E2E · Playwright<br/>built app, stubbed claude"]
-  E --> P["PTY conformance<br/>real PTYs"]
-  P --> L["Live suites<br/>a real claude binary"]
-```
-
 - `tests/` mirrors `src/` and `electron/`: the test for `src/features/inbox/x.tsx` is
   `tests/features/inbox/x.test.tsx`.
 - xterm and `node-pty` are never loaded for real in unit tests. CodeMirror is: it renders

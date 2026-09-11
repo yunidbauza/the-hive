@@ -14,14 +14,10 @@ Load this when working on `electron-builder.yml`, `.github/workflows/release.yml
 > - Desktop asks twice (download, install); a server installs when idle.
 > - An ad-hoc signature cannot self-update, so it is treated as manual.
 
-```mermaid
-flowchart LR
-  V["pnpm version minor<br/>git push --follow-tags"] --> CI["CI: lint, type-check, test"]
-  CI --> D["draft release"] --> U["upload dmg, zip, latest-mac.yml"]
-  U --> Y{"latest-mac.yml present?"}
-  Y -->|yes| Pub["publish"] --> App["apps check 30 s after launch, every 6 h"]
-  Y -->|no| Stay["stays draft"]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/fd-packaging.dark.svg">
+  <img src="assets/diagrams/fd-packaging.light.svg" alt="The release pipeline from a version tag to installed apps">
+</picture>
 
 **On this page:** [Cutting a release](#cutting-a-release) ·
 [What is in the bundle](#what-is-in-the-bundle-and-one-thing-that-is-not) ·
@@ -240,7 +236,7 @@ without a second one (`autoInstallOnAppQuit: false`). The second flag matters
 more than it looks: left at its default, an update the user declined would swap
 itself in at the next quit — including a quit caused by a crash.
 
-**A server is the exception** (HIVE-147): nobody sits at it to say yes. In server
+**A server is the exception**: nobody sits at it to say yes. In server
 mode a found release downloads on its own and installs once no session or agent
 run is live, and launchd rather than Squirrel starts the new version
 (`autoRunAppAfterInstall: false`; `MacUpdater.quitAndInstall` ignores its

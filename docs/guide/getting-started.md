@@ -7,14 +7,6 @@ From download to a live Claude Code session in about two minutes.
 [Start your first session](#start-your-first-session) · [Run from source](#run-from-source) ·
 [Next steps](#next-steps)
 
-```mermaid
-flowchart LR
-  A["Install the .dmg"] --> B["Map a project<br/>(a repo folder)"]
-  B --> C["New session"]
-  C --> D["Talk to Claude<br/>in the terminal"]
-  D --> E["/done when finished"]
-```
-
 ## Install
 
 1. Download the `.dmg` from

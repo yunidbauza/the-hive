@@ -2,10 +2,7 @@
 
 **Scope:** two things that belong together — the **ledger**, one append-only log
 every party in The Hive reads from and writes to, and the **agent definition**,
-the file that makes a party an agent in the first place. **Owned by stories
-HIVE-111 (the log), HIVE-112 (the MCP tools), HIVE-113 (delivery and the
-console verbs), HIVE-114 (definitions) and HIVE-116 (the Agents tab and the
-agent view).**
+the file that makes a party an agent in the first place.
 
 Load this when working on `electron/main/ledger/`, `electron/main/agents/`,
 `electron/mcp-host/`, `electron/shared/{ledger,agent}-*`, the hook receiver's
@@ -22,18 +19,10 @@ Agents, or the agents rail and `src/features/agents/`.
 > - An agent is `~/.hive/agents/<name>/AGENT.md`; each wake is one resumed `claude -p`.
 > - `tools:` is a fence: anything else becomes a permission ask in the inbox.
 
-```mermaid
-sequenceDiagram
-  participant A as Agent run
-  participant L as Ledger
-  participant I as Inbox
-  participant U as You
-  A->>L: ask a12 (to overmind)
-  L->>I: card
-  U->>I: Approve
-  I->>L: answer a12
-  L->>A: wake with the answer
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/fd-agents.dark.svg">
+  <img src="assets/diagrams/fd-agents.light.svg" alt="An ask to the overmind becomes an inbox card, and the answer wakes the agent">
+</picture>
 
 **On this page:** [What the ledger is](#what-the-ledger-is) ·
 [On disk](#on-disk) · [The two ids](#the-two-ids) ·
@@ -41,14 +30,14 @@ sequenceDiagram
 [The console verbs](#the-console-verbs) ·
 [Derived state](#derived-state) · [The routes](#the-routes) ·
 [Who reaches it](#who-reaches-it-and-how) ·
-[The MCP host](#the-mcp-host-hive-112) ·
+[The MCP host](#the-mcp-host) ·
 [Agent definitions](#agent-definitions) ·
-[The agent on screen](#the-agent-on-screen-hive-116)
+[The agent on screen](#the-agent-on-screen)
 
 ## What the ledger is
 
 The overmind (the renderer, voiced through the coordinator identity
-`OVERMIND`), every terminal session, and — from HIVE-112 on — every background
+`OVERMIND`), every terminal session, and every background
 agent are all *parties*. A party posts, asks, answers, claims and releases by
 appending one line to a single log. Nothing is ever edited: an `answer` closes
 an `ask` by naming it, it does not rewrite it, and a `claim` is undone by a
@@ -206,12 +195,12 @@ silent.
 ## Delivery
 
 The ledger records; it does not tell anyone. `electron/main/ledger/deliver.ts`
-is the first rule on top of it (HIVE-113): an `ask` or an `answer` addressed to
+is the first rule on top of it: an `ask` or an `answer` addressed to
 a **live session** is announced in that session's terminal as one line, through
 the same `sessions.write` primitive `send` uses. The trailing `\r` submits it,
 which is the intent — the nudge becomes a turn the agent takes.
 
-**The line is a marker, not the entry** (HIVE-138). `ledgerMarker` in
+**The line is a marker, not the entry.** `ledgerMarker` in
 `electron/shared/ledger-contract.ts` names one entry and nothing else: `📒 a12`
 for an ask, by its ref, the handle the woken session answers with; `📒 <id>`
 for an answer, which has no ref. The entry itself reaches the model as
@@ -223,7 +212,7 @@ what `electron/main/ledger/context.ts` renders: that the line was the app's
 doing and not the user's words, who posted, the ref, the body verbatim, every
 meta key as one JSON line, the asker's own `intent` on an answer, and what is
 owed back. Claude Code puts that text in the model's context beside the prompt
-(HIVE-136 measured it; `hook-contract.ts` records the matrix). A marker that
+(measured; `hook-contract.ts` records the matrix). A marker that
 resolves to nothing, or to an entry addressed elsewhere, or to a kind no nudge
 carries, is answered `204` like any other prompt. A marker prompt also takes no
 ticket intent and no session name, and does not spend the first-prompt mark.
@@ -232,7 +221,7 @@ caller is a party to it; an answer addressed to a third party carries the
 answer and names the thread by id. An ask that has closed since the marker was
 written says so instead of asking to be answered.
 
-The same holds in a container, where the hooks are `command` hooks (HIVE-137):
+The same holds in a container, where the hooks are `command` hooks:
 `statusCommand` prints curl's response body, because a command hook's stdout
 is its hook output exactly as an http handler's body is. Every event's answer
 is an empty `204`, so it prints nothing, and a marker's context prints whole.
@@ -246,7 +235,7 @@ matters, so the number bounds what a stalled main process can add to a prompt
 rather than hiding a dead one (it cannot; a refused connection is drawn at
 once).
 
-Delivery is party-agnostic and stays that way, but since HIVE-126 the entries
+Delivery is party-agnostic and stays that way, but the entries
 reaching it are **written by agents**, not by a human at the console. `ask` is
 an agent-only verb now: a session has a terminal you can open and read, so a
 person with a question for one types `send`. What an agent cannot be sent — it
@@ -263,7 +252,7 @@ the whole of "never write mid-turn". And a turn that ended while a backgrounded
 shell is still running *does* derive `idle`, with `detail: 'script'`, so the
 status alone would say yes to a session that is still working.
 
-And **only into an empty input box** (HIVE-135). Idleness is about the agent;
+And **only into an empty input box**. Idleness is about the agent;
 a user who typed half a sentence and stopped has an idle agent and a full
 box, and the trailing `\r` would submit their draft and the nudge as one
 prompt nobody wrote. Main cannot see the box — it holds raw pty bytes, not a
@@ -302,15 +291,15 @@ a filter**: deliver subscribes to `ledger.onChange` and also appends to the same
 log, so without the gate each receipt would re-enter it and it would feed
 itself.
 
-An entry addressed to the overmind is an inbox card (HIVE-118), not a terminal
+An entry addressed to the overmind is an inbox card, not a terminal
 line; one addressed to an agent is a wake (see below); a broadcast wakes nobody,
 because parties read those on their own schedule.
 
 **What `meta` carries, and who is told.** `meta` is free-form, and a key the
 app reads exists only if the tool schema names it — a model told to "include
 the context" writes it into the body where nothing can find it. Named today:
-`slack.permalink` (HIVE-123), `ttlMs` (an ask's own shorter expiry), and on an
-ask `intent` (HIVE-135): what the asker was about to do, written for a copy of
+`slack.permalink`, `ttlMs` (an ask's own shorter expiry), and on an
+ask `intent`: what the asker was about to do, written for a copy of
 itself with no memory of the turn. `AGENT_PREAMBLE` interpolates the same
 `ASK_INTENT_GUIDANCE` constant the schema uses, and a test holds them
 together. A headless agent re-reads its ask on wake; a terminal session reads
@@ -401,7 +390,7 @@ one door every trigger passes and it is where a paused agent is refused; a
 second entrance would let a ledger entry start an agent the user had just
 stopped.
 
-**A run that closes into `paused` keeps its queue.** HIVE-117 lets a pause land
+**A run that closes into `paused` keeps its queue.** A pause can land
 mid-run — the turn finishes and `finalizeRun` holds `paused` — so an entry
 queued while the agent was `working` can face a paused agent by the time the run
 closes. `onRunClosed` therefore re-reads the status from `agents.json` rather
@@ -432,7 +421,7 @@ synchronously and so re-enters `onRunClosed` — where a flush would spawn a fre
 `claude` after `closeAll` had finished iterating, leaving an orphan with nobody
 left to signal it.
 
-### Task runs (HIVE-128)
+### Task runs
 
 Every wake above is the **standing** run: `--resume` of one conversation, one
 at a time, rotated by handoff. `limits.parallel` above 1 adds a second kind. A
@@ -466,12 +455,12 @@ and a resting status must never hide it. A task close also touches neither
 `lastRunAt` — the `onchange` watermark and the rail's "last used" — nor
 `skipsSinceRun`, because a task run reads no inbox and is not a scheduled wake:
 moving either would hide an ask that arrived before the close, or erase the skip
-signal HIVE-121 exists to show. `kill` stops every run under the name. The scheduler's flush, for an
+signal. `kill` stops every run under the name. The scheduler's flush, for an
 agent above the cap of 1, offers each queued job as its own run after the one
 standing wake, and puts back whatever the cap refuses.
 
-A **permission** ask is the one entry whose `meta` is rebuilt on the way in
-(HIVE-125), so `honestPermissionAsk`'s allowlist has to carry `run` explicitly.
+A **permission** ask is the one entry whose `meta` is rebuilt on the way in,
+so `honestPermissionAsk`'s allowlist has to carry `run` explicitly.
 It did not, and the live suite is what found it: a fenced run closed `done`
 rather than `asking`, which left the card on screen and the agent reading as
 idle — free to be woken again on top of its own unanswered question.
@@ -493,7 +482,7 @@ ledger, and may redo the job itself or hand it back out. And
 task runs are in flight waits for the next close, which flushes it. Both are
 follow-ups, not the shape the design settled on.
 
-### Time passed (HIVE-121)
+### Time passed
 
 The other half of the same module, on the same timer. `onEntry` answers
 *something happened*; `tickSchedules` answers *the clock moved*, and it runs
@@ -563,15 +552,15 @@ standing `pendingWake`.** It is deliberately not gated on `wake.on: [ledger]`.
 That gate decides whether an entry *wakes* the agent; it does not decide whether
 the entry is a change worth waking for on a schedule the author did set — the
 field's own help promises a question "waits unread until the next scheduled
-wake", and this is that wake arriving to read it. HIVE-124 needed no third
-source: a Socket Mode event queues as a `PendingWakeEntry` like anything else,
+wake", and this is that wake arriving to read it. Slack push triggers need no
+third source: a Socket Mode event queues as a `PendingWakeEntry` like anything else,
 so the `pendingWake` clause above is already what `check: onchange` consults
 for it. Slack search-on-schedule agents still set `check: always`, because
 their change lives outside the log entirely.
 
 **A refused wake arms the next time and leaves the skip count alone**, because a
 refusal is a wake deferred rather than a quiet tick. That refusal is also what
-keeps this tick from racing HIVE-119's deferred permission wake: both doors are
+keeps this tick from racing the permission fence's deferred wake: both doors are
 `RunTracker.run`, so whichever arrives first leaves the agent `working` and the
 other is turned away.
 
@@ -657,7 +646,7 @@ there is no lookup table to keep in sync.
 
 | Entry | Effect |
 | --- | --- |
-| `to === 'overmind'` and `kind === 'ask'` | raise `agent.ask`, or `agent.permission` when `meta.kind === 'permission'`; the notification's id is the entry's id, and its `subject` is the asker. A permission ask's text is main's, normalised at `append` (HIVE-125) |
+| `to === 'overmind'` and `kind === 'ask'` | raise `agent.ask`, or `agent.permission` when `meta.kind === 'permission'`; the notification's id is the entry's id, and its `subject` is the asker. A permission ask's text is main's, normalised at `append` |
 | `kind === 'answer'` with a thread | the ask's card is marked read |
 | `kind === 'done'` or `kind === 'failed'` with a thread | the ask's card is dismissed — and `openAsks` closes the ask itself, so the two agree |
 | `kind === 'done'` from an agent | raise `agent.done` |
@@ -674,7 +663,7 @@ noise, not news.
 
 `ledger_ask` takes three optional arguments that together turn a bare question
 into a draft awaiting approval: `options`, the closed set of answers offered
-as buttons; `quote` (HIVE-118), the draft itself — the exact text the agent
+as buttons; `quote`, the draft itself — the exact text the agent
 wants to send; and `inbound`, the message that draft is a reply *to*. All
 three fold into `meta` in the tool handler, guarded so a malformed argument is
 dropped rather than written through (`Array.isArray` for `options`, `typeof
@@ -713,7 +702,7 @@ in a five-thousand-line store, and column arithmetic worth asserting directly.
 
 Delivery receipts are folded out of the default tail and shown by
 `ledger --events`. The filter keys on `meta.delivered`, **not** on
-`kind === 'event'`, so the expiry events HIVE-120 adds will not be swept up by
+`kind === 'event'`, so expiry events are not swept up by
 the same rule.
 
 `ask` differs from `send` in one deliberate way: it does **not** refuse an ended
@@ -750,7 +739,7 @@ functions in `electron/shared/ledger-derive.ts`:
   the task in `meta.task`) is the most recent one with no later `release` for
   that same task. **The ledger records claims; it does not arbitrate them.**
   Nothing here or in `append` refuses a second `claim` on a held task, and
-  nothing should: the tool layer's `ledger_claim` (HIVE-112) reports the
+  nothing should: the tool layer's `ledger_claim` reports the
   current holder back to the caller rather than failing, so a losing claim is
   a fact worth having on the record. First-writer-wins, where it applies, is
   that layer's policy — `claims()` reports the state it produced and has no
@@ -779,7 +768,7 @@ ledger paths, and the hook path itself carries one ledger answer:
 
 | Route | Purpose | Success | Refusals |
 | --- | --- | --- | --- |
-| `POST /hook` | Claude Code's hooks. A `UserPromptSubmit` whose prompt is exactly one ledger marker (HIVE-138) | `200 HookContextReply` for a marker resolved among the caller's own `ask`/`answer` entries · `204` for every other prompt and event | None to a live session: a bad token, a missing header, an unknown identity and a body that is not JSON are refused and answered `204`, logged once per status and identity, because a non-2xx from a hook is drawn on the user's screen · `500` on a thrown handler, accepted as the honest signal of a bug |
+| `POST /hook` | Claude Code's hooks. A `UserPromptSubmit` whose prompt is exactly one ledger marker | `200 HookContextReply` for a marker resolved among the caller's own `ask`/`answer` entries · `204` for every other prompt and event | None to a live session: a bad token, a missing header, an unknown identity and a body that is not JSON are refused and answered `204`, logged once per status and identity, because a non-2xx from a hook is drawn on the user's screen · `500` on a thrown handler, accepted as the honest signal of a bug |
 | `POST /ledger` | Append an entry | `200 { id, ref? }` | `403` bad token, an `answer` from a non-party, or a `release` from a non-holder · `400` missing session header, unknown `kind`, unknown `thread`, or an `answer` whose thread is not an open ask · `404` unknown session or unknown party · `413` over `LEDGER_BODY_MAX` or the transport cap · `500` the write itself failed |
 | `POST /ledger/read` | Read a filtered snapshot | `200 LedgerSnapshot` | `403` bad token · `400` missing session header or malformed query · `404` unknown session · `413` over the transport cap |
 
@@ -811,8 +800,8 @@ Two callers, one `append`:
   because it's a same-process call already gated by `assertSender`, and
   `from` is supplied as `OVERMIND` by the handler rather than accepted from
   the payload (see *The party rule* above).
-- **Out-of-process callers** — a terminal session's hooks today, and from
-  HIVE-112 an MCP host acting for a background agent — over the receiver's
+- **Out-of-process callers** — a terminal session's hooks, and an
+  MCP host acting for a background agent — over the receiver's
   two HTTP routes, authenticated by the per-launch token and identified by
   the `x-hive-session` header.
 
@@ -869,7 +858,7 @@ see every claim; filtering it down to "claims I can see" would let two
 sessions each believe they're the only one holding a task that a third party
 already has.
 
-## The MCP host (HIVE-112)
+## The MCP host
 
 Every `claude` session The Hive launches is handed `--mcp-config` pointing at
 a generated file (`electron/main/mcp/config.ts`) naming one server: the built
@@ -892,7 +881,7 @@ it `url` would make every ledger call 404). None of the host's tools accepts a
 than its own — that is a property of the **MCP tool surface**, reading
 identity out of the environment the app itself controls, not a transport-level
 guarantee: the receiver's per-launch token is shared by every session it
-spawns (HIVE-111), so a model with shell access could still `curl` the
+spawns, so a model with shell access could still `curl` the
 receiver directly using another session's header value. Closing that is
 tracked separately, not attempted here. If any of the three is missing — the
 process was started outside The Hive, or by hand in a plain terminal —
@@ -909,7 +898,7 @@ calls them with the same two headers the hook path uses
 **The nine ledger tools, one ledger kind each:** `ledger_post` → `post`,
 `ledger_ask` → `ask`, `ledger_answer` → `answer`, `ledger_claim` → `claim`,
 `ledger_release` → `release`, `ledger_done` → `done`, `ledger_failed` →
-`failed`, `ledger_handoff` → `handoff` (HIVE-122), and `ledger_read`, which
+`failed`, `ledger_handoff` → `handoff`, and `ledger_read`, which
 takes no kind — it is the one tool that reads rather than appends.
 `ledger_claim` and `ledger_release` still write
 through `client.post` under the hood; they are separate tools rather than
@@ -918,14 +907,14 @@ and their response text (naming the previous holder, if any) are specific
 enough to earn their own schema.
 
 **Two more tools are served beside those nine, and are deliberately not in
-`LEDGER_TOOLS`:** `approve` (HIVE-119), which the CLI reaches by name through
-`--permission-prompt-tool` and the model is never meant to call, and `agents`
-(HIVE-127), described next. That array is the ledger vocabulary the agent
+`LEDGER_TOOLS`:** `approve`, which the CLI reaches by name through
+`--permission-prompt-tool` and the model is never meant to call, and `agents`,
+described next. That array is the ledger vocabulary the agent
 preamble teaches — one entry per ledger kind — and neither of these writes an
 entry. `tools/list` reports eleven, in that order: the nine, then `agents`,
 then `approve` last.
 
-### The agents directory: `mcp__hive__agents` (HIVE-127)
+### The agents directory: `mcp__hive__agents`
 
 Before this, an agent could not learn that another agent existed. `knowsParty`
 is a validation predicate — *may this id write?* — not something enumerable, so
@@ -1017,10 +1006,10 @@ at all, and to a generic one if a refusal came back with no `reason` field).
 Code derives the middle segment of every tool's fully-qualified name from how
 the server was delivered — the short form is what a server named in
 `--mcp-config` gets; a server delivered through `--plugin-dir` would double the
-name (`hive` as the plugin, `hive` again as the server inside it). HIVE-115's
-preamble and HIVE-119's `--permission-prompt-tool mcp__hive__approve` both
-hardcode the short form, which is the whole reason `--mcp-config` was the
-delivery mechanism this story chose over a plugin.
+name (`hive` as the plugin, `hive` again as the server inside it). The agent
+preamble and the fence's `--permission-prompt-tool mcp__hive__approve` both
+hardcode the short form, which is the whole reason `--mcp-config` was chosen
+over a plugin as the delivery mechanism.
 
 **The read cursor lives for the process, not the ledger.** `createToolHandlers`
 (`tools.ts`) closes over one `cursor` variable — the id of the newest entry the
@@ -1048,16 +1037,16 @@ frontmatter over a markdown body, sitting beside `config.json`, `skills/` and
 `ledger/` for the reason all of those do — a definition is a document the person
 is invited to open, `grep` and back up, not an app-private artifact.
 
-HIVE-114 defines the file, teaches main to read, validate and watch a folder of
-them, and gives Settings a place to author them. HIVE-115 added the **waker**:
+Main reads, validates and watches a folder of these files, and Settings is where
+they are authored. The **waker** runs them:
 one headless `claude -p` child per wake (`electron/main/agents/waker.ts` spells
 the argv, `runs.ts` tracks the process), its `stream-json` stdout folded into
 run-log lines by `run-log.ts`, the run closed on the child's `'close'` event,
 and the session uuid, cost, turn count and outcome persisted to
 `~/.hive/ledger/agents.json` by `state.ts`.
 
-HIVE-116 drew the run, and HIVE-121 made the schedule real: `wake.every`,
-`wake.at`, `wake.days` and `wake.quiet` are no longer declaration only — the
+The Agents tab draws the run, and the schedule is real: `wake.every`,
+`wake.at`, `wake.days` and `wake.quiet` are not declaration only — the
 scheduler's tick reads all four, and `wake.check` and `limits.daily_usd` joined
 the grammar to bound what that costs. The sections below record what the command
 line enforces, what the scheduler enforces, and the few things still waiting.
@@ -1103,12 +1092,12 @@ event name and is not one.
 | --- | --- |
 | `ledger` | An `ask` or `answer` whose `to` is this agent wakes it, whoever wrote it: the overmind through the console's `ask` verb, a terminal session through `ledger_ask`, or another agent through the same tools. A broadcast (no `to`) wakes nobody — parties read those on their own schedule. |
 | `slack.mention` | *Search my mentions on the wakes this agent already takes.* Slack's real `app_mention` fires for mentions of a Slack **app**, never of a person, so there is no push to subscribe to. It adds no wakes of its own. |
-| `slack.app_mention` | A genuine push trigger (HIVE-124): Slack's own `app_mention`, for mentions of the Hive's app. Requires Socket Mode on and both tokens stored. An `@hive <agent> <task>` from an allow-listed author is a task run instead; see below. |
+| `slack.app_mention` | A genuine push trigger: Slack's own `app_mention`, for mentions of the Hive's app. Requires Socket Mode on and both tokens stored. An `@hive <agent> <task>` from an allow-listed author is a task run instead; see below. |
 | `slack.channel:#name` | A genuine push trigger, requiring Socket Mode and the app being a member of that channel. Inert without it. |
 
 `ledger` is the one worth understanding before turning it off, because its
 *absence* is easy to misread. Off does not mean "nobody can reach this agent" —
-a manual wake still does, over `CH.agentsRun` (HIVE-115 built the channel; no
+a manual wake still does, over `CH.agentsRun` (no
 verb or button calls it yet). It means a question addressed to it sits unread
 until the next scheduled wake, and if there is no schedule, until
 `LEDGER_ASK_TTL_MS` retires it. The asker gets silence and then an expiry. The
@@ -1223,7 +1212,7 @@ direction that matters. Three turns is the arithmetic minimum (search, call,
 answer); the cap is five, so a Test click can cost up to five model turns.
 
 The probe is also the one model run in this repo that grants tools **outside**
-HIVE-119's permission fence, deliberately: `--setting-sources ''` is what makes
+the permission fence, deliberately: `--setting-sources ''` is what makes
 it an instrument rather than something that reads differently on every machine,
 and a fence would mean loading the settings it is defined by not loading. What
 bounds it instead is `--strict-mcp-config` over a Slack-only server set (no hive
@@ -1292,8 +1281,7 @@ port conflict with nothing on screen explaining it. The four verbs are also
 deduped in main, keyed by channel: the pane's own in-flight guards are
 component-local and a closed-and-reopened Settings re-enables them.
 
-**HIVE-115 measured what `--allowedTools` actually does, and it is a grant, not
-a fence.** Asked for Bash under `--allowedTools "Read"` at 2.1.251, the model
+**Measured: `--allowedTools` is a grant, not a fence.** Asked for Bash under `--allowedTools "Read"` at 2.1.251, the model
 used Bash — with `--setting-sources ""`, and under `--permission-mode dontAsk`
 too. There is no default-deny in `-p`, so a tool left out of `tools` is not
 refused; it merely does not get the free pass. That sets the trap the live
@@ -1317,15 +1305,15 @@ several versions of one plugin sit there at once and only that file says which
 is installed. What the field buys is a name that does not exist caught in the
 editor; what it cannot do is stop a skill the machine has.
 
-HIVE-148 made a Hive skill its whole *folder* rather than a single SKILL.md, and
-deliberately did not reach here. This module resolves **names**, and a name is
+A Hive skill is its whole *folder* rather than a single SKILL.md, and that
+change deliberately did not reach here. This module resolves **names**, and a name is
 what an agent definition declares — the contents of the folder behind it are the
 plugin mirror's business, and `~/.claude/skills` and installed plugins are
 directories The Hive reads and never manages.
 
 Making it a real sandbox would mean `--restricted`, which ignores the user's
 settings sources entirely — and would therefore cut off exactly the external
-skills the widening exists to allow. HIVE-115 declined that trade: the wake
+skills the widening exists to allow. That trade was declined: the wake
 command carries `--setting-sources ""` instead, which stops the user's own
 `settings.json` (and the `permissions.defaultMode: "auto"` a developer machine
 routinely carries) from leaking into an unattended turn, while `--settings`
@@ -1344,7 +1332,7 @@ Two details worth knowing before changing `available.ts`:
   unrelated repository can sit first, and the user-scoped root is the one an
   agent's process would load.
 
-**Half-answered by HIVE-115:** the app's own generated plugin
+**Half-answered:** the app's own generated plugin
 (`<userData>/hive/plugin`, carrying the `done` skill as `hive:done`) is *not*
 among the three roots, so a definition naming it is still refused. The waker
 settled the first half of that question — every wake carries `--plugin-dir
@@ -1354,7 +1342,7 @@ a headless agent that has no pty to close. Widening `available.ts` before that
 has an answer would let a definition name a skill whose effect on an agent is
 undefined.
 
-### The fence, measured (HIVE-119)
+### The fence, measured
 
 A fence needs **two halves**, and neither works alone. `permissions.ask:
 ["*"]`, written into the agent-only settings file (`agentSettings`,
@@ -1463,7 +1451,7 @@ a command falls through to being asked.
 
 Only the specifier text a grant is computed from is kept in the ledger. The
 bulk fields of a call — `content`, `new_string`, `old_string` — are replaced
-with a size marker before the ask is **stored** (at `append`, since HIVE-125;
+with a size marker before the ask is **stored** (at `append`;
 posting is not the door a direct `ledger_ask` uses), because the log is
 append-only JSONL that never rotates and `store.all()` holds all of it in
 memory; the `updatedInput` an *allowed* call runs with is never trimmed.
@@ -1485,9 +1473,9 @@ status line does not run — there is no footer to write to and no human
 sitting at one. The fence's only externally visible effect is the `ask` entry
 `mcp__hive__approve` posts to the ledger.
 
-### The card says what the grant does (HIVE-125)
+### The card says what the grant does
 
-HIVE-119 bounded the grant and not the card. `meta` is a free-form rider that
+The fence alone bounds the grant, not the card. `meta` is a free-form rider that
 `ledger_ask` passes through unfiltered, so an agent could post its own ask
 reading `Allow Read? /repo/a.ts` while carrying `meta.tool: "Bash"` and
 `meta.input: { command: "rm -rf /" }`. Everything the user saw was the
@@ -1691,7 +1679,7 @@ tracker's gate, not passed to `claude`. See *Task runs* above.
 `claude -p --resume <uuid>`, so each one sees the last one's transcript. That is
 the feature — it is how an agent remembers it already answered a thread — and
 the cost is a transcript that only grows. Rotation is what bounds it, and
-**HIVE-122 made it a handover rather than an amnesia**: an agent that forgets
+**It is a handover rather than an amnesia**: an agent that forgets
 without leaving a note forgets the open threads it was the only one watching,
 and the first anyone learns of that is a reply that never comes. So the agent
 is a participant in its own rotation, across two wakes.
@@ -1754,10 +1742,10 @@ minute ago could, and the result would be a last-turn prompt on a brand-new
 happened. With the term, a forced rotation on a never-run agent degrades to the
 ordinary first wake, which is already the fresh session the user was asking for.
 
-### Containerised agents (HIVE-137)
+### Containerised agents
 
 An agent whose `AGENT.md` carries a `container:` block wakes **inside** that
-container, the way a HIVE-133 session does — and the block is the project
+container, the way a containerised session does — and the block is the project
 block's fields plus the two a no-shell wake needs:
 
 ```yaml
@@ -1805,9 +1793,9 @@ resolves to 192.168.65.254` — with no escape hatch a search of the binary
 found. So `hookSettings(…, 'command')` spells every status hook as
 `statusCommand`, the same headers and payload off stdin; the host set keeps
 http. This also fixed containerised **sessions**, whose status events had
-been silently refused since HIVE-133.
+been silently refused before it.
 
-**What a container agent does not get, this story.** `freshness: rewrite`
+**What a container agent does not get yet.** `freshness: rewrite`
 (a per-run set needs the run id only the synchronous tracker knows) and an
 integration in `mcp:` (its server is a binary on this machine). Both are
 refused by the wake with a sentence naming the alternative. A stopped
@@ -1885,11 +1873,11 @@ a name out of the file, so there was nothing for the pane to address. An agent's
 *folder* names it, so there is always a file to open — and the user has to be
 able to open it to fix the key they were just told about.
 
-## The agent on screen (HIVE-116)
+## The agent on screen
 
 ### Two fields the bridge had to grow
 
-HIVE-115 shipped `AgentSummary` carrying the **latest** run's `cost` and nothing
+`AgentSummary` first shipped carrying the **latest** run's `cost` and nothing
 else, on the reasoning that a row draws one number. An agent view draws more
 than a row: its `Today` tile is a count and a sum over the day's runs, and its
 `Session` tile is `runsSinceRotate` over the definition's ceiling. Neither is
@@ -1899,7 +1887,7 @@ on `agents:list`, and on the status push.
 The array rather than a precomputed `todayRuns` / `todayCost` pair, because
 "today" is the user's calendar day and a stored pair would be wrong by morning.
 
-**HIVE-121 revised half of that.** The reasoning held for the day boundary and
+**The scheduler revised half of that.** The reasoning held for the day boundary and
 failed on the arithmetic: `runs` is capped at `AGENT_RUN_HISTORY` — twenty — and
 a five-minute agent takes 288 wakes between midnights, so the sum stopped
 growing part-way through any day the agent actually worked. Main now accumulates
@@ -1922,7 +1910,7 @@ re-parses every `AGENT.md` on disk to learn one number main already holds.
 Twenty summaries on a push that fires a few times an hour is the cheaper
 honesty.
 
-**`sessionUuid` used to stay behind, and HIVE-122 is why it no longer does.**
+**`sessionUuid` used to stay behind, and rotation is why it no longer does.**
 The old argument was that the field moves on a first run and on a rotation, and
 `agents:list` is soon enough for both. Rotation broke the second half of that.
 `finalizeRun` writes the uuid off the `result` event, so it changes at the close
@@ -1936,7 +1924,7 @@ because the scheduler pushes on a skip with no run and no uuid attached.
 
 ### An agent is not a terminal
 
-Until this story, opening an agent mounted a `SessionMetaBar`, a read-only xterm
+Opening an agent once mounted a `SessionMetaBar`, a read-only xterm
 replaying `entity.lines`, and a `MessageInput` — terminal chrome around
 something that owns no process, and a place to type that reached nothing. All
 three are gone. `resolveView` still returns `'agent'`; what changed is that the
@@ -1946,7 +1934,7 @@ That predicate had to **split** rather than narrow, and the split is the part
 worth remembering:
 
 - `isEntityView` — *is the user already looking at this thing?* Still true for
-  both kinds. The foreground gate (HIVE-81) suppresses notifications on it, and
+  both kinds. The foreground gate suppresses notifications on it, and
   an agent view answers exactly as a session's terminal does.
 - `isTerminalView` — *does a terminal and its meta bar belong here?* Session
   only.
@@ -1979,13 +1967,13 @@ line is derived rather than chosen:
   at every size.
 - **280px** is the activity rail's own text measure — 316px less 14px of padding
   either side. A ledger entry and an Inbox card show the same thing, and
-  HIVE-118 turns one into the other.
+  one turns into the other.
 - **380px** because a tool line is `<name> <arg>` with `ARG_LIMIT = 60` in
   `run-log.ts`, so the longest line main can emit is ~95 characters. Past ~110
   neither panel gains from more width.
 - **800px** because below it the log falls under 70 characters, narrower than
-  the prose the model writes into it. There it drops to the stacked layout the
-  ticket started from, so nothing is lost.
+  the prose the model writes into it. There it drops to the stacked layout it
+  started from, so nothing is lost.
 
 `minmax(0, 1fr)` and never a bare `1fr`: `1fr` carries an `auto` minimum, so one
 unbreakable 95-character tool line would push the grid past the stage and give
@@ -2037,7 +2025,7 @@ agent. It is neither of the other two on that screen: not `useOpenAskCount`,
 which counts a session's asks as well, and not the Inbox's `useUnreadCount`,
 which counts notifications. The three stay three different numbers — an agent
 ask, a session ask and a raw notification count are never the same count — but
-they converge on one *event* now that HIVE-118 turns an ask into an inbox
+they converge on one *event* because an ask becomes an inbox
 card: the moment an agent's ask lands, it is simultaneously counted by
 `useAgentAskCount` and, as a card, by `useUnreadCount` — one write, read by
 both badges, rather than a badge with nothing behind it until the user opens

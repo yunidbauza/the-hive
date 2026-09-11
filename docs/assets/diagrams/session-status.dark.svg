@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 875.3800000000001 290" width="875.3800000000001" height="290" style="--bg:#10152a;--fg:#e9effc;--line:#6b779f;--accent:#8fa7f2;--muted:#98a3cc;--surface:#141a33;--border:#273159;background:var(--bg)">
+<style>
+
+  text { font-family: 'system-ui', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 30%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="4.8" refX="8" refY="2.4" orient="auto">
+    <polygon points="0 0, 8 2.4, 0 4.8" fill="var(--_arrow)" />
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="4.8" refX="0" refY="2.4" orient="auto-start-reverse">
+    <polygon points="8 0, 0 2.4, 8 4.8" fill="var(--_arrow)" />
+  </marker>
+</defs>
+<polyline points="282.7,58 469.82500000000005,58 469.82500000000005,112.75" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="510.85,130.75 617.79,130.75 617.79,93.75 780.0550000000001,93.75 780.0550000000001,94.25" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="724.73,112.25 617.79,112.25 617.79,142.25 469.82500000000005,142.25 469.82500000000005,148.75" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="428.80000000000007,130.75 361.9,130.75 361.9,203.5 70.3,203.5 70.3,197.25" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="100.6,179.25 167.5,179.25 167.5,106.5 469.82500000000005,106.5 469.82500000000005,112.75" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="100.6,179.25 167.5,179.25 167.5,155 234.39999999999998,155" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="510.85,130.75 617.79,130.75 617.79,203.5 780.0550000000001,203.5 780.0550000000001,214" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="100.6,179.25 167.5,179.25 167.5,232 728.3050000000001,232" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="295,155 469.82500000000005,155 469.82500000000005,148.75" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<rect x="311" y="44.5" width="101.8" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="361.9" y="58" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">spawn or Resume</text>
+<rect x="526.8499999999999" y="80.25" width="181.88" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="617.79" y="93.75" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">permission prompt or question</text>
+<rect x="581.1899999999999" y="128.75" width="73.2" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="617.79" y="142.25" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">you answer</text>
+<rect x="230.95999999999998" y="190" width="67.48" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="264.7" y="203.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">turn ends</text>
+<rect x="233.82" y="93" width="61.760000000000005" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="264.7" y="106.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">you type</text>
+<rect x="116.6" y="141.5" width="101.8" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="167.5" y="155" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">/done or /clear</text>
+<rect x="572.61" y="190" width="90.36" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="617.79" y="203.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">process exits</text>
+<rect x="316.71999999999997" y="218.5" width="90.36" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="361.9" y="232" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">process exits</text>
+<rect x="336.73999999999995" y="141.5" width="50.32" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="361.9" y="155" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">Resume</text>
+<rect x="724.73" y="94.25" width="110.65" height="36" rx="6" ry="6" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<circle cx="264.7" cy="58" r="16" fill="var(--_text)" stroke="none" />
+<rect x="428.80000000000007" y="112.75" width="82.05000000000001" height="36" rx="6" ry="6" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="40" y="161.25" width="60.6" height="36" rx="6" ry="6" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="234.39999999999998" y="137" width="60.6" height="36" rx="6" ry="6" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="728.3050000000001" y="214" width="103.5" height="36" rx="6" ry="6" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<text x="780.0550000000001" y="112.25" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">needs input</text>
+
+<text x="469.82500000000005" y="130.75" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">working</text>
+<text x="70.3" y="179.25" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">idle</text>
+<text x="264.7" y="155" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">done</text>
+<text x="780.0550000000001" y="232" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">terminated</text>
+</svg>

@@ -25,16 +25,6 @@ card menu has **Export…** and, for imported themes, **Remove**.
 2. Change the colours you want.
 3. **Import theme…** and pick the file.
 
-```mermaid
-flowchart LR
-  T["Download template"] --> E["Edit colours"]
-  E --> I["Import theme…"]
-  I --> V{"Valid?"}
-  V -- yes --> G["New card in the gallery"]
-  V -- no --> X["Couldn't import: the reason and the exact key"]
-  G --> C["Chrome (CSS) · Terminal (xterm) · Editor (CodeMirror)"]
-```
-
 ## The theme file
 
 ```json

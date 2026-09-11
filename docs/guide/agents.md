@@ -15,26 +15,10 @@ One file, `~/.hive/agents/<name>/AGENT.md`: frontmatter that says when and how i
 body that is its standing job. Each wake is one headless `claude -p` run that resumes the
 last one, so it remembers.
 
-```mermaid
-sequenceDiagram
-  participant T as Trigger (schedule, message, Run now, Slack)
-  participant H as The Hive
-  participant A as claude -p (the agent)
-  participant L as Ledger
-  participant U as You (inbox)
-  T->>H: time to wake
-  H->>A: resume the agent's session
-  A->>L: ledger_read (what is new for me?)
-  A->>A: do the job in the body
-  alt needs you
-    A->>L: ledger_ask
-    L->>U: inbox card
-    U->>L: answer
-    L->>H: answer wakes the agent
-  else finished
-    A->>L: ledger_done (card for you)
-  end
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/agent-wake.dark.svg">
+  <img src="../assets/diagrams/agent-wake.light.svg" alt="An agent wakes, reads its ledger inbox, does its job, then either asks you and waits for the answer or reports done">
+</picture>
 
 ## Create an agent
 

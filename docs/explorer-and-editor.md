@@ -13,17 +13,6 @@ what follows is about the two seams that made necessary.
 > - The editor seam is fenced like the terminal's, but its colour is CSS (`--cc-code-*`).
 > - Clean buffers reload silently; saves use optimistic concurrency on mtime.
 
-```mermaid
-flowchart TD
-  Req["fs:write-file {projectId, relPath, baseMtimeMs}"] --> G{"relative, no .., no NUL?"}
-  G -->|no| Rej["rejected"]
-  G -->|yes| C{"inside the project root?<br/>(realpath + lstat)"}
-  C -->|no| Out["EOUTSIDE"]
-  C -->|yes| M{"mtime still baseMtimeMs?"}
-  M -->|no| Conf["conflict, nothing written"]
-  M -->|yes| W["write, return new mtime"]
-```
-
 **On this page:** [The filesystem seam](#the-filesystem-seam) ·
 [The watcher](#the-watcher) ·
 [What is hidden](#what-is-hidden-and-why-not-gitignore) ·
@@ -200,7 +189,7 @@ already names its project, and a second selector would be one more thing to keep
 in sync with the first. The orchestrator tab — which names no session — falls
 back to the last project the tree was rooted at, then to the first mapped one.
 
-### It also follows the session *into a worktree* (HIVE-78)
+### It also follows the session *into a worktree*
 
 A session whose agent has moved into `<project>/.claude/worktrees/<name>` is
 editing files a project-rooted tree does not show, while the tree shows files

@@ -24,22 +24,10 @@ outcome gets a dialog.
 
 ## Update from the command line
 
-Useful over SSH on a Mac mini:
+Useful over SSH on a server Mac:
 
 ```sh
 the-hive --update
-```
-
-```mermaid
-flowchart TD
-  U["the-hive --update"] --> L{"Server running here?"}
-  L -- yes --> E5["exit 5: stop the server first"]
-  L -- no --> F{"Newer release?"}
-  F -- no --> E2["exit 2: already current"]
-  F -- yes --> M{"Can install itself?"}
-  M -- no --> E4["exit 4: prints the release URL"]
-  M -- yes --> D["Downloading… NN%"] --> E0["exit 0: installing, relaunch"]
-  D -- error --> E1["exit 1: could not update"]
 ```
 
 | Exit | Meaning |
@@ -51,7 +39,7 @@ flowchart TD
 | 4 | a newer version needs a manual install |
 | 5 | refused while the local server is running |
 
-On a served mini, stop the LaunchAgent, update, then start it again:
+On a server, stop the LaunchAgent, update, then start it again:
 
 ```sh
 launchctl bootout gui/$(id -u)/com.behiques.the-hive.server

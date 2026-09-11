@@ -10,18 +10,6 @@ One header, two rails, and a centre stage that shows exactly one thing at a time
 
 ![A live session on the centre stage, projects on the left, the inbox on the right](../assets/guide/03-session.png)
 
-```mermaid
-flowchart TB
-  H["Header: status counts · theme · Settings · inbox bell · New session"]
-  subgraph Body[" "]
-    direction LR
-    L["Left rail<br/>Projects · Work · Agents"]
-    C["Centre stage<br/>overmind, a session, an agent,<br/>the editor, the picker or Settings"]
-    R["Right rail<br/>Inbox · PRs · Explorer"]
-  end
-  H --- Body
-```
-
 Both rails can be dragged wider or narrower, and collapsed to an icon strip: click the tab
 that is already selected, or use the shortcut. The terminal never gets squeezed out.
 
@@ -48,17 +36,6 @@ that is already selected, or use the shortcut. The terminal never gets squeezed 
 ## The centre stage
 
 It shows one view, chosen in this order:
-
-```mermaid
-flowchart LR
-  S{"Settings open?"} -- yes --> VS[Settings]
-  S -- no --> P{"Picker open?"} -- yes --> VP[New-session picker]
-  P -- no --> E{"File open full-stage?"} -- yes --> VE[Editor]
-  E -- no --> T{"A tab selected?"}
-  T -- session --> VSe[That session's terminal]
-  T -- agent --> VA[That agent's view]
-  T -- none --> VO[The overmind console]
-```
 
 Hiding a terminal never closes it. Open Settings over a busy session and its scrollback is
 still there when you come back.
@@ -90,7 +67,7 @@ shell beside it in the same folder.
 | Interrupt | `Ctrl+C` | `Ctrl+C` with nothing selected |
 | Save a file in the editor | `⌘S` | |
 
-**Example.** You are in `HIVE-73` and want to run the tests beside it without disturbing
+**Example.** You are in `ABC-123` and want to run the tests beside it without disturbing
 Claude:
 
 1. Press ``Ctrl+` ``. A terminal opens in the same folder, next to the session.

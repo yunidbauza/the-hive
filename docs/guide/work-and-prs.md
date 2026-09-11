@@ -10,8 +10,6 @@ GitHub pull requests. Both refresh every 60 seconds; overscroll either list to r
 
 Until Jira is connected the Work tab says so and points you here.
 
-![The Work tab before Jira is connected](../assets/guide/06-work-tab.png)
-
 1. Open **Settings › Integrations** and scroll to **JIRA**.
 2. **Site**: the bare hostname, like `your-team.atlassian.net`. A pasted `https://` is trimmed.
 3. **Account email**: the address you sign in to Jira with.
@@ -31,6 +29,8 @@ the macOS Keychain and never leaves the main process.
 
 ## The Work tab
 
+<img src="../assets/guide/06-work-tab.png" alt="The Work tab: Jira tickets, each with its status, a new session link and its conversation" width="340">
+
 By default it shows:
 
 ```text
@@ -49,18 +49,16 @@ any status; tick **Mine only** to narrow it.
 Click **new session** on a ticket. The picker opens with the ticket key filled in, because a
 ticket does not say which repository it belongs to. Pick the project and press Enter.
 
-```mermaid
-flowchart LR
-  T["Ticket HIVE-73<br/>in the Work tab"] -->|new session| P["Picker<br/>ticket key prefilled"]
-  P -->|choose project| S["Session named HIVE-73-…"]
-  S -->|"gh sees a PR on its branch"| R["PR row links back<br/>to the session"]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/ticket-to-pr.dark.svg">
+  <img src="../assets/diagrams/ticket-to-pr.light.svg" alt="A Jira ticket starts a session named for it; its branch becomes a pull request that links back to the session">
+</picture>
 
-The session is named for the ticket, and names stay unique: `HIVE-73`, then `HIVE-73-2`.
+The session is named for the ticket, and names stay unique: `ABC-123`, then `ABC-123-2`.
 
 ## The PRs tab
 
-![The PRs tab listing merged pull requests for the-hive](../assets/guide/07-prs-tab.png)
+<img src="../assets/guide/07-prs-tab.png" alt="The PRs tab: an open pull request and two recent merges" width="340">
 
 The list comes from the GitHub CLI, run as you, with two searches:
 

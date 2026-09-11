@@ -10,20 +10,20 @@ hand-editable. Settings writes it for you; if you edit it by hand, press **Reloa
 
 ## Where it lives
 
-```mermaid
-flowchart TB
-  subgraph H["~/.hive/"]
-    C["config.json<br/>projects, runtime, integrations"]
-    S["skills/NAME/SKILL.md"]
-    A["agents/NAME/AGENT.md"]
-    W["work/NAME/<br/>agent working folders"]
-    L["ledger/YYYY-MM-DD.jsonl"]
-  end
-  subgraph U["App data (Application Support)"]
-    K["encrypted tokens<br/>Jira, Slack, remote"]
-    Hs["sessions.json<br/>session history"]
-    G["hive/<br/>generated settings and plugin"]
-  end
+```text
+~/.hive/
+├── config.json               projects, runtime, integrations (this page)
+├── skills/<name>/SKILL.md    custom skills
+├── agents/<name>/AGENT.md    agent definitions
+├── work/<agent>/             each agent's working folder
+└── ledger/YYYY-MM-DD.jsonl   the ledger, one file per day
+
+~/Library/Application Support/The Hive/     the app's own data folder
+├── sessions.json             session history
+├── jira-credential.bin       encrypted with the Keychain
+├── slack-tokens.bin          encrypted with the Keychain
+├── remote-credential.bin     encrypted with the Keychain (attached clients)
+└── hive/                     generated per-session settings and the skills plugin
 ```
 
 Set `HIVE_CONFIG_PATH` to use another file. Skills, agents and the ledger move with it.
@@ -70,7 +70,7 @@ Any key not in this list makes the whole file invalid, and Settings says which.
 | `jira` | `site`, `email`, `jql` | [Jira and pull requests](work-and-prs.md#connect-jira) |
 | `slack` | `socketMode`, `commanders` | [Slack](slack.md) |
 | `receiver` | `hostAlias`, `bind` for containers | [Containers](containers.md) |
-| `server` | serve this machine | [Remote](remote.md#serve-from-a-mac-mini) |
+| `server` | serve this machine | [Remote](remote.md#serve-from-an-always-on-mac) |
 | `remote` | attach to a server | [Remote](remote.md#attach-from-a-laptop) |
 | `subscriptionAuth` | sessions drop `ANTHROPIC_API_KEY` so `claude` uses your Claude plan; default on | [Tour › header](tour.md#the-header) |
 | `sessionMetrics` | read context and usage from each session's status line; default on | [Tour › header](tour.md#the-header) |

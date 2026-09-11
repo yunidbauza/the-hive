@@ -38,17 +38,13 @@ opens as plain text.
 
 Agents and git change files under you. The editor keeps up:
 
-```mermaid
-flowchart LR
-  D["File changes on disk<br/>(Claude, git, you elsewhere)"] --> W["Watcher<br/>300 ms debounce"]
-  W --> T["Tree refreshes"]
-  W --> B{"Your buffer"}
-  B -- "no unsaved edits" --> R["Reloads silently"]
-  B -- "unsaved edits" --> N["Banner: Reload or Keep mine"]
-  S["You press ⌘S"] --> C{"Changed since you opened it?"}
-  C -- "no" --> OK["Saved"]
-  C -- "yes" --> O["Nothing written; Overwrite to replace it"]
-```
+| Your buffer | What changed | What happens |
+| --- | --- | --- |
+| no unsaved edits | the file changed on disk | it reloads silently |
+| unsaved edits | the file changed on disk | a banner offers **Reload** or **Keep mine** |
+| any | you press `⌘S` after the file changed | nothing is written; **Overwrite** replaces the file |
+
+The tree refreshes too, a moment after the change.
 
 ## Editor layouts
 

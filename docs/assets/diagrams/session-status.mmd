@@ -1,0 +1,12 @@
+stateDiagram-v2
+  direction LR
+  state "needs input" as needs_input
+  [*] --> working: spawn or Resume
+  working --> needs_input: permission prompt or question
+  needs_input --> working: you answer
+  working --> idle: turn ends
+  idle --> working: you type
+  idle --> done: /done or /clear
+  working --> terminated: process exits
+  idle --> terminated: process exits
+  done --> working: Resume

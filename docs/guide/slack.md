@@ -14,20 +14,10 @@ Agents can read and post in Slack, and Slack can wake or command them.
 | **Slack MCP sign-in** | agents can search, read and post as you | one sign-in in Settings |
 | **Socket Mode** | Slack events wake agents the moment they happen | your own Slack app and two tokens |
 
-```mermaid
-flowchart LR
-  subgraph Slack
-    M["@hive mention"]
-    C["message in #eng"]
-  end
-  M -- "Socket Mode" --> H["The Hive"]
-  C -- "Socket Mode" --> H
-  H -- "wake" --> A["Agent<br/>wake.on: slack.app_mention"]
-  A -- "Slack MCP: read, draft" --> Slack
-  A -- "ledger_ask with the draft" --> I["Your inbox"]
-  I -- "Approve" --> A
-  A -- "post the reply" --> Slack
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/slack.dark.svg">
+  <img src="../assets/diagrams/slack.light.svg" alt="Slack mentions and channel messages wake an agent over Socket Mode; it drafts a reply and asks you before posting">
+</picture>
 
 ## Sign in for agents
 
