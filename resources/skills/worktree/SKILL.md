@@ -52,7 +52,10 @@ branch over.
 ## As an agent (builder, fixer)
 
 Agents have no `EnterWorktree` and must never write inside the project's
-tree. The worktree lives in your own working directory:
+tree. Git allows one worktree per branch, so look first: `git -C "$REPO"
+worktree list --porcelain`. A branch already checked out somewhere (the
+builder's worktree, before `merge-pr` removes it) is worked on **there**,
+never duplicated. Otherwise the worktree lives in your own working directory:
 
 ```bash
 WT="$HOME/.hive/work/<agent>/<repo-name>-<slug>"
