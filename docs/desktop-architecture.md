@@ -1047,7 +1047,7 @@ Two traps that cost time when rediscovered, both handled by the harness:
 | Command | Runs |
 |---|---|
 | `pnpm test:e2e` | both projects |
-| `pnpm test:e2e:web` | the six browser specs |
+| `pnpm test:e2e:web` | the browser specs |
 | `pnpm test:e2e:electron` | the built desktop app |
 
 `globalSetup` builds `out/` when it is missing or stale, so `--project=electron`

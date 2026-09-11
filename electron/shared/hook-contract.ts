@@ -650,7 +650,7 @@ export interface HookStatusEvent {
    * The directory the agent is working in, as the payload reported it (HIVE-78).
    *
    * **This is the field that makes an honest branch possible**, and it arrives
-   * free. The HIVE-78 design note (now in `docs/desktop-architecture.md`)
+   * free. the design note in `docs/desktop-architecture.md` ("The branch a session is on")
    * listed "the session's live working directory" as the first of two things
    * main did not have, and proposed
    * inspecting the shell process with `lsof -a -p <pid> -d cwd` to get it. That

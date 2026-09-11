@@ -10,7 +10,7 @@ in its config; it opens no window, shows a menu-bar item, and listens on a WebSo
 bound to its Tailscale address. The laptop runs the same app with a `remote`
 block and routes every IPC call to that socket instead of to its own process.
 
-This document takes a Mac from unboxed to attachable, and to a server that
+This document takes a Mac from fresh out of the box to attachable, and to a server that
 survives a reboot with nobody touching it. Follow it top to bottom once. After
 that the machine looks after itself.
 

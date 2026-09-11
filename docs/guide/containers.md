@@ -61,7 +61,7 @@ container:
   hive_dir: /hive         # container path of the app's hive data folder
 ```
 
-`runtime`, `name`, `workspace` and `hive_dir` go together. In the form, **Runs in a
+`runtime`, `name`, `workspace` and `hive_dir` go together; `command`, `env_arg`, `freshness` and `host_alias` are optional. In the form, **Runs in a
 container** writes or removes the whole block.
 
 ## Limits

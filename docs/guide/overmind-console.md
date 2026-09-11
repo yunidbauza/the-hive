@@ -24,7 +24,7 @@ group. Drag the handle under the table to give the transcript more room.
 
 ## Commands
 
-Type `help` for this list.
+`help` prints a shorter version of this list.
 
 | Command | Does |
 | --- | --- |

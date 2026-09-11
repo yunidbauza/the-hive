@@ -1652,7 +1652,7 @@ describe('hook receiver', () => {
   /**
    * The `cwd` half of HIVE-78.
    *
-   * The HIVE-78 design note (now in `docs/desktop-architecture.md`) listed "the
+   * the design note in `docs/desktop-architecture.md` ("The branch a session is on") listed "the
    * session's live working directory" as the first thing main did not have,
    * and proposed inspecting the shell
    * process with `lsof` to get it. These tests record that it was already in

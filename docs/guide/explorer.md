@@ -41,7 +41,7 @@ Agents and git change files under you. The editor keeps up:
 | Your buffer | What changed | What happens |
 | --- | --- | --- |
 | no unsaved edits | the file changed on disk | it reloads silently |
-| unsaved edits | the file changed on disk | a banner offers **Reload** or **Keep mine** |
+| unsaved edits | the file changed on disk | a banner offers **Reload**; ignore it to keep your edits |
 | any | you press `⌘S` after the file changed | nothing is written; **Overwrite** replaces the file |
 
 The tree refreshes too, a moment after the change.

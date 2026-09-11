@@ -110,7 +110,7 @@ A `#` after two or more spaces starts a comment; after one space it is text, so
 a permission card in your [inbox](inbox.md), showing the real call. Choose **once**, a
 family like `git *`, or **all Bash**. A permanent grant is written back into `tools:`.
 
-Commands chained with `;`, `&`, `|`, `>` or `$(` are always asked. The hive ledger tools are
+Commands with `;`, `&`, `|`, `<`, `>`, a backtick, `$(` or a newline are always asked. The hive ledger tools are
 always allowed.
 
 ## Watch an agent work

@@ -37,6 +37,12 @@ that is already selected, or use the shortcut. The terminal never gets squeezed 
 
 It shows one view, chosen in this order:
 
+1. Settings, when open.
+2. The new-session picker.
+3. The editor, when a file is open full-stage.
+4. The overmind, when its tab is active or nothing is selected.
+5. The selected session, agent or terminal.
+
 Hiding a terminal never closes it. Open Settings over a busy session and its scrollback is
 still there when you come back.
 

@@ -300,7 +300,7 @@ should be mounted.
 | Buffer | State on disk | Behaviour |
 | --- | --- | --- |
 | clean | changed | **silently reloaded** |
-| dirty | changed | `staleOnDisk`; banner offers Reload or Keep mine |
+| dirty | changed | `staleOnDisk`; the banner offers Reload, and ignoring it keeps your edits |
 | any | mid-save | skipped |
 | any | the app's own last write | suppressed once, by mtime |
 

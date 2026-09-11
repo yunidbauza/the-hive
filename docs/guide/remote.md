@@ -56,7 +56,7 @@ the config.
 ## Attach from a laptop
 
 **Settings › Advanced › Attach to a server**: enter the server address, port, device id and
-token, then **Attach**. The token is stored in the laptop's Keychain.
+token, then **Attach**. The token is stored encrypted (via the Keychain) in `remote-credential.bin`, in the app's data folder.
 
 You cannot attach while sessions are running locally; the refusal lists them.
 

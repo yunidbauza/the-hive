@@ -1679,7 +1679,7 @@ tracker's gate, not passed to `claude`. See *Task runs* above.
 `claude -p --resume <uuid>`, so each one sees the last one's transcript. That is
 the feature — it is how an agent remembers it already answered a thread — and
 the cost is a transcript that only grows. Rotation is what bounds it, and
-**It is a handover rather than an amnesia**: an agent that forgets
+**it is a handover rather than an amnesia**: an agent that forgets
 without leaving a note forgets the open threads it was the only one watching,
 and the first anyone learns of that is a reply that never comes. So the agent
 is a participant in its own rotation, across two wakes.
@@ -1793,7 +1793,7 @@ resolves to 192.168.65.254` — with no escape hatch a search of the binary
 found. So `hookSettings(…, 'command')` spells every status hook as
 `statusCommand`, the same headers and payload off stdin; the host set keeps
 http. This also fixed containerised **sessions**, whose status events had
-been silently refused before it.
+been silently refused until this change.
 
 **What a container agent does not get yet.** `freshness: rewrite`
 (a per-run set needs the run id only the synchronous tracker knows) and an

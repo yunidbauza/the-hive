@@ -13,7 +13,7 @@ four Zustand stores and xterm; it reaches the main process only through verbs th
 exposes on `window.hive`. Main (`electron/main`) is the single policy point: it validates
 every call, owns the config, the ledger, session history and the hook receiver. Terminals run
 in a separate PTY host process, so a crash there cannot take down main. Each `claude` starts
-its own MCP host over stdio to reach the ledger. `electron/shared` is the only code both
+its own MCP host over stdio to reach the ledger (over HTTP from a container). `electron/shared` is the only code both
 sides import.
 
 ## Processes
@@ -42,7 +42,8 @@ src/
   components/terminal/   the terminal seam (speaks only TerminalTransport)
   components/editor/     the editor seam
   features/<slice>/      agents, editor, explorer, inbox, orchestrator, projects,
-                         pull-requests, sessions, settings, work
+                         pull-requests, sessions, settings, work, shared,
+                         simulation (a placeholder)
   stores/                hive, ui, appearance, editor
 electron/
   main/                  config, sessions, hooks, ledger, agents, integrations, server

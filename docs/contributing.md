@@ -41,7 +41,7 @@ Run one spec with `pnpm exec vitest run <path>`; `pnpm test -- <path>` runs ever
 - xterm and `node-pty` are never loaded for real in unit tests. CodeMirror is: it renders
   without measuring.
 - Timers use fake timers, never real waits.
-- Electron e2e runs against `out/`; run `pnpm desktop:build` first.
+- Electron e2e runs against `out/`; its global setup rebuilds `out/` when sources are newer.
 - A failing e2e spec is re-run alone before it counts as red.
 
 ## Live suites
@@ -67,7 +67,7 @@ draws cannot be faked. Each costs time, some cost tokens.
 
 1. `pnpm lint` passes.
 2. `pnpm type-check` passes.
-3. `pnpm test` passes, with coverage at 80% or more.
+3. `pnpm test:coverage` passes (the 80% gate).
 4. A UI change is seen working in the real app, not only in tests.
 
 No lint rule is disabled inline and no coverage-ignore comment is added to get there.

@@ -43,7 +43,7 @@ The Hive needs its own sign-in; a Slack login from another Claude plugin does no
 | `slack.channel:#eng` | every message in that channel (invite the app first) |
 
 The socket only opens when some agent asks for one of the last two. A burst of messages
-within three seconds is one wake, and wakes are at least a minute apart.
+within three seconds is one wake, and wakes are at least a minute apart; an `@hive` command is not held back.
 
 ## Command an agent from Slack
 
