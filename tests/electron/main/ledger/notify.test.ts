@@ -194,6 +194,43 @@ describe('createLedgerNotifier', () => {
     expect(raise.mock.calls[0][0].link).toBeUndefined();
   });
 
+  it('raises one session.goal card per goal, keyed on the goal, and marks it read when it settles', () => {
+    const { raise, markRead, onEntry } = harness();
+    const receipt = (id: string, status: string, turns: number) =>
+      onEntry({
+        id,
+        ts: 1,
+        from: 'sess-1',
+        kind: 'event',
+        body: `goal ${status}: Make the cache invalidate on write. (turn ${turns}/8)`,
+        meta: { goal: 'sess-1', status, turns_used: turns, turn_budget: 8 },
+      });
+
+    receipt('e1', 'ACTIVE', 1);
+    receipt('e2', 'ACTIVE', 2);
+
+    expect(raise).toHaveBeenCalledTimes(2);
+    expect(raise).toHaveBeenLastCalledWith({
+      kind: 'session.goal',
+      id: 'goal:sess-1',
+      title: 'goal ACTIVE: Make the cache invalidate on write. (turn 2/8)',
+      subject: 'sess-1',
+      action: { type: 'session', entityId: 'sess-1' },
+      createdAt: 1,
+    });
+    expect(markRead).not.toHaveBeenCalled();
+
+    receipt('e3', 'DONE', 2);
+
+    expect(markRead).toHaveBeenCalledWith('goal:sess-1');
+  });
+
+  it('ignores a goal receipt written by an agent, which has no goal to hold', () => {
+    const { raise, onEntry } = harness();
+    onEntry({ id: 'e1', ts: 1, from: 'watcher', kind: 'event', body: 'goal ACTIVE', meta: { goal: 'watcher', status: 'ACTIVE' } });
+    expect(raise).not.toHaveBeenCalled();
+  });
+
   it('raises no link at all when the done entry carries none', () => {
     const { raise, onEntry } = harness();
     onEntry(entry({ kind: 'done', from: 'drone', body: 'Sent.' }));

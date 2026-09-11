@@ -93,6 +93,7 @@ export const NOTIFICATION_KINDS = [
   'session.blocked',
   'session.idle',
   'session.input_needed',
+  'session.goal',
   'clone.done',
   'pr.approved',
   'pr.merged',
@@ -577,6 +578,25 @@ export const NOTIFICATION_KIND_SPECS: Record<
     icon: 'ph-hand-palm',
     tone: 'amber',
     defaultDelivery: 'both',
+  },
+  /**
+   * A goal the `goal-on` skill is holding a session to (HIVE-165).
+   *
+   * Raised off the verifier's ledger receipt, an `event` from the session
+   * with `meta.goal`: once when the goal goes `ACTIVE`, once per blocked turn,
+   * and once when it settles `DONE` or `FAILED`. One card per goal, keyed on
+   * the session, so the row updates in place rather than stacking; a settled
+   * goal marks its card read. `inbox` by default: the session is already on
+   * screen and nothing here waits on the person.
+   */
+  'session.goal': {
+    source: 'session',
+    label: 'When a goal moves',
+    description:
+      'A session holding itself to a goal-on brief reports the goal active, a turn refused, or the goal done or failed.',
+    icon: 'ph-target',
+    tone: 'brand',
+    defaultDelivery: 'inbox',
   },
   /**
    * `inbox`, not `both`.

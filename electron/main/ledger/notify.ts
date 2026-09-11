@@ -323,6 +323,32 @@ export function createLedgerNotifier(
       return;
     }
 
+    /*
+      A goal receipt (HIVE-165): the goal-on verifier posts one `event` per
+      status it changes, as the session, with `meta.goal` naming the session.
+      One card per goal, keyed on the goal rather than the entry, so each
+      receipt replaces the last row instead of stacking twelve "turn 3/8"
+      cards under one session. A terminal status marks it read: nothing is
+      owed, and an unread count that never drains is a count nobody trusts.
+    */
+    const goal = str(meta.goal);
+    if (entry.kind === 'event' && goal !== undefined && !deps.isAgent(entry.from)) {
+      const status = str(meta.status) ?? '';
+      const [first] = split(entry.body);
+      deps.raise({
+        kind: 'session.goal',
+        id: `goal:${goal}`,
+        title: first,
+        subject: entry.from,
+        action: { type: 'session', entityId: entry.from },
+        createdAt: entry.ts,
+      });
+      if (status === 'DONE' || status === 'FAILED' || status === 'CLEARED') {
+        deps.markRead(`goal:${goal}`);
+      }
+      return;
+    }
+
     if (entry.kind !== 'event' || !deps.isAgent(entry.from)) return;
 
     const outcome = str(meta.outcome);
