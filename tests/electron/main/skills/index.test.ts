@@ -1265,3 +1265,17 @@ describe('createSkillsRuntime — whole skills', () => {
     expect(await pluginSkills()).toContain('first');
   });
 });
+
+describe('createSkillsRuntime — a zip that is not a skill', () => {
+  it('is copied in as a file, as it was before whole-skill import', async () => {
+    const { strToU8, zipSync } = await import('fflate');
+    await writeSkill('host', skill('host'));
+    const asset = join(hiveDir, '..', 'template.zip');
+    await writeFile(asset, zipSync({ 'x.txt': strToU8('x') }));
+
+    const snap = await runtime().dropFiles('host', 'assets', [asset]);
+
+    expect(snap.skills.map((entry) => entry.name)).toEqual(['host']);
+    expect(await readdir(join(hiveDir, 'skills', 'host', 'assets'))).toEqual(['template.zip']);
+  });
+});

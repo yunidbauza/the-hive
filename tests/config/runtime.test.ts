@@ -112,7 +112,7 @@ describe('can', () => {
   });
 
   /**
-   * The three `WINDOW_BOUND` predicates (HIVE-144, narrowed by HIVE-146).
+   * The four `WINDOW_BOUND` predicates (HIVE-144, narrowed by HIVE-146).
    *
    * Each of the three is asserted on its own field, in both directions across
    * the two tests below — never as one `toEqual` against a canned object,
@@ -121,7 +121,7 @@ describe('can', () => {
    * these are pure-function tests before they are anything else.
    */
   describe('canFor', () => {
-    it('permits all three capabilities in local mode', () => {
+    it('permits all four capabilities in local mode', () => {
       const c = canFor({ mode: 'local' });
       expect(c.chooseDirectory).toBe(true);
       expect(c.importSkillFiles).toBe(true);
@@ -129,7 +129,7 @@ describe('can', () => {
       expect(c.revealConfig).toBe(true);
     });
 
-    it('withholds exactly the WINDOW_BOUND three while attached', () => {
+    it('withholds exactly the WINDOW_BOUND four while attached', () => {
       const c = canFor({ mode: 'remote' });
       expect(c.chooseDirectory).toBe(false);
       expect(c.importSkillFiles).toBe(false);
@@ -173,7 +173,7 @@ describe('can', () => {
    * renderer's own boot calls it, and the predicates read afterwards. Nothing
    * here hands `can` a mode — it has to go and find one.
    */
-  describe('can — the three WINDOW_BOUND predicates', () => {
+  describe('can — the four WINDOW_BOUND predicates', () => {
     afterEach(() => {
       resetProjectConfig();
     });

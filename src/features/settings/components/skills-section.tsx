@@ -365,6 +365,19 @@ export function SkillsSection() {
     act: (path: string) => void;
   } | null>(null);
 
+  /**
+   * Report a copy-in's refusal, and re-read the list when there was one.
+   *
+   * A refusal usually means nothing changed, which is why `mutate` keeps the
+   * snapshot it had. Importing several skills at once is the exception: the
+   * ones before the refusal are on disk and already shipping to sessions, and
+   * the list should show them rather than wait for the next reload.
+   */
+  const reportCopy = (failure: string | null): void => {
+    setError(failure);
+    if (failure !== null) void loadSkills();
+  };
+
   /** Bring files in from outside, through main's own picker. */
   const importToBundle = (): void => {
     if (drilled === null) return;
@@ -372,7 +385,7 @@ export function SkillsSection() {
     // opens a dialog on the server, which has no window — and would copy the
     // server's files, not the user's.
     if (!importSkillFiles) return;
-    void importIntoSkill(drilled, target).then(setError);
+    void importIntoSkill(drilled, target).then(reportCopy);
   };
 
   const newFile = (): void => {
@@ -480,7 +493,7 @@ export function SkillsSection() {
     if (drilled === null) return;
     const tokens = skillDropTokens([...files]);
     if (tokens.length === 0) return;
-    void dropIntoSkill(drilled, dir, tokens).then(setError);
+    void dropIntoSkill(drilled, dir, tokens).then(reportCopy);
   };
 
   /**
@@ -490,7 +503,7 @@ export function SkillsSection() {
   const importSkillPackage = (): void => {
     // Belt over the disabled button, as `importToBundle` is (HIVE-144).
     if (!importSkill) return;
-    void importNewSkill().then(setError);
+    void importNewSkill().then(reportCopy);
   };
 
   /** The Import skill button, in the list and in the empty state alike. */
@@ -734,7 +747,12 @@ export function SkillsSection() {
    * there would silently discard the one state that recovery depends on.
    */
   useEffect(() => {
-    if (drilled !== null && drilledSkill === undefined && inFile) {
+    /*
+      A selected folder counts too: it holds no buffer HIVE-99's recovery
+      could need, and without this the column falls back to the list while
+      the editor slot still reads "Select a file".
+    */
+    if (drilled !== null && drilledSkill === undefined && (inFile || selectedDir !== null)) {
       setDrilled(null);
       setOpenPath(null);
       setSelectedDir(null);
@@ -743,7 +761,7 @@ export function SkillsSection() {
       setSaved(null);
       setError(null);
     }
-  }, [drilled, drilledSkill, inFile]);
+  }, [drilled, drilledSkill, inFile, selectedDir]);
 
   /**
    * How many files deleting this skill would take with it.

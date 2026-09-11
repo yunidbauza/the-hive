@@ -69,7 +69,7 @@ export const isDesktop = (): boolean =>
  * encounters it.
  */
 /**
- * The three capabilities `WINDOW_BOUND` (`electron/shared/remote-contract.ts`)
+ * The four capabilities `WINDOW_BOUND` (`electron/shared/remote-contract.ts`)
  * refuses while this window is attached to someone else's Hive (HIVE-144,
  * narrowed by HIVE-146).
  *
@@ -189,8 +189,8 @@ export const can = {
   spawnSessionIn: (projectId: string): boolean =>
     projectAccess(projectId).spawnable,
   /**
-   * The three `WINDOW_BOUND` predicates (HIVE-144, HIVE-146). See {@link canFor} for the
-   * pure rule, {@link RemoteCapabilities} for why there are exactly three, and
+   * The four `WINDOW_BOUND` predicates (HIVE-144, HIVE-146). See {@link canFor} for the
+   * pure rule, {@link RemoteCapabilities} for why there are exactly four, and
    * {@link currentRemote} for why the answer comes off the runtime rather
    * than the config snapshot.
    */

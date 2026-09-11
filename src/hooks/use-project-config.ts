@@ -99,7 +99,7 @@ export function useProjectContainerised(projectId: string): boolean {
  * either was computed from.
  *
  * The subscription is the same one either way, which is why one
- * `useSyncExternalStore` still covers all three: these answer off the runtime
+ * `useSyncExternalStore` still covers all four: these answer off the runtime
  * attachment (`can`'s own `currentRemote`), and that module emits on its
  * subscribers when the attachment moves exactly as it does when the snapshot
  * does.

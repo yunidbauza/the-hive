@@ -638,7 +638,9 @@ describe('WINDOW_BOUND', () => {
       /config:browse-directory/,
     );
     expect(WINDOW_BOUND[CH.skillsFileImport]).toMatch(/drag/i);
-    expect(WINDOW_BOUND[CH.skillsImport]).toMatch(/drag/i);
+    // Not "drag" — a drop is REMOTE_REFUSED, so that would be a dead end.
+    expect(WINDOW_BOUND[CH.skillsImport]).toMatch(/machine that holds/);
+    expect(WINDOW_BOUND[CH.skillsImport]).not.toMatch(/drag/i);
     expect(WINDOW_BOUND[CH.configReveal]).toMatch(/already/i);
   });
 

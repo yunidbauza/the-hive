@@ -5,6 +5,7 @@ import {
   lstat,
   mkdir,
   readFile,
+  realpath,
   rename,
   rm,
   stat,
@@ -39,21 +40,39 @@ import { frontmatter } from './read';
  * ## Total, like `copyInto`
  *
  * Every entry is checked before a byte is written, and the bytes are written
- * to a staging folder beside `skills/` — same volume, so the last step is one
- * `rename` — never into `skills/` itself. A refusal at any point leaves
- * nothing behind: not a half-copied skill, and not a staging folder, which is
- * removed on every path out. Staging sits outside `skills/` because
+ * to a staging folder beside `skills/` — beside where it really resolves, so
+ * the last step is one same-volume `rename` even when `~/.hive/skills` is a
+ * dotfiles symlink — never into `skills/` itself. A refusal at any point
+ * leaves nothing behind: not a half-copied skill, and not a staging folder,
+ * which is removed on every path out. Staging sits outside `skills/` because
  * `readUserSkills` lists every folder there, and a sync landing mid-import
  * would show the half-written one as an invalid row.
  *
  * ## A zip is read in memory, and its declared sizes are the bound
  *
  * Two passes over the central directory. The first inflates nothing and only
- * reads names and declared sizes, which is where every cap is enforced — so a
+ * reads names, methods and sizes, which is where every cap is enforced — so a
  * zip bomb is refused on what it *claims*, before any inflation. The second
- * inflates only the admitted entries, and `fflate` inflates each into a buffer
- * of exactly the declared size, so an entry that lies about its size cannot
- * grow past what the first pass admitted.
+ * inflates only the admitted entries, and every result is then held to the
+ * size it declared.
+ *
+ * The two methods are bounded differently, and only one of them by `fflate`.
+ * A deflated entry is inflated into a buffer of exactly its declared size, so
+ * one that lies about its size comes back truncated, never larger. A
+ * **stored** entry is sliced by its *compressed* size instead — so a stored
+ * entry declaring one byte can return six megabytes, and a hundred entries
+ * pointing at the same payload multiply it. So a stored entry whose two sizes
+ * disagree is refused in pass one, any method other than stored or deflate is
+ * refused before `fflate` would throw on it, and pass two's output is
+ * measured anyway.
+ *
+ * ## Names that collide on the disk they land on
+ *
+ * The default macOS volume ignores case and Unicode normalisation, so
+ * `SKILL.md` and `skill.md` are one file there. Every collision check keys on
+ * the NFC-normalised, lower-cased path: two entries that would land on one
+ * file are refused, rather than the second silently replacing the first —
+ * which, for `SKILL.md`, would replace the very file whose name was checked.
  */
 
 /**
@@ -63,6 +82,9 @@ import { frontmatter } from './read';
  * scripts); split it if skills start shipping large assets.
  */
 export const MAX_SKILL_ZIP_BYTES = 100_000_000;
+
+const STORED = 0;
+const DEFLATE = 8;
 
 interface Staged {
   /** Skill-relative, `/`-separated. */
@@ -78,14 +100,39 @@ interface Contents {
   dirs: string[];
 }
 
-/** Is `source` a whole skill — a `.zip`, or a folder with `SKILL.md` at its root? */
+interface Listed {
+  name: string;
+  /** Compressed. */
+  size: number;
+  originalSize: number;
+  compression: number;
+}
+
+/**
+ * Is `source` a whole skill — a zip holding a skill, or a folder with
+ * `SKILL.md` at its root?
+ *
+ * A zip counts only when its listing has a `SKILL.md` where `importSkill`
+ * would look for one. A `template.zip` dropped into `assets/` is an asset,
+ * and `copyInto` has always added it as one; reading the central directory
+ * costs no inflation.
+ */
 export async function isSkillPackage(source: string): Promise<boolean> {
   const info = await lstat(source).catch(() => null);
   if (info === null || info.isSymbolicLink()) return false;
-  if (info.isFile()) return source.toLowerCase().endsWith('.zip');
-  if (!info.isDirectory()) return false;
-  const manifest = await lstat(join(source, 'SKILL.md')).catch(() => null);
-  return manifest?.isFile() ?? false;
+  if (info.isDirectory()) {
+    const manifest = await lstat(join(source, 'SKILL.md')).catch(() => null);
+    return manifest?.isFile() ?? false;
+  }
+  if (!info.isFile() || !isZipName(source) || info.size > MAX_SKILL_ZIP_BYTES) {
+    return false;
+  }
+  try {
+    const names = listZip(new Uint8Array(await readFile(source))).map((entry) => entry.name);
+    return manifestDepth(names) !== null;
+  } catch {
+    return false;
+  }
 }
 
 /** Import one skill package as a new skill, and answer with its name. */
@@ -115,7 +162,8 @@ export async function importSkill(source: string): Promise<string> {
   const taken = `A skill called "${name}" already exists — nothing was imported.`;
   if (await exists(target)) throw new Error(taken);
 
-  const staging = join(dirname(skillsRoot()), `.skill-import-${randomUUID()}`);
+  const root = await realpath(skillsRoot()).catch(() => skillsRoot());
+  const staging = join(dirname(root), `.skill-import-${randomUUID()}`);
   try {
     await mkdir(staging, { recursive: true });
     for (const dir of contents.dirs) {
@@ -202,7 +250,7 @@ async function fromFolder(source: string, label: string): Promise<Contents> {
 
 /** A zip's contents, every entry checked before any is inflated. */
 async function fromZip(source: string, label: string, size: number): Promise<Contents> {
-  if (!source.toLowerCase().endsWith('.zip')) {
+  if (!isZipName(source)) {
     throw new Error(`"${label}" is not a zip or a folder — nothing was imported.`);
   }
   if (size > MAX_SKILL_ZIP_BYTES) {
@@ -213,22 +261,18 @@ async function fromZip(source: string, label: string, size: number): Promise<Con
 
   const data = new Uint8Array(await readFile(source));
 
-  // Pass one: names and declared sizes only. Nothing is inflated.
-  const listed: { name: string; size: number }[] = [];
+  // Pass one: names, methods and sizes only. Nothing is inflated.
+  let listed: Listed[];
   try {
-    unzipSync(data, {
-      filter: (file) => {
-        listed.push({ name: file.name, size: file.originalSize });
-        return false;
-      },
-    });
+    listed = listZip(data);
   } catch {
     throw new Error(`"${label}" is not a readable zip — nothing was imported.`);
   }
 
   const kept: { raw: string; segments: string[]; dir: boolean; size: number }[] = [];
-  for (const { name, size: declared } of listed) {
-    if (name.startsWith('__MACOSX/')) continue;
+  for (const entry of listed) {
+    const { name } = entry;
+    if (!visible(name)) continue;
     if (name.includes('\\') || name.startsWith('/') || /^[A-Za-z]:/.test(name)) {
       throw new Error(`"${name}" is not a path inside the zip — nothing was imported.`);
     }
@@ -237,30 +281,26 @@ async function fromZip(source: string, label: string, size: number): Promise<Con
     if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
       throw new Error(`"${name}" is not a path inside the zip — nothing was imported.`);
     }
-    // Skipped by name, and everything under it, as the tree walk skips it.
-    if (segments.some((segment) => SKILL_SKIP_ENTRIES.includes(segment))) continue;
-    kept.push({ raw: name, segments, dir, size: declared });
+    if (!dir && entry.compression !== STORED && entry.compression !== DEFLATE) {
+      throw new Error(`"${name}" uses a compression this cannot read — nothing was imported.`);
+    }
+    if (!dir && entry.compression === STORED && entry.size !== entry.originalSize) {
+      throw new Error(`"${name}" is not the size it declares — nothing was imported.`);
+    }
+    kept.push({ raw: name, segments, dir, size: entry.originalSize });
   }
 
-  /*
-    `SKILL.md` at the zip's root, or at the root of its one top-level folder —
-    the second is what macOS "Compress" makes of a folder.
-  */
-  const isManifest = (segments: string[], depth: number): boolean =>
-    segments.length === depth + 1 && segments[depth] === 'SKILL.md';
-  const tops = new Set(kept.map((entry) => entry.segments[0]));
-  let strip = 0;
-  if (!kept.some((entry) => !entry.dir && isManifest(entry.segments, 0))) {
-    const wrapped =
-      tops.size === 1 && kept.some((entry) => !entry.dir && isManifest(entry.segments, 1));
-    if (!wrapped) {
-      throw new Error(`"${label}" has no SKILL.md at its root — nothing was imported.`);
-    }
-    strip = 1;
+  const strip = manifestDepth(kept.map((entry) => entry.raw));
+  if (strip === null) {
+    throw new Error(`"${label}" has no SKILL.md at its root — nothing was imported.`);
   }
 
   const contents: Contents = { files: [], dirs: [] };
-  const admit = new Map<string, string>();
+  const admit = new Map<string, { path: string; size: number }>();
+  /** Keyed as the disk compares names: case- and normalisation-blind. */
+  const fileKeys = new Map<string, string>();
+  const dirKeys = new Set<string>();
+  const keyOf = (path: string): string => path.normalize('NFC').toLowerCase();
   let total = 0;
 
   for (const entry of kept) {
@@ -269,17 +309,32 @@ async function fromZip(source: string, label: string, size: number): Promise<Con
     if (path.split('/').length > MAX_BUNDLE_DEPTH) {
       throw new Error(`"${path}" is too deep for a skill — nothing was imported.`);
     }
+    const key = keyOf(path);
     if (entry.dir) {
+      if (fileKeys.has(key)) {
+        throw new Error(`"${path}" is both a file and a folder in the zip — nothing was imported.`);
+      }
+      dirKeys.add(key);
       contents.dirs.push(path);
       continue;
+    }
+    const other = fileKeys.get(key);
+    if (other !== undefined) {
+      throw new Error(
+        `"${other}" and "${path}" would be the same file on disk — nothing was imported.`,
+      );
+    }
+    if (dirKeys.has(key)) {
+      throw new Error(`"${path}" is both a file and a folder in the zip — nothing was imported.`);
     }
     if (entry.size > MAX_BUNDLE_FILE_BYTES) {
       throw new Error(
         `"${path}" is larger than ${String(MAX_BUNDLE_FILE_BYTES / 1_000_000)} MB — nothing was imported.`,
       );
     }
+    fileKeys.set(key, path);
     total += entry.size;
-    admit.set(entry.raw, path);
+    admit.set(entry.raw, { path, size: entry.size });
   }
 
   if (admit.size > MAX_BUNDLE_FILES) {
@@ -295,21 +350,23 @@ async function fromZip(source: string, label: string, size: number): Promise<Con
 
   // A file where another entry needs a folder would surface as a raw ENOTDIR
   // naming the staging path; refused here, with a sentence, instead.
-  const filePaths = new Set(admit.values());
-  for (const path of [...filePaths, ...contents.dirs]) {
+  for (const path of [...fileKeys.values(), ...contents.dirs]) {
     const parts = path.split('/');
     for (let depth = 1; depth < parts.length; depth += 1) {
       const ancestor = parts.slice(0, depth).join('/');
-      if (filePaths.has(ancestor)) {
+      if (fileKeys.has(keyOf(ancestor))) {
         throw new Error(`"${ancestor}" is both a file and a folder in the zip — nothing was imported.`);
       }
     }
   }
 
-  // Pass two: inflate only what was admitted.
+  // Pass two: inflate only what was admitted, and hold each to its size.
   const inflated = unzipSync(data, { filter: (file) => admit.has(file.name) });
-  for (const [raw, path] of admit) {
+  for (const [raw, { path, size: declared }] of admit) {
     const bytes = inflated[raw] ?? new Uint8Array();
+    if (bytes.length !== declared) {
+      throw new Error(`"${path}" is not the size it declares — nothing was imported.`);
+    }
     contents.files.push({
       path,
       bytes,
@@ -320,6 +377,47 @@ async function fromZip(source: string, label: string, size: number): Promise<Con
     });
   }
   return contents;
+}
+
+/** The central directory's names, methods and sizes. Inflates nothing. */
+function listZip(data: Uint8Array): Listed[] {
+  const listed: Listed[] = [];
+  unzipSync(data, {
+    filter: (file) => {
+      listed.push({
+        name: file.name,
+        size: file.size,
+        originalSize: file.originalSize,
+        compression: file.compression,
+      });
+      return false;
+    },
+  });
+  return listed;
+}
+
+/** Not Finder's resource-fork shadow, and not under a name the walk skips. */
+function visible(name: string): boolean {
+  if (name.startsWith('__MACOSX/')) return false;
+  return !name.split('/').some((segment) => SKILL_SKIP_ENTRIES.includes(segment));
+}
+
+/**
+ * How many folders deep the manifest sits: `0` at the zip's root, `1` under
+ * its one top-level folder — the shape macOS "Compress" makes of a folder —
+ * or `null` for neither.
+ */
+function manifestDepth(names: readonly string[]): 0 | 1 | null {
+  const shown = names.filter(visible);
+  const files = shown.filter((name) => !name.endsWith('/'));
+  if (files.includes('SKILL.md')) return 0;
+  const tops = new Set(shown.map((name) => name.split('/')[0]));
+  const [top] = tops;
+  return tops.size === 1 && files.includes(`${top ?? ''}/SKILL.md`) ? 1 : null;
+}
+
+function isZipName(path: string): boolean {
+  return path.toLowerCase().endsWith('.zip');
 }
 
 async function exists(path: string): Promise<boolean> {

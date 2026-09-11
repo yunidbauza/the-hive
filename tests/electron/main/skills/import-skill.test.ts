@@ -56,6 +56,32 @@ const zipAt = async (file: string, entries: Zippable): Promise<string> => {
   return path;
 };
 
+/**
+ * Rewrite one central-directory field of a zip, the way a hostile archive
+ * would: `fflate` only ever writes honest ones. Offsets are the zip format's
+ * own (APPNOTE 4.3.12): method at +10, uncompressed size at +24, name length
+ * at +28, name at +46.
+ */
+const forge = (
+  zip: Uint8Array,
+  name: string,
+  field: 'method' | 'uncompressed',
+  value: number,
+): Uint8Array => {
+  const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+  for (let at = 0; at + 46 <= zip.length; at += 1) {
+    if (view.getUint32(at, true) !== 0x02014b50) continue;
+    const length = view.getUint16(at + 28, true);
+    if (Buffer.from(zip.subarray(at + 46, at + 46 + length)).toString('utf8') !== name) {
+      continue;
+    }
+    if (field === 'method') view.setUint16(at + 10, value, true);
+    else view.setUint32(at + 24, value, true);
+    return zip;
+  }
+  throw new Error(`no central directory entry for ${name}`);
+};
+
 const skillsOnDisk = (): Promise<string[]> =>
   readdir(skillsDir).then((names) => names.sort(), () => []);
 
@@ -149,6 +175,8 @@ describe('importSkill — a zip', () => {
         references: { 'guide.md': strToU8('# Guide') },
         '.DS_Store': strToU8('finder'),
       },
+      // Beside the one folder, not a second top-level entry that counts.
+      '.DS_Store': strToU8('finder'),
       __MACOSX: { 'pr-review': { '._SKILL.md': strToU8('resource fork') } },
     });
 
@@ -223,6 +251,52 @@ describe('importSkill — a zip', () => {
     await refuses(source, /blob\.bin" is larger than/);
   });
 
+  it('refuses a stored entry that declares less than it holds, before inflating anything', async () => {
+    const zip = zipSync(
+      {
+        'SKILL.md': strToU8(manifest('bomb')),
+        'blob.bin': new Uint8Array(MAX_BUNDLE_FILE_BYTES + 1),
+      },
+      { level: 0 },
+    );
+    const source = join(base, 'bomb.zip');
+    // Stored (level 0) entries are sliced by their compressed size, so the
+    // one-byte claim is what a size cap alone would have believed.
+    await writeFile(source, forge(zip, 'blob.bin', 'uncompressed', 1));
+
+    await refuses(source, /blob\.bin" is not the size it declares/);
+  });
+
+  it('refuses a compression method it cannot read', async () => {
+    const zip = zipSync({
+      'SKILL.md': strToU8(manifest('odd')),
+      'x.txt': strToU8('x'),
+    });
+    const source = join(base, 'odd.zip');
+    await writeFile(source, forge(zip, 'x.txt', 'method', 99));
+
+    await refuses(source, /compression this cannot read/);
+  });
+
+  it('refuses two entries that are one file on a case-blind disk', async () => {
+    const source = await zipAt('case.zip', {
+      'SKILL.md': strToU8(manifest('case')),
+      'skill.md': strToU8(manifest('other')),
+    });
+
+    await refuses(source, /would be the same file on disk/);
+  });
+
+  it('refuses a file and a folder that differ only in case', async () => {
+    const source = await zipAt('case-dir.zip', {
+      'SKILL.md': strToU8(manifest('case-dir')),
+      a: strToU8('a file'),
+      'A/b.txt': strToU8('under A'),
+    });
+
+    await refuses(source, /both a file and a folder/);
+  });
+
   it('refuses a path that is both a file and a folder', async () => {
     const source = await zipAt('clash.zip', {
       'SKILL.md': strToU8(manifest('clash')),
@@ -292,8 +366,14 @@ it('leaves no staging folder when the last step fails', async () => {
 });
 
 describe('isSkillPackage', () => {
-  it('answers yes for a zip and for a folder with SKILL.md, no otherwise', async () => {
-    const zip = await zipAt('any.zip', { 'x.txt': strToU8('x') });
+  it('answers yes for a zip holding a skill and for a folder with SKILL.md, no otherwise', async () => {
+    const asset = await zipAt('template.zip', { 'x.txt': strToU8('x') });
+    const rooted = await zipAt('rooted.zip', { 'SKILL.md': strToU8(manifest('rooted')) });
+    const wrapped = await zipAt('wrapped.zip', {
+      wrapped: { 'SKILL.md': strToU8(manifest('wrapped')) },
+    });
+    const broken = join(base, 'broken.zip');
+    await writeFile(broken, 'not a zip');
     const skill = join(base, 'skill');
     await mkdir(skill, { recursive: true });
     await writeFile(join(skill, 'SKILL.md'), manifest('skill'));
@@ -304,7 +384,11 @@ describe('isSkillPackage', () => {
     const link = join(base, 'link');
     await symlink(skill, link);
 
-    expect(await isSkillPackage(zip)).toBe(true);
+    expect(await isSkillPackage(rooted)).toBe(true);
+    expect(await isSkillPackage(wrapped)).toBe(true);
+    // A zip without a skill in it is an asset, as it always was.
+    expect(await isSkillPackage(asset)).toBe(false);
+    expect(await isSkillPackage(broken)).toBe(false);
     expect(await isSkillPackage(skill)).toBe(true);
     expect(await isSkillPackage(plain)).toBe(false);
     expect(await isSkillPackage(file)).toBe(false);

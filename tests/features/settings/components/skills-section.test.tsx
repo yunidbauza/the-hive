@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -183,6 +183,8 @@ describe('SkillsSection', () => {
 
     expect(importNewSkill).toHaveBeenCalledTimes(1);
     expect(await screen.findByRole('alert')).toHaveTextContent('no SKILL.md at its root');
+    // Re-read, so skills imported before the refusal still reach the list.
+    expect(loadSkills).toHaveBeenCalledTimes(2);
   });
 
   it('imports a whole skill from beside + New skill in the list', async () => {
@@ -550,6 +552,18 @@ describe('SkillsSection', () => {
         await screen.findByLabelText('Skill source');
         await add('Add from your computer');
         expect(importIntoSkill).toHaveBeenLastCalledWith('graphify', '');
+      });
+
+      it('backs out to the list when the skill disappears under a selected folder', async () => {
+        setSkillsForTest(withFolder());
+        await selectScripts();
+
+        act(() => {
+          setSkillsForTest(withSkills('other'));
+        });
+
+        expect(await screen.findByRole('button', { name: '/other' })).toBeInTheDocument();
+        expect(screen.queryByText('Select a file, or add one.')).toBeNull();
       });
 
       it('asks before a dirty buffer is closed by a folder click, and keeps it on cancel', async () => {

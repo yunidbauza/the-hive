@@ -288,7 +288,7 @@ export const FRAME_KIND = {
  * the channel's name, and a surprising number of innocuously-named reads spawn a
  * process:
  *
- * - `pty:spawn`, `pty:write`, `pty:restart` — start a process, or type into one.
+ * - `pty:spawn`, `pty:spawn-terminal`, `pty:write`, `pty:restart` — start a process, or type into one.
  *   `pty:kill` is deliberately NOT here: it can only ever stop something, which
  *   is `mutate`, and that is the same reading that keeps `agents:kill` and
  *   `agents:pause` out. If killing were `execute` the rule would stop being
@@ -562,9 +562,9 @@ export const CHANNEL_AUTHORIZATION = {
  * the *server's* files rather than the user's, which is not a worse version
  * of the feature but a different and wrong one. `skills:file:drop` already
  * carries files from the machine the user is sitting at, so the refusal names
- * it. `skills:import` is the same case for a whole skill, and a zip or folder
- * dragged onto any skill's files is imported the same way, so its refusal
- * names the drag too.
+ * it. `skills:import` is the same case for a whole skill — but a drop is itself
+ * `REMOTE_REFUSED`, so there is no route to name from an attached window, and
+ * its refusal points at the Hive on the machine that holds the files instead.
  *
  * `configReveal` is the fifth, and the first refused for a reason other than
  * the event (HIVE-144, Ruling 25). While attached, Settings is already
@@ -587,7 +587,7 @@ export const WINDOW_BOUND = {
   [CH.skillsFileImport]:
     'Adding files to a skill opens a dialog on the server, which has no window — and would copy the server’s files, not yours. Drag them onto the skill instead.',
   [CH.skillsImport]:
-    'Importing a skill opens a dialog on the server, which has no window — and would import the server’s files, not yours. Drag the zip or folder onto any skill’s files instead.',
+    'Importing a skill opens a dialog on the server, which has no window — and would import the server’s files, not yours. Import it in the Hive running on the machine that holds the zip or folder.',
   [CH.configReveal]:
     'Revealing the config file opens Finder on the server, which nobody is sitting at — and while attached, Settings is already showing the server’s config, not this machine’s.',
 } as const satisfies Partial<Record<Channel, string>>;
