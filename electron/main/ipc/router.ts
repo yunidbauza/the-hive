@@ -88,10 +88,12 @@ export function registerIpc(mode: IpcMode, options: RegisterIpcOptions = {}): vo
     if (options.client === undefined) {
       throw new Error('registerIpc("remote", ...) requires a client — there is no socket to attach to.');
     }
+    const broadcaster = options.broadcaster ?? createWindowBroadcaster();
     registerRemoteProxy({
       client: options.client,
-      broadcaster: options.broadcaster ?? createWindowBroadcaster(),
+      broadcaster,
       resumeTracker: options.resumeTracker,
+      onLinkLoss: () => noteLinkLoss(broadcaster),
       // See `localAppInfo`'s own doc comment: this is the closure the most
       // recent `registerIpc('local', ...)` produced, so `CH.appInfo` keeps
       // answering from *this* process even once it stops answering anything
@@ -135,6 +137,7 @@ export function registerIpc(mode: IpcMode, options: RegisterIpcOptions = {}): vo
       */
       localRemotePair: (payload) => applyRemotePair(payload, remoteCredentialStore()),
       localRemoteForget: () => applyRemoteForget(remoteCredentialStore()),
+      localRemotePaired: () => remoteCredentialStore().read() !== null,
     });
     return;
   }
@@ -314,10 +317,38 @@ export function attachedLinkStatus(): RemoteLinkStatus | null {
   return lastLinkStatus;
 }
 
+/**
+ * Calls and keystrokes the link lost since it last held (HIVE-140 audit, gap
+ * 1) — see {@link RemoteLinkStatus.lost}. Stamped onto every status here rather
+ * than threaded through the reconnect loop, which has no reason to know.
+ */
+let lostSinceHeld = 0;
+
 /** Push a link status, recording it for whoever opens a window next. */
-function pushLink(broadcaster: Broadcaster, status: RemoteLinkStatus | null): void {
-  lastLinkStatus = status;
-  broadcaster.emit(CH.remoteLinkStatus, status);
+function pushLink(broadcaster: Broadcaster, status: Omit<RemoteLinkStatus, 'lost'> | null): void {
+  // Only a window that goes local starts the count over. A reattach keeps it,
+  // because that is the moment the chip tells the user to redo what it lists;
+  // the chip clears it on a click (HIVE-140 audit, review round 1).
+  if (status === null) lostSinceHeld = 0;
+  lastLinkStatus = status === null ? null : { ...status, lost: lostSinceHeld };
+  broadcaster.emit(CH.remoteLinkStatus, lastLinkStatus);
+}
+
+/**
+ * One more call or keystroke the link swallowed: count it and re-push the
+ * current status so the chip says so now, not at the next transition.
+ *
+ * The re-push drops `snapshot`: that key means "a reattach just happened, apply
+ * this fleet", and repeating it on every lost keystroke would re-hydrate the
+ * store from a stale accept frame.
+ */
+function noteLinkLoss(broadcaster: Broadcaster): void {
+  lostSinceHeld += 1;
+  if (lastLinkStatus === null) return;
+  const next: RemoteLinkStatus = { ...lastLinkStatus, lost: lostSinceHeld };
+  delete next.snapshot;
+  lastLinkStatus = next;
+  broadcaster.emit(CH.remoteLinkStatus, next);
 }
 
 /** Test-only: the tracker the proxy feeds, so a spec can drive it. */
@@ -752,7 +783,7 @@ function armReattach(
       the old surface's watcher and focus record went away with it.
     */
     epoch: reattachEpoch,
-  } satisfies RemoteLinkStatus);
+  } satisfies Omit<RemoteLinkStatus, 'lost'>);
 }
 
 /**

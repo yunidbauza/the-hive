@@ -1,4 +1,5 @@
 import { PlugsConnected, Plugs } from '@phosphor-icons/react';
+import { useState } from 'react';
 
 import type { Tone } from '@/types/notification';
 
@@ -57,9 +58,27 @@ import { useRemoteLink } from '@stores/hive-store';
  */
 export function AttachedChip() {
   const link = useRemoteLink();
+  /*
+    How many of `lost` the user has already acknowledged with a click (HIVE-140
+    audit, review round 1). Main keeps counting through a reattach, which is the
+    moment the note matters most, and resets only when the window goes local —
+    so a click here is the one way to say "done", and it lives beside the chip
+    that shows the number. Cleared on the same transition main clears on, so
+    losses on the next attachment start from nothing. Adjusted during render
+    rather than in an effect, React's own pattern for state derived from a
+    changed prop.
+  */
+  const [acknowledged, setAcknowledged] = useState(0);
+  const [attachedBefore, setAttachedBefore] = useState(link !== null);
+  if ((link !== null) !== attachedBefore) {
+    setAttachedBefore(link !== null);
+    if (link === null) setAcknowledged(0);
+  }
+
   if (link === null) return null;
 
   const { state, serverName } = link;
+  const lost = Math.max(0, link.lost - acknowledged);
 
   const tone: Tone =
     state === 'attached' ? 'brand' : state === 'reconnecting' ? 'amber' : 'red';
@@ -80,10 +99,31 @@ export function AttachedChip() {
             link.reason === null ? '' : `: ${link.reason}`
           }`;
 
+  /*
+    What the dropped link swallowed (HIVE-140 audit, gap 1): a click or a
+    keystroke sent while it was down reached nothing, and nothing else on
+    screen says so. Named in the chip, not only the tooltip, because the user
+    has to know to redo them.
+  */
+  const lostNote =
+    lost === 0
+      ? ''
+      : ` ${String(lost)} ${lost === 1 ? 'action' : 'actions'} (clicks or keystrokes) did not reach ${serverName}; redo ${lost === 1 ? 'it' : 'them'}${state === 'attached' ? '' : ' once it is back'}. Click the count to clear it.`;
+
   return (
-    <Chip tone={tone} title={title} className="shrink-0">
+    <Chip tone={tone} title={`${title}${lostNote}`} className="shrink-0">
       {state === 'attached' ? <PlugsConnected size={12} /> : <Plugs size={12} />}
       {label} · {serverName}
+      {lost > 0 && (
+        <button
+          type="button"
+          onClick={() => setAcknowledged(link.lost)}
+          aria-label={`${String(lost)} lost — clear`}
+          className="cursor-pointer underline decoration-dotted underline-offset-2"
+        >
+          · {lost} lost
+        </button>
+      )}
     </Chip>
   );
 }

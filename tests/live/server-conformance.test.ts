@@ -607,12 +607,27 @@ async function bootServerApp(
   configPath: string,
   userDataDir: string,
   buildConfig: (port: number) => unknown,
+  /**
+   * `refusing` boots a server whose config refused its bind host (HIVE-140
+   * audit, gap 3): it must come up running and listening *nowhere*, so there is
+   * no socket to health-check. Ready is its one log line saying so.
+   */
+  expect: 'listening' | 'refusing' = 'listening',
 ): Promise<BootedApp> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const port = await freePort();
     writeFileSync(configPath, JSON.stringify(buildConfig(port), null, 2), 'utf8');
     const { child, record } = spawnApp(['--server'], configPath, userDataDir);
+    if (expect === 'refusing') {
+      const deadline = Date.now() + 30_000;
+      while (!record.stderr.includes('server mode is not listening') && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      if (record.stderr.includes('server mode is not listening')) return { child, record, port };
+      await stopApp(child);
+      throw new Error(`the refusing server never said so. stderr:\n${record.stderr || '(empty)'}`);
+    }
     try {
       await waitForListener('127.0.0.1', port, 30_000);
       const status = await httpStatus(`http://127.0.0.1:${String(port)}/`);
@@ -1736,7 +1751,7 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
     it('refuses --update while the local server is running', async () => {
       const result = await runOneShot(['--update'], configPath, userDataDir);
 
-      expect(result.code).toBe(1);
+      expect(result.code).toBe(5);
       expect(result.stdout).toMatch(/server.*running/i);
       expect(result.stderr).toBe('');
     });
@@ -1882,14 +1897,13 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
         version: CONFIG_VERSION,
         projects: [],
         server: { bind: { host: '0.0.0.0', port: bootPort, allowedOrigins: [] } },
-      }));
+      }), 'refusing');
       app = booted.child;
       appRecord = booted.record;
       port = booted.port;
-      // The health check inside `bootServerApp` already confirms the
-      // fallback host (`127.0.0.1`) answers — see case 8b below for why that
-      // alone does not yet distinguish a refused wildcard from an honoured
-      // one, and for the actual proof.
+      // Booted as `refusing` (HIVE-140 audit, gap 3): a refused host binds
+      // nothing, so the ready signal is the one log line saying so rather than
+      // a health check against a socket that must not exist.
     }, 90_000);
 
     afterAll(async () => {
@@ -1910,15 +1924,12 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       // complained about while still honouring it.
       expect(parsed.server?.bind?.host).toBeUndefined();
 
-      // The behavioural half: with `host` refused, the block falls back to
-      // `DEFAULT_SERVER.bind.host` (`127.0.0.1`) — the app is still serving
-      // on the address it fell back to. This alone does **not** prove the
-      // wildcard itself was refused (a bind that genuinely honoured
-      // `0.0.0.0` also answers on `127.0.0.1`, since the wildcard includes
-      // loopback) — see case 8b for the assertion that actually tells the
-      // two apart.
-      const status = await httpStatus(`http://127.0.0.1:${String(port)}/`);
-      expect(status, `served app's stderr so far:\n${appRecord?.stderr || '(empty)'}`).toBe(426);
+      // The behavioural half (HIVE-140 audit, gap 3): with `host` refused, the
+      // server binds nothing at all. It used to fall back to `127.0.0.1` and
+      // answer there, reachable by nobody else and reported as serving. The
+      // running app says why, in the words the tray shows.
+      await expect(httpStatus(`http://127.0.0.1:${String(port)}/`)).rejects.toThrow(/ECONNREFUSED/);
+      expect(appRecord?.stderr).toMatch(/server mode is not listening: .*0\.0\.0\.0 binds every interface/);
 
       // And the app itself has not gone down over a config error — proved by
       // a second, independent process (the `--devices` one-shot) that
@@ -1929,7 +1940,7 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       expect(devices.code).toBe(0);
     });
 
-    it('8b. the OS-level bind is loopback-only — the socket itself, not a network probe', async () => {
+    it('8b. the OS holds no listening socket on that port at all — the socket itself, not a network probe', async () => {
       /*
         Review round 2's finding: an earlier version of this case connected
         from a real non-loopback address on this machine and treated a
@@ -1951,14 +1962,15 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       console.info(`8b lsof -p ${String(app.pid)} -iTCP -sTCP:LISTEN ->`, addresses);
       const forThisPort = addresses.filter((address) => address.endsWith(`:${String(port)}`));
 
+      /*
+        Not the wildcard, and not the loopback fallback it used to take either
+        (HIVE-140 audit, gap 3): nothing. Case 8c proves this same check can see
+        a wildcard bind when one exists, so an empty answer here is a real one.
+      */
       expect(
         forThisPort,
         `lsof -p ${String(app.pid)} reported: ${addresses.join(', ') || '(nothing)'}`,
-      ).toHaveLength(1);
-      // Not merely "not the wildcard" — the exact loopback address the
-      // fallback names, so this fails just as loudly if the fallback itself
-      // ever changed to some other non-wildcard host.
-      expect(forThisPort[0]).toBe(`127.0.0.1:${String(port)}`);
+      ).toEqual([]);
     });
 
     it('8c. the lsof-based check above genuinely can see a wildcard bind, on this same machine', async () => {

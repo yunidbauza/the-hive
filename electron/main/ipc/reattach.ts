@@ -22,7 +22,7 @@ export interface ReattachDeps {
   /** One dial. Rejects the way `connectRemote` does. */
   connect: () => Promise<RemoteClient>;
   /** Called on every transition, for the renderer. */
-  onStatus: (status: RemoteLinkStatus) => void;
+  onStatus: (status: Omit<RemoteLinkStatus, 'lost'>) => void;
   /** Called once per successful reattach, with the live client. */
   onAttached: (client: RemoteClient) => void;
   /**
@@ -92,7 +92,7 @@ export function createReattachLoop(deps: ReattachDeps): ReattachLoop {
   */
   let generation = 0;
 
-  const emit = (status: Omit<RemoteLinkStatus, 'serverName' | 'epoch'>): void => {
+  const emit = (status: Omit<RemoteLinkStatus, 'serverName' | 'epoch' | 'lost'>): void => {
     onStatus({ ...status, serverName, epoch });
   };
 

@@ -41,7 +41,7 @@ const fakeClient = () =>
   ({ serverName: () => 'mini', close: vi.fn() }) as unknown as RemoteClient;
 
 interface Harness {
-  statuses: RemoteLinkStatus[];
+  statuses: Omit<RemoteLinkStatus, 'lost'>[];
   attached: RemoteClient[];
   connect: ReturnType<typeof vi.fn>;
   wake: () => void;
@@ -56,7 +56,7 @@ function harness(
   */
   epochs = { last: 0 },
 ): Harness {
-  const statuses: RemoteLinkStatus[] = [];
+  const statuses: Omit<RemoteLinkStatus, 'lost'>[] = [];
   const attached: RemoteClient[] = [];
   const wakeListeners = new Set<() => void>();
   const connectSpy = vi.fn(connect);

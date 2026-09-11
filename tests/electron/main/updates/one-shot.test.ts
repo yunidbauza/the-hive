@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ServerLockClaim } from '../../../../electron/main/server/server-lock';
 import {
   runUpdateOneShot,
+  UPDATE_EXIT,
   type UpdateOneShotDeps,
 } from '../../../../electron/main/updates/one-shot';
 import type { UpdateEngine } from '../../../../electron/main/updates/updater';
@@ -66,7 +67,7 @@ describe('runUpdateOneShot', () => {
   it('refuses an active server before checking for updates', async () => {
     const h = harness({ serverActive: true });
 
-    await expect(runUpdateOneShot(h.deps)).resolves.toBe(1);
+    await expect(runUpdateOneShot(h.deps)).resolves.toBe(5);
 
     expect(h.engine.check).not.toHaveBeenCalled();
     expect(h.lines.join('\n')).toMatch(/server.*running/i);
@@ -93,7 +94,7 @@ describe('runUpdateOneShot', () => {
   it('prints a version-specific release URL instead of opening a browser for a manual build', async () => {
     const h = harness({ capability: MANUAL });
 
-    await expect(runUpdateOneShot(h.deps)).resolves.toBe(3);
+    await expect(runUpdateOneShot(h.deps)).resolves.toBe(4);
 
     expect(h.engine.download).not.toHaveBeenCalled();
     expect(h.lines.join('\n')).toContain('https://releases.example.test/v0.2.0');
@@ -109,6 +110,20 @@ describe('runUpdateOneShot', () => {
     expect(h.engine.download).toHaveBeenCalledOnce();
     expect(h.engine.install).toHaveBeenCalledOnce();
     expect(h.lines.join('\n')).toMatch(/installing/i);
+  });
+
+  /**
+   * HIVE-140 audit, gap 5: `1` used to mean both "refused, the server is
+   * running" and "failed", and `3` both "no update channel" and "update by
+   * hand". A script driving `--update` over SSH could not tell them apart.
+   */
+  it('exits with a distinct code for every outcome a script can act on', () => {
+    const codes = Object.values(UPDATE_EXIT);
+    expect(new Set(codes).size).toBe(codes.length);
+    // 0 is the one outcome that is not a code here: installation started and
+    // the process quits normally.
+    expect(codes).not.toContain(0);
+    expect(UPDATE_EXIT).toEqual({ failed: 1, current: 2, noChannel: 3, manual: 4, serving: 5 });
   });
 
   it('says it will relaunch only when it will', async () => {

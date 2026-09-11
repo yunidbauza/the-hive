@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import { AttachedChip } from '@components/layout/attached-chip';
@@ -14,6 +15,7 @@ const link = (over: Partial<RemoteLinkStatus> = {}): RemoteLinkStatus => ({
   nextAttemptAt: null,
   reason: null,
   epoch: 0,
+  lost: 0,
   ...over,
 });
 
@@ -35,6 +37,61 @@ describe('AttachedChip', () => {
     render(<AttachedChip />);
 
     expect(screen.getByText('attached · mini')).toBeInTheDocument();
+  });
+
+  /**
+   * HIVE-140 audit, gap 1: a click or a keystroke sent while the link was down
+   * reached nothing, and nothing on screen said so.
+   */
+  it('counts what the dropped link swallowed, and says to redo it', () => {
+    showing(link({ state: 'reconnecting', attempt: 2, lost: 3 }));
+
+    render(<AttachedChip />);
+
+    const count = screen.getByRole('button', { name: '3 lost — clear' });
+    expect(count).toHaveTextContent('· 3 lost');
+    expect(count.closest('[title]')?.textContent).toMatch(/^reconnecting · mini· 3 lost$/);
+    expect(count.closest('[title]')?.getAttribute('title')).toContain(
+      '3 actions (clicks or keystrokes) did not reach mini; redo them once it is back. Click the count to clear it.',
+    );
+  });
+
+  /**
+   * Review round 1: main keeps the count through a reattach, so the click is
+   * the one way to say "done" — and a loss after the click is new news.
+   */
+  it('clears the count on a click, and shows only losses that came after it', async () => {
+    showing(link({ lost: 3 }));
+    const { rerender } = render(<AttachedChip />);
+
+    await userEvent.click(screen.getByRole('button', { name: '3 lost — clear' }));
+    expect(screen.queryByRole('button', { name: /lost/ })).not.toBeInTheDocument();
+
+    showing(link({ state: 'reconnecting', lost: 4 }));
+    rerender(<AttachedChip />);
+    expect(screen.getByRole('button', { name: '1 lost — clear' })).toBeInTheDocument();
+  });
+
+  it('forgets the acknowledgement when the window goes local', async () => {
+    showing(link({ lost: 3 }));
+    const { rerender } = render(<AttachedChip />);
+    await userEvent.click(screen.getByRole('button', { name: '3 lost — clear' }));
+
+    showing(null);
+    rerender(<AttachedChip />);
+    // Main resets its count on the same transition; a fresh loss of 2 is 2.
+    showing(link({ lost: 2 }));
+    rerender(<AttachedChip />);
+
+    expect(screen.getByRole('button', { name: '2 lost — clear' })).toBeInTheDocument();
+  });
+
+  it('says nothing about losses when there were none', () => {
+    showing(link({ state: 'reconnecting', attempt: 1 }));
+
+    render(<AttachedChip />);
+
+    expect(screen.getByText(/reconnecting · mini/).textContent).not.toMatch(/lost/);
   });
 
   it('renders nothing in local mode', () => {

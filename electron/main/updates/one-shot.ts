@@ -17,6 +17,20 @@ export interface UpdateOneShotDeps {
   relaunch: boolean;
 }
 
+/**
+ * What `the-hive --update` exits with, one code per outcome a script can act on
+ * (HIVE-158, made distinct after the HIVE-140 audit). `null` from
+ * {@link runUpdateOneShot} is the fifth outcome: installation has started and
+ * the process quits normally, exiting 0.
+ */
+export const UPDATE_EXIT = {
+  failed: 1,
+  current: 2,
+  noChannel: 3,
+  manual: 4,
+  serving: 5,
+} as const;
+
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
@@ -39,24 +53,24 @@ export async function runUpdateOneShot(deps: UpdateOneShotDeps): Promise<number 
     const lock = acquireLock();
     if (lock.kind === 'active') {
       print('Cannot update The Hive while the local server is running. Stop the server, then retry.');
-      return 1;
+      return UPDATE_EXIT.serving;
     }
     release = lock.release;
 
     if (!capability.canCheck) {
       print(`${capability.reason}\nDownload updates from: ${releasesUrl}`);
-      return 3;
+      return UPDATE_EXIT.noChannel;
     }
 
     const found = await engine.check();
     if (found === null) {
       print(`The Hive ${currentVersion} is already current.`);
-      return 2;
+      return UPDATE_EXIT.current;
     }
 
     if (capability.mode === 'manual') {
       print(`The Hive ${found.version} is available: ${releaseUrlFor(found.version)}`);
-      return 3;
+      return UPDATE_EXIT.manual;
     }
 
     print(`Downloading The Hive ${found.version}...`);
@@ -76,7 +90,7 @@ export async function runUpdateOneShot(deps: UpdateOneShotDeps): Promise<number 
     return null;
   } catch (cause) {
     print(`Could not update The Hive: ${errorMessage(cause)}`);
-    return 1;
+    return UPDATE_EXIT.failed;
   } finally {
     release?.();
   }

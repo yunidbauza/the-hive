@@ -881,6 +881,27 @@ function optionalReceiver(
 const HEX_SHA256 = /^[0-9a-f]{64}$/;
 
 /**
+ * Why the configured `server.bind` host was refused, or `null` when it was not
+ * (HIVE-140 audit, gap 3) — read by the server listener off
+ * `ConfigSnapshot.errors`, so a refused host makes it bind nothing rather than
+ * the default `127.0.0.1`.
+ *
+ * Matched here, beside the messages {@link optionalServerBind} writes, so the
+ * two spellings cannot drift apart. Only the refusals that throw the host away
+ * count: a bad `host`, and a `bind` block ignored whole. An unknown key beside
+ * a good host is advisory and leaves the host standing, so it does not.
+ */
+export function serverBindRefusal(errors: readonly string[]): string | null {
+  return (
+    errors.find(
+      (message) =>
+        /\.server\.bind\.host: /.test(message) ||
+        /\.server\.bind: (expected an object|forbidden key)/.test(message),
+    ) ?? null
+  );
+}
+
+/**
  * HIVE-142's nested `server.bind` block.
  *
  * Structurally {@link optionalBind}'s twin, with two differences the shape
@@ -928,7 +949,12 @@ function optionalServerBind(
     } else if (isServerBindHost(host)) {
       bind.host = host;
     } else {
-      errors.push(`${at}.host: expected a hostname or an IPv4 address — using the default`);
+      // No "using the default" here, unlike its siblings: a refused host makes
+      // the server listen nowhere (`serverBindRefusal`), and this line is the
+      // reason the tray shows for it.
+      errors.push(
+        `${at}.host: expected a hostname or an IPv4 address — the server will not listen until it is fixed`,
+      );
     }
   }
 

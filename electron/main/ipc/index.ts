@@ -33,7 +33,6 @@ import type {
   CommandDiagnostic,
   ConfigSnapshot,
   EnvDiagnostic,
-  RemoteConfig,
   SetRemoteResult,
 } from '@shared/config-contract';
 import type {
@@ -120,6 +119,7 @@ import {
   type NotificationDismissedEvent,
   type NotificationReadEvent,
   type RemoteLinkStatus,
+  type LocalRemoteState,
 } from '@shared/ipc-contract';
 import type {
   JiraComment,
@@ -199,6 +199,7 @@ import {
 } from '../config';
 import { diagnoseEnv } from '../config/env-diagnostic';
 import { loginEnvStatus } from '../config/login-env';
+import { serverBindRefusal } from '../config/parse';
 import { diagnoseCommand, effectiveRuntime, receiverHostAliases } from '../config/runtime';
 import {
   browseHomeDirectory,
@@ -2176,6 +2177,8 @@ export function registerIpcHandlers(
   remoteListenerPort = serverBind.port;
   remoteListener = createRemoteListener({
     bind: serverBind,
+    // A refused host binds nothing, never the default (HIVE-140 audit, gap 3).
+    refusal: serverBindRefusal(getConfig().errors),
     /*
       `readServerDevicesFromDisk()`, not `getConfig()`/`reloadConfig()`
       (HIVE-142 review, N1). `getConfig()` answers this process's cached
@@ -3845,7 +3848,9 @@ export function registerIpcHandlers(
     must still answer it. Both bindings call the one exported reader, so the two
     modes cannot drift into answering the same question differently.
   */
-  handle(CH.configGetRemote, (): RemoteConfig => readLocalRemote());
+  handle(CH.configGetRemote, (): LocalRemoteState =>
+    readLocalRemote(remoteCredentialStore().read() !== null),
+  );
   /**
    * Store the device credential a `server:pair` mint on some *other* Hive
    * handed back (HIVE-144) — the opposite direction from `server:pair` above,

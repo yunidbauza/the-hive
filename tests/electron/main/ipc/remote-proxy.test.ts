@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { CloseCause } from '../../../../electron/remote-client/socket';
+import { RemoteCallError, type CloseCause } from '../../../../electron/remote-client/socket';
 import { CH, type AppInfo } from '../../../../electron/shared/ipc-contract';
 import {
   FRAME_KIND,
@@ -135,7 +135,7 @@ vi.mock('electron', () => ({
   },
 }));
 
-const { registerRemoteProxy, remoteProxyBindingsSize, resetRemoteProxy } = await import(
+const { countsAsAction, lostToTheLink, registerRemoteProxy, remoteProxyBindingsSize, resetRemoteProxy } = await import(
   '../../../../electron/main/ipc/remote-proxy'
 );
 const { createResumeTracker } = await import('../../../../electron/main/ipc/resume-tracker');
@@ -997,6 +997,87 @@ describe('registerRemoteProxy', () => {
     expect(consoleError).toHaveBeenCalledWith('[hive] rejected pty:write:', thrown);
 
     consoleError.mockRestore();
+  });
+
+  /**
+   * HIVE-140 audit, gap 1: what a dead link swallowed is counted, so the chip
+   * can say so. What the server itself refused is not: it arrived.
+   */
+  describe('counting what the link lost', () => {
+    it('tells a dead link from a server refusal', () => {
+      expect(lostToTheLink(new Error('Cannot call config:reload: the connection to mini is closed.'))).toBe(true);
+      expect(lostToTheLink(new RemoteCallError('connection-closed', 'closed'))).toBe(true);
+      expect(lostToTheLink(new RemoteCallError('window-bound', 'no window'))).toBe(false);
+      expect(lostToTheLink(new RemoteCallError('frame-too-large', 'too big'))).toBe(false);
+      expect(lostToTheLink('not an error')).toBe(false);
+    });
+
+    it('counts a call the closed link rejected, and still rejects it', async () => {
+      const client = fakeClient();
+      const lost = new Error('Cannot call config:reload: the connection to mini is closed.');
+      client.call.mockRejectedValue(lost);
+      const onLinkLoss = vi.fn();
+      registerRemoteProxy({ client, broadcaster: fakeBroadcaster(), onLinkLoss });
+
+      await expect(invoke(CH.configReload, trustedEvent, {})).rejects.toBe(lost);
+      expect(onLinkLoss).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * Review round 1: the PR and ticket sweeps poll every minute whether or not
+     * the link is up, and counting their failures told an idle user that a
+     * sleeping server had eaten ten of their "actions".
+     */
+    it('counts only what the user did: no reads, no background polls, no acks', () => {
+      expect(countsAsAction(CH.configReload, 'call')).toBe(true);
+      expect(countsAsAction(CH.ledgerPost, 'call')).toBe(true);
+      expect(countsAsAction(CH.configGet, 'call')).toBe(false);
+      expect(countsAsAction(CH.jiraSearch, 'call')).toBe(false);
+      expect(countsAsAction(CH.githubPrs, 'call')).toBe(false);
+      expect(countsAsAction(CH.ptyWrite, 'notify')).toBe(true);
+      expect(countsAsAction(CH.ptyAck, 'notify')).toBe(false);
+      expect(countsAsAction(CH.ptyResize, 'notify')).toBe(false);
+    });
+
+    it('does not count a read the closed link rejected', async () => {
+      const client = fakeClient();
+      client.call.mockRejectedValue(new Error('Cannot call config:get: the connection to mini is closed.'));
+      const onLinkLoss = vi.fn();
+      registerRemoteProxy({ client, broadcaster: fakeBroadcaster(), onLinkLoss });
+
+      await expect(invoke(CH.configGet, trustedEvent, {})).rejects.toThrow(/is closed/);
+      expect(onLinkLoss).not.toHaveBeenCalled();
+    });
+
+    it('does not count a call the server refused', async () => {
+      const client = fakeClient();
+      client.call.mockRejectedValue(new RemoteCallError('outside', 'EOUTSIDE'));
+      const onLinkLoss = vi.fn();
+      registerRemoteProxy({ client, broadcaster: fakeBroadcaster(), onLinkLoss });
+
+      await expect(invoke(CH.configReload, trustedEvent, {})).rejects.toBeInstanceOf(RemoteCallError);
+      expect(onLinkLoss).not.toHaveBeenCalled();
+    });
+
+    it('counts a keystroke the closed link refused, and nothing it sent', () => {
+      const client = fakeClient();
+      const onLinkLoss = vi.fn();
+      registerRemoteProxy({ client, broadcaster: fakeBroadcaster(), onLinkLoss });
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const write = listeners.get('pty:write');
+      if (write === undefined) throw new Error('pty:write was never bound');
+
+      write(trustedEvent, { sessionId: 's1', data: 'a' });
+      expect(onLinkLoss).not.toHaveBeenCalled();
+
+      client.notify.mockImplementation(() => {
+        throw new RemoteCallError('connection-closed', 'Cannot send pty:write: closed.');
+      });
+      write(trustedEvent, { sessionId: 's1', data: 'b' });
+      expect(onLinkLoss).toHaveBeenCalledTimes(1);
+
+      consoleError.mockRestore();
+    });
   });
 
   /**

@@ -563,6 +563,7 @@ describe('Header', () => {
         nextAttemptAt: null,
         reason: null,
         epoch: 0,
+        lost: 0,
       });
 
       render(<Header />);
@@ -613,6 +614,7 @@ describe('Header', () => {
         nextAttemptAt: null,
         reason: null,
         epoch: 0,
+        lost: 0,
       });
 
       render(<Header />);
