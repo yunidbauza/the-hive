@@ -1912,7 +1912,11 @@ seeded like the skills. The shipper is a patrol: a ten-minute wake with
 GraphQL mutation, and no glob over it could keep the consent narrow);
 HIVE-166's grant or the fence's card decides each merge, and
 `tests/resources/agents/shipped-agents.test.ts` proves it against the real
-`matches`. It
+`matches`. The fixer (HIVE-169) takes a PR and its findings by `ledger_ask`,
+works on the branch where it is already checked out (git allows one worktree
+per branch, and the builder's may still stand) or in a worktree of its own
+under `~/.hive/work/fixer/`, and answers `clean` or `blocked`; a judgment call
+goes to the PR's owner as an ask with options. It
 asks `acr` with a PR link and `--self`, the one job shape acr accepts with no
 project, and `acr` answers it with `ledger_answer` because the asker is an
 agent. `tests/resources/agents/shipped-agents.test.ts` parses both against
