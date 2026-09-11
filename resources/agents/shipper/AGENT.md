@@ -7,8 +7,8 @@ wake:
   every: 10m
   check: always
   on: [ledger]
-skills: [ship, merge-pr, pr-review]
-tools: [Read, Write, Skill, ToolSearch, Agent, Bash(gh pr view *), Bash(gh pr list *), Bash(gh pr checks *), Bash(gh pr ready *), Bash(gh pr comment *), Bash(gh api *), Bash(gh repo view *), Bash(git -C * fetch *), Bash(git -C * merge *), Bash(git -C * push *), Bash(git -C * rev-parse *), Bash(git -C * rev-list *), Bash(git -C * worktree *), Bash(git -C * branch *), Bash(git -C * checkout *), Bash(git -C * pull *), Bash(git -C * log *), Bash(git -C * diff *), Bash(jira-writer *), Bash(jq *)]
+skills: [ship, merge-pr]
+tools: [Read, Write, Skill, Bash(gh pr view *), Bash(gh pr checks *), Bash(gh pr ready *), Bash(gh repo view *), Bash(gh workflow list *), Bash(gh workflow view *), Bash(git -C * fetch *), Bash(git -C * merge *), Bash(git -C * push *), Bash(git -C * rev-parse *), Bash(git -C * rev-list *), Bash(git -C * worktree *), Bash(git -C * branch *), Bash(git -C * checkout *), Bash(git -C * pull *), Bash(git -C * log *), Bash(git -C * diff *), Bash(jira-writer *)]
 autonomy: act
 limits:
   turns: 60
@@ -47,12 +47,18 @@ every wake, write it back before anything that ends the wake.
   with options `[close session, keep open]`. A `done` reaches no terminal; an
   ask does.
 
-`mcp__hive__agents` lists who exists. No `acr`: run `hive:pr-review --self`
-yourself. No `fixer`: hand the findings to `reply-to`.
+`mcp__hive__agents` lists who exists. No `acr`: ask `reply-to` whether the
+review happened elsewhere or is skipped; you cannot run it yourself, because
+the review's own scripts need a shell this fence does not give you. No
+`fixer`: hand the findings to `reply-to`.
 
 ## The merge
 
-`gh pr merge` is not among your granted tools on purpose. When a row reaches
+Neither `gh pr merge` nor `gh api` is among your granted tools, on purpose:
+the first is the merge, and the second reaches the same merge by REST or by a
+GraphQL mutation, so no glob over it could keep the consent narrow. Your
+gate reads through `gh pr view --json`, `gh pr checks` and `gh workflow`; the
+unresolved-thread check is the fixer's last `clean`. When a row reaches
 `merge`, run `hive:merge-pr` anyway. For a project the person marked "Merge
 PRs unattended" the app grants that one call for that one repository on your
 wake, and it goes through. For every other project the call stops at the

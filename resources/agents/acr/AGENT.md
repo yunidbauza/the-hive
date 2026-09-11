@@ -7,7 +7,7 @@ wake:
   on: [ledger]
 autonomy: act
 skills: [pr-review]
-tools: [Read, Grep, Glob, Write, TodoWrite, Skill, Task, ReportFindings, Bash, Agent]
+tools: [Read, Grep, Glob, Write, TodoWrite, Skill, ReportFindings, Bash, Agent]
 limits:
   turns: 120
   parallel: 3
@@ -119,7 +119,7 @@ A self review posts nothing, so the findings need a home the asker can open.
 Write everything the skill wrote above its `json` block (the findings, the
 borderline list, the ticket's scope) with `Write` to:
 
-    <hive>/work/reviewer/reports/<project>-<pr or branch>-self-<YYYYMMDD-HHMM>.md
+    <hive>/work/acr/reports/<project>-<pr or branch>-self-<YYYYMMDD-HHMM>.md
 
 Open the file with three lines: the repository, `source` (`workspace` or
 `pr-head`, from the json block) and `head_sha`. Whoever reads it later should

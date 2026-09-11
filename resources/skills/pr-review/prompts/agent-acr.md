@@ -17,9 +17,9 @@ You will be given:
 ## Your Task
 
 1. **Run it from the worktree, in local mode, against the base that matches the mode:**
-   - **Review:** compare against the remote's current base branch, the same comparison GitHub makes for the PR. Let ACR fetch it first, so `origin/<base>` is the remote's tip, not whatever this checkout last saw:
+   - **Review:** compare against the run's merge base, `BASE_SHA`, the same base every other reviewer and `DIFF_PATH` use, so nothing the PR never touched is reported. The run's worktree already holds it; nothing is fetched into the user's repository:
      ```bash
-     cd "$REVIEW_DIR" && acr -l --base "origin/$BASE_REF"
+     cd "$REVIEW_DIR" && acr -l --base "$BASE_SHA" --no-fetch
      ```
    - **Self:** compare against the run's merge base. The snapshot commit carries uncommitted and untracked work, so ACR sees all of it. Nothing to fetch:
      ```bash

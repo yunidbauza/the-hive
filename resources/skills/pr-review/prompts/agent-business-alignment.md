@@ -24,7 +24,7 @@ You are dispatched only with a fetched ticket, so this part always runs. Work ou
 
 **Important:** This is a lightweight sanity check, not a full QA pass. Cite what you mark; don't over-analyze.
 
-If `status` is `"no_ticket"` or `"fetch_failed"`, skip this part — do not attempt AC checks with no ticket data. **Do not report the `fetch_failed` case yourself**: the orchestrator surfaces it as a review-level warning banner (see SKILL.md Stage 4), so this agent staying silent here is correct — the failure is made visible elsewhere, not swallowed.
+If `status` is `"no_ticket"` or `"fetch_failed"`, skip this part — do not attempt AC checks with no ticket data. **Do not report the `fetch_failed` case yourself**: the orchestrator surfaces it as one warning line in the review (SKILL.md, the ticket status), so this agent staying silent here is correct — the failure is made visible elsewhere, not swallowed. Part 2 still runs.
 
 ## Part 2: Architecture Evaluation (always)
 
@@ -63,7 +63,7 @@ For each finding, ask: "Does the existing codebase do it the way I'm suggesting?
 
 Return ONLY a JSON object: `{ "ticket": { … }, "findings": [ … ], "scope": { … } }`.
 
-`ticket` is the object the ticket instructions above produced: `status`, `ticketKey`, `route`, and `failureReason` when it failed. When `status` is not `ok`, stop after writing it: `findings` is `[]` and `scope` is `null`.
+`ticket` is the object the ticket instructions above produced: `status`, `ticketKey`, `route`, and `failureReason` when it failed. When `status` is not `ok`, `scope` is `null` and `findings` holds Part 2's architecture findings only.
 
 `scope` is Part 1's map of the ticket:
 

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { parseAgent } from '../../../electron/main/agents/definition';
+import { matches } from '../../../electron/shared/permission-rules';
 
 /**
  * Every agent the app ships parses against the skills the app ships
@@ -38,10 +39,26 @@ describe('shipped agents', () => {
     if ('def' in result) expect(result.def.name).toBe(name);
   });
 
-  it('never grants the shipper the merge call: the fence and the auto-merge grant own it', () => {
+  it('never grants the shipper a merge, by gh pr merge, by REST or by a GraphQL mutation', () => {
     const source = readFileSync(join(resources, 'agents', 'shipper', 'AGENT.md'), 'utf8');
-    expect(source).not.toMatch(/Bash\(gh pr merge/);
-    expect(source).not.toMatch(/Bash\(gh pr \*\)/);
-    expect(source).not.toMatch(/\bBash\b(?!\()/);
+    const result = parseAgent(source, {
+      folder: 'shipper',
+      skillNames: shippedSkills,
+      hiveSkillNames: shippedSkills,
+      integrations: ['slack'],
+    });
+    if (!('def' in result)) throw new Error('shipper does not parse');
+    const allows = (command: string) =>
+      result.def.tools.some((rule) => matches(rule, 'Bash', { command }));
+
+    // The real fence, over the real rules: the grammar is what says no.
+    expect(allows('gh pr merge 1 --squash --repo o/r')).toBe(false);
+    expect(allows('gh api -X PUT repos/o/r/pulls/1/merge -f merge_method=squash')).toBe(false);
+    expect(allows("gh api graphql -f query='mutation { mergePullRequest(input:{pullRequestId:\"x\"}) { clientMutationId } }'")).toBe(false);
+    // What the stage table does run.
+    expect(allows('gh pr view 1 --repo o/r --json state,headRefOid')).toBe(true);
+    expect(allows('gh pr checks 1 --repo o/r')).toBe(true);
+    expect(allows('git -C /w merge --ff-only origin/feat')).toBe(true);
+    expect(allows('gh workflow list --repo o/r --json name,path,state')).toBe(true);
   });
 });

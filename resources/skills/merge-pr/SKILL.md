@@ -79,10 +79,31 @@ The gate reads after it, never before.
 
 ## Step 3: the gate, then the merge
 
-One GraphQL reading of every blocker, raw, plus the workspace head read in
-the call right after. No `--jq` here: a jq program is full of `|`, and the
-fence refuses any command carrying one, however it is quoted. The response is
-small and bounded, and the reduction is a checklist you run over it.
+Two readings, by who is running this.
+
+**As the shipper.** The shipper holds no `gh api`: that command reaches the
+merge by REST or by a GraphQL mutation, and no glob over it could keep the
+merge consent narrow. Its reading is
+
+```
+gh pr view <N> --repo <owner>/<repo> --json state,isDraft,mergeable,mergeStateStatus,reviewDecision,headRefOid,statusCheckRollup
+```
+
+then `gh pr checks <N> --repo <owner>/<repo>`, then `git -C <workspace> rev-parse HEAD`.
+`mergeStateStatus` other than `CLEAN` or `HAS_HOOKS` is a HOLD line
+(`BLOCKED`, `BEHIND`, `DIRTY`, `UNSTABLE`, `UNKNOWN`), `reviewDecision` of
+`CHANGES_REQUESTED` or `REVIEW_REQUIRED` is one, and the checks rows below
+apply. Unresolved review threads are not in this reading: the fixer's last
+`clean` answer, which `review-pr-findings` gives only with zero unresolved
+threads, stands for them, and `ship` never reaches this stage without it.
+(HIVE-173 adds `mcp__hive__pr` for a contemporaneous count from the Hive's
+own sweep.)
+
+**In a session.** One GraphQL reading of every blocker, raw, plus the
+workspace head read in the call right after. No `--jq` here: a jq program is
+full of `|`, and a fenced session refuses any command carrying one, however
+it is quoted. The response is small and bounded, and the reduction is a
+checklist you run over it.
 
 ```
 gh api graphql -F owner=<owner> -F repo=<repo> -F n=<N> -f query='query($owner:String!, $repo:String!, $n:Int!) { repository(owner:$owner, name:$repo) { pullRequest(number:$n) { headRefOid state mergeable reviewDecision reviewRequests(first:50){ nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } } } } latestReviews(first:50){ nodes { author { login } state } } reviewThreads(first:100){ pageInfo { hasNextPage } nodes { isResolved isOutdated } } commits(last:1){ nodes { commit { statusCheckRollup { state contexts(first:100){ pageInfo { hasNextPage } nodes { __typename ... on CheckRun { name status conclusion } ... on StatusContext { context state } } } } } } } } } }'
@@ -119,7 +140,7 @@ not a pass, and neither is a JSON you did not read to the end.
 | checks still running, or a `[Bot]` reviewer pending | in a session: wait, then re-run the **whole** gate, bounded at about ten minutes. In a shipper wake: end the wake; the clock re-runs this stage, and nothing sleeps inside a turn |
 | a `[User]` reviewer pending, or CHANGES_REQUESTED | stop and report; nothing here approves for a person |
 | head moved | stop: a wrong repository, or a push mid-run |
-| zero checks | establish whether the repo has CI: `gh api repos/<owner>/<repo>/actions/workflows --jq '.workflows[].path'`, then `gh api repos/<owner>/<repo>/contents/<path>` for each and read whether it triggers on `pull_request` |
+| zero checks | establish whether the repo has CI: `gh workflow list --repo <owner>/<repo> --json name,path,state`, then `gh workflow view <path> --repo <owner>/<repo> --yaml` for each and read whether it triggers on `pull_request` |
 | more than 100 … | paginate; truncated is never CLEAR |
 | empty reading | stop; empty is not a pass |
 
@@ -148,8 +169,9 @@ the Hive's permission fence and becomes an inbox card; the run ends `asking`,
 and the answer wakes a fresh run. That card is the checkpoint, and the wait
 behind it voids the CLEAR like any other wait: **the resumed run re-runs the
 gate** and merges on the new CLEAR, which the one-shot grant now lets through.
-Do not route around the fence through `gh api`: a merge by REST is the same
-act without the consent, and the shipper's body names it as the line.
+The shipper holds no `gh api` at all, because a merge by REST or by GraphQL
+mutation is the same act without the consent; a session that does hold it
+does not use it for that either.
 
 ## Step 4: teardown
 

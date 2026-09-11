@@ -210,7 +210,7 @@ line into Stage 4: "Ticket `KEY` could not be read — scope not checked
    message. Pass `DIFF_PATH`, `REVIEW_DIR`, and `FEEDBACK_PATH` when
    `$RUN_DIR/feedback.json` exists. Each verifier reads the source behind every
    finding it holds and returns a score.
-2. **Drop anything below 80.** In self mode, keep 60–79 as **borderline**
+2. **Drop anything below 75.** In self mode, keep 60–74 as **borderline**
    instead. They take no severity and never mix with the findings; they come
    back in a list of their own, each with its score and the verifier's
    one-line reasoning. On your own branch a false alarm costs you a minute to

@@ -61,8 +61,14 @@ case "${1:-}" in
 esac
 
 repo=$(cd "$2" && git rev-parse --show-toplevel) || die "$2 is not a git repository"
-work=$3
+mkdir -p "$3"
+work=$(cd "$3" && pwd) || die "$3 is not a directory"
 mode=$4
+# A PR may arrive as a link; the number is what the refs and the run label want.
+case "$mode" in
+  */pull/*) mode=${mode##*/pull/}; mode=${mode%%[!0-9]*} ;;
+esac
+[ "$mode" = --self ] || [ -n "$mode" ] || die "no PR number"
 mkdir -p "$work/runs"
 sweep "$work"
 

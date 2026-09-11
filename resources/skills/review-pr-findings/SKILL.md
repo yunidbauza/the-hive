@@ -54,11 +54,12 @@ count as this round's input too.
 ## Step 2: the ledger file
 
 `~/.hive/work/fixer/ledgers/<owner>-<repo>-pr<N>.md`, the same path from a
-session; one place per PR. One row per finding: `finding → round first seen
-→ verdict → action → resolution`. Read it before assessing anything. A
-finding already assessed in an earlier round is not re-fixed: reply pointing
-at the prior resolution. Update after every verdict and every push. It is removed by the run that answers `clean`, and
-by nobody else; a `blocked` answer keeps it for the next round.
+session, so there is one place per PR. One row per finding: `finding → round
+first seen → verdict → action → resolution`. Read it before assessing
+anything. A finding already assessed in an earlier round is not re-fixed:
+reply pointing at the prior resolution. Update after every verdict and every
+push. It is removed by the run that answers `clean`, and by nobody else; a
+`blocked` answer keeps it for the next round.
 
 ## Step 3: adversarial assessment
 
