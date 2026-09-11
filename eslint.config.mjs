@@ -507,8 +507,14 @@ export default tseslint.config(
     },
   },
   {
-    // Config and tooling run on Node, not in the browser.
-    files: ['*.config.{ts,mjs}', 'scripts/**/*.mjs', '*.aliases.mjs'],
+    // Config and tooling run on Node, not in the browser. So does a shipped
+    // skill's script (HIVE-163): a hook process is plain Node, no bundler.
+    files: [
+      '*.config.{ts,mjs}',
+      'scripts/**/*.mjs',
+      '*.aliases.mjs',
+      'resources/skills/**/scripts/*.mjs',
+    ],
     languageOptions: { globals: globals.node },
   },
   {
