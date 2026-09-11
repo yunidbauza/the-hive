@@ -26,6 +26,8 @@ function setup(overrides: Partial<Props> = {}) {
     onChangeKey: vi.fn(),
     onRepoint: vi.fn(),
     onRemove: vi.fn(),
+    autoMerge: false,
+    onToggleAutoMerge: vi.fn(),
     ...overrides,
   };
   render(<ProjectRowMenu {...props} />);
@@ -57,6 +59,18 @@ describe('ProjectRowMenu', () => {
     ]) {
       expect(screen.getByRole('menuitem', { name: label })).toBeInTheDocument();
     }
+    expect(screen.getByRole('menuitemcheckbox', { name: /merge prs unattended/i })).toBeInTheDocument();
+  });
+
+  it('shows unattended merging as a checked item and toggles it (HIVE-166)', async () => {
+    const props = setup({ autoMerge: true });
+    await open();
+
+    const item = screen.getByRole('menuitemcheckbox', { name: /merge prs unattended/i });
+    expect(item).toHaveAttribute('aria-checked', 'true');
+    await userEvent.click(item);
+
+    expect(props.onToggleAutoMerge).toHaveBeenCalledTimes(1);
   });
 
   it.each([

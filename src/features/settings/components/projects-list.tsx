@@ -5,6 +5,7 @@ import {
   renameProjectInConfig,
   reorderProjectsInConfig,
   repointProjectInConfig,
+  setProjectAutoMergeInConfig,
   setProjectKeyInConfig,
 } from '@/lib/project-config';
 
@@ -253,6 +254,13 @@ export function ProjectsList({ entries }: ProjectsListProps) {
                 }
                 onRepoint={() => onRepoint(project.id)}
                 onRemove={() => onRemove(project.id)}
+                autoMerge={project.autoMerge === true}
+                onToggleAutoMerge={() =>
+                  void setProjectAutoMergeInConfig({
+                    id: project.id,
+                    autoMerge: project.autoMerge !== true,
+                  })
+                }
               />
             }
           />

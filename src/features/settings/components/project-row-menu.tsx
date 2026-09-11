@@ -20,6 +20,12 @@ interface ProjectRowMenuProps {
   onChangeKey: () => void;
   onRepoint: () => void;
   onRemove: () => void;
+  /**
+   * Whether the shipper agent may merge this project's PRs without a card
+   * (HIVE-166). Shown as a checked item; toggling writes the config.
+   */
+  autoMerge: boolean;
+  onToggleAutoMerge: () => void;
 }
 
 /**
@@ -65,6 +71,8 @@ export function ProjectRowMenu({
   onChangeKey,
   onRepoint,
   onRemove,
+  autoMerge,
+  onToggleAutoMerge,
 }: ProjectRowMenuProps) {
   const item =
     'rounded-[4px] px-2 py-1 text-[12.5px] text-muted focus:bg-hover focus:text-ink data-[disabled]:opacity-35';
@@ -139,6 +147,14 @@ export function ProjectRowMenu({
           nearer to renaming what it is typed as than either does to moving it
           on disk (HIVE-94).
         */}
+        <DropdownMenuItem
+          role="menuitemcheckbox"
+          aria-checked={autoMerge}
+          onSelect={() => select(onToggleAutoMerge)}
+          className={item}
+        >
+          {autoMerge ? '✓ ' : ''}Merge PRs unattended
+        </DropdownMenuItem>
         <DropdownMenuItem
           onSelect={() => select(onChangeKey, true)}
           className={item}

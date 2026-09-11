@@ -7,6 +7,7 @@ import type {
 import { probeCommand } from '../../config/probe';
 
 import { createGithubClient, type GithubClient } from './client';
+import type { RepoRef } from './query';
 import { createRepoResolver, type RepoResolver } from './repos';
 import type { RunAsync } from './run';
 
@@ -49,6 +50,13 @@ export interface Github {
    * better than silently widening to everything the user did not ask for.
    */
   searchPrs(term: string, projectId?: string): Promise<GhResult<PrRecord[]>>;
+  /**
+   * Project id → repository for the configured projects (HIVE-166), through
+   * the same resolver and cache the sweep uses. An empty map when `gh` is not
+   * installed; the shipper's merge grant reads this and grants nothing for a
+   * project it cannot place.
+   */
+  resolveProjects(): Promise<Map<string, RepoRef>>;
 }
 
 export interface GithubDeps {
@@ -125,6 +133,20 @@ export function createGithub(deps: GithubDeps): Github {
       if (!result.ok) return result;
 
       return { ok: true, value: { prs: result.value, repos: repos.length } };
+    },
+
+    async resolveProjects() {
+      const path = deps.env().PATH ?? '';
+      const { resolved } = probeCommand('gh', path);
+      if (resolved === null) return new Map<string, RepoRef>();
+
+      if (cachedFor !== resolved || resolver === null || client === null) {
+        cachedFor = resolved;
+        resolver = createRepoResolver(resolved, deps.run);
+        client = createGithubClient(resolved, deps.run);
+      }
+
+      return resolver.resolveEach(deps.config().projects);
     },
 
     async searchPrs(term, projectId) {

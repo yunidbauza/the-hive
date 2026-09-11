@@ -100,6 +100,40 @@ const runner = (): RunAsync => (_file, args) => {
 };
 
 describe('createGithub', () => {
+  it('resolveProjects answers an empty map without gh, and project → repo with it (HIVE-166)', async () => {
+    const calls: string[][] = [];
+    const run: RunAsync = (_file, args, options) => {
+      calls.push([...args, options?.cwd ?? '']);
+      return Promise.resolve({
+        code: 0,
+        stdout: JSON.stringify({ nameWithOwner: 'acme/nova-web' }),
+        stderr: '',
+        timedOut: false,
+      });
+    };
+
+    const without = createGithub({
+      config: () => config([project()]),
+      env: () => ({ PATH: '/nowhere' }),
+      run,
+      now: () => 0,
+    });
+    expect(await without.resolveProjects()).toEqual(new Map());
+    expect(calls).toEqual([]);
+
+    const bin = withGh();
+    const github = createGithub({
+      config: () => config([project()]),
+      env: () => ({ PATH: bin }),
+      run,
+      now: () => 0,
+    });
+    expect([...(await github.resolveProjects())]).toEqual([
+      ['nova-web', { owner: 'acme', name: 'nova-web' }],
+    ]);
+    expect(calls[0]).toEqual(['repo', 'view', '--json', 'nameWithOwner', '/repos/nova-web']);
+  });
+
   it('answers with the PRs and how many repositories were swept', async () => {
     const github = createGithub({
       config: () => config([project()]),

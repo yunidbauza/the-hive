@@ -16,6 +16,7 @@ import type {
   RepointProjectRequest,
   SetJiraRequest,
   SetNotificationsRequest,
+  SetProjectAutoMergeRequest,
   SetProjectKeyRequest,
   SetProjectRuntimeRequest,
   SetReceiverRequest,
@@ -801,6 +802,11 @@ export const renameProjectInConfig = (
 export const setProjectKeyInConfig = (
   request: SetProjectKeyRequest,
 ): Promise<void> => mutate((bridge) => bridge.config.setProjectKey(request));
+
+/** Turn unattended merging on or off for one project (HIVE-166). */
+export const setProjectAutoMergeInConfig = (
+  request: SetProjectAutoMergeRequest,
+): Promise<void> => mutate((bridge) => bridge.config.setProjectAutoMerge(request));
 
 /** Point a project at a folder that moved (story 103). */
 export const repointProjectInConfig = (

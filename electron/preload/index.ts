@@ -41,6 +41,7 @@ import type {
   SetJiraRequest,
   SetJiraTokenRequest,
   SetNotificationsRequest,
+  SetProjectAutoMergeRequest,
   SetProjectKeyRequest,
   SetProjectRuntimeRequest,
   SetReceiverRequest,
@@ -265,6 +266,9 @@ const bridge: HiveBridge = {
     // rather than of anything that touches identity.
     setProjectKey: (request: SetProjectKeyRequest): Promise<ConfigSnapshot> =>
       ipcRenderer.invoke(CH.configSetProjectKey, request),
+    // HIVE-166. A boolean on the entry, the way `key` is a string on it.
+    setProjectAutoMerge: (request: SetProjectAutoMergeRequest): Promise<ConfigSnapshot> =>
+      ipcRenderer.invoke(CH.configSetProjectAutoMerge, request),
     reorderProjects: (
       request: ReorderProjectsRequest,
     ): Promise<ConfigSnapshot> =>

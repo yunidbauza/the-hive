@@ -120,6 +120,16 @@ family like `git *`, or **all Bash**. A permanent grant is written back into `to
 Commands with `;`, `&`, `|`, `<`, `>`, a backtick, `$(` or a newline are always asked. The hive ledger tools are
 always allowed.
 
+### Unattended merges
+
+The shipper agent does not hold `gh pr merge`, so every merge it reaches stops at the
+fence and becomes a card. **Settings › Projects › ⋯ › Merge PRs unattended** is the
+consent to skip that card for one project: it writes `autoMerge: true` on the entry, and
+from then on each shipper wake carries a grant for `gh pr merge … --repo <that repository>`
+and nothing else. Other projects' merges still ask. The repository is read from `gh` when
+the app starts and when a wake first needs it; a project `gh` cannot place grants nothing,
+and its merge asks as before.
+
 ## Watch an agent work
 
 ![The agent view: Run now, Pause, Edit definition, status tiles, run log and ledger](../assets/guide/10-agent-view.png)

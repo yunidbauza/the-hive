@@ -1517,6 +1517,42 @@ describe('project keys', () => {
     });
   });
 
+  describe('setProjectAutoMerge (HIVE-166)', () => {
+    it('writes the consent onto the entry, both ways, and touches nothing else', async () => {
+      const one = join(sandbox, 'one');
+      mkdirSync(one);
+      const path = writeConfig({
+        version: 2,
+        projects: [{ id: 'one', name: 'one', path: one, key: 'on', note: 'keep me' }],
+      });
+      const module = await mutable();
+
+      let snapshot = module.setProjectAutoMerge({ id: 'one', autoMerge: true });
+      // `note` is an unknown key and is *reported*, advisory; the write still lands.
+      expect(snapshot.errors.filter((error) => !/unknown key/.test(error))).toEqual([]);
+      expect(snapshot.projects[0]?.autoMerge).toBe(true);
+      expect(entriesOnDisk(path)[0]).toMatchObject({ autoMerge: true, note: 'keep me' });
+
+      snapshot = module.setProjectAutoMerge({ id: 'one', autoMerge: false });
+      // An explicit false, not a deleted key: the file records the decision.
+      expect(entriesOnDisk(path)[0]).toMatchObject({ autoMerge: false });
+      expect(snapshot.projects[0]?.autoMerge).toBe(false);
+    });
+
+    it('refuses an unknown project, writing nothing', async () => {
+      const one = join(sandbox, 'one');
+      mkdirSync(one);
+      const path = writeConfig({ version: 2, projects: [{ id: 'one', name: 'one', path: one, key: 'on' }] });
+      const module = await mutable();
+      const before = readFileSync(path, 'utf8');
+
+      const snapshot = module.setProjectAutoMerge({ id: 'nope', autoMerge: true });
+
+      expect(snapshot.errors[0]).toMatch(/no project with id "nope"/);
+      expect(readFileSync(path, 'utf8')).toBe(before);
+    });
+  });
+
   describe('setProjectKey', () => {
     /**
      * Two projects, both with declared keys.
