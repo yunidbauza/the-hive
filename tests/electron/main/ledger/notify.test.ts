@@ -194,6 +194,57 @@ describe('createLedgerNotifier', () => {
     expect(raise.mock.calls[0][0].link).toBeUndefined();
   });
 
+  it('raises a session.goal card per receipt, keyed on the entry and the caller, never on meta.goal', () => {
+    const { raise, markRead, onEntry } = harness();
+    // In production `meta.goal` is Claude's own session uuid, written by the
+    // verifier from the Stop payload, and `from` is the Hive terminal id the
+    // receiver authenticated. They differ, and only the second is trusted.
+    const receipt = (id: string, status: string, turns: number) =>
+      onEntry({
+        id,
+        ts: 1,
+        from: 'sess-1',
+        kind: 'event',
+        body: `goal ${status}: Make the cache invalidate on write. (turn ${turns}/8)`,
+        meta: { goal: '3f9c1e04-uuid', status, turns_used: turns, turn_budget: 8 },
+      });
+
+    receipt('e1', 'ACTIVE', 1);
+    receipt('e2', 'ACTIVE', 2);
+
+    // Two raises with two ids: the hub collapses them through its supersede
+    // rule on the `session` action (`hub.test.ts`, "keeps only the newest row
+    // about one session"), which is what makes a repeated fixed id wrong here:
+    // `hub.raise` returns null for an id it has already seen.
+    expect(raise).toHaveBeenCalledTimes(2);
+    expect(raise).toHaveBeenLastCalledWith({
+      kind: 'session.goal',
+      id: 'e2',
+      title: 'goal ACTIVE: Make the cache invalidate on write. (turn 2/8)',
+      subject: 'sess-1',
+      action: { type: 'session', entityId: 'sess-1' },
+      createdAt: 1,
+    });
+    expect(markRead).not.toHaveBeenCalled();
+
+    receipt('e3', 'FAILED', 2);
+
+    expect(markRead).toHaveBeenCalledWith('e3');
+  });
+
+  it('lets a forged meta.goal reach nothing but the caller\'s own card', () => {
+    const { raise, markRead, onEntry } = harness();
+    onEntry({ id: 'e9', ts: 1, from: 'sess-2', kind: 'event', body: 'goal DONE: x', meta: { goal: 'sess-1', status: 'DONE' } });
+    expect(raise).toHaveBeenCalledWith(expect.objectContaining({ id: 'e9', action: { type: 'session', entityId: 'sess-2' } }));
+    expect(markRead).toHaveBeenCalledWith('e9');
+  });
+
+  it('ignores a goal receipt written by an agent, which has no goal to hold', () => {
+    const { raise, onEntry } = harness();
+    onEntry({ id: 'e1', ts: 1, from: 'watcher', kind: 'event', body: 'goal ACTIVE', meta: { goal: 'watcher', status: 'ACTIVE' } });
+    expect(raise).not.toHaveBeenCalled();
+  });
+
   it('raises no link at all when the done entry carries none', () => {
     const { raise, onEntry } = harness();
     onEntry(entry({ kind: 'done', from: 'drone', body: 'Sent.' }));

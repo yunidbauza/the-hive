@@ -323,6 +323,38 @@ export function createLedgerNotifier(
       return;
     }
 
+    /*
+      A goal receipt (HIVE-165): the goal-on verifier posts one `event` per
+      status it changes, as the session, with `meta.goal` set. Keyed on the
+      **entry** id, like every other card here, and never on `meta.goal`:
+      `meta` is the free-form rider the two branches above also refuse to
+      trust, and a card id taken from it would let one session mark another
+      session's goal read, or pre-claim its id so the real card is swallowed
+      (`hub.raise` returns null for an id it has seen). One card per goal
+      comes from the hub instead: `supersedeKey(kind, action)` keeps only the
+      newest `session.goal` row about a given `entityId`, and that id is
+      `entry.from`, the authenticated caller. A terminal status marks the row
+      read: nothing is owed, and an unread count that never drains is a count
+      nobody trusts. `meta.status` is model-supplied too, and all it can do
+      here is read a card about its own session.
+    */
+    if (entry.kind === 'event' && str(meta.goal) !== undefined && !deps.isAgent(entry.from)) {
+      const status = str(meta.status) ?? '';
+      const [first] = split(entry.body);
+      deps.raise({
+        kind: 'session.goal',
+        id: entry.id,
+        title: first,
+        subject: entry.from,
+        action: { type: 'session', entityId: entry.from },
+        createdAt: entry.ts,
+      });
+      if (status === 'DONE' || status === 'FAILED' || status === 'CLEARED') {
+        deps.markRead(entry.id);
+      }
+      return;
+    }
+
     if (entry.kind !== 'event' || !deps.isAgent(entry.from)) return;
 
     const outcome = str(meta.outcome);

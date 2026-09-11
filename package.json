@@ -47,6 +47,7 @@
     "test:statusline": "HIVE_LIVE_STATUSLINE_PROOF=1 vitest run tests/live/statusline-conformance.test.ts",
     "test:skills": "HIVE_LIVE_SKILLS_PROOF=1 vitest run tests/live/skills-conformance.test.ts",
     "test:done": "HIVE_LIVE_DONE_PROOF=1 vitest run tests/live/done-conformance.test.ts",
+    "test:goal": "HIVE_LIVE_GOAL_PROOF=1 vitest run tests/live/goal-hook-conformance.test.ts",
     "test:ready": "HIVE_LIVE_READY_PROOF=1 vitest run tests/live/ready-conformance.test.ts",
     "test:hook-context": "HIVE_LIVE_HOOK_CONTEXT_PROOF=1 vitest run tests/live/hook-context-conformance.test.ts",
     "test:marker": "HIVE_LIVE_MARKER_PROOF=1 vitest run tests/live/marker-context-conformance.test.ts",

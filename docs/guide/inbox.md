@@ -36,6 +36,9 @@ what it is doing to a receiver inside the app, over loopback, with a per-session
 - **Permission cards.** An agent wants a tool outside its fence. The card shows the real
   call, like `pnpm test`, and a scope ladder: **once**, a command family like `pnpm *`, or
   **all Bash**. Anything wider than once is written into the agent's definition.
+- **Goal cards.** A session running `/goal-on` reports its goal: active, a turn refused
+  until the evidence exists, done or failed. One card per goal, updated in place; it
+  reads itself once the goal settles.
 - **Update, clone and PR cards.** A new version, a finished clone, a PR approved, merged or
   failing checks.
 
