@@ -17,12 +17,14 @@ This skill does not announce, watch or merge. That is `ship`.
 `ship` (through the fixer's ask) passes the repository, the PR number and the
 findings. The workspace is yours to make:
 
-- **As the fixer:** first `git -C <repo> worktree list --porcelain`. Git
-  allows one worktree per branch, and the builder's may still exist until
-  `merge-pr` removes it: if the PR branch is checked out anywhere, work
-  **there** (`git -C <that path> pull --ff-only`). Otherwise `hive:worktree`,
-  agent path, into `~/.hive/work/fixer/<repo-name>-pr<N>` tracking the PR
-  branch.
+- **As the fixer:** first `git -C <path> worktree list --porcelain`. The
+  first entry is the person's own checkout and is never an agent's, whatever
+  branch it holds. A later entry on `refs/heads/<PR branch>` is the builder's
+  linked worktree: work **there** after `git -C <that path> pull --ff-only`.
+  Otherwise `hive:worktree`, agent path, **detached** at `origin/<PR branch>`
+  under `<hive>/work/fixer/<repo-name>-pr<N>`, pushing each round as
+  `git push origin HEAD:<PR branch>`; git allows one worktree per branch and
+  the person may hold it.
 - **In a session:** the PR's own checkout, on its branch.
 
 Confirm `gh pr view <N> --repo <owner>/<repo> --json headRefName` matches
@@ -70,9 +72,9 @@ related findings; run independent ones in parallel, in one response.
 
 `NEEDS-USER-DECISION` (an architecture trade-off, a scope question): in a
 session, present it with a recommendation. As the fixer, `ledger_ask` the
-overmind with the finding quoted, `options` when the choice is closed, and
-`meta.intent` naming the PR and the finding; END TURN. The answer wakes you
-here.
+`reply-to` party the ask named (the overmind when it named none) with the
+finding quoted, `options` when the choice is closed, and `meta.intent` naming
+the PR and the finding; END TURN. The answer wakes you here.
 
 ## Step 4: act
 
