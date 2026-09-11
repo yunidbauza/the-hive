@@ -111,7 +111,10 @@ machine*, from a screen-sharing session):
   file, which is for trying it out, not for the deployment.
 - **`bind.host`** is the mini's Tailscale address from step 4. `0.0.0.0` is
   refused in every spelling (`0`, `0x0`, `000.000.000.000` included); loopback
-  is allowed so the link can be tried on one machine.
+  is allowed so the link can be tried on one machine. A refused or malformed
+  host does not stop the app: the config reader logs why and the server binds
+  `127.0.0.1` instead, which from every other machine looks like a server that
+  is not there. Check the log after any edit to this block.
 - **Clients must dial the exact string in `bind.host`.** The listener's Host
   guard admits loopback and that one value, nothing else. A MagicDNS name that
   resolves to the same address is refused with a bare 403, and the mini's log
@@ -344,6 +347,7 @@ bytes at normal flush sizes.
 | Symptom | Cause and fix |
 | --- | --- |
 | Menu-bar item says it could not bind | `bind.host` is not an address of this machine yet (Tailscale still starting) or is wrong. It retries by itself; if it never lands, check `Tailscale ip -4` against the config. The log names the error. |
+| Server listens on `127.0.0.1` instead of the tailnet address | `bind.host` was refused (a wildcard, or not a valid host) and the reader fell back to the default. The log names the key and the reason. |
 | Client gets a 403 | It dialed a name the server did not bind. Use the exact `bind.host` string. The mini's log names the refused host. |
 | Client says the versions differ | Update whichever side the message names. |
 | Jira or Slack shows signed out after a reboot | The login keychain is locked: automatic login is off, or the keychain password differs from the account password. |
