@@ -228,6 +228,16 @@ describe('seedShipped', () => {
     expect(report.created.length).toBeGreaterThan(0);
     const read = await readUserSkills(join(target, 'skills'));
     expect(read.invalid).toEqual([]);
-    expect(read.skills.map((entry) => entry.name)).toContain('worktree');
+    expect(read.skills.map((entry) => entry.name)).toEqual([
+      'brainstorm',
+      'debug',
+      'execute',
+      'goal-on',
+      'plan',
+      'tdd',
+      'verify',
+      'work-on',
+      'worktree',
+    ]);
   });
 });
