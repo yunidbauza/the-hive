@@ -1754,6 +1754,9 @@ export function registerIpcHandlers(
     markRead: (id) => hub.markRead(id),
     dismiss: (id) => hub.dismiss(id),
     isAgent: (id) => knownAgents.has(id),
+    // HIVE-167. `ledger` is bound a few lines below; the notifier runs only
+    // from inside its `onChange`, which cannot fire before it exists.
+    ask: (id) => ledger.read({}).entries.find((entry) => entry.id === id && entry.kind === 'ask'),
   });
 
   // The re-arm (HIVE-81): whatever is still blocked when the user looks away
@@ -1922,7 +1925,16 @@ export function registerIpcHandlers(
     isGoneSession: (id) =>
       id !== OVERMIND &&
       !knownAgents.has(id) &&
-      !(sessions?.entities().includes(id) ?? false),
+      !(sessions?.entities().includes(id) ?? false) &&
+      /*
+        A session this app has *had*, not merely an id nobody knows. An agent
+        whose definition is mid-edit drops out of `knownAgents` while its
+        folder still exists; a typo'd `to` matches nothing at all. Neither is
+        a session that closed, and neither should land in the inbox on the
+        strength of it: the first is read on that agent's next wake as it
+        always was, the second expires as it always did.
+      */
+      history?.resumable(id) !== undefined,
   });
 
   /**
@@ -1935,11 +1947,18 @@ export function registerIpcHandlers(
    * already holds the question.
    */
   const redirectOpenAsks = (entityId: string): void => {
-    const waiting = ledger
-      .read({})
-      .openAsks.filter((ask) => ask.to === entityId);
-    for (const ask of waiting) {
-      ledger.append({
+    const { entries, openAsks } = ledger.read({});
+    // The log is the dedup, as it is for the expiry sweep: an ask already
+    // re-surfaced once is not re-surfaced by a later ending of the same id.
+    const surfaced = new Set(
+      entries
+        .filter((entry) => entry.kind === 'event' && entry.from === OVERMIND)
+        .map((entry) => entry.meta?.['redirected'])
+        .filter((id): id is string => typeof id === 'string'),
+    );
+    for (const ask of openAsks) {
+      if (ask.to !== entityId || surfaced.has(ask.id)) continue;
+      const result = ledger.append({
         from: OVERMIND,
         to: OVERMIND,
         kind: 'event',
@@ -1947,6 +1966,11 @@ export function registerIpcHandlers(
         body: `${entityId} ended with this question open; it is yours now`,
         meta: { redirected: ask.id, redirectedFrom: entityId },
       });
+      if (!result.ok) {
+        console.warn(
+          `[ledger] could not re-surface ${ask.id} after ${entityId} ended: ${result.reason}`,
+        );
+      }
     }
   };
 

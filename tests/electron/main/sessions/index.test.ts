@@ -922,6 +922,9 @@ function harness(
         return Promise.resolve();
       },
       stop: () => Promise.resolve(),
+      // A restart writes the container session files through this; the
+      // harness never containerises, so `null` is the honest answer.
+      writeContainerSession: () => Promise.resolve(null),
     } as unknown as Parameters<typeof createSessions>[0]['hooks'],
   });
 
@@ -2519,6 +2522,23 @@ describe('the ended signal (HIVE-167)', () => {
     vi.advanceTimersByTime(8);
 
     expect(seen).toEqual([{ id: 'hero-refresh', live: false }]);
+  });
+});
+
+describe('the ended signal on a restart (HIVE-167)', () => {
+  it('stays quiet: the same entity id is about to come back', async () => {
+    const onEnded = vi.fn();
+    const h = harness(undefined, onEnded);
+    h.sessions.open(OPEN);
+    const first = mintedFor('hero-refresh');
+
+    const restarted = h.sessions.restart(OPEN);
+    await Promise.resolve();
+    emitExit({ sessionId: first, exitCode: 0 });
+    vi.advanceTimersByTime(8);
+    await restarted;
+
+    expect(onEnded).not.toHaveBeenCalled();
   });
 });
 

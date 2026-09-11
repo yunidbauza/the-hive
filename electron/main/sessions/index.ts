@@ -181,7 +181,8 @@ export interface SessionsOptions {
   onIdle?: (entityId: string) => void;
   /**
    * A session ended, however it ended (HIVE-167): `ptyExit`, `ptyLost` and
-   * `/done` all pass through the same funnel, and this fires from it. The
+   * `/done` all pass through the same funnel, and this fires from it. Not on
+   * a restart, which passes through the funnel too but is not an ending. The
    * one consumer re-addresses the asks that were waiting on that terminal.
    */
   onEnded?: (entityId: string) => void;
@@ -1850,8 +1851,10 @@ export function createSessions(options: SessionsOptions): Sessions {
     });
 
     // After the registry entry is gone, so a consumer asking `entities()` in
-    // its callback already sees the session as not live.
-    onEnded?.(entityId);
+    // its callback already sees the session as not live. A restart is not an
+    // ending (`restartOnce`'s own words): the same entity id is about to come
+    // back, and a question addressed to it can still be read there.
+    if (!restarting.has(entityId)) onEnded?.(entityId);
 
     const waiters = exitWaiters.get(entityId);
     if (!waiters) return;

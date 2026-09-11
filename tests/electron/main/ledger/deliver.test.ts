@@ -112,6 +112,25 @@ describe('createDeliver', () => {
     expect(write).toHaveBeenCalledTimes(1);
   });
 
+  it('does not flush an ask that was answered while the session was away (HIVE-167)', () => {
+    live.delete('sess-a');
+    idle.delete('sess-a');
+    const result = ask('sess-a');
+    if (!result.ok) throw new Error(result.reason);
+    // The overmind answered it from the inbox, where a redirect put it.
+    const answered = ledger.answer({ thread: result.id, body: 'main' }, OVERMIND);
+    if (!answered.ok) throw new Error(answered.reason);
+    write.mockClear();
+
+    live.add('sess-a');
+    idle.add('sess-a');
+    deliver.onReady('sess-a');
+
+    // The answer to the overmind's own ask is addressed to the overmind, so
+    // nothing at all is owed to this terminal any more.
+    expect(write).not.toHaveBeenCalled();
+  });
+
   it('writes nothing for an ask addressed to the overmind', () => {
     // The overmind's copy is an inbox card (HIVE-118), not a terminal line.
     ledger.append({ from: 'sess-a', to: OVERMIND, kind: 'ask', body: 'hi' });

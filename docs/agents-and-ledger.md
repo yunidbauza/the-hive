@@ -311,14 +311,20 @@ A builder asks the session that planned its work first, because that session
 holds the spec and the conversation; a session that has since closed cannot
 read a marker, and the ask would sit until `LEDGER_ASK_TTL_MS` retired it a
 day later. Two moments cover it. At **append**, `Ledger.append` asks
-`isGoneSession(to)`, a session the ledger knows that is not an agent and has
-no terminal now, and re-addresses the ask to the overmind with
-`meta.redirectedFrom` naming who it was for; the card captions it. At
-**session end**, `settleExit` fires `onEnded`, and main re-surfaces every ask
+`isGoneSession(to)`, a session this app has had (`history.resumable`) that is
+not an agent and has no terminal now, and re-addresses the ask to the overmind
+with `meta.redirectedFrom` naming who it was for; the card captions it. At
+**session end** (not on a restart, which passes through the same funnel and is
+not an ending), `settleExit` fires `onEnded`, and main re-surfaces every ask
 still open on that terminal as an overmind `event` on the ask's own thread
-(`meta.redirected`), which the notifier raises as the ask's card, so the
-answer goes into the original thread and wakes the asker. Nothing is re-posted
-as the asker: the party rule forbids main writing as anyone but the overmind.
+(`meta.redirected`), once per ask with the log as the dedup. The notifier
+raises the **ask's own card, keyed on the ask's id**, presented as the ask
+would have been had it been addressed to the overmind, so the answer goes into
+the original thread and wakes the asker, and the mark-read, dismiss and expiry
+paths that look a card up by the ask's id all find it. Nothing is re-posted as
+the asker: the party rule forbids main writing as anyone but the overmind. A
+session resumed later is not nudged for an ask settled while it was away:
+`deliver` flushes open asks only.
 
 ### Wakes
 

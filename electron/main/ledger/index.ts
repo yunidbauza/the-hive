@@ -306,9 +306,10 @@ export function createLedger(options: LedgerOptions): Ledger {
         `LEDGER_ASK_TTL_MS` retired it, a day later, with the builder asleep
         the whole time. Re-addressed here rather than in `deliver`, so the
         entry on disk says who it reached and `visibleTo` follows the real
-        recipient. `redirectedFrom` is set by main and nobody else: the guard
-        that parses a posted `meta` does not strip it, so a party could write
-        one, and the card treats it as a caption, never as an identity.
+        recipient. Main sets `redirectedFrom` on a redirect; a party may write one
+        on its own ask too, since the guard that parses a posted `meta` does
+        not strip it, so the card treats it as a caption and never as an
+        identity or an action.
       */
       let redirectedMeta: Record<string, unknown> | undefined;
       if (

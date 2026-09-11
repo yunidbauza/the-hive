@@ -159,7 +159,16 @@ export function AskCard({ notif, thread }: AskCardProps) {
    * A caption only: the ask is answered into its own thread whatever this
    * says, and the value is shown as text, never resolved into a party.
    */
-  const redirectedFrom = text(ask?.meta?.['redirectedFrom']);
+  const redirectedFrom =
+    text(ask?.meta?.['redirectedFrom']) ??
+    text(
+      entries.find(
+        (entry) =>
+          entry.kind === 'event' &&
+          entry.from === 'overmind' &&
+          entry.meta?.['redirected'] === thread,
+      )?.meta?.['redirectedFrom'],
+    );
   const options = strings(ask?.meta?.options);
   const quote = text(ask?.meta?.quote);
   /**

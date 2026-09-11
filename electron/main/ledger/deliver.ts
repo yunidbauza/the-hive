@@ -157,7 +157,11 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
    * and when" is answerable from the log itself.
    */
   function undelivered(entityId: string): LedgerEntry[] {
-    const { entries } = ledger.read({ to: entityId });
+    const { entries, openAsks } = ledger.read({ to: entityId });
+    // An ask answered while this session was away (HIVE-167 redirects one
+    // to the inbox) is settled; a marker for it would invite an answer the
+    // ledger refuses as "thread is not open".
+    const open = new Set(openAsks.map((ask) => ask.id));
 
     const delivered = new Set<string>();
     for (const entry of entries) {
@@ -174,6 +178,7 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
           exactly rather than trusted from the query.
         */
         entry.to === entityId &&
+        (entry.kind !== 'ask' || open.has(entry.id)) &&
         !delivered.has(entry.id),
     );
   }

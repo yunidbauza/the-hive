@@ -28,6 +28,27 @@ describe('a redirected ask (HIVE-167)', () => {
 
     expect(screen.getByText(/meant for sess-9, which ended/)).toBeInTheDocument();
   });
+
+  it('captions from the redirect event too, for a question re-surfaced when its session ended', () => {
+    seedLedger([
+      { ...ask, to: 'sess-9', meta: { options: ['yes'] } },
+      {
+        id: 'e1',
+        ts: Date.now(),
+        from: 'overmind',
+        to: 'overmind',
+        kind: 'event' as const,
+        thread: 'a41',
+        body: 'sess-9 ended with this question open; it is yours now',
+        meta: { redirected: 'a41', redirectedFrom: 'sess-9' },
+      },
+    ]);
+    render(<AskCard notif={notif} thread="a41" />);
+
+    expect(screen.getByText(/meant for sess-9, which ended/)).toBeInTheDocument();
+    // The question itself, not the redirect notice, is what the card shows.
+    expect(screen.getByRole('button', { name: 'yes' })).toBeInTheDocument();
+  });
 });
 
 const notif = {

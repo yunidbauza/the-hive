@@ -141,6 +141,7 @@ vi.mock('../../../../electron/main/sessions/index', async (importOriginal) => {
  * internally.
  */
 let capturedKnowsParty: ((id: string) => boolean) | undefined;
+let capturedIsGoneSession: ((id: string) => boolean) | undefined;
 let capturedOnChangeListener: ((entry: unknown) => void) | undefined;
 /**
  * `knowsParty`'s answer evaluated *inside* the `createLedger` call itself —
@@ -161,8 +162,12 @@ const ledgerAnswer = vi.fn(
 );
 
 vi.mock('../../../../electron/main/ledger', () => ({
-  createLedger: (options: { knowsParty: (id: string) => boolean }) => {
+  createLedger: (options: {
+    knowsParty: (id: string) => boolean;
+    isGoneSession?: (id: string) => boolean;
+  }) => {
     capturedKnowsParty = options.knowsParty;
+    capturedIsGoneSession = options.isGoneSession;
     knowsPartyBeforeSessionsAssigned = options.knowsParty('anyone');
     return {
       read: ledgerRead,
@@ -200,6 +205,7 @@ beforeEach(() => {
   resumableIds = [];
   windows.length = 0;
   capturedKnowsParty = undefined;
+  capturedIsGoneSession = undefined;
   capturedOnChangeListener = undefined;
   knowsPartyBeforeSessionsAssigned = undefined;
   vi.clearAllMocks();
@@ -233,6 +239,18 @@ describe('ledger:answer answers as the coordinator (HIVE-111)', () => {
     // builds the request from `thread`/`body`/`meta` alone, so the object
     // reaching `ledger.answer` has no such field regardless of the payload.
     expect(ledgerAnswer).toHaveBeenCalledWith({ thread: 'a1', body: 'done' }, OVERMIND);
+  });
+});
+
+describe('isGoneSession (HIVE-167)', () => {
+  it('is true only for a session this app has had that is not live now', () => {
+    liveIds = ['sess-live'];
+    resumableIds = ['sess-ended', 'sess-live'];
+    expect(capturedIsGoneSession?.('sess-ended')).toBe(true);
+    expect(capturedIsGoneSession?.('sess-live')).toBe(false);
+    // Neither an id nobody knows nor the overmind is a session that closed.
+    expect(capturedIsGoneSession?.('stranger')).toBe(false);
+    expect(capturedIsGoneSession?.(OVERMIND)).toBe(false);
   });
 });
 
