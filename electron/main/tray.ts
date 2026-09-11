@@ -10,7 +10,7 @@ import {
 
 import type { ServerDevice } from '@shared/config-contract';
 
-import { devIconPath } from './app-icon';
+import { trayIconPath } from './app-icon';
 
 /**
  * The server-mode tray (HIVE-142) — the whole console on a machine that opens
@@ -20,13 +20,9 @@ import { devIconPath } from './app-icon';
  * can be unit-tested against, and a thin `createServerTray` that is the only
  * piece touching real Electron (`Tray`, `Menu`, `dialog`, `clipboard`).
  *
- * **A proper packaged-build tray icon is still owed** (HIVE-142 review): no
- * black-and-transparent template PNG exists in `resources/` today, and
- * shipping one as a runtime resource would need an `electron-builder.yml`
- * `extraResources` entry — both outside this module's own file list. See
- * `trayIcon`'s doc comment for exactly what is missing and why, and
- * `createServerTray`'s text-title fallback for what stands in for it until
- * that asset exists.
+ * Its icon is `resources/tray/trayTemplate.png` (HIVE-147), a black-and-
+ * transparent template drawn by `scripts/icon/generate-app-icon.py --tray` from
+ * the app icon's own geometry — see `trayIcon`.
  */
 
 export interface TrayDeps {
@@ -238,36 +234,21 @@ export function buildTrayTemplate(deps: TrayDeps): MenuItemConstructorOptions[] 
 /**
  * The icon shown in the menu bar.
  *
- * `devIconPath` answers `undefined` once packaged (see its own doc comment),
- * and a packaged build has nothing else to load: `nativeImage.createFromPath`
- * supports only PNG and JPEG (checked against Electron's own docs, HIVE-142
- * review) — the `.icns` electron-builder copies to `Contents/Resources/icon.icns`
- * for the app's own Dock/Finder icon cannot be decoded by it, and no PNG is
- * shipped as a runtime resource today (`electron-builder.yml` sets no
- * `extraResources`). So this resolves an icon in dev and an empty
- * `nativeImage` when packaged — a real gap, tracked rather than silently
- * shipped broken (see `createServerTray`'s title fallback, which is what
- * keeps a packaged tray from being invisible).
+ * The purpose-drawn template HIVE-142 left owed, found by `trayIconPath` in
+ * dev and packaged alike. Drawn at the 18pt macOS gives a menu-bar item, with
+ * an `@2x` sibling, so nothing here resizes it.
  *
- * `setTemplateImage(true)` on whatever does load: a menu-bar icon should be a
- * template image so macOS re-tints it for light and dark menu bars rather
- * than showing whatever colours the source PNG happens to carry. The app's
- * icon art was drawn for the Dock, not as a monochrome silhouette, so this is
- * an improvement over showing it untouched rather than a properly-designed
- * template asset — that asset is still owed (see the module doc comment).
+ * `setTemplateImage(true)` so macOS re-tints it for light and dark menu bars:
+ * only its alpha channel is drawn. The file name's `Template` suffix asks for
+ * the same thing, but only when macOS itself loads the file.
  *
- * `resize({ width: 16, height: 16 })` on top of that (HIVE-142 review,
- * minor): the dev asset `devIconPath` resolves is the full-bleed 1024px Dock
- * master, and a template image keeps only its alpha channel — at menu-bar
- * scale, an un-resized 1024px opaque square renders as a solid block, not a
- * recognisable mark. Bounding it to the size macOS actually draws a menu-bar
- * icon at is what lets whatever silhouette the art has survive at all; it is
- * still not the purpose-built glyph the module doc comment says is owed.
+ * An empty image when the file is missing, which `createServerTray` answers
+ * with a text title rather than an invisible item.
  */
 function trayIcon(): NativeImage {
-  const path = devIconPath('icon.png');
+  const path = trayIconPath();
   if (!path) return nativeImage.createEmpty();
-  const image = nativeImage.createFromPath(path).resize({ width: 16, height: 16 });
+  const image = nativeImage.createFromPath(path);
   if (image.isEmpty()) return image;
   image.setTemplateImage(true);
   return image;
@@ -297,8 +278,8 @@ export function createServerTray(deps: TrayDeps): { destroy: () => void } {
     would make a served machine unreachable from its own screen even though
     everything behind it works. A text title is a strictly worse look than a
     real icon but a strictly better one than nothing, so it is the fallback
-    exactly when `trayIcon()` could not resolve a real one — see that
-    function's doc comment for what is still owed.
+    exactly when `trayIcon()` could not resolve a real one — a tree where
+    `resources/tray/` went missing.
   */
   if (icon.isEmpty()) tray.setTitle('Hive');
 

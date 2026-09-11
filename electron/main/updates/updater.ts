@@ -1,6 +1,7 @@
 import {
   RELEASES_URL,
   releaseUrlFor,
+  UNATTENDED_INSTALL_RETRY_MS,
   UPDATE_CHECK_INTERVAL_MS,
   UPDATE_FIRST_CHECK_DELAY_MS,
   type UpdateCapability,
@@ -86,6 +87,18 @@ export interface UpdaterDeps {
   /** Injected so tests drive the schedule with fake timers. */
   setTimer?: (fn: () => void, ms: number) => unknown;
   log?: (message: string) => void;
+  /**
+   * Set on a server (HIVE-147): nobody is at this machine to click a row.
+   *
+   * A found release downloads on its own and installs at the first moment
+   * `isIdle` says no session or agent run is live, re-asked every
+   * `UNATTENDED_INSTALL_RETRY_MS` until it does. No Inbox row is raised for it
+   * either: its `update.*` action is answered on whichever machine clicks it
+   * (HIVE-151), so on an attached client it would update the client, not this
+   * server. A build that can only update by hand still announces, because the
+   * release page it points at is useful from any machine.
+   */
+  unattended?: { isIdle: () => boolean };
 }
 
 export interface Updater {
@@ -110,6 +123,7 @@ export function createUpdater(deps: UpdaterDeps): Updater {
     inform,
     setTimer = (fn, ms) => setTimeout(fn, ms),
     log = (message) => console.error(message),
+    unattended,
   } = deps;
 
   let capability = deps.capability;
@@ -217,7 +231,41 @@ export function createUpdater(deps: UpdaterDeps): Updater {
     percent = null;
     error = message;
     log(`[hive] in-place update refused, opening the release page: ${message}`);
-    openReleasePage();
+    // A browser opening on a screen nobody watches helps no one.
+    if (unattended === undefined) openReleasePage();
+  };
+
+  const install = async (): Promise<void> => {
+    if (state !== 'ready' || capability.mode === 'manual') {
+      openReleasePage();
+      return;
+    }
+    /**
+     * Awaited, and the await is the whole point.
+     *
+     * `quitAndInstall` returns immediately whether or not the swap will
+     * happen, so a synchronous `try`/`catch` here caught nothing: the app
+     * stayed running, having just told the user it was restarting onto a new
+     * version, and said nothing further. The engine turns Squirrel's
+     * asynchronous refusal into a rejection so it lands in `fallBackToManual`
+     * and the user gets the download page instead of silence.
+     */
+    try {
+      await engine.install();
+    } catch (cause) {
+      fallBackToManual(cause);
+    }
+  };
+
+  /** A server's install: now if the fleet is quiet, otherwise asked again later. */
+  const installWhenIdle = (): void => {
+    if (unattended === undefined) return;
+    if (!unattended.isIdle()) {
+      setTimer(installWhenIdle, UNATTENDED_INSTALL_RETRY_MS);
+      return;
+    }
+    log(`[hive] nothing is live; installing The Hive ${String(availableVersion)}`);
+    void install();
   };
 
   const download = async (): Promise<void> => {
@@ -243,7 +291,8 @@ export function createUpdater(deps: UpdaterDeps): Updater {
       });
       state = 'ready';
       percent = 100;
-      announceReady(availableVersion);
+      if (unattended === undefined) announceReady(availableVersion);
+      else installWhenIdle();
     } catch (cause) {
       fallBackToManual(cause);
     } finally {
@@ -327,6 +376,10 @@ export function createUpdater(deps: UpdaterDeps): Updater {
       state = 'available';
 
       if (origin === 'auto') {
+        if (unattended !== undefined && capability.mode === 'self-install') {
+          await download();
+          return;
+        }
         announceAvailable(found.version);
         return;
       }
@@ -387,27 +440,7 @@ export function createUpdater(deps: UpdaterDeps): Updater {
     },
     check,
     download,
-    async install() {
-      if (state !== 'ready' || capability.mode === 'manual') {
-        openReleasePage();
-        return;
-      }
-      /**
-       * Awaited, and the await is the whole point.
-       *
-       * `quitAndInstall` returns immediately whether or not the swap will
-       * happen, so a synchronous `try`/`catch` here caught nothing: the app
-       * stayed running, having just told the user it was restarting onto a new
-       * version, and said nothing further. The engine turns Squirrel's
-       * asynchronous refusal into a rejection so it lands in `fallBackToManual`
-       * and the user gets the download page instead of silence.
-       */
-      try {
-        await engine.install();
-      } catch (cause) {
-        fallBackToManual(cause);
-      }
-    },
+    install,
     status,
   };
 }

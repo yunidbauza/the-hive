@@ -42,6 +42,23 @@ export function devIconPath(
 }
 
 /**
+ * The server-mode menu-bar template (HIVE-147), packaged or not.
+ *
+ * Unlike the app icon this *is* read at runtime in a packaged build: a `Tray`
+ * takes its image from inside the process, and `nativeImage` decodes PNG and
+ * JPEG only, so the bundle's `.icns` is no use to it. `electron-builder.yml`
+ * ships `resources/tray/` as `Contents/Resources/tray/` for that reason. The
+ * `@2x` sibling beside the file is found by `nativeImage` itself.
+ */
+export function trayIconPath(dirname: string = import.meta.dirname): string | undefined {
+  const dir = app.isPackaged
+    ? join(process.resourcesPath, 'tray')
+    : join(dirname, '../../resources/tray');
+  const path = join(dir, 'trayTemplate.png');
+  return existsSync(path) ? path : undefined;
+}
+
+/**
  * Give the dock its icon during development (macOS only).
  *
  * `app.dock` is undefined elsewhere, and must be called after `whenReady` —

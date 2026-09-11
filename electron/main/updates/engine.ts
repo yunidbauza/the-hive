@@ -48,8 +48,16 @@ function isNewer(
   return result.updateInfo.version !== currentVersion;
 }
 
+/**
+ * @param options.relaunch Whether Squirrel starts the new version itself after
+ * the swap. `false` on a server-configured install (HIVE-147): launchd owns that
+ * process's lifetime, and a copy Squirrel relaunched would be one launchd does
+ * not know about — it would restart its own copy beside it, lose the server
+ * lock to it, and keep retrying for as long as both lived.
+ */
 export function createElectronUpdaterEngine(
   currentVersion: string,
+  { relaunch = true }: { relaunch?: boolean } = {},
 ): UpdateEngine {
   const { autoUpdater } = electronUpdater;
 
@@ -141,13 +149,13 @@ export function createElectronUpdaterEngine(
           reject(cause);
         });
         /**
-         * `isSilent: false`, `isForceRunAfter: true`.
+         * `isSilent: false`, `isForceRunAfter: relaunch`.
          *
          * The second matters: without it a macOS update quits the app and
          * leaves the user staring at a desktop, which reads as a crash rather
-         * than an update.
+         * than an update. Except on a server, where launchd relaunches it.
          */
-        autoUpdater.quitAndInstall(false, true);
+        autoUpdater.quitAndInstall(false, relaunch);
       });
     },
   };

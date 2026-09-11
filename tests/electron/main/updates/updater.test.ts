@@ -1,7 +1,10 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { UpdateCapability } from '../../../../electron/shared/update-contract';
+import {
+  UNATTENDED_INSTALL_RETRY_MS,
+  type UpdateCapability,
+} from '../../../../electron/shared/update-contract';
 
 import {
   createUpdater,
@@ -488,5 +491,85 @@ describe('createUpdater — concurrency', () => {
 
     release(null);
     await first;
+  });
+});
+
+/**
+ * A server (HIVE-147): nobody is at the machine, and an install quits the app,
+ * which ends every session and agent run on it.
+ */
+describe('createUpdater — unattended', () => {
+  function unattended(capability: UpdateCapability, isIdle: () => boolean) {
+    const h = harness(capability);
+    const delays: number[] = [];
+    h.deps.unattended = { isIdle };
+    h.deps.setTimer = (fn, ms) => {
+      h.timers.push(fn);
+      delays.push(ms);
+      return 0;
+    };
+    return { ...h, delays, updater: createUpdater(h.deps) };
+  }
+
+  it('downloads a found release and installs it at once when nothing is live', async () => {
+    const h = unattended(SELF_INSTALL, () => true);
+
+    await h.updater.check('auto');
+
+    expect(h.engine.download).toHaveBeenCalledTimes(1);
+    expect(h.engine.install).toHaveBeenCalledTimes(1);
+    // Neither row: an attached client would answer `update.*` on its own
+    // machine and update itself, not this server.
+    expect(h.notify).not.toHaveBeenCalled();
+  });
+
+  it('holds the install while a session or run is live, and installs once idle', async () => {
+    let idle = false;
+    const h = unattended(SELF_INSTALL, () => idle);
+
+    await h.updater.check('auto');
+    expect(h.updater.status().state).toBe('ready');
+    expect(h.engine.install).not.toHaveBeenCalled();
+    expect(h.delays).toEqual([UNATTENDED_INSTALL_RETRY_MS]);
+
+    // Still busy at the next look: asked again, still not installed.
+    h.timers.at(-1)?.();
+    expect(h.engine.install).not.toHaveBeenCalled();
+    expect(h.delays).toEqual([UNATTENDED_INSTALL_RETRY_MS, UNATTENDED_INSTALL_RETRY_MS]);
+
+    idle = true;
+    h.timers.at(-1)?.();
+    expect(h.engine.install).toHaveBeenCalledTimes(1);
+  });
+
+  it('still announces a build that can only update by hand, and downloads nothing', async () => {
+    const h = unattended(MANUAL, () => true);
+
+    await h.updater.check('auto');
+
+    expect(h.engine.download).not.toHaveBeenCalled();
+    expect(h.notify.mock.calls[0][0]).toMatchObject({ action: { type: 'url' } });
+  });
+
+  it('opens no browser on the served machine when macOS refuses the swap', async () => {
+    const h = unattended(REFUSED_AT_SWAP, () => true);
+    h.engine.install.mockRejectedValue(new Error('refused'));
+
+    await h.updater.check('auto');
+    await vi.waitFor(() => {
+      expect(h.updater.status().capability.mode).toBe('manual');
+    });
+
+    expect(h.openExternal).not.toHaveBeenCalled();
+  });
+
+  it('asks a menu check first, even on a server', async () => {
+    const h = unattended(SELF_INSTALL, () => true);
+    h.confirm.mockResolvedValue(false);
+
+    await h.updater.check('menu');
+
+    expect(h.confirm).toHaveBeenCalledTimes(1);
+    expect(h.engine.download).not.toHaveBeenCalled();
   });
 });

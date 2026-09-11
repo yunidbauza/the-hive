@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import { app } from 'electron';
+import { app, powerSaveBlocker } from 'electron';
 
 import { applyDevDockIcon } from './app-icon';
 import { primaryWindow } from './aux-windows';
@@ -8,9 +8,15 @@ import { parseInvocation } from './cli';
 import { getConfig } from './config';
 import { startLoginEnvImport } from './config/login-env';
 import { installContentSecurityPolicy } from './csp';
-import { remoteListenerBindError, remoteListenerBoundAddress, startRemoteListener } from './ipc';
+import {
+  fleetIsIdle,
+  remoteListenerBindError,
+  remoteListenerBoundAddress,
+  startRemoteListener,
+} from './ipc';
 import { registerIpc, switchIpcMode } from './ipc/router';
 import { registerLifecycle } from './lifecycle';
+import { bindUntilBound } from './server/bind-retry';
 import {
   pairDevice,
   pairOutcomeMessage,
@@ -23,7 +29,7 @@ import { claimServerLock } from './server/server-lock';
 import { setServerMode } from './server-mode';
 import { onShutdown } from './shutdown';
 import { createServerTray } from './tray';
-import { runHeadlessUpdate, startUpdateChecks } from './updates';
+import { runHeadlessUpdate, runUnattended, startUpdateChecks } from './updates';
 import { createWindow } from './window';
 
 /**
@@ -95,7 +101,9 @@ const invocation = parseInvocation(process.argv, app.isPackaged);
 if (invocation.kind === 'update') {
   void app
     .whenReady()
-    .then(() => runHeadlessUpdate())
+    // A machine whose config serves runs under launchd, which relaunches it
+    // onto the new version itself (HIVE-147, `docs/server-mode.md`).
+    .then(() => runHeadlessUpdate({ relaunch: !getConfig().server.enabled }))
     .catch((cause: unknown) => {
       console.log(`[hive] could not update: ${cause instanceof Error ? cause.message : String(cause)}`);
       app.exit(1);
@@ -197,6 +205,13 @@ if (!app.requestSingleInstanceLock()) {
       process.exit(1);
     }
     onShutdown(serverLock.release);
+    /*
+      Nobody sits at a served machine to click "Update ready", so it updates
+      itself, and only while no session or agent run would be cut off by the
+      quit (HIVE-147). Here rather than inside `whenReady` because it has to
+      land before `startUpdateChecks` builds the updater.
+    */
+    runUnattended(fleetIsIdle);
   }
 
   registerIpc('local');
@@ -279,14 +294,21 @@ if (!app.requestSingleInstanceLock()) {
        */
       app.dock?.hide();
       /*
-        Fire-and-forget: a bind failure is not fatal to boot (the tray still
-        shows, still lets a human retry after fixing the config), and there is
-        nobody at this machine to hand a rejected promise to anyway. The
-        result is not needed here — `remoteListenerBoundAddress()` below reads
-        it back once it lands, exactly as `AppInfo` reads the receiver's own
-        `boundHost` rather than the promise `hooks.start()` returned.
+        What `caffeinate -i` does, without a second process to supervise
+        (HIVE-147): idle sleep would take every session and the socket with
+        it. Held for the life of the process; the OS drops it when we exit.
       */
-      void startRemoteListener();
+      powerSaveBlocker.start('prevent-app-suspension');
+      /*
+        A bind failure is not fatal to boot (the tray still shows, and names
+        the cause), and it is not final either (HIVE-147): at login the
+        Tailscale address `server.bind.host` names may not exist yet, so the
+        bind is retried until it lands. The result is not needed here —
+        `remoteListenerBoundAddress()` below reads it back once it lands,
+        exactly as `AppInfo` reads the receiver's own `boundHost` rather than
+        the promise `hooks.start()` returned.
+      */
+      onShutdown(bindUntilBound(startRemoteListener));
       /*
         Held in a module-level binding, not discarded (HIVE-142 review, I2).
         Inside `createServerTray`, the only remaining references form a

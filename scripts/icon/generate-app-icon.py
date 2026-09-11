@@ -40,6 +40,9 @@ Outputs:
     resources/icon.ico          Windows, 16-256
     resources/icons/<n>x<n>.png the Linux ladder
     public/favicon.png, apple-touch-icon.png   the browser tab
+    resources/tray/trayTemplate.png, @2x       the server-mode menu-bar template
+
+`--tray` writes only the last pair, leaving the committed app icons alone.
 
 Requires Pillow (`pip install pillow`) and, for the `.icns`, macOS `iconutil`.
 It is a one-off asset step, not part of `pnpm build` — run it only when the icon
@@ -302,7 +305,50 @@ def write_icns(source: Image.Image, target: Path) -> bool:
     return True
 
 
+TRAY = RESOURCES / "tray"
+TRAY_PT = 18  # the box macOS draws a menu-bar item's image in
+
+
+def render_tray(px: int) -> Image.Image:
+    """The server-mode menu-bar template: the plates, in alpha alone.
+
+    macOS draws a template image's alpha and ignores its colour, so the three
+    fills become one black silhouette. The seam survives as a transparent gap,
+    because the gap is what makes a stack read as a stack; the chevron and the
+    caret are cut out of the front plate for the same reason.
+    """
+    alpha = Image.new("L", (S, S), 0)
+    whole = (0, 0, S, S)
+    for points, _ in PLATES:
+        alpha.paste(0, whole, polygon_mask(points, SEAM))
+        alpha.paste(255, whole, polygon_mask(points))
+    alpha.paste(0, whole, stroke(CHEVRON_PATH, CHEVRON_WEIGHT, INK).split()[3])
+    alpha.paste(0, whole, rounded(S, CARET, (CARET[3] - CARET[1]) / 2))
+
+    shape = alpha.crop(alpha.getbbox())
+    side = max(shape.size)
+    square = Image.new("L", (side, side), 0)
+    square.paste(shape, ((side - shape.width) // 2, (side - shape.height) // 2))
+
+    out = Image.new("RGBA", (px, px), (0, 0, 0, 0))
+    out.putalpha(square.resize((px, px), Image.LANCZOS))
+    return out
+
+
+def write_tray() -> None:
+    TRAY.mkdir(parents=True, exist_ok=True)
+    render_tray(TRAY_PT).save(TRAY / "trayTemplate.png")
+    render_tray(TRAY_PT * 2).save(TRAY / "trayTemplate@2x.png")
+    print(f"wrote {TRAY.relative_to(ROOT)}/")
+
+
 def main() -> None:
+    # `--tray` redraws only the menu-bar template, leaving the committed app
+    # icons byte-for-byte as they are.
+    if "--tray" in sys.argv:
+        write_tray()
+        return
+    write_tray()
     master = render()
     macos = padded_for_macos(master)
     (RESOURCES / "icons").mkdir(parents=True, exist_ok=True)

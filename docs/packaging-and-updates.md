@@ -217,6 +217,12 @@ without a second one (`autoInstallOnAppQuit: false`). The second flag matters
 more than it looks: left at its default, an update the user declined would swap
 itself in at the next quit — including a quit caused by a crash.
 
+**A server is the exception** (HIVE-147): nobody sits at it to say yes. In server
+mode a found release downloads on its own and installs once no session or agent
+run is live, and launchd rather than Squirrel starts the new version. The flags
+above stay `false`; the updater itself makes that call (`UpdaterDeps.unattended`),
+see [`docs/server-mode.md`](server-mode.md#updates).
+
 ### The ad-hoc signature problem
 
 **Historically the load-bearing constraint. It is solved by the Developer ID
