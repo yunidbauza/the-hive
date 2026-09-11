@@ -77,6 +77,7 @@ function localAnswerFor(
     localSetRemote: (payload: unknown) => Promise<unknown>;
     localRemotePair: (payload: unknown) => unknown;
     localRemoteForget: () => void;
+    localRemotePaired: () => boolean;
   },
 ): ((payload: unknown) => unknown | Promise<unknown>) | null {
   switch (channel) {
@@ -105,7 +106,7 @@ function localAnswerFor(
       under `ipc/`, so there is no cycle to route around.
     */
     case CH.configGetRemote:
-      return () => readLocalRemote();
+      return () => readLocalRemote(deps.localRemotePaired());
     /*
       The eighth (HIVE-151), and imported for `CH.configGetRemote`'s reason
       rather than `CH.appInfo`'s: nothing about it is per-registration state,
@@ -322,6 +323,22 @@ function recordWatched(tracker: ResumeTracker, payload: unknown): void {
   tracker.markWatched(sessionId);
 }
 
+/**
+ * Whether a proxied call or notify failed because the link was down, rather
+ * than because the server answered it with a refusal (HIVE-140 audit, gap 1).
+ *
+ * The socket tells the two apart by class. Everything the server answers
+ * arrives as a `RemoteCallError` carrying its code, and so do this client's own
+ * refusals of a frame it would not send (too large, a timeout on a live link).
+ * A dead link is the rest: a plain `Error` from a `call` on a closed client or
+ * from `failAllPending` when the socket goes, and `connection-closed` from a
+ * `notify` on a closed client.
+ */
+export function lostToTheLink(cause: unknown): boolean {
+  if (cause instanceof RemoteCallError) return cause.code === 'connection-closed';
+  return cause instanceof Error;
+}
+
 export function registerRemoteProxy(deps: {
   client: RemoteClient;
   broadcaster: Broadcaster;
@@ -329,6 +346,12 @@ export function registerRemoteProxy(deps: {
   localSetRemote?: (payload: unknown) => Promise<unknown>;
   localRemotePair?: (payload: unknown) => unknown;
   localRemoteForget?: () => void;
+  /**
+   * Whether this machine holds a device credential, for `config:get-remote`'s
+   * `paired` (HIVE-140 audit, gap 6). Handed down with the pair and forget
+   * answers because it reads the same store they write.
+   */
+  localRemotePaired?: () => boolean;
   /**
    * Where a reconnect's `resumeFrom` is built from (HIVE-150).
    *
@@ -339,6 +362,11 @@ export function registerRemoteProxy(deps: {
    * socket that says a terminal is mounted on this surface.
    */
   resumeTracker?: ResumeTracker;
+  /**
+   * Called once per call or notify the link lost (HIVE-140 audit, gap 1) — see
+   * {@link lostToTheLink}. The router counts these onto `RemoteLinkStatus.lost`.
+   */
+  onLinkLoss?: () => void;
 }): void {
   if (bindings !== null) {
     throw new Error(
@@ -355,8 +383,20 @@ export function registerRemoteProxy(deps: {
     localSetRemote = noLocalSetRemote,
     localRemotePair = noLocalRemotePair,
     localRemoteForget = noLocalRemoteForget,
+    localRemotePaired = () => false,
     resumeTracker,
+    onLinkLoss = () => undefined,
   } = deps;
+
+  /** `client.call`, counting a rejection the link caused rather than the server. */
+  const callCounting = async (channel: Channel, payload: unknown): Promise<unknown> => {
+    try {
+      return await client.call(channel, payload);
+    } catch (cause) {
+      if (lostToTheLink(cause)) onLinkLoss();
+      throw cause;
+    }
+  };
 
   bindings = createBindings(ipcMain);
   /*
@@ -412,6 +452,7 @@ export function registerRemoteProxy(deps: {
             localSetRemote,
             localRemotePair,
             localRemoteForget,
+            localRemotePaired,
           })
         : null;
       /*
@@ -499,7 +540,7 @@ export function registerRemoteProxy(deps: {
           payloadAnswer(payload);
           return Promise.resolve();
         }
-        return client.call(channel as Channel, payload);
+        return callCounting(channel as Channel, payload);
       });
       bindings.record(channel);
     } else if (kind === 'notify') {
@@ -546,6 +587,7 @@ export function registerRemoteProxy(deps: {
           }
           client.notify(channel as Channel, outgoing);
         } catch (cause) {
+          if (lostToTheLink(cause)) onLinkLoss();
           console.error(`[hive] rejected ${channel}:`, cause);
         }
       });

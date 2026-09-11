@@ -5935,6 +5935,7 @@ describe('the agent view selectors', () => {
       nextAttemptAt: null,
       reason: null,
       epoch: 0,
+      lost: 0,
       ...over,
     });
 

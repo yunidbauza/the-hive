@@ -59,7 +59,7 @@ export function AttachedChip() {
   const link = useRemoteLink();
   if (link === null) return null;
 
-  const { state, serverName } = link;
+  const { state, serverName, lost } = link;
 
   const tone: Tone =
     state === 'attached' ? 'brand' : state === 'reconnecting' ? 'amber' : 'red';
@@ -80,10 +80,22 @@ export function AttachedChip() {
             link.reason === null ? '' : `: ${link.reason}`
           }`;
 
+  /*
+    What the dropped link swallowed (HIVE-140 audit, gap 1): a click or a
+    keystroke sent while it was down reached nothing, and nothing else on
+    screen says so. Named in the chip, not only the tooltip, because the user
+    has to know to redo them.
+  */
+  const lostNote =
+    lost === 0
+      ? ''
+      : ` ${String(lost)} ${lost === 1 ? 'action' : 'actions'} (clicks or keystrokes) did not reach ${serverName}; redo ${lost === 1 ? 'it' : 'them'} once it is back.`;
+
   return (
-    <Chip tone={tone} title={title} className="shrink-0">
+    <Chip tone={tone} title={`${title}${lostNote}`} className="shrink-0">
       {state === 'attached' ? <PlugsConnected size={12} /> : <Plugs size={12} />}
       {label} · {serverName}
+      {lost > 0 && ` · ${String(lost)} lost`}
     </Chip>
   );
 }

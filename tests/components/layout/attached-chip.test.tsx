@@ -14,6 +14,7 @@ const link = (over: Partial<RemoteLinkStatus> = {}): RemoteLinkStatus => ({
   nextAttemptAt: null,
   reason: null,
   epoch: 0,
+  lost: 0,
   ...over,
 });
 
@@ -35,6 +36,30 @@ describe('AttachedChip', () => {
     render(<AttachedChip />);
 
     expect(screen.getByText('attached · mini')).toBeInTheDocument();
+  });
+
+  /**
+   * HIVE-140 audit, gap 1: a click or a keystroke sent while the link was down
+   * reached nothing, and nothing on screen said so.
+   */
+  it('counts what the dropped link swallowed, and says to redo it', () => {
+    showing(link({ state: 'reconnecting', attempt: 2, lost: 3 }));
+
+    render(<AttachedChip />);
+
+    const chip = screen.getByText(/reconnecting · mini · 3 lost/);
+    expect(chip).toBeInTheDocument();
+    expect(chip.closest('[title]')?.getAttribute('title')).toContain(
+      '3 actions (clicks or keystrokes) did not reach mini; redo them once it is back.',
+    );
+  });
+
+  it('says nothing about losses when there were none', () => {
+    showing(link({ state: 'reconnecting', attempt: 1 }));
+
+    render(<AttachedChip />);
+
+    expect(screen.getByText(/reconnecting · mini/).textContent).not.toMatch(/lost/);
   });
 
   it('renders nothing in local mode', () => {

@@ -26,6 +26,7 @@ const link = (epoch: number): RemoteLinkStatus => ({
   nextAttemptAt: null,
   reason: null,
   epoch,
+  lost: 0,
 });
 
 beforeEach(() => {

@@ -265,6 +265,17 @@ function isAttachShaped(value: unknown): value is AttachRequest {
 export function createRemoteListener(options: {
   bind: ServerBindConfig;
   /**
+   * Set when the config refused the host this server was asked to bind
+   * (`serverBindRefusal`, HIVE-140 audit, gap 3). The listener then binds
+   * nothing at all, and reports the refusal as {@link RemoteListener.lastBindError}.
+   *
+   * It used to bind `bind.host`'s default, `127.0.0.1`, instead: a server
+   * asked for `0.0.0.0` came up answering only itself, which from every other
+   * machine is indistinguishable from a server that is not there, while the
+   * tray showed it serving.
+   */
+  refusal?: string | null;
+  /**
    * Read once per handshake, never cached at construction — and the caller
    * must make that actually true, not merely re-invoke a getter that closes
    * over an already-cached answer (HIVE-142 review, N5). `--pair` runs in a
@@ -355,7 +366,9 @@ export function createRemoteListener(options: {
    * starting" apart from "failed, and here is why" instead of showing the
    * same "Not yet listening" for both.
    */
-  let bindError: string | null = null;
+  const refusal = options.refusal ?? null;
+  let bindError: string | null = refusal;
+  let refusalLogged = false;
 
   /**
    * Every timer armed on behalf of a socket that has not yet fired or been
@@ -488,6 +501,12 @@ export function createRemoteListener(options: {
     },
 
     start() {
+      if (refusal !== null) {
+        // Once, not per retry: `bindUntilBound` asks again every minute.
+        if (!refusalLogged) console.error(`[hive] server mode is not listening: ${refusal}`);
+        refusalLogged = true;
+        return Promise.resolve(null);
+      }
       return new Promise<string | null>((resolve) => {
         /*
           Any plain HTTP request to this socket is a mistake, not a use case —

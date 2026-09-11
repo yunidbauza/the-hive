@@ -42,8 +42,16 @@ import { isThisMachineAction } from './notification-contract';
  * — which is exactly what this version bump exists to force: an old client
  * talking to a new server fails the handshake instead of being silently
  * misunderstood.
+ *
+ * **2 → 3 (HIVE-140 audit):** three stories added a channel without bumping,
+ * against the rule above — `config:browse-directory` (HIVE-146),
+ * `config:get-remote` (HIVE-149) and `notifications:badge` (HIVE-159) — so a
+ * client from before any of them attached to a newer server, or the reverse,
+ * and met an "unlisted channel" refusal on first use instead of a version
+ * message at the handshake. The same change added `RemoteLinkStatus.lost` and
+ * `LocalRemoteState.paired`. Bumped once for all of it.
  */
-export const REMOTE_PROTOCOL_VERSION = 2;
+export const REMOTE_PROTOCOL_VERSION = 3;
 
 /**
  * What a frame is for.

@@ -1,10 +1,11 @@
-import type { RemoteConfig } from '@shared/config-contract';
+import type { LocalRemoteState } from '@shared/ipc-contract';
 
 import { getConfig } from '../config';
 
 /**
  * What `config:get-remote` answers (HIVE-149) — this process's own `remote`
- * block, whichever mode it is bound in.
+ * block, whichever mode it is bound in, and whether a device credential is
+ * stored beside it (HIVE-140 audit, gap 6).
  *
  * Its own module rather than an inline `getConfig().remote` at each of the two
  * call sites, for the reason {@link applySetRemote} has one (`set-remote.ts`):
@@ -18,11 +19,11 @@ import { getConfig } from '../config';
  * booted in — the same staleness as the proxied read this channel replaces,
  * arriving through the other door.
  *
- * Imported directly by both call sites rather than handed down the way
- * `localAppInfo` is, on the test `remote-proxy.ts`'s own doc comment sets:
- * nothing here is per-registration state, and `electron/main/config/index.ts`
- * reaches nothing under `ipc/`, so the import closes no cycle.
+ * `paired` is handed in rather than read here: the credential store is spelled
+ * in `ipc/index.ts` (`remoteCredentialStore`), which imports this module, so
+ * reading it here would close an import cycle. Both callers pass the same
+ * `remoteCredentialStore().read() !== null`.
  */
-export function readLocalRemote(): RemoteConfig {
-  return getConfig().remote;
+export function readLocalRemote(paired: boolean): LocalRemoteState {
+  return { ...getConfig().remote, paired };
 }

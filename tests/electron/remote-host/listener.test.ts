@@ -626,6 +626,37 @@ describe('the concurrent unattached-socket cap (HIVE-143 review)', () => {
 });
 
 describe('start()/stop() lifecycle', () => {
+  /**
+   * HIVE-140 audit, gap 3: a host the config refused (`0.0.0.0`, a malformed
+   * one) used to leave `bind.host` at its default, so the server came up on
+   * `127.0.0.1` — reachable by nobody else, and reported as serving.
+   */
+  it('binds nothing when the config refused its host, and says why, once', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const refusal = 'config.server.bind.host: 0.0.0.0 binds every interface';
+    listener = createRemoteListener({
+      bind: { host: '127.0.0.1', port: 0, allowedOrigins: [] },
+      refusal,
+      devices: () => [],
+      serverName: 'test-mini',
+      dispatch: noopDispatch,
+      buildSnapshot: noopBuildSnapshot,
+      onAttach: noopOnAttach,
+      onDetach: noopOnDetach,
+    });
+
+    // Reported before any start(), so the tray has it from the first open.
+    expect(listener.lastBindError).toBe(refusal);
+    await expect(listener.start()).resolves.toBeNull();
+    await expect(listener.start()).resolves.toBeNull();
+    expect(listener.boundHost).toBeNull();
+    expect(listener.lastBindError).toBe(refusal);
+    // `bindUntilBound` retries every minute; the log says it once.
+    expect(errorSpy.mock.calls.filter(([line]) => String(line).includes('not listening'))).toHaveLength(1);
+
+    errorSpy.mockRestore();
+  });
+
   it('resolves start() with null and leaves boundHost null on a bind failure', async () => {
     const blocker = createNetServer();
     await new Promise<void>((resolve) => blocker.listen(0, '127.0.0.1', () => resolve()));

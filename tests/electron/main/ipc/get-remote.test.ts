@@ -30,10 +30,11 @@ describe('readLocalRemote', () => {
       snapshotWith({ mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 }),
     );
 
-    expect(readLocalRemote()).toEqual({
+    expect(readLocalRemote(false)).toEqual({
       mode: 'remote',
       host: 'mini.tail1234.ts.net',
       port: 7433,
+      paired: false,
     });
   });
 
@@ -44,12 +45,27 @@ describe('readLocalRemote', () => {
         snapshotWith({ mode: 'remote', host: '100.101.102.103', port: 7500 }),
       );
 
-    expect(readLocalRemote().mode).toBe('local');
-    expect(readLocalRemote()).toEqual({
+    expect(readLocalRemote(false).mode).toBe('local');
+    expect(readLocalRemote(false)).toEqual({
       mode: 'remote',
       host: '100.101.102.103',
       port: 7500,
+      paired: false,
     });
     expect(getConfig).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * HIVE-140 audit, gap 6: Settings' "Paired" chip used to know only what it
+   * watched happen in the same session. Whether a credential is stored now
+   * rides on this answer, as a yes or no and never the credential.
+   */
+  it('says whether a credential is stored, and nothing more about it', () => {
+    getConfig.mockReturnValue(snapshotWith({ mode: 'remote', host: 'mini', port: 7433 }));
+
+    const answer = readLocalRemote(true);
+
+    expect(answer.paired).toBe(true);
+    expect(Object.keys(answer).sort()).toEqual(['host', 'mode', 'paired', 'port']);
   });
 });

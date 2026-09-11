@@ -894,6 +894,27 @@ const HEX_SHA256 = /^[0-9a-f]{64}$/;
  * refused here rather than the generic "using the default" salvage
  * `optionalPort` would otherwise apply.
  */
+/**
+ * Why the configured `server.bind` host was refused, or `null` when it was not
+ * (HIVE-140 audit, gap 3) — read by the server listener off
+ * `ConfigSnapshot.errors`, so a refused host makes it bind nothing rather than
+ * the default `127.0.0.1`.
+ *
+ * Matched here, beside the messages {@link optionalServerBind} writes, so the
+ * two spellings cannot drift apart. Only the refusals that throw the host away
+ * count: a bad `host`, and a `bind` block ignored whole. An unknown key beside
+ * a good host is advisory and leaves the host standing, so it does not.
+ */
+export function serverBindRefusal(errors: readonly string[]): string | null {
+  return (
+    errors.find(
+      (message) =>
+        /\.server\.bind\.host: /.test(message) ||
+        /\.server\.bind: (expected an object|forbidden key)/.test(message),
+    ) ?? null
+  );
+}
+
 function optionalServerBind(
   record: Record<string, unknown>,
   label: string,

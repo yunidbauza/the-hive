@@ -79,6 +79,6 @@ describe('the updater a launch gets', () => {
     await updates.runHeadlessUpdate({ relaunch: false });
     expect(createElectronUpdaterEngine).toHaveBeenCalledWith('0.1.0', { relaunch: false });
     // The faked lock says a server is running, so the command refuses.
-    expect(exit).toHaveBeenCalledWith(1);
+    expect(exit).toHaveBeenCalledWith(5);
   });
 });

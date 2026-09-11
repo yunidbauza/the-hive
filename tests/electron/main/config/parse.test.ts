@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 
-import { parseConfig } from '../../../../electron/main/config/parse';
+import { parseConfig, serverBindRefusal } from '../../../../electron/main/config/parse';
 
 /**
  * Shape validation for `~/.hive/config.json` (stories 090, 101).
@@ -755,6 +755,39 @@ describe('the server block (HIVE-142)', () => {
       'config',
     );
     expect(parsed.server?.bind?.host).toBe('127.0.0.1');
+  });
+
+  /**
+   * HIVE-140 audit, gap 3. The listener reads a refused host off the snapshot's
+   * errors and binds nothing, instead of the default it would otherwise fall
+   * back to. So the predicate must name every refusal that throws the host
+   * away, and none that leaves it standing.
+   */
+  describe('serverBindRefusal', () => {
+    const refusalOf = (server: unknown): string | null =>
+      serverBindRefusal(parseConfig(JSON.stringify({ version: 2, server }), 'config').errors);
+
+    it.each(['0.0.0.0', '0x0', '000.000.000.000', 'not a host!'])(
+      'names the refusal of %s',
+      (host) => {
+        expect(refusalOf({ enabled: true, bind: { host } })).toMatch(/^config\.server\.bind\.host: /);
+      },
+    );
+
+    it('names a bind block that was ignored whole', () => {
+      expect(refusalOf({ enabled: true, bind: 'mini' })).toMatch(/^config\.server\.bind: expected an object/);
+    });
+
+    it('is null for a good host, and for no bind block at all', () => {
+      expect(refusalOf({ enabled: true, bind: { host: '100.101.102.103' } })).toBeNull();
+      expect(refusalOf({ enabled: true })).toBeNull();
+    });
+
+    it('is null for an advisory beside a good host', () => {
+      expect(
+        refusalOf({ enabled: true, bind: { host: '100.101.102.103', colour: 'blue' } }),
+      ).toBeNull();
+    });
   });
 
   it('drops a malformed device and keeps the good ones', () => {

@@ -25,7 +25,7 @@ import {
   type ServerDevice,
   type SwitchOutcome,
 } from '@shared/config-contract';
-import type { RemoteLinkStatus } from '@shared/ipc-contract';
+import type { LocalRemoteState, RemoteLinkStatus } from '@shared/ipc-contract';
 import { useApplyModeChange } from '@stores/hive-store';
 
 /**
@@ -270,7 +270,7 @@ interface ServerModeGroupProps {
    * this field is the one exception to it, for the two controls whose subject is
    * this window rather than the fleet.
    */
-  localRemote: RemoteConfig | null;
+  localRemote: LocalRemoteState | null;
   /**
    * The machine the stored config *names* as the attach target (HIVE-144) —
    * `ConfigSnapshot.attachedServer`.
@@ -791,8 +791,15 @@ export function ServerModeGroup({
    * This flag is cosmetic acknowledgement only, and **does not gate Forget**
    * — see `handleForget` below for why that distinction is the actual fix for
    * the review's Important-3.
+   *
+   * It no longer forgets across a remount (HIVE-140 audit, gap 6): with no
+   * pairing or forgetting watched in this session, it falls back to
+   * `LocalRemoteState.paired`, whether this machine's store actually holds a
+   * credential. What this session did wins over that read, because the read
+   * only refreshes with the config snapshot and a pair or forget writes none.
    */
-  const [paired, setPaired] = useState(false);
+  const [pairedHere, setPaired] = useState<boolean | null>(null);
+  const paired = pairedHere ?? localRemote?.paired === true;
 
   const handleRemotePair = () => {
     const deviceId = remotePairDeviceId.trim();

@@ -37,7 +37,6 @@ import type {
   JiraIssueRequest,
   JiraSearchRequest,
   JiraTransitionsRequest,
-  RemoteConfig,
   RepointProjectRequest,
   SetJiraRequest,
   SetJiraTokenRequest,
@@ -91,6 +90,7 @@ import {
   type SpawnRequest,
   type SpawnTerminalRequest,
   type WriteRequest,
+  type LocalRemoteState,
 } from '@shared/ipc-contract';
 import type {
   JiraComment,
@@ -321,7 +321,7 @@ const bridge: HiveBridge = {
       is proxied, so its `remote` block is the server's. The credential is not
       in the answer, because `RemoteConfig` has never held one.
     */
-    getRemote: (): Promise<RemoteConfig> => ipcRenderer.invoke(CH.configGetRemote),
+    getRemote: (): Promise<LocalRemoteState> => ipcRenderer.invoke(CH.configGetRemote),
     /*
       Story 107. Neither takes an argument — see the contract for why that is
       the security design and not an oversight. Written with no parameter list

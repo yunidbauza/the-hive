@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -12,7 +12,7 @@ import {
   setServerConfig,
   type RemoteSwitch,
 } from '@lib/project-config';
-import type { RemoteLinkStatus } from '@shared/ipc-contract';
+import type { LocalRemoteState, RemoteLinkStatus } from '@shared/ipc-contract';
 import { useHiveStore } from '@stores/hive-store';
 import {
   DEFAULT_REMOTE,
@@ -1204,7 +1204,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={SERVER_ANSWERED_REMOTE}
-          localRemote={{ mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433 }}
+          localRemote={{ mode: 'remote', host: 'mini.tail1234.ts.net', port: 7433, paired: false }}
           attachedServer={null}
           attachedServerName="mini"
           serving={false}
@@ -1232,7 +1232,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={SERVER_ANSWERED_REMOTE}
-          localRemote={{ mode: 'remote', host: '100.101.102.103', port: 7500 }}
+          localRemote={{ mode: 'remote', host: '100.101.102.103', port: 7500, paired: false }}
           attachedServer={null}
           attachedServerName="mini"
           serving={false}
@@ -1300,7 +1300,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={{ mode: 'local', host: 'studio.tail1234.ts.net', port: 7433 }}
-          localRemote={{ mode: 'remote', host: 'mini.tail1234.ts.net', port: 9000 }}
+          localRemote={{ mode: 'remote', host: 'mini.tail1234.ts.net', port: 9000, paired: false }}
           attachedServer={null}
           attachedServerName="mini"
           serving={false}
@@ -1322,7 +1322,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={{ mode: 'local', host: 'studio.tail1234.ts.net', port: 7433 }}
-          localRemote={{ mode: 'remote', host: 'mini.tail1234.ts.net', port: 9000 }}
+          localRemote={{ mode: 'remote', host: 'mini.tail1234.ts.net', port: 9000, paired: false }}
           attachedServer={null}
           attachedServerName="mini"
           serving={false}
@@ -1345,7 +1345,7 @@ describe('ServerModeGroup', () => {
           bind={DEFAULT_BIND}
           devices={[]}
           remote={{ mode: 'local', host: 'studio.tail1234.ts.net', port: 7433 }}
-          localRemote={{ mode: 'remote', host: 'mini.tail1234.ts.net', port: 9000 }}
+          localRemote={{ mode: 'remote', host: 'mini.tail1234.ts.net', port: 9000, paired: false }}
           attachedServer={null}
           attachedServerName="mini"
           serving={false}
@@ -1516,6 +1516,72 @@ describe('ServerModeGroup', () => {
       expect(forgetRemoteDevice).toHaveBeenCalled();
       // Forget is still there afterwards — it was never gated on `paired`.
       expect(screen.getByRole('button', { name: /^forget$/i })).toBeInTheDocument();
+      expect(screen.queryByText(/^paired$/i)).not.toBeInTheDocument();
+    });
+
+    /**
+     * HIVE-140 audit, gap 6: "Paired" used to mean "you watched a pairing
+     * succeed in this session", so reopening Settings over a credential paired
+     * yesterday showed nothing. It now falls back to whether this machine's
+     * store holds one.
+     */
+    it('shows Paired on first render when this machine already holds a credential', async () => {
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={DEFAULT_REMOTE}
+          localRemote={{ ...DEFAULT_REMOTE, paired: true }}
+          attachedServer={null}
+          attachedServerName={null}
+          serving={false}
+        />,
+      );
+
+      await userEvent.click(screen.getByRole('switch', { name: 'Attach to a server' }));
+
+      expect(screen.getByText(/^paired$/i)).toBeInTheDocument();
+    });
+
+    it('drops Paired after Forget, even though the stored read still says paired', async () => {
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={DEFAULT_REMOTE}
+          localRemote={{ ...DEFAULT_REMOTE, paired: true }}
+          attachedServer={null}
+          attachedServerName={null}
+          serving={false}
+        />,
+      );
+      await userEvent.click(screen.getByRole('switch', { name: 'Attach to a server' }));
+
+      await userEvent.click(screen.getByRole('button', { name: /^forget$/i }));
+
+      await waitFor(() => {
+        expect(screen.queryByText(/^paired$/i)).not.toBeInTheDocument();
+      });
+    });
+
+    it('shows no Paired chip when this machine holds no credential', async () => {
+      render(
+        <ServerModeGroup
+          enabled={false}
+          bind={DEFAULT_BIND}
+          devices={[]}
+          remote={DEFAULT_REMOTE}
+          localRemote={{ ...DEFAULT_REMOTE, paired: false }}
+          attachedServer={null}
+          attachedServerName={null}
+          serving={false}
+        />,
+      );
+
+      await userEvent.click(screen.getByRole('switch', { name: 'Attach to a server' }));
+
       expect(screen.queryByText(/^paired$/i)).not.toBeInTheDocument();
     });
 
@@ -1807,12 +1873,13 @@ describe('ServerModeGroup', () => {
       nextAttemptAt: null,
       reason: null,
       epoch: 0,
+      lost: 0,
       ...over,
     });
 
     const renderAttached = (
       status: RemoteLinkStatus | null,
-      localRemote: RemoteConfig | null = null,
+      localRemote: LocalRemoteState | null = null,
     ) =>
       render(
         <ServerModeGroup
@@ -1912,6 +1979,7 @@ describe('ServerModeGroup', () => {
           mode: 'remote',
           host: 'mini.tail1234.ts.net',
           port: 7433,
+          paired: false,
         });
 
         expect(screen.getByLabelText(/server address/i)).toHaveValue('mini.tail1234.ts.net');

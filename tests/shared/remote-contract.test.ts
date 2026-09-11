@@ -535,8 +535,8 @@ describe('remote contract: the version handshake', () => {
     expect(REMOTE_PROTOCOL_VERSION).toBeGreaterThan(0);
   });
 
-  it('is protocol 2, because a bare seq could not carry a generation (HIVE-144)', () => {
-    expect(REMOTE_PROTOCOL_VERSION).toBe(2);
+  it('is protocol 3: 2 carried a generation (HIVE-144), 3 caught up on unbumped channels (HIVE-140 audit)', () => {
+    expect(REMOTE_PROTOCOL_VERSION).toBe(3);
   });
 });
 

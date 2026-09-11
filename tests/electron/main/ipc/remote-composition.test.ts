@@ -1424,6 +1424,45 @@ describe('the mode switch (HIVE-144)', () => {
       vi.useRealTimers();
     });
 
+    /**
+     * HIVE-140 audit, gap 1, through the real router and the real proxy: what
+     * the dead link swallowed is counted onto the pushed status while it is
+     * down, and the count starts over once the link holds again.
+     */
+    it('counts what the dropped link swallowed, and starts over on reattach', async () => {
+      boundLocally();
+      const first = fakeClient();
+      const second = fakeClient();
+      const broadcaster = { emit: vi.fn() };
+      const connect = vi.fn(() => Promise.resolve(first));
+      connect.mockResolvedValueOnce(first).mockResolvedValue(second);
+      await switchIpcMode('remote', opts({ connect, broadcaster }));
+
+      first.call.mockRejectedValue(new Error('Cannot call config:get: the connection to mini is closed.'));
+      first.drop();
+      broadcaster.emit.mockClear();
+
+      await expect(invoke(CH.configGet)).rejects.toThrow(/is closed/);
+      await expect(invoke(CH.configGet)).rejects.toThrow(/is closed/);
+
+      const pushed = broadcaster.emit.mock.calls
+        .filter(([channel]) => channel === CH.remoteLinkStatus)
+        .map(([, status]) => status as { state: string; lost: number; snapshot?: unknown });
+      expect(pushed.map(({ state, lost }) => ({ state, lost }))).toEqual([
+        { state: 'reconnecting', lost: 1 },
+        { state: 'reconnecting', lost: 2 },
+      ]);
+      // A lost keystroke must not re-apply a reattach snapshot.
+      expect(pushed.every((status) => status.snapshot === undefined)).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(600_000);
+
+      const last = broadcaster.emit.mock.calls
+        .filter(([channel]) => channel === CH.remoteLinkStatus)
+        .at(-1)?.[1] as { state: string; lost: number };
+      expect(last).toMatchObject({ state: 'attached', lost: 0 });
+    });
+
     it('rebinds the surface to the new client without unbinding local twice', async () => {
       boundLocally();
       const first = fakeClient();

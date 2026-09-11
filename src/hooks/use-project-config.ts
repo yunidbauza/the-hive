@@ -14,8 +14,8 @@ import {
 import {
   isLoopbackHost,
   type ConfigSnapshot,
-  type RemoteConfig,
 } from '@shared/config-contract';
+import type { LocalRemoteState } from '@shared/ipc-contract';
 import { useRemoteLink } from '@stores/hive-store';
 
 
@@ -461,9 +461,9 @@ export function useAttachedServer(): string | null {
  * already covers both a mode switch and a reload. There is nothing here a push
  * would tell us sooner.
  */
-export function useLocalRemote(): RemoteConfig | null {
+export function useLocalRemote(): LocalRemoteState | null {
   const snapshot = useProjectConfig();
-  const [local, setLocal] = useState<RemoteConfig | null>(null);
+  const [local, setLocal] = useState<LocalRemoteState | null>(null);
 
   useEffect(() => {
     if (snapshot === null) return;

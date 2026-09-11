@@ -1487,6 +1487,19 @@ export type NotificationActivateEvent =
  */
 export type RemoteLinkState = 'attached' | 'reconnecting' | 'disconnected';
 
+/**
+ * What {@link CH.configGetRemote} answers: this machine's own `remote` block,
+ * and whether a device credential is stored beside it.
+ *
+ * `paired` is a yes or no and never the credential itself (HIVE-140 audit,
+ * gap 6). Settings used to learn it only by watching a pairing succeed in the
+ * same session, so a credential paired yesterday showed no "Paired" chip. The
+ * token stays where `remote:pair` put it; no verb returns it.
+ */
+export interface LocalRemoteState extends RemoteConfig {
+  paired: boolean;
+}
+
 /** The payload {@link CH.remoteLinkStatus} pushes. */
 export interface RemoteLinkStatus {
   state: RemoteLinkState;
@@ -1532,6 +1545,19 @@ export interface RemoteLinkStatus {
    * there.
    */
   snapshot?: Readonly<Partial<Record<Channel, unknown>>>;
+  /**
+   * How many calls and keystrokes from this window failed because the link was
+   * down, since it last held (HIVE-140 audit, gap 1).
+   *
+   * A dead link used to lose them silently: the renderer's wrappers log and
+   * swallow a rejected call, and a keystroke into a still-focused terminal
+   * ended at a `console.error` in main. The reattach replays the *server's*
+   * transcript, which never held them, so nothing anywhere recorded that the
+   * input existed. Counted in main, where every proxied call and notify passes,
+   * and reset to 0 whenever the link holds again. Refusals the server itself
+   * answered are not counted: those reached it.
+   */
+  lost: number;
 }
 
 /** Answer to {@link CH.appInfo} — proves the bridge round-trips. */
@@ -1940,16 +1966,16 @@ export interface HiveBridge {
      * half.
      *
      * Takes no argument and carries no credential: `RemoteConfig` has never
-     * held the device token, so this returns the same three fields `setRemote`
-     * writes and nothing more. Whether a credential is *stored* is deliberately
-     * not here — see `readRemoteCredential`'s doc comment in
-     * `electron/main/ipc/index.ts`.
+     * held the device token, so this returns the three fields `setRemote`
+     * writes, plus whether a credential is stored ({@link LocalRemoteState}).
+     * The credential itself is not here and never will be — see
+     * `readRemoteCredential`'s doc comment in `electron/main/ipc/index.ts`.
      *
      * Prefer this over {@link get}'s `remote` block anywhere the answer must
      * describe *this* window: while attached, `config:get` is answered by the
      * server, so its `remote` block is the far end's.
      */
-    getRemote(): Promise<RemoteConfig>;
+    getRemote(): Promise<LocalRemoteState>;
     /**
      * Show the config file in the OS file manager (story 107).
      *

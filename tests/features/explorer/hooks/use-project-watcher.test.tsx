@@ -238,6 +238,7 @@ describe('useProjectWatcher', () => {
           nextAttemptAt: null,
           reason: null,
           epoch,
+          lost: 0,
         });
       });
     };
@@ -279,6 +280,7 @@ describe('useProjectWatcher', () => {
           nextAttemptAt: Date.now() + 4_000,
           reason: null,
           epoch: 0,
+          lost: 0,
         });
       });
 

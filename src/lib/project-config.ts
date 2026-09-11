@@ -9,7 +9,6 @@ import type {
   ModeChange,
   ProjectConfig,
   ProjectStatus,
-  RemoteConfig,
   RemotePairRequest,
   RemoveProjectRequest,
   RenameProjectRequest,
@@ -31,6 +30,7 @@ import type {
   IntegrationsStatus,
   LoginEnvStatus,
   NotificationDeliveryStatus,
+  LocalRemoteState,
 } from '@shared/ipc-contract';
 
 /**
@@ -716,7 +716,7 @@ export async function readAppInfo(): Promise<AppInfo | null> {
  * caller shows what it already had rather than an address this machine never
  * stated.
  */
-export async function readLocalRemote(): Promise<RemoteConfig | null> {
+export async function readLocalRemote(): Promise<LocalRemoteState | null> {
   const bridge = window.hive;
   if (!bridge) return null;
 

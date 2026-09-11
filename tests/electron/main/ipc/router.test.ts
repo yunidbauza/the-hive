@@ -195,6 +195,10 @@ describe('registerIpc', () => {
       // before the story — forwarded, clearing the *server's* credential.
       localRemotePair: expect.any(Function),
       localRemoteForget: expect.any(Function),
+      // HIVE-140 audit, gaps 6 and 1: whether a credential is stored, and
+      // where a call the dead link swallowed is counted.
+      localRemotePaired: expect.any(Function),
+      onLinkLoss: expect.any(Function),
     });
   });
 
@@ -216,6 +220,10 @@ describe('registerIpc', () => {
       localSetRemote: expect.any(Function),
       localRemotePair: expect.any(Function),
       localRemoteForget: expect.any(Function),
+      // HIVE-140 audit, gaps 6 and 1: whether a credential is stored, and
+      // where a call the dead link swallowed is counted.
+      localRemotePaired: expect.any(Function),
+      onLinkLoss: expect.any(Function),
     });
   });
 
