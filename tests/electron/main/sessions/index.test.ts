@@ -882,7 +882,10 @@ describe('identity: the renderer only ever sees entity ids', () => {
  * capture, and reading status back by entity is exactly what `on()` already
  * does for the suite's default instance.
  */
-function harness(onIdle?: (entityId: string) => void): {
+function harness(
+  onIdle?: (entityId: string) => void,
+  onEnded?: (entityId: string) => void,
+): {
   hook: (
     event: { entityId: string; event: HookStatusEvent['event'] } & Partial<
       Omit<HookStatusEvent, 'entityId' | 'event' | 'status'>
@@ -906,6 +909,7 @@ function harness(onIdle?: (entityId: string) => void): {
     userDataPath: USER_DATA_PATH,
     newSessionUuid: () => TEST_UUID,
     ...(onIdle === undefined ? {} : { onIdle }),
+    ...(onEnded === undefined ? {} : { onEnded }),
     hooks: {
       settingsPathFor: () => undefined,
       envFor: () => ({}),
@@ -2501,6 +2505,23 @@ describe('/done', () => {
  * consumer a prompt just came free — and `isIdle` is the pull, for a caller
  * that arrives between events and has to ask.
  */
+describe('the ended signal (HIVE-167)', () => {
+  it('fires from the exit funnel, after the session has left the register', () => {
+    const seen: Array<{ id: string; live: boolean }> = [];
+    let instance: Sessions | null = null;
+    const h = harness(undefined, (entityId) => {
+      seen.push({ id: entityId, live: instance?.entities().includes(entityId) ?? true });
+    });
+    instance = h.sessions;
+    h.sessions.open(OPEN);
+
+    emitExit({ sessionId: mintedFor('hero-refresh'), exitCode: 0 });
+    vi.advanceTimersByTime(8);
+
+    expect(seen).toEqual([{ id: 'hero-refresh', live: false }]);
+  });
+});
+
 describe('the idle signal', () => {
   it('fires when a session goes idle with nothing running behind it', () => {
     const onIdle = vi.fn();

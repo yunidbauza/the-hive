@@ -245,6 +245,34 @@ describe('createLedgerNotifier', () => {
     expect(raise).not.toHaveBeenCalled();
   });
 
+  it('raises the ask\'s own card when main re-surfaces a question its session left open (HIVE-167)', () => {
+    const { raise, onEntry } = harness();
+    onEntry({
+      id: 'e7',
+      ts: 5,
+      from: OVERMIND,
+      to: OVERMIND,
+      kind: 'event',
+      thread: 'a12',
+      body: 'sess-1 ended with this question open; it is yours now',
+      meta: { redirected: 'a12', redirectedFrom: 'sess-1' },
+    });
+    expect(raise).toHaveBeenCalledWith({
+      kind: 'agent.ask',
+      id: 'e7',
+      title: 'sess-1 ended with this question open; it is yours now',
+      subject: 'sess-1',
+      action: { type: 'ask', thread: 'a12' },
+      createdAt: 5,
+    });
+  });
+
+  it('ignores a redirect event any party but the overmind wrote', () => {
+    const { raise, onEntry } = harness();
+    onEntry({ id: 'e8', ts: 5, from: 'drone', kind: 'event', body: 'x', meta: { redirected: 'a12' } });
+    expect(raise).not.toHaveBeenCalled();
+  });
+
   it('raises no link at all when the done entry carries none', () => {
     const { raise, onEntry } = harness();
     onEntry(entry({ kind: 'done', from: 'drone', body: 'Sent.' }));

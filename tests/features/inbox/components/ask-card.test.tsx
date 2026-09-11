@@ -21,6 +21,15 @@ const ask = {
   meta: { options: ['yes', 'no'] },
 };
 
+describe('a redirected ask (HIVE-167)', () => {
+  it('says who the question was meant for, as a caption', () => {
+    seedLedger([{ ...ask, meta: { options: ['yes'], redirectedFrom: 'sess-9' } }]);
+    render(<AskCard notif={notif} thread="a41" />);
+
+    expect(screen.getByText(/meant for sess-9, which ended/)).toBeInTheDocument();
+  });
+});
+
 const notif = {
   id: 'a41',
   kind: 'agent.ask' as const,

@@ -1913,7 +1913,42 @@ export function registerIpcHandlers(
       */
       knownAgents.has(id) ||
       history?.resumable(id) !== undefined,
+    /*
+      HIVE-167. A session the ledger knows, that is not an agent, and that has
+      no terminal right now. `entities()` is the live register; a resumable
+      ended session is a party (so its own late writes are accepted) but it
+      cannot read a marker, and an ask to it is what this redirects.
+    */
+    isGoneSession: (id) =>
+      id !== OVERMIND &&
+      !knownAgents.has(id) &&
+      !(sessions?.entities().includes(id) ?? false),
   });
+
+  /**
+   * The other half of HIVE-167: asks that were open when their session ended.
+   *
+   * Each is re-surfaced to the overmind as an `event` on the ask's own
+   * thread, so the card the notifier raises answers into the original ask and
+   * the answer still wakes the asker. Nothing is re-posted as the asker; the
+   * party rule forbids main writing as anyone but `OVERMIND`, and the thread
+   * already holds the question.
+   */
+  const redirectOpenAsks = (entityId: string): void => {
+    const waiting = ledger
+      .read({})
+      .openAsks.filter((ask) => ask.to === entityId);
+    for (const ask of waiting) {
+      ledger.append({
+        from: OVERMIND,
+        to: OVERMIND,
+        kind: 'event',
+        thread: ask.id,
+        body: `${entityId} ended with this question open; it is yours now`,
+        meta: { redirected: ask.id, redirectedFrom: entityId },
+      });
+    }
+  };
 
   /**
    * Delivery — what happens to an entry after it is written (HIVE-113).
@@ -2930,6 +2965,8 @@ export function registerIpcHandlers(
     */
     onIdle: (entityId) => deliver.onIdle(entityId),
     onReady: (entityId) => deliver.onReady(entityId),
+    // HIVE-167: the asks that were waiting on this terminal go to the inbox.
+    onEnded: (entityId) => redirectOpenAsks(entityId),
     /*
       The same register the ledger authenticates a party against (HIVE-115),
       and deliberately not a second one: an agent that may write to the log is

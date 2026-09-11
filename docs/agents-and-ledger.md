@@ -305,6 +305,21 @@ itself with no memory of the turn. `AGENT_PREAMBLE` interpolates the same
 together. A headless agent re-reads its ask on wake; a terminal session reads
 the intent in the context the answer's marker carries, whole.
 
+### An ask to a session that is gone (HIVE-167)
+
+A builder asks the session that planned its work first, because that session
+holds the spec and the conversation; a session that has since closed cannot
+read a marker, and the ask would sit until `LEDGER_ASK_TTL_MS` retired it a
+day later. Two moments cover it. At **append**, `Ledger.append` asks
+`isGoneSession(to)`, a session the ledger knows that is not an agent and has
+no terminal now, and re-addresses the ask to the overmind with
+`meta.redirectedFrom` naming who it was for; the card captions it. At
+**session end**, `settleExit` fires `onEnded`, and main re-surfaces every ask
+still open on that terminal as an overmind `event` on the ask's own thread
+(`meta.redirected`), which the notifier raises as the ask's card, so the
+answer goes into the original thread and wakes the asker. Nothing is re-posted
+as the asker: the party rule forbids main writing as anyone but the overmind.
+
 ### Wakes
 
 `electron/main/agents/scheduler.ts` is the third consumer of that same

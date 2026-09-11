@@ -35,6 +35,16 @@ export interface LedgerOptions {
   dir: string;
   /** {@link OVERMIND} plus every session this app has, live or resumable. */
   knowsParty: (id: string) => boolean;
+  /**
+   * Whether `id` names a session that is not live (HIVE-167): a party the
+   * ledger knows, that is not an agent and not the overmind, and that has no
+   * terminal right now. An `ask` addressed to one is re-addressed to the
+   * overmind at append time, with `meta.redirectedFrom` naming who it was
+   * meant for, because a marker to a terminal that is not there is a question
+   * nobody asked and the asker would wait out the whole expiry on it. Absent
+   * means "never", which is what every existing test constructs.
+   */
+  isGoneSession?: (id: string) => boolean;
   now?: () => number;
 }
 
@@ -289,11 +299,34 @@ export function createLedger(options: LedgerOptions): Ledger {
         );
       }
 
+      /*
+        The attached-mode safety net (HIVE-167). A session that planned the
+        work is the party a builder asks first; a session that has since
+        closed cannot read the marker, and `deliver` would hold the ask until
+        `LEDGER_ASK_TTL_MS` retired it, a day later, with the builder asleep
+        the whole time. Re-addressed here rather than in `deliver`, so the
+        entry on disk says who it reached and `visibleTo` follows the real
+        recipient. `redirectedFrom` is set by main and nobody else: the guard
+        that parses a posted `meta` does not strip it, so a party could write
+        one, and the card treats it as a caption, never as an identity.
+      */
+      let redirectedMeta: Record<string, unknown> | undefined;
+      if (
+        request.kind === 'ask' &&
+        to !== undefined &&
+        to !== OVERMIND &&
+        options.isGoneSession?.(to) === true
+      ) {
+        redirectedMeta = { ...(honest?.meta ?? request.meta ?? {}), redirectedFrom: to };
+        to = OVERMIND;
+      }
+
       let stored: LedgerEntry;
       try {
         stored = store.append({
           ...request,
           ...(honest === undefined ? {} : { body: honest.body, meta: honest.meta }),
+          ...(redirectedMeta === undefined ? {} : { meta: redirectedMeta }),
           ...(thread === undefined ? {} : { thread }),
           ...(to === undefined ? {} : { to }),
         });

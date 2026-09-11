@@ -35,6 +35,33 @@ describe('createLedger', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it('re-addresses an ask to a session that is gone to the overmind, naming who it was for (HIVE-167)', () => {
+    const redirecting = createLedger({
+      dir,
+      now: () => clock,
+      knowsParty: () => true,
+      isGoneSession: (id) => id === 'sess-closed',
+    });
+
+    const result = redirecting.append({
+      from: 'builder',
+      to: 'sess-closed',
+      kind: 'ask',
+      body: 'which colour?',
+      meta: { options: ['red', 'blue'] },
+    });
+
+    expect(result.ok).toBe(true);
+    const stored = redirecting.read({}).entries.at(-1)!;
+    expect(stored.to).toBe('overmind');
+    expect(stored.meta).toEqual({ options: ['red', 'blue'], redirectedFrom: 'sess-closed' });
+    // A live session, an agent, and the overmind itself are left alone.
+    for (const to of ['sess-live', 'watcher', 'overmind']) {
+      redirecting.append({ from: 'builder', to, kind: 'ask', body: 'x' });
+      expect(redirecting.read({}).entries.at(-1)!.to).toBe(to);
+    }
+  });
+
   it('accepts a post from a known party', () => {
     const result = ledger.append({ from: 'sess-a', kind: 'post', body: 'hello' });
 

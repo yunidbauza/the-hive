@@ -191,6 +191,28 @@ export function createLedgerNotifier(
       return;
     }
 
+    /*
+      HIVE-167. An ask that was waiting on a session that has ended is
+      re-surfaced by main as an `event` on the ask's own thread. The card it
+      raises is the ask's card: `action.thread` names the ask, so answering
+      goes into the original thread and wakes the asker. Only the overmind
+      writes these, and the author check is what keeps a party from raising
+      cards for questions that were never its to redirect.
+    */
+    const redirected = str(meta.redirected);
+    if (entry.kind === 'event' && entry.from === OVERMIND && redirected !== undefined) {
+      const [first] = split(entry.body);
+      deps.raise({
+        kind: 'agent.ask',
+        id: entry.id,
+        title: first,
+        subject: str(meta.redirectedFrom),
+        action: { type: 'ask', thread: redirected },
+        createdAt: entry.ts,
+      });
+      return;
+    }
+
     if (entry.kind === 'answer' && entry.thread !== undefined) {
       deps.markRead(entry.thread);
       return;

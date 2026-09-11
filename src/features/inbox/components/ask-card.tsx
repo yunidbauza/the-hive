@@ -154,6 +154,12 @@ export function AskCard({ notif, thread }: AskCardProps) {
    */
   const [refusal, setRefusal] = useState<string | null>(null);
 
+  /**
+   * Who the question was meant for, when main re-addressed it (HIVE-167).
+   * A caption only: the ask is answered into its own thread whatever this
+   * says, and the value is shown as text, never resolved into a party.
+   */
+  const redirectedFrom = text(ask?.meta?.['redirectedFrom']);
   const options = strings(ask?.meta?.options);
   const quote = text(ask?.meta?.quote);
   /**
@@ -323,6 +329,9 @@ export function AskCard({ notif, thread }: AskCardProps) {
   const meta = (trailing?: ReactNode) => (
     <div className="flex items-center gap-1.5 text-[10px] text-subtle">
       <span className="font-medium text-muted">{asker}</span>
+      {redirectedFrom !== undefined ? (
+        <span data-redirected-from={redirectedFrom}>meant for {redirectedFrom}, which ended</span>
+      ) : null}
       <span className="opacity-50">·</span>
       <span>{age}</span>
       {trailing}

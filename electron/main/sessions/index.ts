@@ -180,6 +180,12 @@ export interface SessionsOptions {
    */
   onIdle?: (entityId: string) => void;
   /**
+   * A session ended, however it ended (HIVE-167): `ptyExit`, `ptyLost` and
+   * `/done` all pass through the same funnel, and this fires from it. The
+   * one consumer re-addresses the asks that were waiting on that terminal.
+   */
+  onEnded?: (entityId: string) => void;
+  /**
    * A session's agent came up, including after a resume (HIVE-113).
    *
    * The same event `CH.sessionReady` reports to the renderer, offered to main's
@@ -498,6 +504,7 @@ export function createSessions(options: SessionsOptions): Sessions {
     branchReader,
     history,
     onIdle,
+    onEnded,
     onReady,
     /*
       An empty register is the honest default (HIVE-115): a build with no agents
@@ -1841,6 +1848,10 @@ export function createSessions(options: SessionsOptions): Sessions {
       // older one settling late.
       if (containerRemovals.get(entityId) === removal) containerRemovals.delete(entityId);
     });
+
+    // After the registry entry is gone, so a consumer asking `entities()` in
+    // its callback already sees the session as not live.
+    onEnded?.(entityId);
 
     const waiters = exitWaiters.get(entityId);
     if (!waiters) return;
