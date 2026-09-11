@@ -584,10 +584,12 @@ export const NOTIFICATION_KIND_SPECS: Record<
    *
    * Raised off the verifier's ledger receipt, an `event` from the session
    * with `meta.goal`: once when the goal goes `ACTIVE`, once per blocked turn,
-   * and once when it settles `DONE` or `FAILED`. One card per goal, keyed on
-   * the session, so the row updates in place rather than stacking; a settled
-   * goal marks its card read. `inbox` by default: the session is already on
-   * screen and nothing here waits on the person.
+   * and once when it settles `DONE` or `FAILED`. One row per session at a
+   * time, through the hub's supersede rule on the `session` action, so a new
+   * receipt replaces the last rather than stacking; a settled goal marks its
+   * row read. `inbox` by default: the receipt reports what the floor did, and
+   * the session that needs the person (`NEEDS-DECISION`, `PENDING-APPROVAL`)
+   * says so in its own terminal and through `session.input_needed`.
    */
   'session.goal': {
     source: 'session',

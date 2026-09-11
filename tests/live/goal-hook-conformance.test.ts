@@ -1,10 +1,11 @@
 // @vitest-environment node
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -90,7 +91,7 @@ describe.skipIf(!enabled)('goal-on Stop hook through the generated plugin (HIVE-
   let receiver: { server: Server; url: string; receipts: Receipt[] };
 
   beforeAll(async () => {
-    const resources = new URL('../../resources', import.meta.url).pathname;
+    const resources = fileURLToPath(new URL('../../resources', import.meta.url));
     const read = await readUserSkills(join(resources, 'skills'));
     expect(read.invalid).toEqual([]);
     pluginRoot = join(mkdtempSync(join(tmpdir(), 'hive-goal-plugin-')), 'plugin');
@@ -100,8 +101,15 @@ describe.skipIf(!enabled)('goal-on Stop hook through the generated plugin (HIVE-
     receiver = await stub();
   });
 
-  afterAll(() => {
-    receiver.server.close();
+  afterAll(async () => {
+    // The verifier posts through undici with keep-alive, so a socket can
+    // outlive its request; `hook-context-conformance` closes the same way.
+    receiver.server.closeAllConnections();
+    await new Promise<void>((resolve) => receiver.server.close(() => resolve()));
+    // The cwd stays: `finding.json` is the run's evidence. The other two are
+    // scaffolding.
+    rmSync(join(pluginRoot, '..'), { recursive: true, force: true });
+    rmSync(goals, { recursive: true, force: true });
   });
 
   it(
@@ -110,7 +118,6 @@ describe.skipIf(!enabled)('goal-on Stop hook through the generated plugin (HIVE-
     async () => {
       const session = randomUUID();
       const brief = join(goals, `${session}.md`);
-      mkdirSync(goals, { recursive: true });
       writeFileSync(
         brief,
         [
@@ -135,7 +142,7 @@ describe.skipIf(!enabled)('goal-on Stop hook through the generated plugin (HIVE-
       );
 
       const token = `test-${randomUUID()}`;
-      const run = await new Promise<{ stdout: string; stderr: string }>((resolve) => {
+      const run = await new Promise<{ stdout: string; stderr: string; error: string | null }>((resolve) => {
         execFile(
           'claude',
           [
@@ -164,9 +171,14 @@ describe.skipIf(!enabled)('goal-on Stop hook through the generated plugin (HIVE-
               HIVE_SESSION_ID: session,
             },
           },
-          (_error, stdout, stderr) => resolve({ stdout, stderr }),
+          (error, stdout, stderr) =>
+            resolve({ stdout, stderr, error: error === null ? null : `${error.code ?? ''} ${error.message}`.trim() }),
         );
       });
+
+      // A missing binary or a hung run must say so, not read as an unstamped
+      // brief and point the blame at the hook.
+      expect(run.error ?? '').not.toMatch(/ENOENT|ETIMEDOUT|SIGTERM/);
 
       const after = readFileSync(brief, 'utf8');
       // Written before any assertion, so a failed run still leaves its evidence.
@@ -190,9 +202,9 @@ describe.skipIf(!enabled)('goal-on Stop hook through the generated plugin (HIVE-
       for (const receipt of events) {
         expect(receipt.headers['x-hive-token']).toBe(token);
         expect(receipt.headers['x-hive-session']).toBe(session);
-        expect((receipt.body as { meta: { goal: string } }).meta.goal).toBe(session);
+        expect((receipt.body as { meta?: { goal?: string } }).meta?.goal).toBe(session);
       }
-      const statuses = events.map((receipt) => (receipt.body as { meta: { status: string } }).meta.status);
+      const statuses = events.map((receipt) => (receipt.body as { meta?: { status?: string } }).meta?.status);
       expect(statuses).toContain('FAILED');
     },
   );
