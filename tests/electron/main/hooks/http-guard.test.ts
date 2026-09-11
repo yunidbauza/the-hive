@@ -125,6 +125,7 @@ describe('secretEquals', () => {
     );
     expect(source).toMatch(/import \{[^}]*\bcreateOriginGuard\b[^}]*\} from '[^']*http-guard'/);
     expect(source).toContain('createOriginGuard(');
-    expect(source).not.toMatch(/headers\[['"]origin['"]\]/);
+    // No second read of either header, by bracket or by dot.
+    expect(source).not.toMatch(/headers(\.|\[['"])(origin|host)\b/);
   });
 });

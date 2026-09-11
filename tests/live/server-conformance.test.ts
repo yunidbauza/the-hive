@@ -3839,7 +3839,10 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       );
       expect(await ui.evaluate<string | null>(`${SWITCH}.getAttribute('aria-checked')`)).toBe('false');
       // And the chip goes with the socket: nothing in the header claims a link.
-      await untilUi(`!(${HEADER_CHIPS}).includes('attached ·')`, 'the header chip to go once detached');
+      // Every state of the chip names the server, so the name's absence is the
+      // test, not the word "attached": a "disconnected" chip left standing after
+      // a deliberate detach is the regression this guards.
+      await untilUi(`!(${HEADER_CHIPS}).includes('· ${hostname()}')`, 'the header chip to go once detached');
 
       const info = await ui.evaluate<AppInfo>('window.hive.appInfo()');
       expect(info.attachedServerName).toBeNull();
@@ -4590,6 +4593,8 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
         );
         await ui.evaluate(`(() => {
           const original = HTMLInputElement.prototype.click;
+          // Kept where \`finally\` can reach it, should the import never click.
+          globalThis.__hive21nClick = original;
           HTMLInputElement.prototype.click = function () {
             if (this.type !== 'file') return original.call(this);
             HTMLInputElement.prototype.click = original;
@@ -4607,6 +4612,11 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
         expect(readFileSync(serverConfigPath, 'utf8')).toBe(serverBefore);
       } finally {
         rmSync(scratch, { recursive: true, force: true });
+        await ui
+          .evaluate(
+            'if (globalThis.__hive21nClick) HTMLInputElement.prototype.click = globalThis.__hive21nClick; true',
+          )
+          .catch(() => undefined);
       }
     }, 240_000);
 
@@ -4681,13 +4691,20 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
           'the client’s own dock to badge the row its store now holds',
           30_000,
         );
+        /*
+          Tied to this row, not to any toast: the hub titles a toast
+          "<session> <title>" (`toastTitle`), and an unnamed session is named by
+          its id, so a notification left over from an earlier case cannot
+          satisfy this wait.
+        */
+        const ours = `globalThis.__audit140Shown.some((shown) => shown.title.includes(${JSON.stringify(sessionId)}))`;
         await waitForAsync(
-          async () => (await owner.evaluate<number>('globalThis.__audit140Shown.length')) > 0,
-          'the client to raise a real OS notification for the row',
+          async () => owner.evaluate<boolean>(ours),
+          'the client to raise a real OS notification for this row',
           30_000,
         );
         const shown = await owner.evaluate<{ title: string; body: string }[]>('globalThis.__audit140Shown');
-        expect(shown[0]?.title.length ?? 0).toBeGreaterThan(0);
+        expect(shown.some((notification) => notification.title.includes(sessionId))).toBe(true);
         measurements.push({
           case: '21o. a server row on the client’s dock and OS',
           badge: await owner.evaluate<string>("require('electron').app.dock.getBadge()"),

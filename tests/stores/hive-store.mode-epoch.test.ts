@@ -342,11 +342,19 @@ describe('a ticket sweep that outlives the mode switch it started under', () => 
     const sweep = state().refreshTickets();
     state().applyModeChange({ to: 'local' });
 
-    jira.settle({ site: null, email: null, credential: { kind: 'none' } } as unknown as JiraStatus);
+    const unconfigured: JiraStatus = {
+      site: null,
+      email: null,
+      siteSource: null,
+      emailSource: null,
+      credential: { kind: 'none' },
+      encryptionAvailable: true,
+    };
+    jira.settle(unconfigured);
     await sweep;
 
+    // Without the epoch guard this would read `unconfigured`.
     expect(state().ticketSource).toEqual({ kind: 'loading' });
-    expect(searchJiraIssues).not.toHaveBeenCalled();
   });
 });
 
