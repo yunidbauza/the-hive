@@ -38,94 +38,101 @@ textually from here on.
 `gh pr checks <N> --repo <owner>/<repo>`. Zero checks is not green until the
 repository is known to have no workflows.
 
+## One plain command per call
+
+The shipper runs this skill through a permission fence whose Bash rules refuse
+any command carrying a shell control character: `|`, `;`, `&`, `<`, `>`, a
+backtick, `$(`. So nothing below is a script. Every command is one plain
+invocation, its output is read by you, and the branching is yours. Values a
+script would keep in a variable are read once and then written into the next
+command as **literals**: a branch, a SHA, a path. `gh`'s own `--jq` does the
+reducing a pipe used to.
+
 ## Step 2: sync the workspace, then the base
 
 The workspace may be behind its own branch: a fixer pushed from a worktree of
 its own, and the shipper's checkout still sits where the builder left it.
-Bring it level first, or the gate reports `head moved` for ever:
+Bring it level first, or the gate reports `head moved` for ever.
 
-```bash
-HEAD_REF=$(gh pr view <N> --repo <owner>/<repo> --json headRefName --jq '.headRefName')
-[ -n "$HEAD_REF" ] || { echo "ABORT: head branch not resolved"; exit 1; }
-git -C "<workspace>" fetch origin
-git -C "<workspace>" merge --ff-only "origin/$HEAD_REF"
-```
+1. `gh pr view <N> --repo <owner>/<repo> --json headRefName,baseRefName --jq '[.headRefName, .baseRefName]'`
+   Read both. Empty is a stop, not a default.
+2. `git -C <workspace> fetch origin`
+3. `git -C <workspace> merge --ff-only origin/<headRefName>`
+   A refused fast-forward means local commits nobody pushed. Stop and report;
+   do not force either side.
+4. `git -C <workspace> rev-list --count HEAD..origin/<baseRefName>`
+   Zero: go to Step 3. More: `git -C <workspace> log --oneline HEAD..origin/<baseRefName>`
+   and `git -C <workspace> diff --stat HEAD...origin/<baseRefName>` say what
+   landed. No overlap with this PR's files: `git -C <workspace> merge origin/<baseRefName>`,
+   then `git -C <workspace> push origin <headRefName>`, and wait for green
+   before the gate. Overlap: the same merge, then the repository's targeted
+   verification on the affected paths.
+5. A conflict: `git -C <workspace> log -p origin/<baseRefName> -- <file>` for
+   both intents, resolve preserving both, never blanket `--ours` or
+   `--theirs`. **A resolution that would change what this PR was reviewed as
+   doing, or break a merged PR's behaviour, is a hard stop:** report both
+   intents and the proposed resolution. In a shipper wake that report is a
+   `ledger_ask` to the PR's `reply-to`.
 
-A refused fast-forward means local commits nobody pushed. Stop and report;
-do not force either side.
-
-Then the base. Re-read `BASE` inside every block; it does not survive a call
-and must never be inlined as bare text:
-
-```bash
-BASE=$(gh pr view <N> --repo <owner>/<repo> --json baseRefName --jq '.baseRefName')
-[ -n "$BASE" ] || { echo "ABORT: base branch not resolved"; exit 1; }
-git -C "<workspace>" fetch origin
-git -C "<workspace>" rev-list --count "HEAD..origin/$BASE"
-```
-
-Behind with no conflict: read what landed (`git log HEAD..origin/$BASE`, the
-diff stat), merge `origin/$BASE`, run the targeted verification when the
-upstream touched files this PR touches, push, wait for green. Conflicting:
-read both intents (`git log -p origin/$BASE -- <file>`), merge preserving
-both, never blanket `--ours`/`--theirs`. **A resolution that would change what
-this PR was reviewed as doing, or break a merged PR's behaviour, is a hard
-stop:** report both intents and the proposed resolution; this fork cannot
-ask.
+Anything pushed here moves the head, restarts CI and can wake a review agent.
+The gate reads after it, never before.
 
 ## Step 3: the gate, then the merge
 
-One GraphQL reading of every blocker, plus the workspace head, reduced to one
-verdict:
+Two readings, by who is running this.
 
-```bash
-GATE=$(gh api graphql -f query='
-query($owner:String!, $repo:String!, $n:Int!) {
-  repository(owner:$owner, name:$repo) {
-    pullRequest(number:$n) {
-      headRefOid state mergeable reviewDecision
-      reviewRequests(first:50){ nodes { requestedReviewer {
-        __typename ... on User { login } ... on Bot { login } } } }
-      latestReviews(first:50){ nodes { author { login } state } }
-      reviewThreads(first:100){ pageInfo { hasNextPage } nodes { isResolved isOutdated } }
-      commits(last:1){ nodes { commit { statusCheckRollup { state contexts(first:100){
-        pageInfo { hasNextPage }
-        nodes { __typename ... on CheckRun { name status conclusion }
-                ... on StatusContext { context state } } } } } } }
-    }
-  }
-}' -F owner=<owner> -F repo=<repo> -F n=<N>)
-LOCAL_HEAD=$(git -C "<workspace>" rev-parse HEAD)
-[ -n "$GATE" ] && [ -n "$LOCAL_HEAD" ] || { echo "GATE: HOLD: empty reading"; exit 1; }
-printf '%s' "$GATE" | jq -r --arg local "$LOCAL_HEAD" '
-  .data.repository.pullRequest as $p
-  | ($p.reviewThreads.nodes | map(select(.isResolved | not))) as $open
-  | ($p.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // []) as $ctx
-  | ($ctx | map(select(
-      (.__typename=="CheckRun"      and (.status != "COMPLETED")) or
-      (.__typename=="StatusContext" and (.state=="PENDING" or .state=="EXPECTED"))))) as $running
-  | ($ctx | map(select(
-      (.__typename=="CheckRun"      and ([.conclusion] | inside(["FAILURE","TIMED_OUT","CANCELLED","ACTION_REQUIRED","STARTUP_FAILURE","STALE"]))) or
-      (.__typename=="StatusContext" and (.state=="FAILURE" or .state=="ERROR"))))) as $failed
-  | ($p.reviewRequests.nodes | map("\(.requestedReviewer.login // "?") [\(.requestedReviewer.__typename)]")) as $pending
-  | ($p.latestReviews.nodes | map(select(.state=="CHANGES_REQUESTED") | .author.login)) as $cr
-  | [ (if $p.headRefOid != $local then "head moved: PR \($p.headRefOid) != workspace \($local)" else empty end),
-      (if $p.state != "OPEN" then "PR state is \($p.state)" else empty end),
-      (if ($open|length) > 0 then "\($open|length) unresolved review thread(s), \(($open|map(select(.isOutdated))|length)) of them outdated" else empty end),
-      (if $p.reviewThreads.pageInfo.hasNextPage then "more than 100 review threads: paginate" else empty end),
-      (if ($running|length) > 0 then "checks still running: \($running|map(.name // .context)|join(", "))" else empty end),
-      (if ($ctx|length) == 0 then "zero checks reported: establish whether this repo has CI" else empty end),
-      (if $p.commits.nodes[0].commit.statusCheckRollup.contexts.pageInfo.hasNextPage then "more than 100 checks: paginate" else empty end),
-      (if ($failed|length) > 0 then "checks failed: \($failed|map(.name // .context)|join(", "))" else empty end),
-      (if ($pending|length) > 0 then "review still requested from: \($pending|join(", ")); reviewDecision=\($p.reviewDecision // "none")" else empty end),
-      (if ($cr|length) > 0 then "CHANGES_REQUESTED standing from: \($cr|join(", "))" else empty end),
-      (if $p.mergeable == "CONFLICTING" then "mergeable=CONFLICTING" else empty end),
-      (if $p.mergeable == "UNKNOWN" then "mergeable=UNKNOWN: re-query" else empty end)
-    ] as $blocks
-  | if ($blocks|length) == 0
-    then "GATE: CLEAR: merge \($p.headRefOid) in the very next call"
-    else "GATE: HOLD\n" + ($blocks | map("  - " + .) | join("\n")) end'
+**As the shipper.** The shipper holds no `gh api`: that command reaches the
+merge by REST or by a GraphQL mutation, and no glob over it could keep the
+merge consent narrow. Its reading is
+
 ```
+gh pr view <N> --repo <owner>/<repo> --json state,isDraft,mergeable,mergeStateStatus,reviewDecision,headRefOid,statusCheckRollup
+```
+
+then `gh pr checks <N> --repo <owner>/<repo>`, then `git -C <workspace> rev-parse HEAD`.
+`mergeStateStatus` other than `CLEAN` or `HAS_HOOKS` is a HOLD line
+(`BLOCKED`, `BEHIND`, `DIRTY`, `UNSTABLE`, `UNKNOWN`), `reviewDecision` of
+`CHANGES_REQUESTED` or `REVIEW_REQUIRED` is one, and the checks rows below
+apply. Unresolved review threads are not in this reading: the fixer's last
+`clean` answer, which `review-pr-findings` gives only with zero unresolved
+threads, stands for them, and `ship` never reaches this stage without it.
+(HIVE-173 adds `mcp__hive__pr` for a contemporaneous count from the Hive's
+own sweep.)
+
+**In a session.** One GraphQL reading of every blocker, raw, plus the
+workspace head read in the call right after. No `--jq` here: a jq program is
+full of `|`, and a fenced session refuses any command carrying one, however
+it is quoted. The response is small and bounded, and the reduction is a
+checklist you run over it.
+
+```
+gh api graphql -F owner=<owner> -F repo=<repo> -F n=<N> -f query='query($owner:String!, $repo:String!, $n:Int!) { repository(owner:$owner, name:$repo) { pullRequest(number:$n) { headRefOid state mergeable reviewDecision reviewRequests(first:50){ nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } } } } latestReviews(first:50){ nodes { author { login } state } } reviewThreads(first:100){ pageInfo { hasNextPage } nodes { isResolved isOutdated } } commits(last:1){ nodes { commit { statusCheckRollup { state contexts(first:100){ pageInfo { hasNextPage } nodes { __typename ... on CheckRun { name status conclusion } ... on StatusContext { context state } } } } } } } } } }'
+```
+
+Then `git -C <workspace> rev-parse HEAD`.
+
+Write the verdict yourself, from the JSON, as `GATE: CLEAR at <headRefOid>`
+or `GATE: HOLD at <headRefOid>` followed by every line below that applies.
+The reading is one call, so every fact on it is from one instant; that is
+what makes it a gate rather than a collection of readings.
+
+| Check, in this order | HOLD line |
+| --- | --- |
+| `headRefOid` is not the string `rev-parse` printed | `head moved: PR <oid> != workspace <sha>` |
+| `state` is not `OPEN` | `PR state is <state>` |
+| any `reviewThreads.nodes[]` with `isResolved: false` | `<n> unresolved review thread(s), <m> of them outdated` |
+| `reviewThreads.pageInfo.hasNextPage` is true | `more than 100 review threads: paginate` |
+| any `CheckRun` whose `status` is not `COMPLETED`, or any `StatusContext` whose `state` is `PENDING` or `EXPECTED` | `checks still running: <names>` |
+| `contexts.nodes` is empty | `zero checks reported: establish whether this repo has CI` |
+| `contexts.pageInfo.hasNextPage` is true | `more than 100 checks: paginate` |
+| any `CheckRun` whose `conclusion` is `FAILURE`, `TIMED_OUT`, `CANCELLED`, `ACTION_REQUIRED`, `STARTUP_FAILURE` or `STALE`, or any `StatusContext` whose `state` is `FAILURE` or `ERROR` | `checks failed: <names>` |
+| any `reviewRequests.nodes[]` | `review still requested from: <login> [<typename>], …; reviewDecision=<decision>` |
+| any `latestReviews.nodes[]` with `state: CHANGES_REQUESTED` | `CHANGES_REQUESTED standing from: <logins>` |
+| `mergeable` is `CONFLICTING` | `mergeable=CONFLICTING` |
+| `mergeable` is `UNKNOWN` | `mergeable=UNKNOWN: re-query` |
+
+No line applies: CLEAR. Empty output from either command is a stop; empty is
+not a pass, and neither is a JSON you did not read to the end.
 
 | HOLD line | Action |
 | --- | --- |
@@ -133,27 +140,27 @@ printf '%s' "$GATE" | jq -r --arg local "$LOCAL_HEAD" '
 | checks still running, or a `[Bot]` reviewer pending | in a session: wait, then re-run the **whole** gate, bounded at about ten minutes. In a shipper wake: end the wake; the clock re-runs this stage, and nothing sleeps inside a turn |
 | a `[User]` reviewer pending, or CHANGES_REQUESTED | stop and report; nothing here approves for a person |
 | head moved | stop: a wrong repository, or a push mid-run |
-| zero checks | establish whether the repo has CI (`gh api repos/<o>/<r>/actions/workflows`) |
+| zero checks | establish whether the repo has CI: `gh workflow list --repo <owner>/<repo> --json name,path,state`, then `gh workflow view <path> --repo <owner>/<repo> --yaml` for each and read whether it triggers on `pull_request` |
 | more than 100 … | paginate; truncated is never CLEAR |
 | empty reading | stop; empty is not a pass |
 
 **A CLEAR is valid for exactly one call**, the merge, issued next, with
 nothing in between. Anything in between, including a wait, voids it: re-run
-the block verbatim.
+the gate verbatim.
 
-```bash
+```
 gh pr merge <N> --squash --match-head-commit <the SHA the CLEAR line printed> --repo <owner>/<repo>
 ```
 
-The SHA is copied from the CLEAR line; carrying it is the check. `--repo`
-is **last** and stays last: the shipper's auto-merge grant pins the slug at
-the end of the line, because `gh` reads the last `--repo` it is given and a
-grant that allowed anything after it would allow another repository. Never
+The SHA is copied from the CLEAR line; carrying it is the check. `--repo` is
+**last** and stays last: the shipper's auto-merge grant pins the slug at the
+end of the line, because `gh` reads the last `--repo` it is given and a grant
+that allowed anything after it would allow another repository. Never
 `--delete-branch`: from inside a worktree it tries to switch the checkout and
 fails half way. Step 4 owns teardown. Then confirm:
 
-```bash
-gh pr view <N> --repo <owner>/<repo> --json state,mergedAt,mergeCommit --jq '{state, mergedAt, mergeCommit: .mergeCommit.oid}'
+```
+gh pr view <N> --repo <owner>/<repo> --json state,mergedAt,mergeCommit --jq '[.state, .mergedAt, .mergeCommit.oid]'
 ```
 
 **The fence.** Run by the shipper, `gh pr merge` is granted only for projects
@@ -161,54 +168,47 @@ whose `autoMerge` is on (HIVE-166). For any other project the call stops at
 the Hive's permission fence and becomes an inbox card; the run ends `asking`,
 and the answer wakes a fresh run. That card is the checkpoint, and the wait
 behind it voids the CLEAR like any other wait: **the resumed run re-runs the
-gate block verbatim** and merges on the new CLEAR, which the one-shot grant
-now lets through. Do not route around the fence through `gh api`.
+gate** and merges on the new CLEAR, which the one-shot grant now lets through.
+The shipper holds no `gh api` at all, because a merge by REST or by GraphQL
+mutation is the same act without the consent; a session that does hold it
+does not use it for that either.
 
 ## Step 4: teardown
 
-Re-read the branch and the default in-call, quoted; a ref may hold shell
-metacharacters:
+1. `gh pr view <N> --repo <owner>/<repo> --json headRefName --jq '.headRefName'`
+   and `gh repo view <owner>/<repo> --json defaultBranchRef --jq '.defaultBranchRef.name'`.
+   Both are literals from here on; a ref may hold characters a shell reads,
+   which is one more reason no shell reads them.
+2. `git -C <workspace> worktree list --porcelain`. The first `worktree` line is
+   the main working tree. A later block whose `branch` is `refs/heads/<headRefName>`
+   names the linked worktree on the branch, if any.
+3. A linked worktree: `git -C <main working tree> worktree remove <that path>`.
+   No `--force`: a refusal means uncommitted files in it, and those are
+   somebody's; stop and report. Then `git -C <main working tree> worktree prune`.
+   An agent worktree under `~/.hive/work/<agent>/` is a linked worktree of the
+   project and goes the same way.
+4. `git -C <main working tree> checkout <defaultBranchName>`. The main working
+   tree is the person's own checkout and is often dirty; a checkout that fails
+   is a stop, because a pull into whatever branch is still checked out would
+   merge the default branch into their work.
+5. `git -C <main working tree> branch -D <headRefName>` (`-D`: a squashed branch
+   is never "fully merged" locally; "not found" is fine).
+6. `git -C <main working tree> push origin --delete <headRefName>` ("remote ref
+   does not exist" is fine).
+7. `git -C <main working tree> pull --ff-only origin <defaultBranchName>`.
+8. Report `main working tree: <path>`.
 
-```bash
-BRANCH=$(gh pr view <N> --repo <owner>/<repo> --json headRefName --jq '.headRefName')
-DEFAULT=$(gh repo view <owner>/<repo> --json defaultBranchRef --jq '.defaultBranchRef.name')
-[ -n "$BRANCH" ] && [ -n "$DEFAULT" ] || { echo "ABORT: branch/default not resolved"; exit 1; }
-WT_LIST=$(git -C "<workspace>" worktree list --porcelain)
-MAIN_WT=""; WT_PATH=""; cur=""
-while IFS= read -r line; do
-  case "$line" in
-    "worktree "*)                cur=${line#worktree }; [ -n "$MAIN_WT" ] || MAIN_WT=$cur ;;
-    "branch refs/heads/$BRANCH") WT_PATH=$cur ;;
-  esac
-done <<< "$WT_LIST"
-[ -n "$MAIN_WT" ] || { echo "ABORT: main working tree not resolved"; exit 1; }
-if [ -n "$WT_PATH" ] && [ "$WT_PATH" != "$MAIN_WT" ]; then
-  # No --force: a refusal means uncommitted files in the worktree, and those
-  # are somebody's. Stop and report rather than delete them.
-  git -C "$MAIN_WT" worktree remove "$WT_PATH" || { echo "ABORT: worktree $WT_PATH holds uncommitted files"; exit 1; }
-  git -C "$MAIN_WT" worktree prune
-fi
-# The main working tree is the person's own checkout and is often dirty. A
-# checkout that fails must stop here: a pull into whatever branch is still
-# checked out would merge the default branch into their work.
-git -C "$MAIN_WT" checkout "$DEFAULT" || { echo "ABORT: could not check out $DEFAULT in $MAIN_WT (dirty tree?)"; exit 1; }
-git -C "$MAIN_WT" branch -D "$BRANCH" 2>/dev/null || true   # -D: a squashed branch is never "fully merged" locally
-git -C "$MAIN_WT" push origin --delete "$BRANCH" 2>/dev/null || true
-git -C "$MAIN_WT" pull --ff-only origin "$DEFAULT"
-rm -f "$HOME/.hive/work/fixer/ledgers/<owner>-<repo>-pr<N>.md"   # the findings ledger, done with
-echo "main working tree: $MAIN_WT"
-```
-
-An agent worktree under `~/.hive/work/<agent>/…` is a linked worktree of the
-project and is removed by the same branch. The project's own checkout is
-never touched beyond the checkout and pull of its default branch. Neither
-case is "the branch was never checked out here": then nothing is removed and
-the report says so.
+The project's own checkout is never touched beyond the checkout and pull of
+its default branch. When the branch was never checked out anywhere, nothing
+is removed and the report says so. The fixer's findings ledger is the fixer's
+to remove; it does so when it answers `clean`.
 
 ## Step 5: Jira, only on a confirmed key
 
-Collect every key in the branch name (`grep -oiE '[a-z]+-[0-9]+'`, uppercased,
-unique); an empty branch name here is a bug, stop. Then exactly one rule:
+Collect every key in the branch name: every token matching
+`[A-Za-z]+-[0-9]+`, uppercased, unique, read off the `headRefName` from Step 4
+by eye rather than through a pipe; an empty branch name here is a bug, stop.
+Then exactly one rule:
 
 | | Branch keys | Supplied key | Action |
 | --- | --- | --- | --- |

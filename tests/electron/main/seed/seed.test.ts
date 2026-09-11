@@ -226,6 +226,9 @@ describe('seedShipped', () => {
     const report = await seedShipped({ source: repoResources, target, manifestFile });
 
     expect(report.created.length).toBeGreaterThan(0);
+    expect(report.created).toEqual(
+      expect.arrayContaining(['agents/shipper/AGENT.md', 'agents/acr/AGENT.md']),
+    );
     const read = await readUserSkills(join(target, 'skills'));
     expect(read.invalid).toEqual([]);
     expect(read.skills.map((entry) => entry.name)).toEqual([
@@ -235,6 +238,7 @@ describe('seedShipped', () => {
       'goal-on',
       'merge-pr',
       'plan',
+      'pr-review',
       'review-pr-findings',
       'ship',
       'spec-deviation',

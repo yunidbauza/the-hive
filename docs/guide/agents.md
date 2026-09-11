@@ -22,9 +22,11 @@ last one, so it remembers.
 
 ## Agents the app ships
 
-Agents can come with The Hive: the app's own `resources/agents/` is copied into
-`~/.hive/agents` on launch, the way shipped skills are ([Custom skills](skills.md)). The
-workflow agents land there as they ship. Your edits win: a definition you changed is left
+Agents come with The Hive: the app's own `resources/agents/` is copied into
+`~/.hive/agents` on launch, the way shipped skills are ([Custom skills](skills.md)).
+Today that is **shipper**, the PR endgame, and **acr**, the reviewer it asks (named after
+the review tool it runs, `acr`, which is a command on the machine, not this agent); the rest
+of the workflow agents land as they ship. Your edits win: a definition you changed is left
 alone by updates, and one you deleted stays deleted.
 
 ## Create an agent

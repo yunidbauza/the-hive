@@ -54,11 +54,12 @@ count as this round's input too.
 ## Step 2: the ledger file
 
 `~/.hive/work/fixer/ledgers/<owner>-<repo>-pr<N>.md`, the same path from a
-session; one place per PR. One row per finding: `finding → round first seen
-→ verdict → action → resolution`. Read it before assessing anything. A
-finding already assessed in an earlier round is not re-fixed: reply pointing
-at the prior resolution. Update after every verdict and every push.
-`merge-pr`'s teardown removes it.
+session, so there is one place per PR. One row per finding: `finding → round
+first seen → verdict → action → resolution`. Read it before assessing
+anything. A finding already assessed in an earlier round is not re-fixed:
+reply pointing at the prior resolution. Update after every verdict and every
+push. It is removed by the run that answers `clean`, and by nobody else; a
+`blocked` answer keeps it for the next round.
 
 ## Step 3: adversarial assessment
 
@@ -103,7 +104,8 @@ fixed, what was rejected and why) and report.
 
 - **As the fixer:** `ledger_answer` the asker: `clean, <rounds> round(s)`, or
   `blocked: <what waits on whom>`. Release the claim the fixer took on
-  arrival; remove the worktree when clean and it was the fixer's own.
+  arrival; when clean, remove the ledger file and the worktree if it was the
+  fixer's own.
 - **In a session:** the same two lines, in chat.
 
 "All resolved" describes the moment this skill finished. `merge-pr` reads the

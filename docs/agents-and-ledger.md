@@ -1902,6 +1902,22 @@ seed writes reaches `knownAgents` through the same `onChange` a hand-written
 one does. Packaged, the two trees ride `extraResources` beside the tray icon;
 `shippedRoot` in `seed/paths.ts` names both locations.
 
+### The agents the app ships (HIVE-168)
+
+`resources/agents/shipper/AGENT.md` and `resources/agents/acr/AGENT.md`,
+seeded like the skills. The shipper is a patrol: a ten-minute wake with
+`check: always` plus ledger wakes, `prs.json` in its work dir as memory, one
+`ledger_ask` per wake because an ask ends the wake. It holds neither
+`gh pr merge` nor `gh api` (the second reaches the same merge by REST or by a
+GraphQL mutation, and no glob over it could keep the consent narrow);
+HIVE-166's grant or the fence's card decides each merge, and
+`tests/resources/agents/shipped-agents.test.ts` proves it against the real
+`matches`. It
+asks `acr` with a PR link and `--self`, the one job shape acr accepts with no
+project, and `acr` answers it with `ledger_answer` because the asker is an
+agent. `tests/resources/agents/shipped-agents.test.ts` parses both against
+the shipped skills, so a definition the registry would refuse fails here.
+
 ### Why this folder pushes where skills pull
 
 `skills/index.ts` re-reads on demand and has no change channel, and
