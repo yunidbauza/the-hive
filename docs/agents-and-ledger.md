@@ -1346,7 +1346,8 @@ undefined.
 
 A project's `autoMerge: true` becomes, at wake time and for the agent named
 `shipper` only, one rule on `HIVE_GRANTS`: `Bash(gh pr merge * --repo
-<owner>/<name> *)`. `electron/main/agents/auto-merge.ts` composes it from the
+<owner>/<name>)`, with the slug pinned as the last thing on the line because
+`gh` honours the last `--repo` it sees. `electron/main/agents/auto-merge.ts` composes it from the
 config and from the GitHub integration's per-project resolver
 (`Github.resolveProjects`, the same `gh repo view` and cache the PR sweep
 uses); `ipc/index.ts` folds it into `pendingGrants` beside the one-shot

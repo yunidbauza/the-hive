@@ -197,11 +197,11 @@ describe('remote contract: authorization', () => {
     expect(authorizationOf(channel)).toBe('execute');
   });
 
-  it('grades the 135 as 57 read, 45 mutate and 33 execute', () => {
+  it('grades the 135 as 57 read, 44 mutate and 34 execute', () => {
     const tally = { read: 0, mutate: 0, execute: 0 };
     for (const authz of Object.values(CHANNEL_AUTHORIZATION)) tally[authz] += 1;
 
-    expect(tally).toEqual({ read: 57, mutate: 45, execute: 33 });
+    expect(tally).toEqual({ read: 57, mutate: 44, execute: 34 });
   });
 
   /**
@@ -536,7 +536,7 @@ describe('remote contract: the version handshake', () => {
   });
 
   it('is protocol 3: 2 carried a generation (HIVE-144), 3 caught up on unbumped channels (HIVE-140 audit)', () => {
-    expect(REMOTE_PROTOCOL_VERSION).toBe(3);
+    expect(REMOTE_PROTOCOL_VERSION).toBe(4);
   });
 });
 

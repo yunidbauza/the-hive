@@ -28,11 +28,11 @@ describe('autoMergeRule', () => {
   it('composes the narrowest rule the grammar allows, and the real merge command matches it', () => {
     const rule = autoMergeRule(hive);
 
-    expect(rule).toBe('Bash(gh pr merge * --repo yunidbauza/the-hive *)');
+    expect(rule).toBe('Bash(gh pr merge * --repo yunidbauza/the-hive)');
     expect(
       matches(rule!, 'Bash', {
         command:
-          'gh pr merge 214 --repo yunidbauza/the-hive --squash --match-head-commit 0211110354',
+          'gh pr merge 214 --squash --match-head-commit 0211110354 --repo yunidbauza/the-hive',
       }),
     ).toBe(true);
   });
@@ -40,13 +40,34 @@ describe('autoMergeRule', () => {
   it('does not match another repository, another verb, or a chained command', () => {
     const rule = autoMergeRule(hive)!;
 
-    expect(matches(rule, 'Bash', { command: 'gh pr merge 1 --repo yunidbauza/other --squash' })).toBe(false);
+    expect(matches(rule, 'Bash', { command: 'gh pr merge 1 --squash --repo yunidbauza/other' })).toBe(false);
     expect(matches(rule, 'Bash', { command: 'gh pr close 1 --repo yunidbauza/the-hive' })).toBe(false);
     expect(
       matches(rule, 'Bash', {
-        command: 'gh pr merge 1 --repo yunidbauza/the-hive --squash; rm -rf /',
+        command: 'gh pr merge 1 --repo yunidbauza/the-hive; rm -rf /',
       }),
     ).toBe(false);
+  });
+
+  it('cannot be widened by a second --repo after the granted one; an earlier one is overridden', () => {
+    // `gh` takes the last `--repo`. Nothing may follow the granted slug.
+    const rule = autoMergeRule(hive)!;
+
+    expect(
+      matches(rule, 'Bash', {
+        command: 'gh pr merge 1 --repo yunidbauza/the-hive --repo victim/secret',
+      }),
+    ).toBe(false);
+    expect(
+      matches(rule, 'Bash', {
+        command: 'gh pr merge 1 --repo yunidbauza/the-hive --squash',
+      }),
+    ).toBe(false);
+    expect(
+      matches(rule, 'Bash', {
+        command: 'gh pr merge 1 --repo victim/secret --squash --repo yunidbauza/the-hive',
+      }),
+    ).toBe(true);
   });
 
   it('refuses a slug that carries anything the glob or the rule list reads', () => {
@@ -76,7 +97,7 @@ describe('autoMergeRulesFor', () => {
       id === 'the-hive' ? hive : undefined,
     );
 
-    expect(rules).toEqual(['Bash(gh pr merge * --repo yunidbauza/the-hive *)']);
+    expect(rules).toEqual(['Bash(gh pr merge * --repo yunidbauza/the-hive)']);
   });
 });
 
@@ -94,7 +115,7 @@ describe('createAutoMergeGrants', () => {
     await grants.refresh();
 
     expect(grants.grantsFor(AUTO_MERGE_AGENT)).toEqual([
-      'Bash(gh pr merge * --repo yunidbauza/the-hive *)',
+      'Bash(gh pr merge * --repo yunidbauza/the-hive)',
     ]);
     // Known now: no second resolve for the same wake.
     expect(resolve).toHaveBeenCalledTimes(1);
@@ -129,7 +150,7 @@ describe('createAutoMergeGrants', () => {
     projects = [project({ id: 'the-hive', autoMerge: true })];
 
     expect(grants.grantsFor(AUTO_MERGE_AGENT)).toEqual([
-      'Bash(gh pr merge * --repo yunidbauza/the-hive *)',
+      'Bash(gh pr merge * --repo yunidbauza/the-hive)',
     ]);
   });
 

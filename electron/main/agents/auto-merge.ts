@@ -44,10 +44,22 @@ export const AUTO_MERGE_AGENT = 'shipper';
 /** GitHub's own alphabet for owners and repositories; nothing the glob reads. */
 const SAFE_SEGMENT = /^[A-Za-z0-9_.-]+$/;
 
-/** The rule for one repository, or `null` when the slug could not be composed safely. */
+/**
+ * The rule for one repository, or `null` when the slug could not be composed
+ * safely.
+ *
+ * `--repo <slug>` is the **last** thing on the line, with no wildcard after
+ * it. `gh` reads the last `--repo` it is given, so a trailing `*` would let
+ * consent for one repository carry `--repo victim/other` after the granted
+ * slug and merge there instead (whole-branch review, HIVE-166). With the slug
+ * pinned at the end an earlier `--repo` is the one overridden, and `merge-pr`
+ * spells its command with `--repo` last for exactly this reason. The glob is
+ * case-sensitive where GitHub's slugs are not, which fails closed: a merge
+ * spelled in another case raises the card.
+ */
 export function autoMergeRule(repo: RepoRef): string | null {
   if (!SAFE_SEGMENT.test(repo.owner) || !SAFE_SEGMENT.test(repo.name)) return null;
-  return `Bash(gh pr merge * --repo ${repo.owner}/${repo.name} *)`;
+  return `Bash(gh pr merge * --repo ${repo.owner}/${repo.name})`;
 }
 
 /** Pure: the rules for `name`, given the projects and what is known of their repositories. */

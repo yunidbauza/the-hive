@@ -3695,7 +3695,17 @@ export function registerIpcHandlers(
     projects: () => getConfig().projects,
     resolve: () => github.resolveProjects(),
   });
-  void loginEnvStatus().then(() => autoMergeGrants?.refresh());
+  void loginEnvStatus()
+    .then(() => {
+      // Only when something asked for it; `grantsFor` refreshes on demand later.
+      if (getConfig().projects.some((project) => project.autoMerge === true)) {
+        return autoMergeGrants?.refresh();
+      }
+      return undefined;
+    })
+    .catch(() => {
+      /* the login-env probe reports itself; the next wake asks again */
+    });
 
   handle(CH.githubPrs, async (): Promise<GhResult<PrsSnapshot>> => {
     // The poller's first tick can land before the boot-time import resolves,
@@ -5140,6 +5150,9 @@ export function resetIpcHandlers(options: { flush?: boolean } = {}): void {
   // here would let a next test's `ledger.onChange` reach a `permissions`
   // built against this test's disposed `agents`/`ledger`.
   permissions = null;
+  // HIVE-166. A boot refresh still in flight must not reach a `gh` spawn
+  // against a finished test's project paths.
+  autoMergeGrants = null;
   runs?.closeAll('reset');
   runs = null;
   /*

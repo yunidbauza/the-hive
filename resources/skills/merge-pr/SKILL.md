@@ -142,10 +142,13 @@ nothing in between. Anything in between, including a wait, voids it: re-run
 the block verbatim.
 
 ```bash
-gh pr merge <N> --repo <owner>/<repo> --squash --match-head-commit <the SHA the CLEAR line printed>
+gh pr merge <N> --squash --match-head-commit <the SHA the CLEAR line printed> --repo <owner>/<repo>
 ```
 
-The SHA is copied from the CLEAR line; carrying it is the check. Never
+The SHA is copied from the CLEAR line; carrying it is the check. `--repo`
+is **last** and stays last: the shipper's auto-merge grant pins the slug at
+the end of the line, because `gh` reads the last `--repo` it is given and a
+grant that allowed anything after it would allow another repository. Never
 `--delete-branch`: from inside a worktree it tries to switch the checkout and
 fails half way. Step 4 owns teardown. Then confirm:
 

@@ -2,6 +2,7 @@ import { DotsThreeVertical } from '@phosphor-icons/react';
 import { useRef } from 'react';
 
 import {
+  DropdownMenuCheckboxItem,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -142,19 +143,24 @@ export function ProjectRowMenu({
           Rename…
         </DropdownMenuItem>
         {/*
+          Consent to an unattended merge (HIVE-166), a real checkbox item so
+          the state lives in `aria-checked` and the label never moves. Above
+          *Change key…* because it is the one edit that changes what an agent
+          may do rather than how the project is named.
+        */}
+        <DropdownMenuCheckboxItem
+          checked={autoMerge}
+          onSelect={() => select(onToggleAutoMerge)}
+          className={`${item} pl-7`}
+        >
+          Merge PRs unattended
+        </DropdownMenuCheckboxItem>
+        {/*
           Between *Rename…* and *Change folder…*: the three edits are ordered by
           how much they change, and renaming what a project is called sits
           nearer to renaming what it is typed as than either does to moving it
           on disk (HIVE-94).
         */}
-        <DropdownMenuItem
-          role="menuitemcheckbox"
-          aria-checked={autoMerge}
-          onSelect={() => select(onToggleAutoMerge)}
-          className={item}
-        >
-          {autoMerge ? '✓ ' : ''}Merge PRs unattended
-        </DropdownMenuItem>
         <DropdownMenuItem
           onSelect={() => select(onChangeKey, true)}
           className={item}

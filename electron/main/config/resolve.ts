@@ -83,6 +83,7 @@ function decorate(
   | 'claudeCommand'
   | 'env'
   | 'container'
+  | 'autoMerge'
 > {
   return {
     id: raw.id,
