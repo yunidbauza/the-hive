@@ -1904,15 +1904,23 @@ one does. Packaged, the two trees ride `extraResources` beside the tray icon;
 
 ### The agents the app ships (HIVE-168)
 
-`resources/agents/shipper/AGENT.md` and `resources/agents/acr/AGENT.md`,
-seeded like the skills. The shipper is a patrol: a ten-minute wake with
+`resources/agents/shipper/AGENT.md`, `resources/agents/acr/AGENT.md` and
+`resources/agents/fixer/AGENT.md`, seeded like the skills. The shipper is a patrol: a ten-minute wake with
 `check: always` plus ledger wakes, `prs.json` in its work dir as memory, one
 `ledger_ask` per wake because an ask ends the wake. It holds neither
 `gh pr merge` nor `gh api` (the second reaches the same merge by REST or by a
 GraphQL mutation, and no glob over it could keep the consent narrow);
 HIVE-166's grant or the fence's card decides each merge, and
 `tests/resources/agents/shipped-agents.test.ts` proves it against the real
-`matches`. It
+`matches`, and pins every shipped icon to the Settings list so none draws as
+a question mark. The fixer (HIVE-169) takes a PR and its findings by `ledger_ask`,
+works on the branch where it is already checked out (git allows one worktree
+per branch, and the builder's may still stand) or in a worktree of its own
+under `~/.hive/work/fixer/` (detached at the branch's tip, since the person's
+own checkout may hold the branch and is never an agent's), and answers `clean`
+or `blocked`; a judgment call goes to the ask's `reply-to` party with options.
+It claims `<owner>/<repo>#<N> findings`, a key of its own, because the shipper
+holds `<owner>/<repo>#<N>` for the life of the PR. The shipper itself
 asks `acr` with a PR link and `--self`, the one job shape acr accepts with no
 project, and `acr` answers it with `ledger_answer` because the asker is an
 agent. `tests/resources/agents/shipped-agents.test.ts` parses both against

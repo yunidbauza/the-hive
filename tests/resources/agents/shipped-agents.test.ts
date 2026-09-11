@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { parseAgent } from '../../../electron/main/agents/definition';
+import { AGENT_ICON_NAMES } from '@features/settings/components/agent-form';
 import { matches } from '../../../electron/shared/permission-rules';
 
 /**
@@ -23,8 +24,8 @@ const shippedAgents = readdirSync(join(resources, 'agents'), { withFileTypes: tr
   .map((entry) => entry.name);
 
 describe('shipped agents', () => {
-  it('ships shipper and acr', () => {
-    expect(shippedAgents.sort()).toEqual(['acr', 'shipper']);
+  it('ships shipper, acr and fixer', () => {
+    expect(shippedAgents.sort()).toEqual(['acr', 'fixer', 'shipper']);
   });
 
   it.each(shippedAgents)('%s parses against the shipped skills', (name) => {
@@ -36,7 +37,11 @@ describe('shipped agents', () => {
       integrations: ['slack'],
     });
     expect('problems' in result ? result.problems : []).toEqual([]);
-    if ('def' in result) expect(result.def.name).toBe(name);
+    if ('def' in result) {
+      expect(result.def.name).toBe(name);
+      // An icon the Settings list does not know draws as a question mark.
+      expect(AGENT_ICON_NAMES).toContain(result.def.icon);
+    }
   });
 
   it('never grants the shipper a merge, by gh pr merge, by REST or by a GraphQL mutation', () => {

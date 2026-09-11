@@ -1,6 +1,6 @@
 ---
 name: worktree
-description: Use when starting feature work that must not touch the shared checkout, before any edit. A builder or fixer run, an isolation-guarded session, or any work that needs its own branch off a fresh default branch. Creates an isolated git worktree, verifies the baseline, and says where it is.
+description: Use when starting feature work that must not touch the shared checkout, before any edit. A builder or fixer run, an isolation-guarded session, or any work that needs its own branch off a fresh default branch. Reuses a linked worktree already on the branch or creates an isolated one, verifies the baseline, and says where it is.
 ---
 
 # Worktree
@@ -62,11 +62,15 @@ WT="$HOME/.hive/work/<agent>/<repo-name>-<slug>"
 git -C "$REPO" worktree add "$WT" -b "<branch>" "origin/$DEFAULT"
 ```
 
-For a fixer on an existing PR branch, track it instead of creating one:
+For a fixer on an existing PR branch, git allows one worktree per branch and
+the person's own checkout, the first entry of `worktree list`, may be the one
+holding it. That checkout is never an agent's. Work in a **detached** tree at
+the branch's tip instead, and push to the branch by name:
 
 ```bash
-git -C "$REPO" worktree add "$WT" "<branch>"
-git -C "$WT" pull --ff-only
+git -C "$REPO" fetch origin
+git -C "$REPO" worktree add --detach "$WT" "origin/<branch>"
+git -C "$WT" push origin HEAD:<branch>      # after each round's commits
 ```
 
 Then install and baseline as above. Put the path in every `ledger_post` you
