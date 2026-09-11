@@ -51,7 +51,10 @@ import { isThisMachineAction } from './notification-contract';
  * message at the handshake. The same change added `RemoteLinkStatus.lost` and
  * `LocalRemoteState.paired`. Bumped once for all of it.
  */
-export const REMOTE_PROTOCOL_VERSION = 3;
+/**
+ * 3 → 4 (HIVE-166): `CH` gained `config:set-project-auto-merge`.
+ */
+export const REMOTE_PROTOCOL_VERSION = 4;
 
 /**
  * What a frame is for.
@@ -124,6 +127,7 @@ export const FRAME_KIND = {
   [CH.configRepointProject]: 'call',
   [CH.configReorderProjects]: 'call',
   [CH.configSetProjectKey]: 'call',
+  [CH.configSetProjectAutoMerge]: 'call',
   [CH.configSetRuntime]: 'call',
   [CH.configSetProjectRuntime]: 'call',
   [CH.configDiagnoseCommand]: 'call',
@@ -385,6 +389,11 @@ export const CHANNEL_AUTHORIZATION = {
   [CH.configRepointProject]: 'mutate',
   [CH.configReorderProjects]: 'mutate',
   [CH.configSetProjectKey]: 'mutate',
+  /*
+    `execute`, like `agentsWrite`: consent here widens what an agent may run
+    unattended, which is the consequence that grade names.
+  */
+  [CH.configSetProjectAutoMerge]: 'execute',
   [CH.configSetRuntime]: 'execute',
   [CH.configSetProjectRuntime]: 'execute',
   [CH.configDiagnoseCommand]: 'execute',

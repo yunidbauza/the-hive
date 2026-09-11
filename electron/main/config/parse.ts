@@ -79,6 +79,8 @@ export interface RawProject {
   env?: Record<string, string>;
   /** HIVE-133's per-project container block. Absent means "inherit". */
   container?: ContainerConfig;
+  /** HIVE-166's unattended-merge consent. Absent means `false`. */
+  autoMerge?: boolean;
 }
 
 export interface ParsedConfig {
@@ -289,6 +291,7 @@ const PROJECT_KEYS = [
   'claudeCommand',
   'env',
   'container',
+  'autoMerge',
 ];
 
 /** POSIX-portable environment variable name. */
@@ -1474,6 +1477,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
     const commandOverride = optionalString(entry, 'claudeCommand', at, errors);
     const env = optionalEnv(entry, at, errors);
     const container = optionalContainer(entry, at, errors);
+    const autoMerge = optionalBoolean(entry, 'autoMerge', at, errors);
 
     // Conditional spread, matching `parseSpawnRequest`: an `undefined`-valued
     // own key would be reported as unknown the next time this file is read.
@@ -1488,6 +1492,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       ...(commandOverride !== null ? { claudeCommand: commandOverride } : {}),
       ...(env !== undefined ? { env } : {}),
       ...(container !== undefined ? { container } : {}),
+      ...(autoMerge !== null ? { autoMerge } : {}),
     });
   });
 

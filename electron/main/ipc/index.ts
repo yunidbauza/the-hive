@@ -72,6 +72,7 @@ import {
   parseLedgerReadQuery,
   parseRemoveProjectRequest,
   parseRenameProjectRequest,
+  parseSetProjectAutoMergeRequest,
   parseSetProjectKeyRequest,
   parseReorderProjectsRequest,
   parseRepointProjectRequest,
@@ -158,6 +159,7 @@ import {
   type TokenStore,
 } from '../../remote-client/token-store';
 import { createAgentsRuntime, type AgentRegistry } from '../agents';
+import { createAutoMergeGrants, type AutoMergeGrants } from '../agents/auto-merge';
 import { resolveClaude } from '../agents/claude-path';
 import { agentsDirectoryFor } from '../agents/directory';
 import {
@@ -190,6 +192,7 @@ import {
   resetConfig,
   setJira,
   setNotifications,
+  setProjectAutoMerge,
   setProjectKey,
   setProjectRuntime,
   setReceiver,
@@ -811,6 +814,14 @@ let scheduler: Scheduler | null = null;
  * at registration.
  */
 let permissions: Permissions | null = null;
+
+/**
+ * The shipper's per-project merge grant (HIVE-166), or `null` before the
+ * GitHub integration is composed. Read through the binding for the reason
+ * `permissions` is: `pendingGrants` is a closure invoked at wake time, long
+ * after registration has assigned this.
+ */
+let autoMergeGrants: AutoMergeGrants | null = null;
 /**
  * The agent names the ledger will accept as a party.
  *
@@ -2511,7 +2522,11 @@ export function registerIpcHandlers(
     // `permissions` is armed later, alongside `scheduler` — read through the
     // module binding for the same reason `hooks`/`mcp` are read through
     // getters here rather than closed over as values.
-    pendingGrants: (name) => permissions?.grantsFor(name) ?? [],
+    pendingGrants: (name) => [
+      ...(permissions?.grantsFor(name) ?? []),
+      // HIVE-166: consent from the config becomes a rule on the shipper's wake.
+      ...(autoMergeGrants?.grantsFor(name) ?? []),
+    ],
     // HIVE-137. The container agent's settings file lives in the container
     // set `hooks` writes at start, and the alias is the receiver's global one,
     // read live so a config reload is honoured on the next wake.
@@ -3378,6 +3393,17 @@ export function registerIpcHandlers(
       setProjectKey(parseSetProjectKeyRequest(payload)),
   );
 
+  /*
+    HIVE-166. The consent behind the shipper's merge grant. The write is the
+    plain sibling of the key editor's; what it *means* is composed at wake
+    time by `autoMergeGrants`, from the config as it stands then.
+  */
+  handle(
+    CH.configSetProjectAutoMerge,
+    (_event, payload): ConfigSnapshot =>
+      setProjectAutoMerge(parseSetProjectAutoMergeRequest(payload)),
+  );
+
   handle(
     CH.configReorderProjects,
     (_event, payload): ConfigSnapshot =>
@@ -3657,6 +3683,29 @@ export function registerIpcHandlers(
     run: runAsync,
     now: () => Date.now(),
   });
+
+  /*
+    HIVE-166. Refreshed once now, in the background, so the first shipper wake
+    after boot already knows its repositories; and again whenever a wake finds
+    a flagged project it cannot place. `loginEnvStatus` first, for the reason
+    `githubPrs` below awaits it: a `gh` "not found" cached before the login
+    shell's PATH arrives would outlive the race.
+  */
+  autoMergeGrants = createAutoMergeGrants({
+    projects: () => getConfig().projects,
+    resolve: () => github.resolveProjects(),
+  });
+  void loginEnvStatus()
+    .then(() => {
+      // Only when something asked for it; `grantsFor` refreshes on demand later.
+      if (getConfig().projects.some((project) => project.autoMerge === true)) {
+        return autoMergeGrants?.refresh();
+      }
+      return undefined;
+    })
+    .catch(() => {
+      /* the login-env probe reports itself; the next wake asks again */
+    });
 
   handle(CH.githubPrs, async (): Promise<GhResult<PrsSnapshot>> => {
     // The poller's first tick can land before the boot-time import resolves,
@@ -5101,6 +5150,9 @@ export function resetIpcHandlers(options: { flush?: boolean } = {}): void {
   // here would let a next test's `ledger.onChange` reach a `permissions`
   // built against this test's disposed `agents`/`ledger`.
   permissions = null;
+  // HIVE-166. A boot refresh still in flight must not reach a `gh` spawn
+  // against a finished test's project paths.
+  autoMergeGrants = null;
   runs?.closeAll('reset');
   runs = null;
   /*

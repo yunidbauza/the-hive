@@ -46,6 +46,7 @@ import type {
   SetJiraRequest,
   SetJiraTokenRequest,
   SetNotificationsRequest,
+  SetProjectAutoMergeRequest,
   SetProjectKeyRequest,
   SetProjectRuntimeRequest,
   SetReceiverRequest,
@@ -724,6 +725,18 @@ export function parseSetProjectKeyRequest(input: unknown): SetProjectKeyRequest 
   return {
     id: assertId(raw.id, 'setProjectKey.id'),
     key: assertProjectKey(raw.key, 'setProjectKey.key'),
+  };
+}
+
+/** Payload guard for `config:set-project-auto-merge` (HIVE-166). */
+export function parseSetProjectAutoMergeRequest(input: unknown): SetProjectAutoMergeRequest {
+  const raw = assertShape(input, ['id', 'autoMerge'], 'setProjectAutoMerge');
+  if (typeof raw.autoMerge !== 'boolean') {
+    throw new TypeError('setProjectAutoMerge.autoMerge must be a boolean');
+  }
+  return {
+    id: assertId(raw.id, 'setProjectAutoMerge.id'),
+    autoMerge: raw.autoMerge,
   };
 }
 

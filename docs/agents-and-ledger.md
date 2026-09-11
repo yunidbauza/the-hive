@@ -1342,6 +1342,21 @@ a headless agent that has no pty to close. Widening `available.ts` before that
 has an answer would let a definition name a skill whose effect on an agent is
 undefined.
 
+### The shipper's merge grant (HIVE-166)
+
+A project's `autoMerge: true` becomes, at wake time and for the agent named
+`shipper` only, one rule on `HIVE_GRANTS`: `Bash(gh pr merge * --repo
+<owner>/<name>)`, with the slug pinned as the last thing on the line because
+`gh` honours the last `--repo` it sees. `electron/main/agents/auto-merge.ts` composes it from the
+config and from the GitHub integration's per-project resolver
+(`Github.resolveProjects`, the same `gh repo view` and cache the PR sweep
+uses); `ipc/index.ts` folds it into `pendingGrants` beside the one-shot
+grants. A grant rather than an answer at the fence because it composes with
+what exists and never runs on a denied call. The slug is checked against
+GitHub's own alphabet before it is composed, so nothing the glob reads can
+arrive through a repository name. A project whose repository is not known yet
+grants nothing and schedules a refresh; its merge raises the card, once.
+
 ### The fence, measured
 
 A fence needs **two halves**, and neither works alone. `permissions.ask:

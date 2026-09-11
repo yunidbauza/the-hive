@@ -812,6 +812,7 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
      * the guard, which is a *stronger* position than the guard could take: the
      * renderer's snapshot may be stale, and the bytes being written may not be.
      */
+    'setProjectAutoMerge',
     'setProjectKey',
     'setProjectRuntime',
     /**

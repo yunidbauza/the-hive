@@ -87,6 +87,7 @@ Any key not in this list makes the whole file invalid, and Settings says which.
 | `origin` | where it came from (`local`, or a clone) |
 | `shell`, `claudeCommand`, `env` | per-project overrides |
 | `container` | run sessions in a container ([Containers](containers.md)) |
+| `autoMerge` | `true` lets the shipper agent merge this project's pull requests without asking ([Agents › The tools fence](agents.md#the-tools-fence)) |
 
 A project whose path does not exist shows **unmapped** in the rail, with the reason, and
 cannot start sessions.

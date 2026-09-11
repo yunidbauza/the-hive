@@ -27,6 +27,7 @@ import {
   type RepointProjectRequest,
   type SetJiraRequest,
   type SetNotificationsRequest,
+  type SetProjectAutoMergeRequest,
   type SetProjectKeyRequest,
   type SetProjectRuntimeRequest,
   type SetReceiverRequest,
@@ -586,6 +587,33 @@ export function setProjectKey(request: SetProjectKeyRequest): ConfigSnapshot {
         projects: entries.map((entry) =>
           idOf(entry) === request.id
             ? { ...(entry as Record<string, unknown>), key: request.key }
+            : entry,
+        ),
+      };
+    }),
+  );
+}
+
+/**
+ * Turn unattended merging on or off for one project (HIVE-166).
+ *
+ * The plainest sibling of {@link setProjectKey}: no uniqueness to check, the
+ * entry is spread rather than rebuilt, and `false` is written as an explicit
+ * key rather than by deleting it, so a file that once said yes and now says
+ * no reads as a decision rather than as a default.
+ */
+export function setProjectAutoMerge(request: SetProjectAutoMergeRequest): ConfigSnapshot {
+  return commit(
+    writeConfig((draft) => {
+      const entries = projectsOf(draft);
+      if (!entries.some((entry) => idOf(entry) === request.id)) {
+        throw new WriteRefused(`no project with id "${request.id}"`);
+      }
+      return {
+        ...draft,
+        projects: entries.map((entry) =>
+          idOf(entry) === request.id
+            ? { ...(entry as Record<string, unknown>), autoMerge: request.autoMerge }
             : entry,
         ),
       };

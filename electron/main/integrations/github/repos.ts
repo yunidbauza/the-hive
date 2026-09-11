@@ -55,6 +55,15 @@ export interface RepoResolution {
 
 export interface RepoResolver {
   /**
+   * Project id → repository, for every project `gh` could answer for
+   * (HIVE-166). The same `ask` and the same cache as {@link resolve}; this
+   * one keeps the project ids the sweep deliberately folds away, because a
+   * per-project grant needs to know *which* project a slug belongs to.
+   * Failures are dropped, not reported: the caller reads the map for what it
+   * holds and asks again later for what it does not.
+   */
+  resolveEach(projects: readonly ProjectConfig[]): Promise<Map<string, RepoRef>>;
+  /**
    * The distinct repositories behind these projects.
    *
    * Deduped, because two projects can point at one repository — a worktree and
@@ -140,6 +149,16 @@ export function createRepoResolver(
   }
 
   return {
+    async resolveEach(projects) {
+      const byProject = new Map<string, RepoRef>();
+      for (const project of projects) {
+        if (project.path === null || !project.isRepo || project.status !== 'ok') continue;
+        const answer = await ask(project.path);
+        if (answer.kind === 'repo') byProject.set(project.id, answer.repo);
+      }
+      return byProject;
+    },
+
     async resolve(projects) {
       const repos: RepoRef[] = [];
       const seen = new Set<string>();

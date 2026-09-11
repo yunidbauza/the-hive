@@ -21,6 +21,7 @@ const renameProjectInConfig = vi.fn();
 const repointProjectInConfig = vi.fn();
 const reorderProjectsInConfig = vi.fn();
 const setProjectKeyInConfig = vi.fn();
+const setProjectAutoMergeInConfig = vi.fn();
 
 vi.mock('@/lib/project-config', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/project-config')>();
@@ -35,6 +36,7 @@ vi.mock('@/lib/project-config', async (importOriginal) => {
     reorderProjectsInConfig: (request: unknown) =>
       reorderProjectsInConfig(request),
     setProjectKeyInConfig: (request: unknown) => setProjectKeyInConfig(request),
+    setProjectAutoMergeInConfig: (request: unknown) => setProjectAutoMergeInConfig(request),
   };
 });
 
@@ -436,6 +438,14 @@ describe('ProjectsList · changing a key', () => {
 
     expect(keyField()).toHaveValue(testProjectKey('a'));
     expect(screen.getAllByRole('textbox', { name: 'Project key' })).toHaveLength(1);
+  });
+
+  it('toggles unattended merging for the row through the config (HIVE-166)', async () => {
+    render(<ProjectsList entries={abc} />);
+    await openMenu('a');
+    await userEvent.click(screen.getByRole('menuitemcheckbox', { name: /merge prs unattended/i }));
+
+    expect(setProjectAutoMergeInConfig).toHaveBeenCalledWith({ id: 'a', autoMerge: true });
   });
 
   it('posts the new key and closes the editor', async () => {

@@ -50,6 +50,25 @@ const answering = (
   return { run, calls };
 };
 
+describe('createRepoResolver.resolveEach (HIVE-166)', () => {
+  it('maps each project to its repository and drops the ones gh cannot answer for', async () => {
+    const { run, calls } = answering({ '/repos/nova-web': 'acme/nova-web' });
+    const resolver = createRepoResolver('/usr/bin/gh', run);
+
+    const map = await resolver.resolveEach([
+      project(),
+      project({ id: 'other', path: '/repos/other' }),
+      project({ id: 'not-repo', path: '/repos/not-repo', isRepo: false }),
+    ]);
+
+    expect([...map]).toEqual([['nova-web', { owner: 'acme', name: 'nova-web' }]]);
+    // The non-repo was never asked about; the others share the sweep's cache.
+    expect(calls).toEqual(['/repos/nova-web', '/repos/other']);
+    await resolver.resolveEach([project()]);
+    expect(calls).toHaveLength(2);
+  });
+});
+
 describe('createRepoResolver', () => {
   it('asks gh what repository a project directory is', async () => {
     const { run, calls } = answering({ '/repos/nova-web': 'acme/nova-web' });

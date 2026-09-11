@@ -105,6 +105,17 @@ export interface ProjectConfig {
    * spawn is byte-identical to what it was before this key existed.
    */
   container?: ContainerConfig;
+  /**
+   * Whether the shipper agent may merge this project's pull requests without
+   * a card (HIVE-166).
+   *
+   * A grant, not a flag a skill reads: at wake time main turns every project
+   * with this set into a `Bash(gh pr merge * --repo <owner/name> *)` rule on
+   * the shipper's `HIVE_GRANTS`, so the one call the fence would otherwise
+   * stop goes through. Every other project's merge still lands on the inbox
+   * as a permission card. Absent means `false`.
+   */
+  autoMerge?: boolean;
 }
 
 /**
@@ -1892,6 +1903,18 @@ export interface RenameProjectRequest {
 export interface SetProjectKeyRequest {
   id: string;
   key: string;
+}
+
+/**
+ * Payload of `config:set-project-auto-merge` (HIVE-166).
+ *
+ * A boolean per project, written into the entry like `key` is. Turning it on
+ * is consent to an unattended merge of that repository's pull requests by the
+ * shipper agent; the settings row says so in those words.
+ */
+export interface SetProjectAutoMergeRequest {
+  id: string;
+  autoMerge: boolean;
 }
 
 /**

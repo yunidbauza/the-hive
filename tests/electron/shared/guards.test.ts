@@ -22,6 +22,7 @@ import {
   parseResizeRequest,
   parseRevokeDeviceRequest,
   parseSessionPrRequest,
+  parseSetProjectAutoMergeRequest,
   parseSetProjectKeyRequest,
   parseSetProjectRuntimeRequest,
   parseSetReceiverRequest,
@@ -861,6 +862,22 @@ describe('parseReorderProjectsRequest', () => {
  * is a fact about the file main is about to write, which this guard cannot see.
  * That check lives inside the write's mutation.
  */
+describe('parseSetProjectAutoMergeRequest', () => {
+  it('accepts an id and a boolean', () => {
+    expect(parseSetProjectAutoMergeRequest({ id: 'the-hive', autoMerge: true })).toEqual({
+      id: 'the-hive',
+      autoMerge: true,
+    });
+  });
+
+  it.each([['a string', 'yes'], ['a number', 1], ['absent', undefined]])(
+    'refuses %s for autoMerge',
+    (_label, value) => {
+      expect(() => parseSetProjectAutoMergeRequest({ id: 'a', autoMerge: value })).toThrow();
+    },
+  );
+});
+
 describe('parseSetProjectKeyRequest', () => {
   it('accepts an id and a key', () => {
     expect(parseSetProjectKeyRequest({ id: 'the-hive', key: 'hive' })).toEqual({

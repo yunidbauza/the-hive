@@ -2,6 +2,7 @@ import { DotsThreeVertical } from '@phosphor-icons/react';
 import { useRef } from 'react';
 
 import {
+  DropdownMenuCheckboxItem,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -20,6 +21,12 @@ interface ProjectRowMenuProps {
   onChangeKey: () => void;
   onRepoint: () => void;
   onRemove: () => void;
+  /**
+   * Whether the shipper agent may merge this project's PRs without a card
+   * (HIVE-166). Shown as a checked item; toggling writes the config.
+   */
+  autoMerge: boolean;
+  onToggleAutoMerge: () => void;
 }
 
 /**
@@ -65,6 +72,8 @@ export function ProjectRowMenu({
   onChangeKey,
   onRepoint,
   onRemove,
+  autoMerge,
+  onToggleAutoMerge,
 }: ProjectRowMenuProps) {
   const item =
     'rounded-[4px] px-2 py-1 text-[12.5px] text-muted focus:bg-hover focus:text-ink data-[disabled]:opacity-35';
@@ -133,6 +142,19 @@ export function ProjectRowMenu({
         >
           Rename…
         </DropdownMenuItem>
+        {/*
+          Consent to an unattended merge (HIVE-166), a real checkbox item so
+          the state lives in `aria-checked` and the label never moves. Above
+          *Change key…* because it is the one edit that changes what an agent
+          may do rather than how the project is named.
+        */}
+        <DropdownMenuCheckboxItem
+          checked={autoMerge}
+          onSelect={() => select(onToggleAutoMerge)}
+          className={`${item} pl-7`}
+        >
+          Merge PRs unattended
+        </DropdownMenuCheckboxItem>
         {/*
           Between *Rename…* and *Change folder…*: the three edits are ordered by
           how much they change, and renaming what a project is called sits

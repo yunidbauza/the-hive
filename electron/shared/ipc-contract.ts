@@ -59,6 +59,7 @@ import type {
   SetJiraRequest,
   SetJiraTokenRequest,
   SetNotificationsRequest,
+  SetProjectAutoMergeRequest,
   SetProjectKeyRequest,
   SetProjectRuntimeRequest,
   SetReceiverRequest,
@@ -179,6 +180,8 @@ export const CH = {
    * — a key already taken by another project — which a send could not report.
    */
   configSetProjectKey: 'config:set-project-key',
+  /** HIVE-166's per-project unattended-merge consent. `invoke`, like every config write. */
+  configSetProjectAutoMerge: 'config:set-project-auto-merge',
   /**
    * Story 102's clone verbs.
    *
@@ -1855,6 +1858,8 @@ export interface HiveBridge {
      * than against the caller's snapshot.
      */
     setProjectKey(request: SetProjectKeyRequest): Promise<ConfigSnapshot>;
+    /** Turn unattended merging on or off for one project (HIVE-166). */
+    setProjectAutoMerge(request: SetProjectAutoMergeRequest): Promise<ConfigSnapshot>;
     /**
      * Point a project at a folder that moved (story 103).
      *
@@ -3373,6 +3378,8 @@ export const BRIDGE_CONFIG_KEYS = [
   'reorderProjects',
   // HIVE-94.
   'setProjectKey',
+  // HIVE-166.
+  'setProjectAutoMerge',
   // Story 102.
   'startClone',
   'cancelClone',

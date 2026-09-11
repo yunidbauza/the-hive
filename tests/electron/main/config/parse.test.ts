@@ -149,6 +149,23 @@ describe('parseConfig — fatal versus advisory', () => {
 });
 
 describe('parseConfig — the new entry fields', () => {
+  it('reads a project\'s autoMerge consent, and reports a non-boolean without dropping the entry (HIVE-166)', () => {
+    const parsed = parseConfig(
+      JSON.stringify({
+        version: 2,
+        projects: [
+          { id: 'a', path: '/repos/a', autoMerge: true },
+          { id: 'b', path: '/repos/b', autoMerge: 'yes' },
+          { id: 'c', path: '/repos/c' },
+        ],
+      }),
+      'config',
+    );
+
+    expect(parsed.projects.map((entry) => entry.autoMerge)).toEqual([true, undefined, undefined]);
+    expect(parsed.errors.some((error) => /autoMerge: expected true or false/.test(error))).toBe(true);
+  });
+
   it('leaves name, icon and origin absent when the file omits them', () => {
     const parsed = parseConfig(
       JSON.stringify({ version: 2, projects: [{ id: 'a', path: '~/a' }] }),
