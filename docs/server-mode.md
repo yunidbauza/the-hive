@@ -108,7 +108,9 @@ machine*, from a screen-sharing session):
 
 - **`enabled: true`** is what makes a plain launch serve. The LaunchAgent below
   passes no flag. `the-hive --server` serves for one run without writing the
-  file, which is for trying it out, not for the deployment.
+  file, which is for trying it out, not for the deployment. A `--server` run
+  does not update itself either: only `enabled: true` means launchd is behind
+  the process.
 - **`bind.host`** is the mini's Tailscale address from step 4. `0.0.0.0` is
   refused in every spelling (`0`, `0x0`, `000.000.000.000` included); loopback
   is allowed so the link can be tried on one machine. A refused or malformed
@@ -197,8 +199,9 @@ launchctl bootout gui/$(id -u)/com.behiques.the-hive.server             # stop
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.behiques.the-hive.server.plist  # start
 ```
 
-A running server shows *The Hive · serving* on its menu-bar item, the bound
-address, the paired devices, *Pair a device…* and *Open The Hive*. The dock
+A running server has a menu-bar item whose tooltip reads *The Hive · serving*.
+Its menu shows the bound address (or *Not serving* with the reason), the paired
+devices, *Pair a device…* and *Open The Hive*. The dock
 icon is hidden, and no unread badge appears there: each attached client badges
 its own dock.
 
@@ -263,6 +266,9 @@ Two consequences:
   refused at attach with a message saying which side to update.
 - **A fleet that is never idle never updates.** A session left open for days
   holds the update for days. Close it, or update by hand.
+- **Any quit installs a downloaded update.** Once one is staged, a crash,
+  *Quit* in the menu, or `launchctl bootout` also swaps it in, and the next
+  start is the new version.
 
 An ad-hoc signed build cannot install in place. It announces the release with a
 row pointing at the release page instead, and changes nothing.
@@ -346,7 +352,7 @@ bytes at normal flush sizes.
 
 | Symptom | Cause and fix |
 | --- | --- |
-| Menu-bar item says it could not bind | `bind.host` is not an address of this machine yet (Tailscale still starting) or is wrong. It retries by itself; if it never lands, check `Tailscale ip -4` against the config. The log names the error. |
+| The menu reads *Not serving* | `bind.host` is not an address of this machine yet (Tailscale still starting) or is wrong. It retries by itself; if it never lands, check `Tailscale ip -4` against the config. The log names the error. |
 | Server listens on `127.0.0.1` instead of the tailnet address | `bind.host` was refused (a wildcard, or not a valid host) and the reader fell back to the default. The log names the key and the reason. |
 | Client gets a 403 | It dialed a name the server did not bind. Use the exact `bind.host` string. The mini's log names the refused host. |
 | Client says the versions differ | Update whichever side the message names. |

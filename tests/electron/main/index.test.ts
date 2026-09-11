@@ -104,7 +104,10 @@ describe('the boot path of a served machine', () => {
   });
 
   it('makes the updater unattended behind the server lock, before the updater is built', () => {
-    const call = source.indexOf('runUnattended(fleetIsIdle)');
+    // The config decides, not `--server`: a one-off trial run has a person at
+    // it and no launchd behind it.
+    const call = source.indexOf('if (getConfig().server.enabled) runUnattended(fleetIsIdle)');
+    expect(call).toBeGreaterThan(-1);
     expect(count('runUnattended(')).toBe(1);
     expect(call).toBeGreaterThan(source.indexOf('claimServerLock()'));
     expect(call).toBeLessThan(source.indexOf('startUpdateChecks()'));

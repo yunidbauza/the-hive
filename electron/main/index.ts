@@ -210,8 +210,13 @@ if (!app.requestSingleInstanceLock()) {
       itself, and only while no session or agent run would be cut off by the
       quit (HIVE-147). Here rather than inside `whenReady` because it has to
       land before `startUpdateChecks` builds the updater.
+
+      The config's `server.enabled`, not `serverMode`: a one-off `--server`
+      trial is run by someone sitting at the machine and supervised by nothing,
+      so it must neither install without asking nor quit expecting launchd to
+      bring it back — the same test `--update` applies above.
     */
-    runUnattended(fleetIsIdle);
+    if (getConfig().server.enabled) runUnattended(fleetIsIdle);
   }
 
   registerIpc('local');

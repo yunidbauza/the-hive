@@ -247,6 +247,7 @@ export async function runHeadlessUpdate({ relaunch }: { relaunch: boolean }): Pr
     releasesUrl: RELEASES_URL,
     print: (line) => console.log(line),
     onInstallFailure: () => app.exit(1),
+    relaunch,
   });
   if (code !== null) app.exit(code);
 }
