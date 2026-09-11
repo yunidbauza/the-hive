@@ -60,6 +60,11 @@ interface AgentEditorProps {
    * it `notice`.
    */
   notice: string | null;
+  /**
+   * A question is open below the editor, so its buttons are the only ones on
+   * offer — `skill-editor.tsx`'s prop, for the same four-answers problem.
+   */
+  actionsHidden?: boolean;
 }
 
 /**
@@ -111,6 +116,7 @@ export function AgentEditor({
   onDelete,
   onRun,
   notice,
+  actionsHidden = false,
 }: AgentEditorProps) {
   const [tab, setTab] = useState<Tab>('form');
   const appearance = useEditorAppearance();
@@ -380,7 +386,7 @@ export function AgentEditor({
             {footer}
           </span>
         )}
-        <div className="flex shrink-0 gap-1.5">
+        <div className="flex shrink-0 gap-1.5" hidden={actionsHidden}>
           <button
             type="button"
             onClick={onDelete}

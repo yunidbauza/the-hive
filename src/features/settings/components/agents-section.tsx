@@ -515,6 +515,7 @@ export function AgentsSection() {
               onDelete={remove}
               onRun={run}
               notice={runNotice}
+              actionsHidden={pending !== null}
             />
 
             {pending === null ? null : (
