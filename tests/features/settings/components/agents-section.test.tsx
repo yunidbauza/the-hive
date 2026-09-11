@@ -439,14 +439,26 @@ describe('AgentsSection', () => {
 
       expect(await screen.findByText('Delete slack-watcher?')).toBeInTheDocument();
 
-      // Two buttons say "Delete" now — the editor's and the confirm's. Scope to
-      // the confirm, or the click lands back on the one that opened it.
       const confirm = screen.getByRole('alertdialog', {
         name: 'Delete slack-watcher?',
       });
 
+      // The editor's footer steps aside: the confirm's two are the only answers.
+      expect(screen.getAllByRole('button', { name: 'Delete' })).toHaveLength(1);
+      expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+      expect(screen.queryByRole('button', { name: /Run now/ })).toBeNull();
+
       await userEvent.click(
-        within(confirm).getByRole('button', { name: 'Delete' }),
+        within(confirm).getByRole('button', { name: 'Keep editing' }),
+      );
+      expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Run now/ })).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+      await userEvent.click(
+        within(
+          screen.getByRole('alertdialog', { name: 'Delete slack-watcher?' }),
+        ).getByRole('button', { name: 'Delete' }),
       );
 
       await waitFor(() =>
