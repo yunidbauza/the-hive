@@ -1845,6 +1845,27 @@ hand-edit has broken the promise that it is *their* file. That is what makes
 the editor's Form and Source tabs two views of one buffer in the strict sense:
 switching between them cannot change a byte.
 
+### What the app seeds into this folder (HIVE-162)
+
+`resources/agents/<name>/AGENT.md` and `resources/skills/<name>/` ship with the
+app and are copied into `~/.hive` at registration by `electron/main/seed/`.
+The rule is one line and every branch of `seed.ts` serves it: **the user's
+edits win.** A file is copied when absent and never seeded before, left absent
+when the manifest says it was seeded once (a deletion is an edit), overwritten
+only when the copy on disk is byte-identical to what the last seed wrote
+(`~/.hive/.seed.json` holds that hash per file), and otherwise left alone. A
+shipped file that is later dropped from `resources/` is never deleted. Nothing
+is written through a symlink at any depth below `~/.hive`; a linked `skills/`,
+a linked skill folder or a linked folder inside one each stop the write. A
+file's mode travels with it.
+
+The seed is started, not awaited, in `registerIpcHandlers`: the skills runtime
+waits for it before its first regeneration (`ready` in `createSkillsRuntime`),
+and this registry needs nothing — it watches the folder, and a definition the
+seed writes reaches `knownAgents` through the same `onChange` a hand-written
+one does. Packaged, the two trees ride `extraResources` beside the tray icon;
+`shippedRoot` in `seed/paths.ts` names both locations.
+
 ### Why this folder pushes where skills pull
 
 `skills/index.ts` re-reads on demand and has no change channel, and

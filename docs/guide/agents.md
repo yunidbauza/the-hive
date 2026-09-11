@@ -20,6 +20,13 @@ last one, so it remembers.
   <img src="../assets/diagrams/agent-wake.light.svg" alt="An agent wakes, reads its ledger inbox, does its job, then either asks you and waits for the answer or reports done">
 </picture>
 
+## Agents the app ships
+
+Agents can come with The Hive: the app's own `resources/agents/` is copied into
+`~/.hive/agents` on launch, the way shipped skills are ([Custom skills](skills.md)). The
+workflow agents land there as they ship. Your edits win: a definition you changed is left
+alone by updates, and one you deleted stays deleted.
+
 ## Create an agent
 
 **Agents tab › + New agent…** opens **Settings › Agents**. Fill in the **Form**, or switch

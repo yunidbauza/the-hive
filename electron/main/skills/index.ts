@@ -168,12 +168,25 @@ export interface SkillsRuntimeOptions {
    * `/done` is still a skills directory.
    */
   doneUrl?: () => string | null;
+  /**
+   * Something the first regeneration must wait for (HIVE-162).
+   *
+   * The seed writes shipped skills into `~/.hive/skills` at registration, and
+   * the plugin is regenerated before every spawn. The two are independent
+   * promises, and a spawn that raced the seed would mirror a half-copied
+   * folder — a `SKILL.md` whose script is not on disk yet, the exact shape
+   * HIVE-148 fixed. Awaiting it here, once, is cheaper than teaching every
+   * caller of `sync()` about the seed. Never rejects into the queue: a seed
+   * that failed already reported itself, and the tree is what it is.
+   */
+  ready?: Promise<unknown>;
 }
 
 export function createSkillsRuntime({
   userDataPath,
   version,
   doneUrl,
+  ready,
 }: SkillsRuntimeOptions): SkillsRuntime {
   const pluginRoot = join(userDataPath, PLUGIN_DIR);
   let written = false;
@@ -205,10 +218,10 @@ export function createSkillsRuntime({
    * writes, so the wait is not worth a more elaborate mechanism — and a spawn
    * that overlaps a save is precisely the case this exists for.
    */
-  let inFlight: Promise<SkillsRead> = Promise.resolve({
-    skills: [],
-    invalid: [],
-  });
+  let inFlight: Promise<SkillsRead> = (ready ?? Promise.resolve()).then(
+    () => ({ skills: [], invalid: [] }),
+    () => ({ skills: [], invalid: [] }),
+  );
 
   const regenerate = async (): Promise<SkillsRead> => {
     const read = await readUserSkills(skillsRoot());

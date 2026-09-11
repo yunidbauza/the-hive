@@ -101,3 +101,11 @@ apparent size. Hand the dock a full-bleed tile and it obeys — the app then
 stands a head taller than its neighbours, which is exactly what happened when
 the dev dock was pointed at `icon.png`. Windows and Linux draw the file as
 given and take the full-bleed master.
+
+## Shipped skills and agents
+
+`skills/<name>/` and `agents/<name>/AGENT.md` are copied into `~/.hive` when the app
+starts (HIVE-162, `electron/main/seed/`). An agent folder ships exactly its `AGENT.md`;
+a skill folder ships whole. The user's edits win over updates; see
+`docs/guide/skills.md`. `agents/README.md` exists so the folder is packaged before the
+first agent lands: electron-builder ships nothing for an empty directory.
