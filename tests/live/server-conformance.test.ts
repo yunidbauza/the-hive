@@ -167,7 +167,7 @@ import {
  *     the two generations' heads deliberately **far apart** (a slow 30-line
  *     loop on gen 1, a single line on gen 2), because a fixture where both
  *     rings happen to sit at the same head cannot tell the fix from the bug.
- * 19. An `attach-accepted` carries a **populated** snapshot — the six
+ * 19. An `attach-accepted` carries a **populated** snapshot — the seven
  *     `SNAPSHOT_CHANNELS` read against a server that has a project, a
  *     ledger and live sessions, not an empty object that would satisfy
  *     "has a `snapshot` key".
@@ -2748,7 +2748,7 @@ describe.skipIf(!RUN)('server mode, against a real built app (HIVE-142)', () => 
       for (const key of keys) expect(SNAPSHOT_CHANNELS).toContain(key);
 
       /*
-        Five of the six asserted individually rather than by count, so a
+        Five of the seven asserted individually rather than by count, so a
         failure names which one went missing. `github:prs` is deliberately not
         among them: it shells out to a real `gh` and races
         `SNAPSHOT_READ_BUDGET_MS`, and Ruling 15 says a read that misses that

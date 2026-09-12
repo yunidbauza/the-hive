@@ -297,6 +297,7 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     */
     'ledger',
     'notifications',
+    'plans',
     'pty',
     /**
      * HIVE-144 adds `remote`. What a web page can now do that it could not

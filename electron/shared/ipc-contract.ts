@@ -111,6 +111,7 @@ import type {
   HiveNotification,
   NotificationAction,
 } from './notification-contract';
+import type { PlanChangedEvent, PlansSnapshot } from './plan-contract';
 import type {
   SessionEffort,
   SessionModel,
@@ -733,6 +734,10 @@ export const CH = {
   ledgerAnswer: 'ledger:answer',
   /** Push: one entry landed, from any party. main → renderer. */
   ledgerChanged: 'ledger:changed',
+  /** Every live plan (HIVE-179). Boot hydration and the attach snapshot. */
+  plansList: 'plans:list',
+  /** Push: one session's plan changed, or went (`plan: null`). main → renderer. */
+  planChanged: 'plan:changed',
   /** What the app knows about a newer version of itself. */
   updatesStatus: 'updates:status',
   /**
@@ -1150,6 +1155,7 @@ export const EVENT_CHANNELS = [
   CH.notificationsActivate,
   CH.fsChanged,
   CH.ledgerChanged,
+  CH.planChanged,
   CH.agentsChanged,
   CH.agentsStatus,
   CH.agentsLines,
@@ -2508,6 +2514,11 @@ export interface HiveBridge {
     answer: (request: LedgerAnswerRequest) => Promise<LedgerResult>;
     onChanged: (callback: (entry: LedgerEntry) => void) => () => void;
   };
+  /** Every session's plan (HIVE-179). Read-only; see {@link BRIDGE_PLANS_KEYS}. */
+  plans: {
+    list: () => Promise<PlansSnapshot>;
+    onChanged: (callback: (event: PlanChangedEvent) => void) => () => void;
+  };
   /**
    * Agent definitions on disk (HIVE-114).
    *
@@ -2784,6 +2795,12 @@ export const BRIDGE_KEYS = [
   'jira',
   'ledger',
   'notifications',
+  /**
+   * HIVE-179 adds `plans`. What a web page can now do that it could not
+   * before: read every session's task list and hear it change. Read-only —
+   * see {@link BRIDGE_PLANS_KEYS}.
+   */
+  'plans',
   'pty',
   /**
    * HIVE-144 adds `remote`. What a web page can now do that it could not
@@ -3359,6 +3376,18 @@ export const BRIDGE_LEDGER_KEYS = [
   'post',
   'answer',
   // One entry landed, from any party — see `CH.ledgerChanged`.
+  'onChanged',
+] as const;
+
+/**
+ * The exact key set of `window.hive.plans` (HIVE-179). Two reads and no
+ * write: main owns every rule about a plan, so a verb that set one from the
+ * page would be the change this list exists to catch.
+ */
+export const BRIDGE_PLANS_KEYS = [
+  // Every live plan. Boot and reattach hydration.
+  'list',
+  // One session's plan changed, or went — see `CH.planChanged`.
   'onChanged',
 ] as const;
 

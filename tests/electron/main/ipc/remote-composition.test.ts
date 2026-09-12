@@ -415,6 +415,8 @@ vi.mock('../../../../electron/main/sessions', () => ({
     observedCwd: () => undefined,
     containerRemoval: async () => {},
     diagnostics: () => [],
+    // A sentinel no fallback could produce, so the plans:list test proves the wiring (HIVE-179).
+    plans: () => ({ plans: [{ entityId: 'sess-sentinel', source: 'task-tools', tasks: [], allDone: false }] }),
     dispose: vi.fn(),
     releaseSurface: (surfaceId: string) => surfaceReleases.flowControl(surfaceId),
   }),
@@ -517,7 +519,7 @@ describe('remote composition (HIVE-143)', () => {
       elsewhere, by the real `ipcMain.handle` refusing a second handler for a
       channel — not by this number.
     */
-    expect(remoteRegistrySize()).toBe(110);
+    expect(remoteRegistrySize()).toBe(111);
   });
 
   it('re-registers every channel after a reset without throwing (HIVE-144)', () => {
@@ -833,7 +835,7 @@ describe('the attach replay loop (HIVE-143)', () => {
 describe('the attach snapshot (HIVE-144)', () => {
   it('answers an empty snapshot rather than throwing when no channel is registered yet', async () => {
     // `resetIpcHandlers` without a following `registerIpcHandlers`: every one
-    // of the six is `null` in the registry. `raceSnapshotRead` does not
+    // of the seven is `null` in the registry. `raceSnapshotRead` does not
     // special-case that — it calls `null` as a function and lets the
     // resulting `TypeError` land in its own `.catch` — so this proves that
     // path resolves cleanly to "omitted" rather than rejecting the whole call
@@ -857,6 +859,10 @@ describe('the attach snapshot (HIVE-144)', () => {
     for (const channel of SNAPSHOT_CHANNELS) {
       expect(snapshot).toHaveProperty(channel);
     }
+    // HIVE-179: the plans read answers the sessions layer's own snapshot, not a fallback.
+    expect(snapshot[CH.plansList]).toEqual({
+      plans: [{ entityId: 'sess-sentinel', source: 'task-tools', tasks: [], allDone: false }],
+    });
   });
 
   it('omits a channel whose read throws, without losing the others', async () => {
@@ -1092,12 +1098,12 @@ describe('handlers that dereference the Electron event', () => {
 describe('the mode switch (HIVE-144)', () => {
   /**
    * Both modes bind the same channels: every `call` and every `notify` in the
-   * contract, and no `event` — 110 of them. Written once here because the two
+   * contract, and no `event` — 111 of them. Written once here because the two
    * surfaces agreeing on this number is itself the invariant. `remote-proxy
-   * .test.ts` and the registry case above own the question of whether 110 is
+   * .test.ts` and the registry case above own the question of whether 111 is
    * still the right number; this file only asks whether the two agree.
    */
-  const BOUND_CHANNELS = 110;
+  const BOUND_CHANNELS = 111;
 
   /**
    * `assertSender` compares `senderFrame` to `sender.mainFrame` by identity,

@@ -683,6 +683,7 @@ describe.skipIf(!RUN)('real claude -> receiver -> notifier -> hub', () => {
               : { runInBackground: e.runInBackground }),
           });
         },
+        onPlanTool: () => {},
         onTicketIntent: () => undefined,
         onPromptName: () => {},
         onCleared: () => undefined,

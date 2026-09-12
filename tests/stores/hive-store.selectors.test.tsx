@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { Session } from '@/types/entity';
 import type { AgentSummary } from '@shared/agent-contract';
+import type { PlanTaskStatus, SessionPlan } from '@shared/plan-contract';
 
 import {
   emptySnapshot,
@@ -32,6 +33,8 @@ import {
   useEndedSessions,
   useNavOrder,
   useNotifs,
+  usePlan,
+  usePlanProgress,
   useProjects,
   useProjectSessions,
   usePrs,
@@ -1845,5 +1848,72 @@ describe('hive-store selectors', () => {
 
       expect(result.current).toBeNull();
     });
+  });
+});
+
+/**
+ * The plan selectors (HIVE-179). Progress is derived, never stored, and
+ * shallow-compared, so a tick on one session's plan re-renders nothing that
+ * asked about another.
+ */
+describe('plan selectors (HIVE-179)', () => {
+  const plan = (entityId: string, statuses: PlanTaskStatus[]): SessionPlan => ({
+    entityId,
+    source: 'task-tools',
+    tasks: statuses.map((status, index) => ({
+      id: String(index + 1),
+      title: `Task ${String(index + 1)}`,
+      status,
+    })),
+    allDone: false,
+  });
+
+  beforeEach(() => {
+    useHiveStore.getState().reset();
+  });
+
+  it('usePlan returns the stored plan, and undefined without one', () => {
+    const stored = plan('sess-01', ['pending']);
+    act(() => useHiveStore.getState().setPlan('sess-01', stored));
+
+    expect(renderHook(() => usePlan('sess-01')).result.current).toBe(stored);
+    expect(renderHook(() => usePlan('sess-02')).result.current).toBeUndefined();
+    expect(renderHook(() => usePlan(undefined)).result.current).toBeUndefined();
+  });
+
+  it('usePlanProgress derives done and total, and undefined without a plan', () => {
+    act(() =>
+      useHiveStore.getState().setPlan('sess-01', plan('sess-01', ['completed', 'in_progress', 'pending'])),
+    );
+
+    expect(renderHook(() => usePlanProgress('sess-01')).result.current).toEqual({ done: 1, total: 3 });
+    expect(renderHook(() => usePlanProgress('sess-02')).result.current).toBeUndefined();
+    expect(renderHook(() => usePlanProgress(undefined)).result.current).toBeUndefined();
+  });
+
+  it("re-renders only the session whose plan's counts changed", () => {
+    let rendersA = 0;
+    let rendersB = 0;
+    renderHook(() => {
+      rendersA += 1;
+      return usePlanProgress('sess-01');
+    });
+    renderHook(() => {
+      rendersB += 1;
+      return usePlanProgress('sess-02');
+    });
+    act(() => useHiveStore.getState().setPlan('sess-01', plan('sess-01', ['pending'])));
+    const beforeA = rendersA;
+    const beforeB = rendersB;
+
+    act(() => useHiveStore.getState().setPlan('sess-02', plan('sess-02', ['completed'])));
+
+    expect(rendersB).toBe(beforeB + 1);
+    expect(rendersA).toBe(beforeA);
+
+    // A new object with the same counts is not a change to anyone reading progress.
+    act(() => useHiveStore.getState().setPlan('sess-01', plan('sess-01', ['pending'])));
+
+    expect(rendersA).toBe(beforeA);
   });
 });

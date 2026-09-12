@@ -1,4 +1,5 @@
 // @vitest-environment node
+import type { PlanToolCall } from '../../../../electron/main/plans';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -2189,12 +2190,18 @@ describe('/done', () => {
     statusOf: (entityId: string) => unknown;
     finishedFor: (entityId: string) => number;
     lastFinished: (entityId: string) => Record<string, unknown> | undefined;
+    /** Hand the store a main-agent task-tool call, as the receiver would (HIVE-179). */
+    planTool: (call: PlanToolCall) => void;
+    /** Every `CH.planChanged` payload for the entity, in order. */
+    planPushes: (entityId: string) => Record<string, unknown>[];
+    sessions: Sessions;
   } {
     const written: Written[] = [];
     const local: Sent[] = [];
     let onEvent!: (event: HookStatusEvent) => void;
     let onDone!: (entityId: string) => void;
     let onCleared!: (entityId: string) => void;
+    let onPlanTool!: (call: PlanToolCall) => void;
 
     const instance = createSessions({
       supervisor,
@@ -2214,10 +2221,12 @@ describe('/done', () => {
           onEvent: (event: HookStatusEvent) => void;
           onDone: (entityId: string) => void;
           onCleared: (entityId: string) => void;
+          onPlanTool: (call: PlanToolCall) => void;
         }) => {
           onEvent = opts.onEvent;
           onDone = opts.onDone;
           onCleared = opts.onCleared;
+          onPlanTool = opts.onPlanTool;
           return Promise.resolve();
         },
         stop: () => Promise.resolve(),
@@ -2307,8 +2316,127 @@ describe('/done', () => {
               entry.payload.entityId === entityId,
           )
           .at(-1)?.payload,
+      planTool: (call) => onPlanTool(call),
+      planPushes: (entityId) =>
+        local
+          .filter(
+            (entry) => entry.channel === CH.planChanged && entry.payload.entityId === entityId,
+          )
+          .map((entry) => entry.payload),
+      sessions: instance,
     };
   }
+
+  /**
+   * Sessions own the plans (HIVE-179): a plan lives exactly as long as the
+   * conversation that made it, so every way that conversation ends drops it.
+   * Hosted here for `finished()`, the one harness that captures every
+   * callback the three endings need.
+   */
+  describe('plans (HIVE-179)', () => {
+    const createAlpha = (entityId: string): PlanToolCall => ({
+      entityId,
+      toolName: 'TaskCreate',
+      toolInput: { subject: 'Alpha' },
+      toolResponse: { task: { id: '1', subject: 'Alpha' } },
+    });
+
+    const alphaPlan = (entityId: string) => ({
+      entityId,
+      source: 'task-tools',
+      tasks: [{ id: '1', title: 'Alpha', status: 'pending' }],
+      allDone: false,
+    });
+
+    it('publishes a main-agent task tool as the session plan, and lists it', () => {
+      const h = finished();
+      h.open();
+
+      h.planTool(createAlpha('hero-refresh'));
+
+      expect(h.planPushes('hero-refresh')).toEqual([
+        { entityId: 'hero-refresh', plan: alphaPlan('hero-refresh') },
+      ]);
+      expect(h.sessions.plans()).toEqual({ plans: [alphaPlan('hero-refresh')] });
+    });
+
+    it('drops the plan on /clear', () => {
+      const h = finished();
+      h.open();
+      h.planTool(createAlpha('hero-refresh'));
+
+      h.cleared('hero-refresh');
+
+      expect(h.planPushes('hero-refresh').at(-1)).toEqual({ entityId: 'hero-refresh', plan: null });
+      expect(h.sessions.plans()).toEqual({ plans: [] });
+    });
+
+    it('drops the plan when the session finishes', () => {
+      const h = finished();
+      const sessionId = h.open();
+      h.planTool(createAlpha('hero-refresh'));
+
+      h.done('hero-refresh');
+      h.hook('hero-refresh', 'Stop');
+      emitExit({ sessionId, exitCode: 0 });
+
+      expect(h.finishedFor('hero-refresh')).toBe(1);
+      expect(h.planPushes('hero-refresh').at(-1)).toEqual({ entityId: 'hero-refresh', plan: null });
+      expect(h.sessions.plans()).toEqual({ plans: [] });
+    });
+
+    /*
+      Any ending, not only a declared one (HIVE-179 review). A kill, a plain
+      `/exit` or a crash never reaches `publishFinished`, and a restart reuses
+      the entity id: a plan left standing would have the next conversation's
+      tasks appended to the last one's.
+    */
+    it('drops the plan when the session exits without /done', () => {
+      const h = finished();
+      const sessionId = h.open();
+      h.planTool(createAlpha('hero-refresh'));
+
+      emitExit({ sessionId, exitCode: 0 });
+
+      expect(h.finishedFor('hero-refresh')).toBe(0);
+      expect(h.planPushes('hero-refresh').at(-1)).toEqual({ entityId: 'hero-refresh', plan: null });
+      expect(h.sessions.plans()).toEqual({ plans: [] });
+    });
+
+    it('starts a restarted session on a fresh plan', async () => {
+      const h = finished();
+      const first = h.open();
+      h.planTool(createAlpha('hero-refresh'));
+
+      // The restart's teardown waits for the old generation's exit.
+      const restarted = h.restart();
+      await Promise.resolve();
+      emitExit({ sessionId: first, exitCode: 0 });
+      vi.advanceTimersByTime(8);
+      await restarted;
+      h.planTool({ ...createAlpha('hero-refresh'), toolInput: { subject: 'Beta' } });
+
+      expect(h.sessions.plans()).toEqual({
+        plans: [
+          {
+            ...alphaPlan('hero-refresh'),
+            tasks: [{ id: '1', title: 'Beta', status: 'pending' }],
+          },
+        ],
+      });
+    });
+
+    it("drops the plan when a terminal's shell ends", () => {
+      const h = finished();
+      h.sessions.openTerminal(TERMINAL);
+      h.planTool(createAlpha('term-01'));
+
+      emitExit({ sessionId: mintedFor('term-01'), exitCode: 0 });
+
+      expect(h.planPushes('term-01').at(-1)).toEqual({ entityId: 'term-01', plan: null });
+      expect(h.sessions.plans()).toEqual({ plans: [] });
+    });
+  });
 
   /** Every chunk written into the pty since the session opened. */
   const writes = () => vi.mocked(supervisor.write).mock.calls.map((call) => call[1]);

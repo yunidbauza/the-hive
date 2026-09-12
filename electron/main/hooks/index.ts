@@ -35,6 +35,7 @@ import {
   writeSharedContainerFiles,
 } from '../container/generated';
 import type { Ledger } from '../ledger';
+import type { PlanToolCall } from '../plans';
 
 import { withHostAlias } from './container-origin';
 import { createReceiver, type Receiver } from './receiver';
@@ -206,6 +207,8 @@ export interface HookHandlers {
    */
   onPromptName: (entityId: string, name: string) => void;
   onCleared: (entityId: string) => void;
+  /** A main-agent PostToolUse of a task tool (HIVE-179). See `ReceiverOptions.onPlanTool`. */
+  onPlanTool: (call: PlanToolCall) => void;
   /** A session reported its context and rate-limit usage (HIVE-79). */
   onMetrics: (entityId: string, metrics: SessionMetrics) => void;
   /** A session declared itself finished — `/done` (HIVE-93). */
@@ -440,6 +443,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       onTicketIntent,
       onPromptName,
       onCleared,
+      onPlanTool,
       onMetrics,
       onDone,
       onReady,
@@ -456,6 +460,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
         onTicketIntent,
         onPromptName,
         onCleared,
+        onPlanTool,
         onMetrics,
         onDone,
         onReady,

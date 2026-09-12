@@ -75,6 +75,7 @@ import {
 import { sessionNameFromPrompt } from '@shared/session-contract';
 
 import { entryContext } from '../ledger/context';
+import { TASK_TOOL_NAMES, type PlanToolCall } from '../plans';
 
 import { createOriginGuard, secretEquals } from './http-guard';
 import { parseMetrics } from './metrics';
@@ -169,6 +170,12 @@ export interface ReceiverOptions {
    * version of `SessionEnd` handling lock users out of live sessions.
    */
   onCleared: (entityId: string) => void;
+  /**
+   * A main-agent PostToolUse of a task tool (HIVE-179). Session path only,
+   * whole bodies only, never a subagent's. A separate callback for the reason
+   * `onTicketIntent` is one: a plan is not a status.
+   */
+  onPlanTool: (call: PlanToolCall) => void;
   /**
    * A session reported its context and rate-limit usage (HIVE-79).
    *
@@ -579,6 +586,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     onTicketIntent,
     onPromptName,
     onCleared,
+    onPlanTool,
     onMetrics,
     onDone,
     onReady,
@@ -1592,6 +1600,8 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     let prompt: unknown;
     let toolUseId: unknown;
     let toolName: unknown;
+    let toolInput: unknown;
+    let toolResponse: unknown;
     let agentId: unknown;
     let runInBackground: unknown;
     let backgroundShells: string[] | undefined;
@@ -1631,7 +1641,8 @@ export function createReceiver(options: ReceiverOptions): Receiver {
               tool_use_id?: unknown;
               tool_name?: unknown;
               agent_id?: unknown;
-              tool_input?: { run_in_background?: unknown };
+              tool_input?: unknown;
+              tool_response?: unknown;
               background_tasks?: unknown;
               session_id?: unknown;
             })
@@ -1645,7 +1656,10 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       toolUseId = fields?.tool_use_id;
       toolName = fields?.tool_name;
       agentId = fields?.agent_id;
-      runInBackground = fields?.tool_input?.run_in_background;
+      toolInput = fields?.tool_input;
+      toolResponse = fields?.tool_response;
+      runInBackground = (toolInput as { run_in_background?: unknown } | null | undefined)
+        ?.run_in_background;
       backgroundShells = liveBackgroundShellIds(
         fields?.background_tasks,
         noteUnknownTaskType,
@@ -1710,6 +1724,37 @@ export function createReceiver(options: ReceiverOptions): Receiver {
         ...(runInBackground === true ? { runInBackground: true } : {}),
         ...(backgroundShells === undefined ? {} : { backgroundShells }),
       });
+
+    /*
+      The plan panel's source 1 (HIVE-179). Whole bodies only: a truncated
+      one has lost `tool_input`'s tail and a half-read plan is worse than a
+      late one. The main agent only: a subagent's task shares the session's
+      id space but is not the session's plan. PreToolUse is ignored — the id
+      exists only in the response. `agentId` is only ever read off a whole
+      body, which is why `!truncated` is required rather than decorative.
+
+      Caught here rather than left to the caller's try: a plan is a view, and
+      a throw in it must not cost the session the status `publish` below.
+    */
+    if (
+      event === 'PostToolUse' &&
+      !truncated &&
+      agentId === undefined &&
+      typeof toolName === 'string' &&
+      TASK_TOOL_NAMES.has(toolName)
+    ) {
+      try {
+        onPlanTool({
+          entityId,
+          toolName,
+          toolInput,
+          toolResponse,
+          ...(typeof cwd === 'string' && cwd !== '' ? { cwd } : {}),
+        });
+      } catch (cause) {
+        console.error('[hive] onPlanTool threw; the plan missed one call:', cause);
+      }
+    }
 
     /**
      * The intent goes out **before** the status (HIVE-78).

@@ -5,6 +5,7 @@ import type { AgentSummary } from '@shared/agent-contract';
 import type { GhResult, PrsSnapshot } from '@shared/github-contract';
 import { CH } from '@shared/ipc-contract';
 import type { LedgerEntry } from '@shared/ledger-contract';
+import type { SessionPlan } from '@shared/plan-contract';
 import type { SessionHistoryEntry } from '@shared/session-history-contract';
 import { useHiveStore } from '@stores/hive-store';
 
@@ -392,5 +393,70 @@ describe('applyModeChange', () => {
     expect(state().order).toEqual([]);
     expect(state().agentOrder).toEqual([]);
     expect(state().notifs).toEqual([]);
+  });
+});
+
+/**
+ * The plans slice (HIVE-179). Main owns every rule — rank, grace, the drop on
+ * every ending — and the store only mirrors it. Keyed by entity id, so it is
+ * cleared on a mode switch for the reason `metrics` is.
+ */
+describe('plans (HIVE-179)', () => {
+  const plan = (entityId: string, title = 'Alpha'): SessionPlan => ({
+    entityId,
+    source: 'task-tools',
+    tasks: [{ id: '1', title, status: 'pending' }],
+    allDone: false,
+  });
+
+  it('setPlan stores a plan and null removes it', () => {
+    state().setPlan('sess-01', plan('sess-01'));
+
+    expect(state().plans['sess-01']).toEqual(plan('sess-01'));
+
+    state().setPlan('sess-01', null);
+
+    expect('sess-01' in state().plans).toBe(false);
+  });
+
+  it('setPlan null for a session with no plan changes nothing', () => {
+    const before = state().plans;
+
+    state().setPlan('sess-09', null);
+
+    expect(state().plans).toBe(before);
+  });
+
+  it('hydratePlans merges rather than replaces', () => {
+    state().setPlan('sess-01', plan('sess-01'));
+
+    state().hydratePlans([plan('sess-02')]);
+
+    expect(Object.keys(state().plans).sort()).toEqual(['sess-01', 'sess-02']);
+  });
+
+  it('applyAttachSnapshot hydrates CH.plansList, merging', () => {
+    state().setPlan('sess-old', plan('sess-old'));
+
+    state().applyAttachSnapshot({ [CH.plansList]: { plans: [plan('sess-01')] } });
+
+    expect(state().plans['sess-01']).toEqual(plan('sess-01'));
+    expect(state().plans['sess-old']).toEqual(plan('sess-old'));
+  });
+
+  it('clearModeEntities clears plans, so a reused session id does not inherit one', () => {
+    state().setPlan('sess-01', plan('sess-01', 'stale'));
+
+    state().clearModeEntities();
+
+    expect(state().plans).toEqual({});
+  });
+
+  it('reset clears plans', () => {
+    state().setPlan('sess-01', plan('sess-01'));
+
+    state().reset();
+
+    expect(state().plans).toEqual({});
   });
 });

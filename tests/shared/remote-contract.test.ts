@@ -81,7 +81,7 @@ const MAIN_ONLY: ReadonlyMap<string, FrameKind> = new Map([
 
 describe('remote contract: coverage', () => {
   it('classifies every channel exactly once for frame kind', () => {
-    expect(entries).toHaveLength(136);
+    expect(entries).toHaveLength(138);
     expect(Object.keys(FRAME_KIND).sort()).toEqual([...Object.values(CH)].sort());
   });
 
@@ -120,17 +120,17 @@ describe('remote contract: frame kinds match the preload bridge', () => {
     expect(frameKindOf(channel)).toBe(expected);
   });
 
-  it('splits 104 call, 6 notify and 26 event', () => {
+  it('splits 105 call, 6 notify and 27 event', () => {
     const tally = { call: 0, notify: 0, event: 0 };
     for (const kind of Object.values(FRAME_KIND)) tally[kind] += 1;
 
-    expect(tally).toEqual({ call: 104, notify: 6, event: 26 });
+    expect(tally).toEqual({ call: 105, notify: 6, event: 27 });
   });
 
   /**
    * The correction that reading the bridge forced.
    *
-   * `EVENT_CHANNELS` is not the set of pushed channels — it is 20 of the 26.
+   * `EVENT_CHANNELS` is not the set of pushed channels — it is 21 of the 27.
    * `slack:socket-status` and the three `notifications:*` pushes are subscribed
    * without being listed there, `notifications:toast` is pushed to a main
    * process rather than a renderer at all, and `remote:link-status` (HIVE-150)
@@ -197,11 +197,11 @@ describe('remote contract: authorization', () => {
     expect(authorizationOf(channel)).toBe('execute');
   });
 
-  it('grades the 135 as 57 read, 44 mutate and 34 execute', () => {
+  it('grades the 138 as 59 read, 44 mutate and 35 execute', () => {
     const tally = { read: 0, mutate: 0, execute: 0 };
     for (const authz of Object.values(CHANNEL_AUTHORIZATION)) tally[authz] += 1;
 
-    expect(tally).toEqual({ read: 57, mutate: 44, execute: 35 });
+    expect(tally).toEqual({ read: 59, mutate: 44, execute: 35 });
   });
 
   /**
@@ -563,13 +563,13 @@ describe('remote contract: the call deadline (HIVE-144)', () => {
  * there: commenting out `CH.githubPrs` at the source left `pnpm exec vitest
  * run tests/electron` fully green, because every one of those tests would
  * simply have iterated five channels instead of six and never noticed a sixth
- * was missing. This is the one test in the suite that names the six by hand,
+ * was missing. This is the one test in the suite that names the seven by hand,
  * so a channel silently dropped from the array — accidentally, or in a merge
  * conflict — has somewhere to be caught.
  */
 describe('remote contract: the attach snapshot (HIVE-144)', () => {
-  it('is exactly these six channels, in this order', () => {
-    expect(SNAPSHOT_CHANNELS).toHaveLength(6);
+  it('is exactly these seven channels, in this order', () => {
+    expect(SNAPSHOT_CHANNELS).toHaveLength(7);
     expect(SNAPSHOT_CHANNELS).toEqual([
       CH.sessionHistory,
       CH.agentsList,
@@ -577,7 +577,18 @@ describe('remote contract: the attach snapshot (HIVE-144)', () => {
       CH.notificationsList,
       CH.githubPrs,
       CH.configGet,
+      CH.plansList,
     ]);
+  });
+
+  it('snapshots the plans so a reattaching client sees the current plan (HIVE-179)', () => {
+    expect(SNAPSHOT_CHANNELS).toContain(CH.plansList);
+  });
+
+  it('pushes plan changes to the renderer and across a socket (HIVE-179)', () => {
+    expect(EVENT_CHANNELS).toContain(CH.planChanged);
+    expect(frameKindOf(CH.planChanged)).toBe('event');
+    expect(frameKindOf(CH.plansList)).toBe('call');
   });
 });
 

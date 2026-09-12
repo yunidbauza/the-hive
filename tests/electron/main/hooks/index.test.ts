@@ -91,6 +91,7 @@ const noopHandlers: HookHandlers = {
   onAgentsList: () => Promise.resolve({ agents: [] }),
   onEvent: () => {},
   onAgentEvent: () => {},
+  onPlanTool: () => {},
   onTicketIntent: () => {},
   onPromptName: () => {},
   onCleared: () => {},
