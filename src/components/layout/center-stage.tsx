@@ -20,6 +20,7 @@ import { EditorPane } from '@features/editor/components/editor-pane';
 import { EditorTabStrip } from '@features/editor/components/editor-tab-strip';
 import { ConsoleInput } from '@features/orchestrator/components/console-input';
 import { FleetPane, TRANSCRIPT_FLOOR } from '@features/orchestrator/components/fleet-pane';
+import { PlanRail } from '@features/plan/components/plan-rail';
 import { MessageInput } from '@features/sessions/components/message-input';
 import { NewSessionPicker } from '@features/sessions/components/new-session-picker';
 import { SessionBootCover } from '@features/sessions/components/session-boot-cover';
@@ -37,13 +38,16 @@ import { ORCHESTRATOR_ID } from '@lib/terminal/static-transport';
 import type { TerminalTransport } from '@lib/terminal/terminal-transport';
 import {
   useEditorLayout,
+  usePlanPinned,
   useSetEditorSplitRatio,
+  useSetPlanPinned,
   useTerminalAppearance,
 } from '@stores/appearance-store';
 import { useActiveFileKey, useHasOpenFiles } from '@stores/editor-store';
 import {
   terminalIdFor,
   useActiveEntity,
+  usePlan,
   useTerminalHostIds,
 } from '@stores/hive-store';
 import {
@@ -140,6 +144,22 @@ export function CenterStage() {
    * look at an agent would cost each of them its scrollback.
    */
   const showingAgent = view === 'agent';
+
+  /*
+    The plan panel (HIVE-181): a sibling of the terminal region, never inside
+    it, so peeking (an absolute drawer) costs the terminal nothing and pinning
+    (a wider sibling) refits it once through the ResizeObserver it already has.
+    A session's plan only, in a terminal view (the predicate the meta bar uses), and only with a task in it.
+  */
+  const plan = usePlan(
+    isTerminalView(view) && entity !== null && isSession(entity) ? entity.id : undefined,
+  );
+  const planPinned = usePlanPinned();
+  const setPlanPinned = useSetPlanPinned();
+  const planRail =
+    plan !== undefined && plan.tasks.length > 0 ? (
+      <PlanRail plan={plan} pinned={planPinned} onPinnedChange={setPlanPinned} />
+    ) : null;
 
   /*
     Agents are not in this list any more (HIVE-116).
@@ -405,6 +425,18 @@ export function CenterStage() {
         ) : null}
 
         {/*
+          The terminal region and the plan rail, side by side (HIVE-181). This
+          row is now the column's flex child, so the fleet table's floor and
+          the agent view's `hidden` live here rather than on the region.
+        */}
+        <div
+          className={cn(
+            'flex min-w-0 flex-1 flex-row',
+            view === 'orchestrator' && !splitting ? TRANSCRIPT_FLOOR.className : 'min-h-0',
+            showingAgent && 'hidden',
+          )}
+        >
+        {/*
           Clicking the terminal focuses the message row, as the concept does —
           the row should feel like part of the terminal, not a form beneath it.
           Not a button: this is a click *target*, and the keyboard already
@@ -439,11 +471,7 @@ export function CenterStage() {
             at all: this region is the only flexible thing in the column, so
             `min-h-0` is what it has always effectively had.
           */
-          className={cn(
-            'relative flex flex-1 flex-col',
-            view === 'orchestrator' && !splitting ? TRANSCRIPT_FLOOR.className : 'min-h-0',
-            showingAgent && 'hidden',
-          )}
+          className="relative flex min-h-0 min-w-0 flex-1 flex-col"
           onClick={focusMessageInput}
         >
           <TerminalHost
@@ -516,6 +544,8 @@ export function CenterStage() {
               does="returns to the overmind"
             />
           ) : null}
+        </div>
+        {planRail}
         </div>
         </div>
 
