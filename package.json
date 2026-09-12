@@ -57,7 +57,8 @@
     "test:mcp-http": "HIVE_LIVE_MCP_HTTP_PROOF=1 vitest run tests/live/mcp-http-conformance.test.ts",
     "test:agent": "HIVE_LIVE_AGENT_PROOF=1 vitest run tests/live/agent-conformance.test.ts",
     "test:container": "HIVE_LIVE_CONTAINER_PROOF=1 vitest run tests/live/container-conformance.test.ts",
-    "test:server": "HIVE_LIVE_SERVER_PROOF=1 vitest run tests/live/server-conformance.test.ts"
+    "test:server": "HIVE_LIVE_SERVER_PROOF=1 vitest run tests/live/server-conformance.test.ts",
+    "test:plan": "HIVE_LIVE_PLAN_PROOF=1 vitest run tests/live/plan-conformance.test.ts"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.4",
