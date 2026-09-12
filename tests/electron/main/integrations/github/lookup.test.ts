@@ -1,8 +1,12 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { PrRecord } from '../../../../../electron/shared/github-contract';
-import { lookupPr } from '../../../../../electron/main/integrations/github/lookup';
+import {
+  answerPrLookup,
+  lookupPr,
+  PR_LOOKUP_MAX_AGE_MS,
+} from '../../../../../electron/main/integrations/github/lookup';
 
 const record = (over: Partial<PrRecord> = {}): PrRecord => ({
   number: 214,
@@ -35,5 +39,33 @@ describe('lookupPr (HIVE-173)', () => {
     expect(
       lookupPr({ ok: false, error: { kind: 'not-installed', message: 'GitHub CLI (`gh`) was not found on this machine.' } }, { repo: 'acme/the-hive', number: 214 }),
     ).toEqual({ pr: null, reason: 'GitHub CLI (`gh`) was not found on this machine.' });
+  });
+});
+
+describe('answerPrLookup', () => {
+  const recent = { prs: [record()], repos: 1 };
+  const fresh = { ok: true as const, value: { prs: [record(), record({ number: 300 })], repos: 1 } };
+
+  it('answers from the recent sweep without running gh', async () => {
+    const prs = vi.fn(async () => fresh);
+    const latestPrs = vi.fn(() => recent);
+
+    expect(await answerPrLookup({ prs, latestPrs }, { repo: 'acme/the-hive', number: 214 })).toEqual({
+      pr: record(),
+    });
+    expect(latestPrs).toHaveBeenCalledWith(PR_LOOKUP_MAX_AGE_MS);
+    expect(prs).not.toHaveBeenCalled();
+  });
+
+  it('sweeps fresh when there is no recent sweep, or it lacks the PR', async () => {
+    const prs = vi.fn(async () => fresh);
+
+    expect(await answerPrLookup({ prs, latestPrs: () => recent }, { repo: 'acme/the-hive', number: 300 })).toEqual({
+      pr: record({ number: 300 }),
+    });
+    expect(await answerPrLookup({ prs, latestPrs: () => null }, { repo: 'acme/the-hive', number: 214 })).toEqual({
+      pr: record(),
+    });
+    expect(prs).toHaveBeenCalledTimes(2);
   });
 });

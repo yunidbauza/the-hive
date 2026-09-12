@@ -36,6 +36,11 @@ export interface Github {
   /** Every PR worth showing, across the configured project repositories. */
   prs(): Promise<GhResult<PrsSnapshot>>;
   /**
+   * The last successful sweep if it started within `maxAgeMs`, else null. It
+   * never runs `gh`; a caller that gets null calls `prs()`.
+   */
+  latestPrs(maxAgeMs: number): PrsSnapshot | null;
+  /**
    * Every PR matching `term`, whoever wrote it (the PRs panel's search row).
    *
    * `projectId` narrows the sweep to one mapped project — the session the user
@@ -89,50 +94,76 @@ export function createGithub(deps: GithubDeps): Github {
   let resolver: RepoResolver | null = null;
   let client: GithubClient | null = null;
 
+  /**
+   * The last good sweep, and the one running now.
+   *
+   * A sweep is one GraphQL call that takes three to four seconds. The PRs panel
+   * runs one a minute, and before this an `mcp__hive__pr` lookup ran another of
+   * its own for one record, which outran the MCP host's timeout. Now a lookup
+   * reads the panel's last sweep when it is recent, and a caller arriving while
+   * a sweep is in flight waits on that one instead of starting a second.
+   */
+  let last: { at: number; value: PrsSnapshot } | null = null;
+  let inflight: Promise<GhResult<PrsSnapshot>> | null = null;
+
+  const sweep = async (): Promise<GhResult<PrsSnapshot>> => {
+    const at = deps.now();
+    const path = deps.env().PATH ?? '';
+    const { resolved } = probeCommand('gh', path);
+
+    if (resolved === null) {
+      return {
+        ok: false,
+        error: {
+          kind: 'not-installed',
+          message: 'GitHub CLI (`gh`) was not found on this machine.',
+        },
+      };
+    }
+
+    if (cachedFor !== resolved || resolver === null || client === null) {
+      cachedFor = resolved;
+      resolver = createRepoResolver(resolved, deps.run);
+      client = createGithubClient(resolved, deps.run);
+    }
+
+    const { repos, failure } = await resolver.resolve(deps.config().projects);
+
+    /**
+     * A resolution failure outranks the empty list it produced.
+     *
+     * Without this, a `gh` that is not logged in reports `no-repos` — because
+     * `gh repo view` fails for every project, the list comes back empty, and
+     * the sweep short-circuits on the count. The user would be told to fix
+     * their project list, which was never the problem, while the message that
+     * would actually help them (`gh auth login`) sat one layer down. The
+     * failure is only preferred when there is genuinely nothing to sweep: a
+     * machine where four repositories resolved and a fifth timed out still
+     * gets its four.
+     */
+    if (repos.length === 0 && failure !== null) {
+      return { ok: false, error: failure };
+    }
+
+    const result = await client.sweep(repos, at);
+
+    if (!result.ok) return result;
+
+    const value = { prs: result.value, repos: repos.length };
+    last = { at, value };
+    return { ok: true, value };
+  };
+
   return {
-    async prs() {
-      const path = deps.env().PATH ?? '';
-      const { resolved } = probeCommand('gh', path);
+    prs() {
+      inflight ??= sweep().finally(() => {
+        inflight = null;
+      });
+      return inflight;
+    },
 
-      if (resolved === null) {
-        return {
-          ok: false,
-          error: {
-            kind: 'not-installed',
-            message: 'GitHub CLI (`gh`) was not found on this machine.',
-          },
-        };
-      }
-
-      if (cachedFor !== resolved || resolver === null || client === null) {
-        cachedFor = resolved;
-        resolver = createRepoResolver(resolved, deps.run);
-        client = createGithubClient(resolved, deps.run);
-      }
-
-      const { repos, failure } = await resolver.resolve(deps.config().projects);
-
-      /**
-       * A resolution failure outranks the empty list it produced.
-       *
-       * Without this, a `gh` that is not logged in reports `no-repos` — because
-       * `gh repo view` fails for every project, the list comes back empty, and
-       * the sweep short-circuits on the count. The user would be told to fix
-       * their project list, which was never the problem, while the message that
-       * would actually help them (`gh auth login`) sat one layer down. The
-       * failure is only preferred when there is genuinely nothing to sweep: a
-       * machine where four repositories resolved and a fifth timed out still
-       * gets its four.
-       */
-      if (repos.length === 0 && failure !== null) {
-        return { ok: false, error: failure };
-      }
-
-      const result = await client.sweep(repos, deps.now());
-
-      if (!result.ok) return result;
-
-      return { ok: true, value: { prs: result.value, repos: repos.length } };
+    latestPrs(maxAgeMs) {
+      return last !== null && deps.now() - last.at <= maxAgeMs ? last.value : null;
     },
 
     async resolveProjects() {
