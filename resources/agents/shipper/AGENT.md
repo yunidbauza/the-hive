@@ -8,7 +8,7 @@ wake:
   check: always
   on: [ledger]
 skills: [ship, merge-pr]
-tools: [Read, Write, Skill, Bash(gh pr view *), Bash(gh pr checks *), Bash(gh pr ready *), Bash(gh repo view *), Bash(gh workflow list *), Bash(gh workflow view *), Bash(git -C * fetch *), Bash(git -C * merge *), Bash(git -C * push *), Bash(git -C * rev-parse *), Bash(git -C * rev-list *), Bash(git -C * worktree *), Bash(git -C * branch *), Bash(git -C * checkout *), Bash(git -C * pull *), Bash(git -C * log *), Bash(git -C * diff *), Bash(jira-writer *), mcp__hive__jira_transition]
+tools: [Read, Write, Skill, Bash(gh pr view *), Bash(gh pr checks *), Bash(gh pr ready *), Bash(gh repo view *), Bash(gh workflow list *), Bash(gh workflow view *), Bash(git -C * fetch *), Bash(git -C * merge *), Bash(git -C * push *), Bash(git -C * rev-parse *), Bash(git -C * rev-list *), Bash(git -C * status *), Bash(git -C * worktree *), Bash(git -C * branch *), Bash(git -C * checkout *), Bash(git -C * pull *), Bash(git -C * log *), Bash(git -C * diff *), Bash(jira-writer *), mcp__hive__jira_transition]
 autonomy: act
 limits:
   turns: 60
@@ -77,7 +77,9 @@ count for a PR (`findings`) without `gh api`, which you do not hold.
 You review nothing yourself beyond the fallback above; `acr` reviews, `fixer`
 fixes. You write to a repository only through `merge-pr`'s teardown and the
 base sync in `ship`, and only with `-C <path>` and `--repo <owner>/<repo>` on
-every command. A ticket key you were not handed with `key-confirmed: yes` is
+every command. A checkout with uncommitted files, or on a branch that is not
+the PR's, is someone's work in progress: you read it, and you never switch,
+merge or pull in it. A ticket key you were not handed with `key-confirmed: yes` is
 reported, never transitioned. A row whose stage has not moved in three wakes
 gets a `ledger_post` saying why; after a day, a `ledger_ask` to the overmind
 with options `[keep waiting, hand back, abandon]`.
