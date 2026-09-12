@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -49,6 +49,7 @@ import {
 } from '../../../../electron/shared/metrics-contract';
 import { createLedger, type Ledger } from '../../../../electron/main/ledger';
 import { createReceiver, type Receiver } from '../../../../electron/main/hooks/receiver';
+import type { PlanToolCall } from '../../../../electron/main/plans';
 
 /**
  * Every call site below that is not exercising the ledger routes still needs
@@ -232,6 +233,7 @@ describe('hook receiver', () => {
     receiver = createReceiver({
       onCleared: (entityId) => cleared.push(entityId),
       onEvent: (event) => events.push(event),
+      onPlanTool: () => {},
       onTicketIntent: (event) => intents.push(event),
       onPromptName: (entityId, name) => promptNames.push({ entityId, name }),
       onDone: (entityId) => dones.push(entityId),
@@ -1775,6 +1777,7 @@ describe('hook receiver', () => {
       const ordered = createReceiver({
         onCleared: () => {},
         onEvent: () => order.push('status'),
+        onPlanTool: () => {},
         onTicketIntent: () => order.push('intent'),
         onPromptName: () => {},
         onDone: () => {},
@@ -2042,6 +2045,7 @@ describe('hook receiver', () => {
     const doomed = createReceiver({
     onCleared: () => {},
       onEvent: () => {},
+      onPlanTool: () => {},
       onTicketIntent: () => {},
       onPromptName: () => {},
       onDone: () => {},
@@ -2062,6 +2066,7 @@ describe('hook receiver', () => {
       onEvent: () => {
         throw new Error('listener blew up');
       },
+      onPlanTool: () => {},
       onTicketIntent: () => {},
       onPromptName: () => {},
       onDone: () => {},
@@ -2119,6 +2124,7 @@ describe('the token binds to one session (HIVE-112)', () => {
     receiver = createReceiver({
       onCleared: () => {},
       onEvent: (event) => events.push(event),
+      onPlanTool: () => {},
       onTicketIntent: () => {},
       onPromptName: () => {},
       onDone: () => {},
@@ -2188,6 +2194,7 @@ describe('the token binds to one session (HIVE-112)', () => {
       const impostor = createReceiver({
         onCleared: () => {},
         onEvent: () => {},
+        onPlanTool: () => {},
         onTicketIntent: () => {},
         onPromptName: () => {},
         onDone: () => {},
@@ -2217,8 +2224,8 @@ describe('hook receiver tokens', () => {
     // *the same* session id — the launch secret is what has to differ for
     // this to hold, since `tokenFor` is otherwise a pure function of its
     // argument (HIVE-112).
-    const a = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onPromptName: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
-    const b = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onPromptName: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
+    const a = createReceiver({ onEvent: () => {}, onCleared: () => {}, onPlanTool: () => {}, onTicketIntent: () => {}, onPromptName: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
+    const b = createReceiver({ onEvent: () => {}, onCleared: () => {}, onPlanTool: () => {}, onTicketIntent: () => {}, onPromptName: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
     expect(a.tokenFor('sess-01')).not.toBe(b.tokenFor('sess-01'));
     // Hex-encoded SHA-256, not a v4 uuid.
     expect(a.tokenFor('sess-01')).toHaveLength(64);
@@ -2226,17 +2233,17 @@ describe('hook receiver tokens', () => {
   });
 
   it('is deterministic: the same receiver and session id always agree', () => {
-    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onPromptName: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
+    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onPlanTool: () => {}, onTicketIntent: () => {}, onPromptName: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
     expect(receiver.tokenFor('sess-01')).toBe(receiver.tokenFor('sess-01'));
   });
 
   it('derives a different token for a different session id on the same receiver', () => {
-    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onPromptName: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
+    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onPlanTool: () => {}, onTicketIntent: () => {}, onPromptName: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
     expect(receiver.tokenFor('sess-01')).not.toBe(receiver.tokenFor('sess-02'));
   });
 
   it('has no url before it starts', () => {
-    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onTicketIntent: () => {}, onPromptName: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
+    const receiver = createReceiver({ onEvent: () => {}, onCleared: () => {}, onPlanTool: () => {}, onTicketIntent: () => {}, onPromptName: () => {}, onMetrics: () => {}, onDone: () => {}, onReady: () => {}, knowsSession: () => true, ...noLedger, ...noAgents });
     expect(receiver.url).toBeNull();
   });
 });
@@ -2260,6 +2267,7 @@ describe('the status line path', () => {
     receiver = createReceiver({
       onEvent: () => {},
       onCleared: () => {},
+      onPlanTool: () => {},
       onTicketIntent: () => {},
       onPromptName: () => {},
       onMetrics: (entityId, reported) => metrics.push({ entityId, reported }),
@@ -2300,6 +2308,7 @@ describe('the status line path', () => {
     const unbound = createReceiver({
       onEvent: () => {},
       onCleared: () => {},
+      onPlanTool: () => {},
       onTicketIntent: () => {},
       onPromptName: () => {},
       onMetrics: () => {},
@@ -2450,6 +2459,7 @@ describe('the agent id space (HIVE-115)', () => {
       knowsAgent: (entityId) => entityId === AGENT,
       onEvent: (event) => sessionEvents.push(event),
       onAgentEvent: (event) => agentEvents.push(event),
+      onPlanTool: () => {},
       onTicketIntent: (event) => intents.push(event),
       onPromptName: () => {},
       onCleared: (entityId) => cleared.push(entityId),
@@ -2743,6 +2753,7 @@ describe('the projects and pr routes (HIVE-173)', () => {
     receiver = createReceiver({
       knowsSession: (entityId) => entityId === CALLER,
       onEvent: () => {},
+      onPlanTool: () => {},
       onTicketIntent: () => {},
       onPromptName: () => {},
       onCleared: () => {},
@@ -2890,6 +2901,7 @@ describe('the Jira routes (HIVE-174)', () => {
     receiver = createReceiver({
       knowsSession: (entityId) => entityId === CALLER,
       onEvent: () => {},
+      onPlanTool: () => {},
       onTicketIntent: () => {},
       onPromptName: () => {},
       onCleared: () => {},
@@ -2980,6 +2992,7 @@ describe('the Jira routes (HIVE-174)', () => {
     const bare = createReceiver({
       knowsSession: (entityId) => entityId === CALLER,
       onEvent: () => {},
+      onPlanTool: () => {},
       onTicketIntent: () => {},
       onPromptName: () => {},
       onCleared: () => {},
@@ -3057,6 +3070,7 @@ describe('the agents route', () => {
       knowsAgent: () => false,
       onEvent: () => {},
       onAgentEvent: () => {},
+      onPlanTool: () => {},
       onTicketIntent: () => {},
       onPromptName: () => {},
       onCleared: () => {},
@@ -3209,6 +3223,7 @@ describe('the MCP route', () => {
     receiver = createReceiver({
       onCleared: () => {},
       onEvent: () => {},
+      onPlanTool: () => {},
       onTicketIntent: () => {},
       onPromptName: () => {},
       onDone: () => {},
@@ -3639,6 +3654,7 @@ describe('a widened bind', () => {
     widened = createReceiver({
       onCleared: () => {},
       onEvent: () => {},
+      onPlanTool: () => {},
       onTicketIntent: () => {},
       onPromptName: () => {},
       onDone: () => {},
@@ -3719,6 +3735,7 @@ describe('boundHost (HIVE-134)', () => {
     const fresh = createReceiver({
       onCleared: () => {},
       onEvent: () => {},
+      onPlanTool: () => {},
       onTicketIntent: () => {},
       onPromptName: () => {},
       onDone: () => {},
@@ -3764,6 +3781,7 @@ describe('boundHost (HIVE-134)', () => {
     const fresh = createReceiver({
       onCleared: () => {},
       onEvent: () => {},
+      onPlanTool: () => {},
       onTicketIntent: () => {},
       onPromptName: () => {},
       onDone: () => {},
@@ -3818,6 +3836,7 @@ describe('the token comparison (HIVE-134)', () => {
     receiver = createReceiver({
       onCleared: () => {},
       onEvent: (event) => events.push(event),
+      onPlanTool: () => {},
       onTicketIntent: () => {},
       onPromptName: () => {},
       onDone: () => {},
@@ -3973,6 +3992,7 @@ describe('the Origin and Host guard', () => {
     receiver = createReceiver({
       onCleared: () => {},
       onEvent: (event) => events.push(event),
+      onPlanTool: () => {},
       onTicketIntent: () => {},
       onPromptName: () => {},
       onDone: () => {},
@@ -4152,6 +4172,7 @@ describe('a diverged host alias (HIVE-134 follow-up)', () => {
     diverged = createReceiver({
       onCleared: () => {},
       onEvent: () => {},
+      onPlanTool: () => {},
       onTicketIntent: () => {},
       onPromptName: () => {},
       onDone: () => {},
@@ -4231,6 +4252,7 @@ describe('an allowlisted origin', () => {
     listed = createReceiver({
       onCleared: () => {},
       onEvent: () => {},
+      onPlanTool: () => {},
       onTicketIntent: () => {},
       onPromptName: () => {},
       onDone: () => {},
@@ -4282,5 +4304,182 @@ describe('an allowlisted origin', () => {
     );
 
     expect(response.status).toBe(403);
+  });
+});
+
+/**
+ * The plan panel's source 1 (HIVE-179): the main agent's task tools, and
+ * nothing else, reach `onPlanTool`.
+ *
+ * The receiver is a trust boundary here. A subagent's task shares the
+ * session's id space, and an agent's POST carries a name rather than a
+ * session, so both are posted from the recorded claude 2.1.269 bodies and
+ * must never arrive.
+ */
+describe('hook receiver: task tools reach onPlanTool (HIVE-179)', () => {
+  const AGENT = 'plan-probe-agent';
+
+  interface RecordedBody {
+    hook_event_name: string;
+    tool_name: string;
+    agent_id?: string;
+    cwd: string;
+    [key: string]: unknown;
+  }
+
+  const recorded: RecordedBody[] = readFileSync(
+    join(__dirname, '../../../fixtures/hooks/task-tools-2.1.269.jsonl'),
+    'utf8',
+  )
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => JSON.parse(line) as RecordedBody);
+
+  const pick = (event: string, fromSubagent: boolean): RecordedBody => {
+    const body = recorded.find(
+      (b) =>
+        b.hook_event_name === event &&
+        b.tool_name === 'TaskCreate' &&
+        (b.agent_id !== undefined) === fromSubagent,
+    );
+    if (body === undefined) throw new Error(`the fixture has no ${event} TaskCreate`);
+    return body;
+  };
+
+  let receiver: Receiver;
+  let url: string;
+  let planCalls: PlanToolCall[];
+  let events: HookStatusEvent[];
+  let throwOnPlan: boolean;
+
+  beforeEach(async () => {
+    planCalls = [];
+    events = [];
+    throwOnPlan = false;
+    receiver = createReceiver({
+      onEvent: (event) => events.push(event),
+      onCleared: () => {},
+      onTicketIntent: () => {},
+      onPlanTool: (call) => {
+        if (throwOnPlan) throw new Error('plans store broke');
+        planCalls.push(call);
+      },
+      onPromptName: () => {},
+      onMetrics: () => {},
+      onDone: () => {},
+      onReady: () => {},
+      knowsSession: (entityId) => entityId === 'sess-01',
+      ...noLedger,
+      ...noAgents,
+      knowsAgent: (entityId) => entityId === AGENT,
+    });
+    const started = await receiver.start();
+    expect(started).not.toBeNull();
+    url = started as string;
+  });
+
+  afterEach(async () => {
+    await receiver.stop();
+  });
+
+  const postAs = (entityId: string, body: unknown) =>
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [HOOK_HEADER_TOKEN]: receiver.tokenFor(entityId),
+        [HOOK_HEADER_SESSION]: entityId,
+      },
+      body: JSON.stringify(body),
+    });
+
+  it("hands the main agent's PostToolUse TaskCreate to onPlanTool", async () => {
+    const body = pick('PostToolUse', false);
+
+    const response = await postAs('sess-01', body);
+
+    expect(response.status).toBe(204);
+    expect(planCalls).toEqual([
+      {
+        entityId: 'sess-01',
+        toolName: 'TaskCreate',
+        toolInput: { subject: 'Alpha', description: 'Alpha' },
+        toolResponse: { task: { id: '1', subject: 'Alpha' } },
+        cwd: body.cwd,
+      },
+    ]);
+  });
+
+  it('replays the recorded run as five calls, none of them the subagent', async () => {
+    for (const body of recorded) await postAs('sess-01', body);
+
+    expect(planCalls.map((call) => call.toolName)).toEqual([
+      'TaskCreate',
+      'TaskCreate',
+      'TaskCreate',
+      'TaskUpdate',
+      'TaskUpdate',
+    ]);
+  });
+
+  it('ignores the PreToolUse of the same call', async () => {
+    await postAs('sess-01', pick('PreToolUse', false));
+
+    expect(planCalls).toEqual([]);
+  });
+
+  it("ignores a subagent's TaskCreate", async () => {
+    const body = pick('PostToolUse', true);
+    expect(body.agent_id).toBe('ad74678b565585bbf');
+
+    await postAs('sess-01', body);
+
+    expect(planCalls).toEqual([]);
+  });
+
+  it("never hands a POST under an agent's name to onPlanTool", async () => {
+    const response = await postAs(AGENT, pick('PostToolUse', false));
+
+    expect(response.status).toBe(204);
+    expect(planCalls).toEqual([]);
+  });
+
+  it('a truncated task-tool body is ignored, never half-read', async () => {
+    const body = {
+      ...pick('PostToolUse', false),
+      tool_input: { subject: 'Alpha', description: 'x'.repeat(70 * 1024) },
+    };
+    expect(JSON.stringify(body).length).toBeGreaterThan(HOOK_MAX_BODY_BYTES);
+
+    const response = await postAs('sess-01', body);
+
+    expect(response.status).toBe(204);
+    expect(planCalls).toEqual([]);
+  });
+
+  it('ignores a tool that is not a task tool', async () => {
+    await postAs('sess-01', {
+      ...pick('PostToolUse', false),
+      tool_name: 'Read',
+      tool_input: { file_path: '/tmp/x' },
+      tool_response: {},
+    });
+
+    expect(planCalls).toEqual([]);
+  });
+
+  it('answers and still publishes the status when onPlanTool throws', async () => {
+    throwOnPlan = true;
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const response = await postAs('sess-01', pick('PostToolUse', false));
+
+    expect(response.status).toBe(204);
+    expect(events.map((event) => event.event)).toEqual(['PostToolUse']);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('onPlanTool threw'),
+      expect.any(Error),
+    );
+    error.mockRestore();
   });
 });

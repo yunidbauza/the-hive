@@ -351,6 +351,7 @@ describe.skipIf(!RUN || CLAUDE_IMAGE === undefined)('container conformance — c
       onReady: (entityId) => {
         seen.ready.push(entityId);
       },
+      onPlanTool: () => {},
       onTicketIntent: () => undefined,
       onPromptName: () => {},
       onCleared: () => undefined,
@@ -786,6 +787,7 @@ tool it names, and nothing more. Never ask a question.
       onAgentEvent: (event) => {
         agentEvents.push(event);
       },
+      onPlanTool: () => {},
       onTicketIntent: () => {},
       onPromptName: () => {},
       onCleared: () => {},

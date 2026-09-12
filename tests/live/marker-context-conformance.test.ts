@@ -148,6 +148,7 @@ describe.skipIf(!enabled)('a marker carries its entry as context, against a real
     receiver = createReceiver({
       onEvent: (event) => arrivals.push({ at: Date.now(), event: event.event }),
       onCleared: () => {},
+      onPlanTool: () => {},
       onTicketIntent: () => {},
       onPromptName: () => {},
       onMetrics: () => {},

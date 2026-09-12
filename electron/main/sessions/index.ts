@@ -62,6 +62,7 @@ import { createStatusTracker } from '../hooks/tracker';
 import { createPtyIpc, type PtyIpc, type ResumeResult } from '../ipc/pty';
 import type { SurfaceId } from '../ipc/surfaces';
 import type { McpRuntime } from '../mcp';
+import { createPlans } from '../plans';
 import type { PtyHostSupervisor } from '../pty-host/supervisor';
 import type { SkillsRuntime } from '../skills';
 
@@ -539,6 +540,9 @@ export function createSessions(options: SessionsOptions): Sessions {
     onJira,
     onAgentTurnEnded,
   } = options;
+
+  /** Every session's plan (HIVE-179). Main owns the rules; the renderer mirrors them. */
+  const plans = createPlans({ send });
 
   const registry: SessionRegistry = createSessionRegistry();
   /**
@@ -1118,6 +1122,8 @@ export function createSessions(options: SessionsOptions): Sessions {
         keys: [event.key],
         source: event.source,
       } satisfies SessionTicketIntentEvent),
+    // The plan panel's source 1 (HIVE-179); the receiver already filtered.
+    onPlanTool: (call) => plans.onTool(call),
     /**
      * The first prompt named the session (first-prompt naming).
      *

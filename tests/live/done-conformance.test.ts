@@ -109,6 +109,7 @@ describe.skipIf(!enabled)('/done conformance', () => {
     declared = [];
     receiver = createReceiver({
       onEvent: () => {},
+      onPlanTool: () => {},
       onTicketIntent: () => {},
       onPromptName: () => {},
       onCleared: () => {},

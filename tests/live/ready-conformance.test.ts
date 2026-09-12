@@ -75,6 +75,7 @@ describe.skipIf(!enabled)('ready-signal conformance', () => {
     const receiver = createReceiver({
       onEvent: () => {},
       onCleared: () => {},
+      onPlanTool: () => {},
       onTicketIntent: () => {},
       onPromptName: () => {},
       onMetrics: () => {},

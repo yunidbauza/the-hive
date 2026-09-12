@@ -130,6 +130,7 @@ describe.skipIf(!RUN)('the hive MCP endpoint over HTTP, against a real claude', 
       onAgentEvent: () => undefined,
       // Not exercised by this test: every other route the receiver serves.
       onEvent: () => undefined,
+      onPlanTool: () => {},
       onTicketIntent: () => undefined,
       onPromptName: () => {},
       onCleared: () => undefined,
