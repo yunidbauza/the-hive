@@ -799,3 +799,76 @@ describe('CenterStage — terminals', () => {
     expect(useUiStore.getState().activeTab).toBe(id);
   });
 });
+
+/**
+ * The plan rail (HIVE-181): mounted beside the terminal region for a session
+ * with a plan, in the terminal view only, and pinned through appearance-store.
+ */
+describe('CenterStage — the plan rail (HIVE-181)', () => {
+  const plan = (taskCount = 2) => ({
+    entityId: 'hero-refresh',
+    source: 'task-tools' as const,
+    allDone: false,
+    tasks: Array.from({ length: taskCount }, (_, index) => ({
+      id: String(index + 1),
+      title: `Task ${String(index + 1)}`,
+      status: 'pending' as const,
+    })),
+  });
+
+  beforeEach(() => {
+    useHiveStore.getState().reset();
+    seedDemoFleet();
+    useUiStore.getState().reset();
+    useAppearanceStore.getState().setPlanPinned(false);
+    resetTerminalInstances();
+    resetFitAddonInstances();
+    resetWebLinksAddonInstances();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("shows the rail beside the terminal for a session with a plan", () => {
+    act(() => useHiveStore.getState().setPlan('hero-refresh', plan()));
+    render(<CenterStage />);
+    act(() => useUiStore.getState().openTab('hero-refresh'));
+
+    expect(screen.getByRole('button', { name: 'Plan, 0 of 2 done' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Plan' })).toBeInTheDocument();
+  });
+
+  it('shows nothing for a session with no plan, or a plan with no tasks', () => {
+    render(<CenterStage />);
+    act(() => useUiStore.getState().openTab('hero-refresh'));
+
+    expect(screen.queryByRole('region', { name: 'Plan' })).toBeNull();
+
+    act(() => useHiveStore.getState().setPlan('hero-refresh', plan(0)));
+
+    expect(screen.queryByRole('region', { name: 'Plan' })).toBeNull();
+  });
+
+  it('shows nothing on the overmind or an agent, whatever plans exist', () => {
+    act(() => useHiveStore.getState().setPlan('hero-refresh', plan()));
+    render(<CenterStage />);
+
+    expect(screen.queryByRole('region', { name: 'Plan' })).toBeNull();
+
+    act(() => useUiStore.getState().openTab('slack-agent'));
+
+    expect(screen.queryByRole('region', { name: 'Plan' })).toBeNull();
+  });
+
+  it('pins the drawer through appearance-store', async () => {
+    act(() => useHiveStore.getState().setPlan('hero-refresh', plan()));
+    render(<CenterStage />);
+    act(() => useUiStore.getState().openTab('hero-refresh'));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Pin plan' }));
+
+    expect(useAppearanceStore.getState().planPinned).toBe(true);
+    expect(screen.getByRole('button', { name: 'Unpin plan' })).toHaveAttribute('aria-pressed', 'true');
+  });
+});

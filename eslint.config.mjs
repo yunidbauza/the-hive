@@ -24,6 +24,7 @@ const FEATURE_SLICES = [
   'explorer',
   'inbox',
   'orchestrator',
+  'plan',
   'projects',
   'pull-requests',
   'sessions',

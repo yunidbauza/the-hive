@@ -383,6 +383,30 @@ editor is the other way round — it is unmounted when nothing is open, because
 `editor-store` still holds the text and a hidden editor would keep a document
 and a `ResizeObserver` alive to show nothing.
 
+## The plan rail
+
+A session's plan (HIVE-178) is drawn by `PlanRail`, a 34px rail at the
+terminal's right edge. It is a **sibling of the terminal region, never a child**:
+`center-stage.tsx` wraps the region in a flex row and mounts the rail as the
+row's second child, for a session in a terminal view whose plan has at least
+one task. That row, not the region, now carries the fleet table's floor and the
+agent view's `hidden`, because it is the column's flex child.
+
+The `plan` slice is **props only**. The composition root reads `usePlan` and the
+pin (`usePlanPinned`, `useSetPlanPinned` from `appearance-store`) and passes
+them down; nothing under `src/features/plan/` reads a store.
+
+**Peek is CSS, pin is layout.** At rest the rail is one button, labelled with
+the whole summary ("Plan, 3 of 7 done"), so its rings are hidden from assistive
+tech rather than read twice. Hovering or focusing it shows a 232px drawer —
+`absolute right-full` over the terminal, revealed by `group-hover` and
+`group-focus-within` — so the terminal's box never changes size and xterm never
+refits. Pinning makes the rail itself 232px wide, which the terminal region's
+existing `ResizeObserver` answers with exactly one refit;
+`tests/e2e/electron/plan-rail.spec.ts` counts both (zero on peek, one on pin),
+because happy-dom lays nothing out. The width change animates under
+`motion-safe:` only, and so does the in-progress ring's `ccpulse`.
+
 ## Not built yet
 
 Keyboard navigation beyond the global chords in `src/hooks/use-app-chords.ts`,
