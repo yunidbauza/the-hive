@@ -400,7 +400,7 @@ test('the columns hold together at the minimum window with a resumable row', asy
  *
  * The **alignment** half of this column's claim is not here — it is in the test
  * above, which drives the case that actually breaks it: the minimum window with
- * a Resume column, where `LAST USED` is one more `shrink-0` term in the 396px
+ * a Resume column, where `LAST USED` is one more `shrink-0` term in the 440px
  * threshold. Asserting alignment on a fresh profile would be asserting the
  * first test again under a different name.
  */

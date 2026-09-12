@@ -383,7 +383,7 @@ export function SessionTable() {
         </span>
         {/*
           A third measurement handle. `LAST USED` is a `shrink-0` cell, so it is
-          a term in the 396px threshold above rather than something that gives
+          a term in the 440px threshold above rather than something that gives
           way — which makes it exactly the kind of column that takes the ones to
           its right with it when it is re-sized by someone who has not read the
           arithmetic.
