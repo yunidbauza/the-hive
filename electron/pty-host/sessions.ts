@@ -15,6 +15,8 @@ export interface SessionOperations {
   spawn(command: SpawnCommand, emit: (message: HostMessage) => void): void;
   write(sessionId: string, data: string): void;
   resize(sessionId: string, cols: number, rows: number): void;
+  /** Raise SIGWINCH at the current size: a row off and straight back. */
+  refresh(sessionId: string): void;
   kill(sessionId: string, signal?: string): void;
   /**
    * Stop / start reading the pty's fd (story 093).

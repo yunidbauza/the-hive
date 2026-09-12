@@ -375,6 +375,14 @@ export interface Sessions {
    */
   write(entityId: string, data: string): boolean;
   resize(entityId: string, cols: number, rows: number): void;
+  /**
+   * Make Claude re-read its size: SIGWINCH at the size it already has.
+   *
+   * For a Claude Code that took a zero size at startup or across a sleep and
+   * drew itself at 80×24 since. A no-op for terminals and clones, and for an
+   * entity with no live session.
+   */
+  refresh(entityId: string): void;
   ack(entityId: string, seq: number, surfaceId?: SurfaceId): void;
   /** A surface went away: release whatever it was holding (HIVE-145). */
   releaseSurface(surfaceId: SurfaceId): void;
@@ -1978,6 +1986,22 @@ export function createSessions(options: SessionsOptions): Sessions {
   }
 
   /**
+   * A size the renderer reported before its entity's pty existed. See `resize`.
+   *
+   * Kept across a refused spawn (at capacity, host blocked) on purpose: the
+   * surface is still mounted at an unchanged size, so no fresh measure follows
+   * a retry, and the spawn request itself only ever carries the transport's
+   * 80×24 placeholder. Dropping the entry here would spawn the retry at the
+   * very size this map exists to replace. Never stale, because every later
+   * resize overwrites it.
+   *
+   * ponytail: an entity refused and then abandoned leaves one entry that is
+   * never evicted — two numbers per id the user created. Evict on entity
+   * removal if main ever learns of one.
+   */
+  const sizeBeforeSpawn = new Map<string, { cols: number; rows: number }>();
+
+  /**
    * Mint a session id and start a process. The one place a PTY is spawned.
    *
    * Both entry points funnel through here so there is no second way to start
@@ -2012,6 +2036,9 @@ export function createSessions(options: SessionsOptions): Sessions {
     }
 
     const sessionId = registry.open(request.entityId);
+    // The size the renderer measured while this spawn was still on its way.
+    const size = sizeBeforeSpawn.get(request.entityId);
+    sizeBeforeSpawn.delete(request.entityId);
 
     ptyIpc.spawn({
       sessionId,
@@ -2038,8 +2065,7 @@ export function createSessions(options: SessionsOptions): Sessions {
        * environment.
        */
       ...(request.stripEnv === undefined ? {} : { stripEnv: request.stripEnv }),
-      cols: request.cols,
-      rows: request.rows,
+      ...(size ?? { cols: request.cols, rows: request.rows }),
       ...(request.foreground === true ? { foreground: true } : {}),
     });
   }
@@ -2646,8 +2672,24 @@ export function createSessions(options: SessionsOptions): Sessions {
 
     resize(entityId, cols, rows) {
       const sessionId = registry.sessionFor(entityId);
-      if (sessionId === undefined) return;
+      /**
+       * Kept, not dropped, for the spawn that has not happened yet. The
+       * renderer measures on mount, and `ptySpawn` awaits the login env, the
+       * skills sync and the MCP start before it opens anything — a measure
+       * dropped there left the pty at the 80×24 spawn default for good.
+       */
+      if (sessionId === undefined) {
+        sizeBeforeSpawn.set(entityId, { cols, rows });
+        return;
+      }
       ptyIpc.resize(sessionId, cols, rows);
+    },
+
+    refresh(entityId) {
+      if (terminalEntities.has(entityId) || commandEntities.has(entityId)) return;
+      const sessionId = registry.sessionFor(entityId);
+      if (sessionId === undefined) return;
+      ptyIpc.refresh(sessionId);
     },
 
     ack(entityId, seq, surfaceId) {

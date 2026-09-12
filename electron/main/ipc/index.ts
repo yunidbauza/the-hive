@@ -206,6 +206,7 @@ import { diagnoseEnv } from '../config/env-diagnostic';
 import { loginEnvStatus } from '../config/login-env';
 import { serverBindRefusal } from '../config/parse';
 import { diagnoseCommand, effectiveRuntime, receiverHostAliases } from '../config/runtime';
+import { onDisplayWake } from '../display-wake';
 import {
   browseHomeDirectory,
   createFsWatchLayer,
@@ -727,6 +728,8 @@ let remoteListener: ReturnType<typeof createRemoteListener> | null = null;
 let remoteListenerPort: number | null = null;
 
 let sessions: Sessions | null = null;
+/** Releases the wake subscription `registerIpcHandlers` makes for `sessions`. */
+let stopDisplayWake: (() => void) | null = null;
 /**
  * The session history (HIVE-87), or `null` before registration.
  *
@@ -2999,7 +3002,11 @@ export function registerIpcHandlers(
       coming free mid-life, and a session coming back at all.
     */
     onIdle: (entityId) => deliver.onIdle(entityId),
-    onReady: (entityId) => deliver.onReady(entityId),
+    onReady: (entityId) => {
+      deliver.onReady(entityId);
+      // Claude can come up believing it is 80×24; a SIGWINCH now makes it look.
+      sessions?.refresh(entityId);
+    },
     // HIVE-167: the asks that were waiting on this terminal go to the inbox.
     onEnded: (entityId) => redirectOpenAsks(entityId),
     /*
@@ -3080,6 +3087,15 @@ export function registerIpcHandlers(
       late Stop from arming the watchdog on the next run under the same name.
     */
     onAgentTurnEnded: (name, sessionUuid) => runs?.noteTurnEnded(name, sessionUuid),
+  });
+
+  /*
+    A wake, or a display coming back, is when Claude Code loses its size and
+    sits at 80×24 until the window is dragged. Every live session gets the drag.
+  */
+  stopDisplayWake?.();
+  stopDisplayWake = onDisplayWake(() => {
+    for (const entityId of sessions?.entities() ?? []) sessions?.refresh(entityId);
   });
 
   /**
@@ -5194,6 +5210,8 @@ export function resetIpcHandlers(options: { flush?: boolean } = {}): void {
     exercises it on every teardown.
   */
   bindings.unbindAll();
+  stopDisplayWake?.();
+  stopDisplayWake = null;
   sessions?.dispose();
   sessions = null;
   cloneFlow?.dispose();
