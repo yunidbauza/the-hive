@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { spawn as spawnProcess, type SpawnOptions } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -197,6 +197,8 @@ const ASKER = 'probe-asker';
 const RESPONDER = 'probe-responder';
 /** The builder's shape (HIVE-170): asks the party the job named, not the overmind. */
 const REPLYTO = 'probe-replyto';
+/** The builder's step 4, verbatim (HIVE-180): posts each task's start and commit in the ask's thread. */
+const BUILDSTEP = 'probe-buildstep';
 
 /**
  * The agent whose `tools:` does not include `Bash` (HIVE-119).
@@ -347,6 +349,7 @@ const AGENTS = [
   NAME,
   ASKER,
   REPLYTO,
+  BUILDSTEP,
   RESPONDER,
   FENCE,
   INTERVAL,
@@ -610,6 +613,53 @@ Read your ledger inbox, then do exactly one of these and end your turn:
   \`meta.intent\` set to "answer <the id of the ask you took> when told".
 
 Never address the overmind unless the reply-to line says so. Say nothing else.
+`;
+
+/**
+ * The shipped builder's step 4, read off `resources/agents/builder/AGENT.md`
+ * rather than copied here (HIVE-180), so this suite goes red on any wording
+ * of that step that stops asking for the posts the plan panel reads.
+ */
+const BUILDER_STEP_4 = ((): string => {
+  const text = readFileSync(join(process.cwd(), 'resources/agents/builder/AGENT.md'), 'utf8');
+  const step = /^4\. [\s\S]*?(?=^5\. )/m.exec(text)?.[0];
+  if (step === undefined) throw new Error('resources/agents/builder/AGENT.md has no step 4');
+  return step.trim();
+})();
+
+/**
+ * The builder's task progress (HIVE-180): a one-task plan that needs no
+ * work, and the builder's own step 4 as the only instruction about what to
+ * post. Nothing in this body names `thread` or `state`; whatever the posts
+ * carry, they carry because step 4 said so.
+ */
+const BUILDSTEP_MD = `---
+name: ${BUILDSTEP}
+description: Follows the builder's step 4 on a one-task plan, then answers.
+icon: Ghost
+model: haiku
+wake:
+  on: [ledger]
+tools: [TodoWrite]
+limits:
+  turns: 10
+  rotate_after: 50
+---
+This is a conformance probe. Do not read files, search the disk, or run
+commands — there is nothing here to find, and no skill to invoke.
+
+Your job is the oldest open ask addressed to you. The plan it names has
+exactly one task, task 1, and it needs no work: treat task 1 as started, then
+as committed, at once. The drift check and \`hive:execute\` are not available
+here; skip them. Use \`ticket: HIVE-000\`, \`worktree: /tmp/probe-worktree\` and
+\`checkout: /tmp/probe-checkout\` wherever a step asks for them.
+
+Carry out this step from your instructions, for task 1 only:
+
+${BUILDER_STEP_4}
+
+Then call \`ledger_answer\` on that ask with the body "probe built" and end
+your turn. Say nothing else.
 `;
 
 /**
@@ -914,6 +964,7 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       [NAME, AGENT_MD],
       [ASKER, ASKER_MD],
       [REPLYTO, REPLYTO_MD],
+      [BUILDSTEP, BUILDSTEP_MD],
       [RESPONDER, RESPONDER_MD],
       [FENCE, fenceMd(marker)],
       [INTERVAL, INTERVAL_MD],
@@ -1715,6 +1766,46 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
     );
     expect(closes).toHaveLength(1);
     expect(closes[0]?.['to']).toBe(SESSION);
+  }, 300_000);
+
+  /**
+   * The builder's task progress (HIVE-180), from the shipped step 4.
+   *
+   * The plan panel links a build by the ask's id and ticks it from two posts
+   * per task, both in the ask's thread: one when the task starts
+   * (`state: "started"`), one when its commit lands. A post without `thread`
+   * is invisible to it, which is what the old wording produced.
+   */
+  it("posts each task's start and its commit in the build ask's thread (HIVE-180)", async () => {
+    const woken = settled(BUILDSTEP);
+    const job = ledger.append({
+      from: SESSION,
+      to: BUILDSTEP,
+      kind: 'ask',
+      body: 'Build HIVE-000: a probe\nticket: HIVE-000\nplan: .hive/plans/p.md',
+      meta: { ticket: 'HIVE-000', stage: 'build', plan: '.hive/plans/p.md' },
+    });
+    expect(job.ok).toBe(true);
+    await woken;
+
+    const jobId = job.ok ? job.id : '';
+    const posts = (await onDisk()).filter(
+      (entry) => entry['from'] === BUILDSTEP && entry['kind'] === 'post',
+    );
+    const metaOf = (entry: Record<string, unknown>) =>
+      (entry['meta'] ?? {}) as Record<string, unknown>;
+    const tick = (state: string | undefined) =>
+      posts.findIndex(
+        (entry) =>
+          entry['thread'] === jobId &&
+          metaOf(entry)['stage'] === 'build' &&
+          metaOf(entry)['task'] === 1 &&
+          metaOf(entry)['state'] === state,
+      );
+    const what = `the probe posted: ${JSON.stringify(posts)}`;
+
+    expect(tick('started'), what).toBeGreaterThanOrEqual(0);
+    expect(tick(undefined), what).toBeGreaterThan(tick('started'));
   }, 300_000);
 
   /**
