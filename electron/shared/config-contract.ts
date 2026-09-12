@@ -2425,3 +2425,41 @@ export interface CloneDoneEvent {
   reason: string | null;
   snapshot: ConfigSnapshot;
 }
+
+/**
+ * The receiver route the projects directory is served on (HIVE-173).
+ *
+ * Its own path for the reason `AGENTS_PATH` has one: the route set is closed
+ * and each entry carries a body cap sized to the document it expects. This one
+ * reads no body at all.
+ */
+export const PROJECTS_PATH = '/projects';
+
+/**
+ * One project, as an **agent** sees it (HIVE-173).
+ *
+ * A projection of {@link ProjectConfig}, not the record itself: `env`, `shell`
+ * and `claudeCommand` are the user's machine, and an agent asking "where is
+ * the-hive" has no business with any of them. `autoMerge` is here because the
+ * shipper reads it as consent (HIVE-166), and `container.workspace` because a
+ * containerised project's checkout has two addresses and a shell command needs
+ * the right one.
+ */
+export interface ProjectsDirectoryEntry {
+  id: string;
+  /** The short alias a person types; an ask body may use it in place of the path. */
+  key: string;
+  name: string;
+  /** The host checkout, or `null` when this machine does not have it. */
+  path: string | null;
+  status: ProjectStatus;
+  origin: ProjectOrigin;
+  autoMerge: boolean;
+  /** Where the checkout is mounted inside the container, when there is one. */
+  container?: { workspace: string };
+}
+
+/** What {@link PROJECTS_PATH} answers. */
+export interface ProjectsDirectory {
+  projects: ProjectsDirectoryEntry[];
+}

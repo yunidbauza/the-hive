@@ -238,6 +238,9 @@ describe.skipIf(!RUN)('the hive MCP endpoint over HTTP, against a real claude', 
       'ledger_failed',
       'ledger_handoff',
       'agents',
+      // HIVE-173. The two workflow lookups, served beside the directory.
+      'projects',
+      'pr',
     ]) {
       expect(out).toContain(`mcp__hive__${name}`);
     }

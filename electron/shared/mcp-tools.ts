@@ -1,6 +1,6 @@
 import type { LedgerKind, LedgerReadQuery } from './ledger-contract';
 import { asInbound } from './ledger-derive';
-import { AGENTS_TOOL, APPROVE_TOOL, LEDGER_TOOLS } from './ledger-tools';
+import { AGENTS_TOOL, APPROVE_TOOL, LEDGER_TOOLS, PR_TOOL, PROJECTS_TOOL } from './ledger-tools';
 import {
   LEDGER_READ_DEFAULT_LIMIT,
   ReceiverError,
@@ -259,6 +259,62 @@ export function createToolHandlers(
     );
   };
 
+  /** The projects directory (HIVE-173), prose and structured, like `agents`. */
+  const projects = async (): Promise<CallToolResult> => {
+    const directory = await client.projects();
+
+    if (directory.projects.length === 0) {
+      return ok(
+        'No projects are configured in The Hive. Ask for an absolute checkout path instead of a project name.',
+        { projects: [] },
+      );
+    }
+
+    const lines = directory.projects.map((project) => {
+      const where = project.path === null ? `not on this machine (${project.status})` : project.path;
+      const notes = [
+        project.autoMerge ? 'auto-merge on' : 'auto-merge off',
+        ...(project.container === undefined
+          ? []
+          : [`in a container, checkout mounted at ${project.container.workspace}`]),
+      ];
+      return `- ${project.id} (key ${project.key}, "${project.name}") — ${where} [${notes.join('; ')}]`;
+    });
+
+    return ok(`${directory.projects.length} project(s) configured:\n${lines.join('\n')}`, {
+      projects: directory.projects,
+    });
+  };
+
+  /** One PR record (HIVE-173). A missing record is an answer, not an error. */
+  const pr = async (args: Record<string, unknown>): Promise<CallToolResult> => {
+    const repo = stringArg(args, 'repo');
+    const number = args['number'];
+    if (
+      repo === undefined ||
+      typeof number !== 'number' ||
+      !Number.isInteger(number) ||
+      number < 1
+    ) {
+      return failed('pr needs repo (owner/name) and number (a positive integer)');
+    }
+
+    const reply = await client.pr({ repo, number });
+    if (reply.pr === null) {
+      const reason = reply.reason ?? 'not in the sweep';
+      return ok(
+        `No record of ${repo}#${number}: ${reason}. The sweep lists PRs you authored, open or merged in the last day, on configured projects only.`,
+        { pr: null, reason },
+      );
+    }
+
+    const record = reply.pr;
+    return ok(
+      `${repo}#${number} "${record.title}" — ${record.state}; ${record.findings} unresolved review thread(s); checks ${record.checks}; branch ${record.branch}; updated ${record.updatedAt}; ${record.url}`,
+      { pr: record },
+    );
+  };
+
   const claim = async (args: Record<string, unknown>): Promise<CallToolResult> => {
     const task = stringArg(args, 'task');
     if (task === undefined) return failed('ledger_claim needs a task');
@@ -448,7 +504,13 @@ export function createToolHandlers(
   return {
     // `approve` stays last: the tools a model is meant to call come first, and
     // that one is only ever reached by the CLI on its behalf.
-    listTools: (): readonly McpToolDefinition[] => [...LEDGER_TOOLS, AGENTS_TOOL, APPROVE_TOOL],
+    listTools: (): readonly McpToolDefinition[] => [
+      ...LEDGER_TOOLS,
+      AGENTS_TOOL,
+      PROJECTS_TOOL,
+      PR_TOOL,
+      APPROVE_TOOL,
+    ],
 
     async callTool(name, args): Promise<CallToolResult> {
       // `approve` must never surface as `isError` or throw — the CLI can only
@@ -469,6 +531,10 @@ export function createToolHandlers(
         switch (name) {
           case 'agents':
             return await agents();
+          case 'projects':
+            return await projects();
+          case 'pr':
+            return await pr(args);
           case 'ledger_read':
             return await read(args);
           case 'ledger_post':

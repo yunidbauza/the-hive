@@ -19,6 +19,11 @@ import {
   type AgentsDirectoryEntry,
   type AgentsSnapshot,
 } from '@shared/agent-contract';
+import type {
+  ConfigSnapshot,
+  ProjectsDirectory,
+  ProjectsDirectoryEntry,
+} from '@shared/config-contract';
 
 import { mergeRunState } from './summary';
 
@@ -63,4 +68,31 @@ export function agentsDirectoryFor(
     .sort((a, b) => a.name.localeCompare(b.name));
 
   return { agents };
+}
+
+/**
+ * The config's projects as an agent may see them (HIVE-173).
+ *
+ * A whitelist written field by field, as {@link agentsDirectoryFor} is: `env`,
+ * `shell` and `claudeCommand` never cross, and a field added to
+ * `ProjectConfig` later is ignored until someone decides an agent may see it.
+ */
+export function projectsDirectoryFor(snapshot: ConfigSnapshot): ProjectsDirectory {
+  const projects = snapshot.projects.map((project): ProjectsDirectoryEntry => {
+    const entry: ProjectsDirectoryEntry = {
+      id: project.id,
+      key: project.key,
+      name: project.name,
+      path: project.path,
+      status: project.status,
+      origin: project.origin,
+      autoMerge: project.autoMerge === true,
+    };
+    if (project.container !== undefined) {
+      entry.container = { workspace: project.container.workspace };
+    }
+    return entry;
+  });
+
+  return { projects };
 }

@@ -11,6 +11,11 @@ import {
   type AgentsDirectory,
 } from '../../../../electron/shared/agent-contract';
 import {
+  PROJECTS_PATH,
+  type ProjectsDirectory,
+} from '../../../../electron/shared/config-contract';
+import { PR_PATH, type PrLookupReply } from '../../../../electron/shared/github-contract';
+import {
   HOOK_HEADER_RUN,
   HOOK_HEADER_SESSION,
   HOOK_HEADER_TOKEN,
@@ -138,6 +143,21 @@ const ROUTES: {
     name: '/agents',
     url: (r) => `${r.origin as string}${AGENTS_PATH}`,
     body: {},
+    ok: 200,
+    refused: 403,
+  },
+  // HIVE-173: both answer their honest defaults when nothing is wired.
+  {
+    name: '/projects',
+    url: (r) => `${r.origin as string}${PROJECTS_PATH}`,
+    body: {},
+    ok: 200,
+    refused: 403,
+  },
+  {
+    name: '/pr',
+    url: (r) => `${r.origin as string}${PR_PATH}`,
+    body: { repo: 'acme/nova', number: 1 },
     ok: 200,
     refused: 403,
   },
@@ -2667,6 +2687,148 @@ describe('the agent id space (HIVE-115)', () => {
  * one exercising an **async** route handler, which is the change to this
  * server that every other route on it now rides through.
  */
+describe('the projects and pr routes (HIVE-173)', () => {
+  const CALLER = 'shipper';
+  const PROJECT = {
+    id: 'the-hive',
+    key: 'hive',
+    name: 'The Hive',
+    path: '/repos/the-hive',
+    status: 'ok' as const,
+    origin: 'local' as const,
+    autoMerge: true,
+  };
+  const RECORD = {
+    number: 214,
+    title: 'feat: a thing',
+    url: 'https://github.com/acme/the-hive/pull/214',
+    repo: 'the-hive',
+    owner: 'acme',
+    branch: 'feat/thing',
+    state: 'open' as const,
+    findings: 2,
+    checks: 'passing' as const,
+    updatedAt: '2026-09-11T10:00:00Z',
+  };
+
+  let receiver: Receiver;
+  let url: string;
+  let seen: { caller: string; lookup?: unknown }[];
+  let failNext: boolean;
+
+  beforeEach(async () => {
+    seen = [];
+    failNext = false;
+    receiver = createReceiver({
+      knowsSession: (entityId) => entityId === CALLER,
+      onEvent: () => {},
+      onTicketIntent: () => {},
+      onPromptName: () => {},
+      onCleared: () => {},
+      onDone: () => {},
+      onReady: () => {},
+      onMetrics: () => {},
+      ...noLedger,
+      ...noAgents,
+      onProjectsList: (caller): ProjectsDirectory => {
+        seen.push({ caller });
+        return { projects: [PROJECT] };
+      },
+      onPrLookup: (caller, lookup): Promise<PrLookupReply> => {
+        seen.push({ caller, lookup });
+        if (failNext) return Promise.reject(new Error('spawn gh EACCES /Users/someone/bin/gh'));
+        return Promise.resolve(lookup.number === RECORD.number ? { pr: RECORD } : { pr: null, reason: 'not in the sweep' });
+      },
+    });
+    const started = await receiver.start();
+    expect(started).not.toBeNull();
+    url = started as string;
+  });
+
+  afterEach(async () => {
+    await receiver.stop();
+  });
+
+  const origin = () => new URL(url).origin;
+
+  const post = (path: string, body: string, headers: Record<string, string>) =>
+    fetch(`${origin()}${path}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [HOOK_HEADER_TOKEN]: receiver.tokenFor(headers[HOOK_HEADER_SESSION] ?? ''),
+        ...headers,
+      },
+      body,
+    });
+
+  it('answers the projects directory to an authenticated caller, reading no body', async () => {
+    const response = await post(PROJECTS_PATH, JSON.stringify({ caller: 'overmind' }), { [HOOK_HEADER_SESSION]: CALLER });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ projects: [PROJECT] });
+    expect(seen).toEqual([{ caller: CALLER }]);
+  });
+
+  it('answers a PR record for a well-formed lookup, and a reasoned null for an unknown one', async () => {
+    const found = await post(PR_PATH, JSON.stringify({ repo: 'acme/the-hive', number: 214 }), { [HOOK_HEADER_SESSION]: CALLER });
+    expect(found.status).toBe(200);
+    expect(await found.json()).toEqual({ pr: RECORD });
+
+    const missing = await post(PR_PATH, JSON.stringify({ repo: 'acme/the-hive', number: 9 }), { [HOOK_HEADER_SESSION]: CALLER });
+    expect(missing.status).toBe(200);
+    expect(await missing.json()).toEqual({ pr: null, reason: 'not in the sweep' });
+    expect(seen).toEqual([
+      { caller: CALLER, lookup: { repo: 'acme/the-hive', number: 214 } },
+      { caller: CALLER, lookup: { repo: 'acme/the-hive', number: 9 } },
+    ]);
+  });
+
+  it('refuses a malformed lookup with 400 and a reason the model can act on, calling nothing', async () => {
+    const response = await post(PR_PATH, JSON.stringify({ repo: 'the-hive', number: 214 }), { [HOOK_HEADER_SESSION]: CALLER });
+    const body = (await response.json()) as { reason: string };
+
+    expect(response.status).toBe(400);
+    expect(body.reason).toMatch(/owner\/name/);
+    expect(seen).toEqual([]);
+  });
+
+  it('refuses a body over the cap with 413', async () => {
+    const response = await post(
+      PR_PATH,
+      JSON.stringify({ repo: 'acme/the-hive', number: 214, padding: 'x'.repeat(600) }),
+      { [HOOK_HEADER_SESSION]: CALLER },
+    );
+
+    expect(response.status).toBe(413);
+    expect(seen).toEqual([]);
+  });
+
+  it('answers 500 with a fixed sentence when the lookup throws, never the error text', async () => {
+    failNext = true;
+    const response = await post(PR_PATH, JSON.stringify({ repo: 'acme/the-hive', number: 214 }), { [HOOK_HEADER_SESSION]: CALLER });
+    const body = (await response.json()) as { reason: string };
+
+    expect(response.status).toBe(500);
+    expect(body.reason).toBe('the pull request could not be looked up');
+    expect(body.reason).not.toContain('/Users');
+  });
+
+  it('refuses an unknown id and a foreign token on both routes', async () => {
+    for (const path of [PROJECTS_PATH, PR_PATH]) {
+      const unknown = await post(path, '{}', { [HOOK_HEADER_SESSION]: 'nobody-at-all' });
+      expect(unknown.status).toBe(404);
+      const foreign = await fetch(`${origin()}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', [HOOK_HEADER_TOKEN]: 'not-mine', [HOOK_HEADER_SESSION]: CALLER },
+        body: '{}',
+      });
+      expect(foreign.status).toBe(403);
+    }
+    expect(seen).toEqual([]);
+  });
+});
+
 describe('the agents route', () => {
   const CALLER = 'scout';
 

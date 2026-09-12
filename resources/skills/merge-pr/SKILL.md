@@ -96,8 +96,9 @@ then `gh pr checks <N> --repo <owner>/<repo>`, then `git -C <workspace> rev-pars
 apply. Unresolved review threads are not in this reading: the fixer's last
 `clean` answer, which `review-pr-findings` gives only with zero unresolved
 threads, stands for them, and `ship` never reaches this stage without it.
-(HIVE-173 adds `mcp__hive__pr` for a contemporaneous count from the Hive's
-own sweep.)
+The shipper also reads `mcp__hive__pr { repo, number }` in the same round:
+its `findings` is the Hive's own count of unresolved threads from the last
+sweep, and a non-zero count there is a HOLD line.
 
 **In a session.** One GraphQL reading of every blocker, raw, plus the
 workspace head read in the call right after. No `--jq` here: a jq program is

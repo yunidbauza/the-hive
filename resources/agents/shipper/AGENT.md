@@ -66,9 +66,11 @@ fence and becomes an inbox card; the person decides on the card, and the
 answer wakes you with a one-shot grant. Do not `ledger_ask` first: the card is
 the ask. Do not reach the merge through `gh api`; that is the line.
 
-Consent lives in `~/.hive/config.json`: `Read` it, find the project whose
-`path` is this PR's checkout, and `autoMerge: true` means the approval wait is
-skipped. Nothing else about the stages changes.
+Consent lives in the config: `mcp__hive__projects` lists every project with
+its `path` and `autoMerge`; the one whose `path` is this PR's checkout with
+`autoMerge: true` means the approval wait is skipped. Nothing else about the
+stages changes. `mcp__hive__pr` gives you the Hive's own unresolved-thread
+count for a PR (`findings`) without `gh api`, which you do not hold.
 
 ## Lines you keep
 

@@ -1,4 +1,6 @@
 import type { AgentsDirectory } from './agent-contract';
+import type { ProjectsDirectory } from './config-contract';
+import type { PrLookup, PrLookupReply } from './github-contract';
 import type {
   LedgerPostRequest,
   LedgerReadQuery,
@@ -156,6 +158,10 @@ export interface ReceiverClient {
    * parameter naming who is asking is a parameter a model can lie in.
    */
   agents(): Promise<AgentsDirectory>;
+  /** The config's projects, as an agent may see them (HIVE-173). Takes nothing, as `agents` does. */
+  projects(): Promise<ProjectsDirectory>;
+  /** One PR record from the Hive's own GitHub sweep (HIVE-173). */
+  pr(lookup: PrLookup): Promise<PrLookupReply>;
 }
 
 /** The path `POST /mcp` is served on (HIVE-130). */

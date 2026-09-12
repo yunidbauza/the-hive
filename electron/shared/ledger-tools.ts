@@ -321,6 +321,42 @@ export const APPROVE_TOOL: McpToolDefinition = {
  * so there is nothing to pass. A parameter naming who is asking is a parameter
  * a model can lie in.
  */
+/**
+ * The projects directory (HIVE-173): what the config maps, so an ask body can
+ * say `the-hive` and the agent can turn it into a checkout path and a consent
+ * flag without reading `~/.hive/config.json` itself. No arguments, for
+ * {@link AGENTS_TOOL}'s reason.
+ */
+export const PROJECTS_TOOL: McpToolDefinition = {
+  name: 'projects',
+  description:
+    'List the projects configured in The Hive: each one\'s id, key (the short alias a person types), name, host checkout path, status, origin, whether auto-merge is on, and the container workspace when the project runs in one. Use it to turn a project named in an ask into its absolute path, and to read auto-merge consent, instead of opening the config file.',
+  inputSchema: {
+    type: 'object',
+    properties: {},
+  },
+};
+
+/**
+ * One PR record from the Hive\'s own GitHub sweep (HIVE-173): state, the
+ * unresolved review-thread count the PR badge shows (`findings`), checks,
+ * branch and URL. It exists so the shipper\'s gate has a contemporaneous thread
+ * count without `gh api`, which no glob can keep from merging.
+ */
+export const PR_TOOL: McpToolDefinition = {
+  name: 'pr',
+  description:
+    'Look up one pull request in The Hive\'s own GitHub sweep: its state (open, draft, approved, merged), `findings` (unresolved review threads), checks (passing, running, failing), branch, URL and when it was last updated. The sweep covers PRs you authored, open or merged in the last day, on configured projects only; anything else answers with no record and a reason. Use it for an unresolved-thread count when you hold no `gh api`.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      repo: { type: 'string', description: 'The repository as owner/name.' },
+      number: { type: 'integer', description: 'The pull request number.' },
+    },
+    required: ['repo', 'number'],
+  },
+};
+
 export const AGENTS_TOOL: McpToolDefinition = {
   name: 'agents',
   description:

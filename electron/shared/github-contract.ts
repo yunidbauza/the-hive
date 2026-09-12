@@ -137,3 +137,33 @@ export const GH_MERGED_PAGE = 100;
  * trade against a poll that runs every minute.
  */
 export const GH_THREAD_PAGE = 100;
+
+/**
+ * The receiver route one PR record is served on (HIVE-173).
+ *
+ * The shipper's merge gate needs a contemporaneous unresolved-thread count and
+ * may hold no `gh api` (a REST or GraphQL merge hides behind that glob; see
+ * HIVE-168). The Hive's own sweep already counts threads for the PR badge, so
+ * the record is served to the agent instead.
+ */
+export const PR_PATH = '/pr';
+
+/** The body cap on {@link PR_PATH}: an `owner/name` and a number, with room. */
+export const PR_LOOKUP_MAX_BYTES = 512;
+
+export interface PrLookup {
+  /** `owner/name`, as GitHub spells it. */
+  repo: string;
+  number: number;
+}
+
+/**
+ * What {@link PR_PATH} answers. `pr` is `null` with a `reason` when the sweep
+ * has no such record, which is a real answer and not an error: the sweep lists
+ * PRs the user authored, open or merged in the last day, on configured
+ * projects only.
+ */
+export interface PrLookupReply {
+  pr: PrRecord | null;
+  reason?: string;
+}

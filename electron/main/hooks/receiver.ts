@@ -3,8 +3,14 @@ import { createServer, type Server } from 'node:http';
 import { StringDecoder } from 'node:string_decoder';
 
 import { AGENTS_PATH, type AgentsDirectory } from '@shared/agent-contract';
-import { DEFAULT_RECEIVER } from '@shared/config-contract';
-import { parseLedgerPostBody, parseLedgerReadQuery } from '@shared/guards';
+import { DEFAULT_RECEIVER, PROJECTS_PATH, type ProjectsDirectory } from '@shared/config-contract';
+import {
+  PR_LOOKUP_MAX_BYTES,
+  PR_PATH,
+  type PrLookup,
+  type PrLookupReply,
+} from '@shared/github-contract';
+import { parseLedgerPostBody, parseLedgerReadQuery, parsePrLookup } from '@shared/guards';
 import {
   CLEAR_REASON,
   hookContextReply,
@@ -206,6 +212,18 @@ export interface ReceiverOptions {
    * Everything else here answers from memory.
    */
   onAgentsList: (caller: string) => Promise<AgentsDirectory>;
+  /**
+   * The config's projects, as an agent may see them (HIVE-173). Synchronous,
+   * because the config is already in memory. Optional with an empty default:
+   * a receiver composed without a config (the live suites) has no projects,
+   * and that is an answer.
+   */
+  onProjectsList?: (caller: string) => ProjectsDirectory;
+  /**
+   * One PR from the GitHub sweep (HIVE-173). Optional for the same reason;
+   * the default says the integration is not wired rather than "no such PR".
+   */
+  onPrLookup?: (caller: string, lookup: PrLookup) => Promise<PrLookupReply>;
   /** Whether an entity id is a session this app actually has. */
   knowsSession: (entityId: string) => boolean;
   /**
@@ -531,6 +549,9 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     onLedgerRead,
     onLedgerPost,
     onAgentsList,
+    onProjectsList = () => ({ projects: [] }),
+    onPrLookup = () =>
+      Promise.resolve({ pr: null, reason: 'the GitHub integration is not wired to this receiver' }),
     knowsSession,
     knowsAgent,
     onAgentEvent,
@@ -983,6 +1004,44 @@ export function createReceiver(options: ReceiverOptions): Receiver {
    * call rather than cached, which is the whole of the "a newly written agent
    * is discoverable on the next wake" promise.
    */
+  /** `/projects` (HIVE-173): the caller is the header, the body is unread. */
+  function handleProjects(headers: Record<string, string | string[] | undefined>): Reply {
+    const refusal = reject(headers);
+    if (refusal !== null) return refusal;
+
+    const caller = headers[HOOK_HEADER_SESSION] as string;
+    return { status: 200, json: onProjectsList(caller) };
+  }
+
+  /** `/pr` (HIVE-173): a small JSON body, parsed by the shared guard. */
+  async function handlePr(
+    headers: Record<string, string | string[] | undefined>,
+    body: string,
+    truncated: boolean,
+  ): Promise<Reply> {
+    const refusal = reject(headers);
+    if (refusal !== null) return refusal;
+
+    if (truncated) {
+      return { status: 413, json: { reason: `body exceeds ${PR_LOOKUP_MAX_BYTES} bytes` } };
+    }
+
+    const caller = headers[HOOK_HEADER_SESSION] as string;
+    let lookup: PrLookup;
+    try {
+      lookup = parsePrLookup(body === '' ? {} : JSON.parse(body));
+    } catch (cause) {
+      return { status: 400, json: { reason: describeCause(cause) } };
+    }
+
+    try {
+      return { status: 200, json: await onPrLookup(caller, lookup) };
+    } catch {
+      // A fixed sentence, as `/agents` answers: a `gh` failure can quote a path.
+      return { status: 500, json: { reason: 'the pull request could not be looked up' } };
+    }
+  }
+
   async function handleAgents(
     headers: Record<string, string | string[] | undefined>,
   ): Promise<Reply> {
@@ -1264,6 +1323,9 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       },
 
       agents: async () => unwrap<AgentsDirectory>(await handleAgents(headers)),
+      projects: async () => unwrap<ProjectsDirectory>(handleProjects(headers)),
+      pr: async (lookup) =>
+        unwrap<PrLookupReply>(await handlePr(headers, JSON.stringify(lookup), false)),
     };
   }
 
@@ -1715,6 +1777,9 @@ export function createReceiver(options: ReceiverOptions): Receiver {
             `/ready` treat theirs.
           */
           { path: AGENTS_PATH, cap: 0, handle: (headers) => handleAgents(headers) },
+          // HIVE-173: the two workflow lookups, one bodiless and one bounded.
+          { path: PROJECTS_PATH, cap: 0, handle: (headers) => handleProjects(headers) },
+          { path: PR_PATH, cap: PR_LOOKUP_MAX_BYTES, handle: handlePr },
           { path: MCP_PATH, cap: MCP_MAX_BODY_BYTES, handle: handleMcp },
         ];
 

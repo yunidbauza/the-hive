@@ -161,7 +161,7 @@ import {
 import { createAgentsRuntime, type AgentRegistry } from '../agents';
 import { createAutoMergeGrants, type AutoMergeGrants } from '../agents/auto-merge';
 import { resolveClaude } from '../agents/claude-path';
-import { agentsDirectoryFor } from '../agents/directory';
+import { agentsDirectoryFor, projectsDirectoryFor } from '../agents/directory';
 import {
   agentPromptFile,
   agentStateFile,
@@ -219,6 +219,7 @@ import {
 import { createHookRuntime } from '../hooks';
 import { readGhStatus, runCommand } from '../integrations/gh';
 import { createGithub } from '../integrations/github';
+import { lookupPr } from '../integrations/github/lookup';
 import { runAsync, type RunAsync } from '../integrations/github/run';
 import { createJira } from '../integrations/jira';
 import { credentialFile } from '../integrations/jira/auth';
@@ -3037,6 +3038,15 @@ export function registerIpcHandlers(
 
       return agentsDirectoryFor(caller, snapshot, agentState?.all() ?? {});
     },
+    // HIVE-173: the config's projects, read per call so an edit in Settings shows.
+    onProjectsList: () => projectsDirectoryFor(getConfig()),
+    /*
+      HIVE-173. `github` is declared further down this function. The callback
+      runs only when a request arrives, after this whole body has executed, so
+      the binding is initialised by then; the sweep it runs is the one the PRs
+      panel already polls.
+    */
+    onPrLookup: async (_caller, lookup) => lookupPr(await github.prs(), lookup),
     /*
       The uuid is forwarded, not dropped: `noteTurnEnded` ignores a `Stop`
       whose uuid does not match the run it is holding, which is what keeps a

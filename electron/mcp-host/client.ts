@@ -1,4 +1,6 @@
 import { AGENTS_PATH, type AgentsDirectory } from '@shared/agent-contract';
+import { PROJECTS_PATH, type ProjectsDirectory } from '@shared/config-contract';
+import { PR_PATH, type PrLookupReply } from '@shared/github-contract';
 import { HOOK_HEADER_SESSION, HOOK_HEADER_TOKEN } from '@shared/hook-contract';
 import {
   LEDGER_POST_PATH,
@@ -127,5 +129,8 @@ export function createReceiverClient({
       the `x-hive-session` header, and the route's body cap is zero.
     */
     agents: () => call<AgentsDirectory>(AGENTS_PATH, {}),
+    // HIVE-173: the same shape, the same empty body, for the same reason.
+    projects: () => call<ProjectsDirectory>(PROJECTS_PATH, {}),
+    pr: (lookup) => call<PrLookupReply>(PR_PATH, lookup),
   };
 }
