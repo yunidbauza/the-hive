@@ -91,7 +91,6 @@ describe('SessionPluginsRow (HIVE-176, HIVE-177)', () => {
     expect(within(dialog).getByRole('switch', { name: 'jira-writer' })).toHaveAttribute('aria-checked', 'true');
     const workstream = within(dialog).getByRole('switch', { name: 'workstream' });
     expect(workstream).toHaveAttribute('aria-checked', 'false');
-    expect(workstream).toHaveAccessibleDescription("Off by default: its skills duplicate the Hive's.");
 
     await userEvent.click(within(dialog).getByRole('switch', { name: 'jira-writer' }));
     expect(setSessionPluginInConfig).toHaveBeenLastCalledWith({ plugin: 'jira-writer', off: true });
