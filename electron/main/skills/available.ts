@@ -188,6 +188,62 @@ async function pluginSkills(file: string): Promise<string[]> {
  * agent could be called `graphify`, refused on account of a folder The Hive
  * neither manages nor mentions.
  */
+/** Every key in the registry, `name@marketplace` as installed (HIVE-176). */
+function registryKeys(json: string): string[] {
+  try {
+    const plugins = (JSON.parse(json) as { plugins?: unknown } | null)?.plugins;
+    return typeof plugins === 'object' && plugins !== null ? Object.keys(plugins) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Installed plugin names, the part before `@`, sorted (HIVE-176). */
+export function installedPluginNames(json: string): string[] {
+  return [...installPaths(json).keys()].sort();
+}
+
+/**
+ * `enabledPlugins` overrides that keep the named plugins out of a Hive
+ * session (HIVE-176): every registry key whose name is listed, set `false`.
+ *
+ * Keyed by the exact `name@marketplace`, because that is the only key Claude
+ * Code honours, and measured against a real `claude`: a `--settings` file
+ * carrying these drops the plugins for that run and leaves the rest loaded.
+ */
+export function sessionPluginOverrides(
+  json: string,
+  disabled: readonly string[],
+): Record<string, false> {
+  const off = new Set(disabled);
+  const overrides: Record<string, false> = {};
+  for (const key of registryKeys(json)) {
+    if (off.has(key.split('@')[0] ?? '')) overrides[key] = false;
+  }
+  return overrides;
+}
+
+/** {@link sessionPluginOverrides} from the registry file; `{}` when there is none. */
+export async function readSessionPluginOverrides(
+  file: string,
+  disabled: readonly string[],
+): Promise<Record<string, false>> {
+  try {
+    return sessionPluginOverrides(await readFile(file, 'utf8'), disabled);
+  } catch {
+    return {};
+  }
+}
+
+/** {@link installedPluginNames} from the registry file; `[]` when there is none. */
+export async function readInstalledPluginNames(file: string): Promise<string[]> {
+  try {
+    return installedPluginNames(await readFile(file, 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
 export interface AvailableSkills {
   all: string[];
   hive: string[];

@@ -21,6 +21,7 @@ import {
 
 import { SwarmCreature } from '@components/ui/swarm-creature';
 import { REMOTE_DISABLED_REASON } from '@config/runtime';
+import { SessionPluginsGroup } from '@features/settings/components/session-plugins-group';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
 import { SkillBundle } from '@features/settings/components/skill-bundle';
 import { SkillDiscardConfirm } from '@features/settings/components/skill-discard-confirm';
@@ -1041,6 +1042,8 @@ export function SkillsSection() {
           )}
         </div>
       </div>
+
+      <SessionPluginsGroup />
 
       <p className="text-[11px] text-subtle">
         Skills folder: {snapshot.skillsRoot}

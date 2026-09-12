@@ -83,6 +83,12 @@ export interface HookRuntimeOptions {
    */
   sessionMetrics?: () => boolean;
   /**
+   * The plugins a Hive session does not load, as `enabledPlugins` overrides
+   * (HIVE-176). Read at every write of the session settings file, so a change
+   * in Settings reaches the next session through {@link HookRuntime.rewriteSettings}.
+   */
+  enabledPlugins?: () => Promise<Record<string, boolean>>;
+  /**
    * The hostname a container reaches this machine by (HIVE-132).
    *
    * A getter for the same reason {@link HookRuntimeOptions.sessionMetrics} is:
@@ -225,6 +231,12 @@ export interface HookRuntime {
    */
   settingsPathFor(): string | null;
   /**
+   * Write the session settings file again with what the config says now
+   * (HIVE-176). A running session keeps the file it started with; the next
+   * one reads this. A no-op before the receiver has bound.
+   */
+  rewriteSettings(): Promise<void>;
+  /**
    * The `--settings` argument for an agent's headless turn (HIVE-119).
    *
    * {@link settingsPathFor}'s agent-space twin, `null` on the same terms —
@@ -337,6 +349,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
     userDataPath,
     port,
     sessionMetrics = () => true,
+    enabledPlugins,
     hostAlias = () => DEFAULT_RECEIVER.hostAlias,
     // Falls back to a set of exactly the global alias, through the same
     // getter file generation already reads — not `DEFAULT_RECEIVER.hostAlias`
@@ -352,6 +365,8 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
 
   let receiver: Receiver | null = null;
   let settingsPath: string | null = null;
+  /** The last successful session-settings write, replayable (HIVE-176). */
+  let rewrite: (() => Promise<void>) | null = null;
   let agentSettingsPath: string | null = null;
   /**
    * The receiver's `boundHost`, captured independently of `receiver` itself
@@ -389,6 +404,16 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
   return {
     settingsPathFor() {
       return settingsPath;
+    },
+
+    async rewriteSettings() {
+      try {
+        await rewrite?.();
+      } catch (cause) {
+        // The file from the last write still stands; say so rather than throw
+        // into a Settings click that already saved the config.
+        console.info(`[hive] session settings could not be rewritten (${String(cause)})`);
+      }
     },
 
     agentSettingsPathFor() {
@@ -533,6 +558,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
           */
           created.readyUrl ?? undefined,
           transport,
+          await enabledPlugins?.(),
         );
         /*
           Written right after its sibling, with the same `url`/`readyUrl` — the
@@ -585,6 +611,20 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
         }
 
         settingsPath = newSettingsPath;
+        /*
+          Same file, same path, so nothing is reassigned: a rewrite still in
+          flight when `stop` runs cannot bring `settingsPath` back to life.
+        */
+        rewrite = async () => {
+          await writeHookSettings(
+            userDataPath,
+            url,
+            sessionMetrics() ? (created.metricsUrl ?? undefined) : undefined,
+            created.readyUrl ?? undefined,
+            transport,
+            await enabledPlugins?.(),
+          );
+        };
         agentSettingsPath = newAgentSettingsPath;
         receiver = created;
 
@@ -644,6 +684,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
          */
         await created.stop();
         settingsPath = null;
+        rewrite = null;
         agentSettingsPath = null;
         // The socket really is closed now — `created.stop()` just ran — so
         // `null` here is the true state, not a premature guess at it.
@@ -842,6 +883,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       const running = receiver;
       receiver = null;
       settingsPath = null;
+      rewrite = null;
       agentSettingsPath = null;
       liveBoundHost = null;
       if (running !== null) await running.stop();

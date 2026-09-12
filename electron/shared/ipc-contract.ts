@@ -59,6 +59,7 @@ import type {
   SetJiraRequest,
   SetJiraTokenRequest,
   SetNotificationsRequest,
+  SetDisabledSessionPluginsRequest,
   SetProjectAutoMergeRequest,
   SetProjectKeyRequest,
   SetProjectRuntimeRequest,
@@ -182,6 +183,8 @@ export const CH = {
   configSetProjectKey: 'config:set-project-key',
   /** HIVE-166's per-project unattended-merge consent. `invoke`, like every config write. */
   configSetProjectAutoMerge: 'config:set-project-auto-merge',
+  /** HIVE-176's plugins a Hive session does not load. `invoke`, like every config write. */
+  configSetDisabledSessionPlugins: 'config:set-disabled-session-plugins',
   /**
    * Story 102's clone verbs.
    *
@@ -1860,6 +1863,8 @@ export interface HiveBridge {
     setProjectKey(request: SetProjectKeyRequest): Promise<ConfigSnapshot>;
     /** Turn unattended merging on or off for one project (HIVE-166). */
     setProjectAutoMerge(request: SetProjectAutoMergeRequest): Promise<ConfigSnapshot>;
+    /** Which plugins a Hive session does not load (HIVE-176). */
+    setDisabledSessionPlugins(request: SetDisabledSessionPluginsRequest): Promise<ConfigSnapshot>;
     /**
      * Point a project at a folder that moved (story 103).
      *
@@ -3380,6 +3385,8 @@ export const BRIDGE_CONFIG_KEYS = [
   'setProjectKey',
   // HIVE-166.
   'setProjectAutoMerge',
+  // HIVE-176.
+  'setDisabledSessionPlugins',
   // Story 102.
   'startClone',
   'cancelClone',

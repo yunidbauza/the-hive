@@ -1013,3 +1013,43 @@ describe('start forwards the Jira tools (HIVE-174)', () => {
     expect(await response.json()).toEqual({ ok: false, error: { kind: 'not-found', message: 'composed: HIVE-7' } });
   });
 });
+
+/**
+ * HIVE-176. A Settings change reaches the next session through a rewrite of
+ * the one settings file, read from the getter as it stands then.
+ */
+describe('rewriteSettings (HIVE-176)', () => {
+  let dir: string;
+  let ledger: Ledger;
+  let runtime: HookRuntime | undefined;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'hive-hooks-rewrite-'));
+    ledger = createLedger({ dir, knowsParty: () => true });
+  });
+
+  afterEach(async () => {
+    await runtime?.stop();
+    runtime = undefined;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('writes the plugins switched off at start, and the new list after a rewrite', async () => {
+    let off: Record<string, boolean> = { 'workstream@claude-kit': false };
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      ledger,
+      enabledPlugins: () => Promise.resolve(off),
+    });
+
+    await runtime.rewriteSettings(); // before start: nothing to rewrite, and no throw
+    await runtime.start(noopHandlers);
+    const path = runtime.settingsPathFor()!;
+    expect(JSON.parse(await readFile(path, 'utf8')).enabledPlugins).toEqual({ 'workstream@claude-kit': false });
+
+    off = {};
+    await runtime.rewriteSettings();
+    expect(JSON.parse(await readFile(path, 'utf8'))).not.toHaveProperty('enabledPlugins');
+  });
+});

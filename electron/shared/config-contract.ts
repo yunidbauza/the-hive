@@ -1332,6 +1332,13 @@ export interface ConfigSnapshot {
    */
   sessionMetrics: boolean;
   /**
+   * Plugin names a Hive session does not load (HIVE-176). Absent in the file
+   * means {@link DEFAULT_DISABLED_SESSION_PLUGINS}; an explicit `[]` means
+   * every installed plugin loads. Sessions only: agents already load none of
+   * the user's plugins.
+   */
+  disabledSessionPlugins: string[];
+  /**
    * Whether the app imports {@link LOGIN_ENV_IMPORT_KEYS} from the login shell
    * at startup (HIVE-84).
    *
@@ -1572,6 +1579,19 @@ export const DEFAULT_SUBSCRIPTION_AUTH = true;
 export const DEFAULT_SESSION_METRICS = true;
 
 /**
+ * The plugins a Hive session does not load until the user says otherwise
+ * (HIVE-176): the two whose skills the Hive's own replace. `hive:work-on` and
+ * `workstream:work-on` side by side, with near-identical descriptions, is a
+ * coin toss on "work on HIVE-123". Names, not `name@marketplace` keys: the
+ * marketplace differs between machines, and the session writer resolves the
+ * exact keys from the plugin registry at write time.
+ */
+export const DEFAULT_DISABLED_SESSION_PLUGINS: readonly string[] = ['workstream', 'superpowers'];
+
+/** A plugin name as Claude Code's registry spells the part before `@`. */
+export const SESSION_PLUGIN_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/**
  * The one definition of "what a spawned session's environment looks like"
  * (story 092, extended by story 108's fix round).
  *
@@ -1777,6 +1797,7 @@ export function emptySnapshot(
     claudeCommand: DEFAULT_CLAUDE_COMMAND,
     subscriptionAuth: DEFAULT_SUBSCRIPTION_AUTH,
     sessionMetrics: DEFAULT_SESSION_METRICS,
+    disabledSessionPlugins: [...DEFAULT_DISABLED_SESSION_PLUGINS],
     importLoginEnv: DEFAULT_IMPORT_LOGIN_ENV,
     env: {},
     projects: [],
@@ -2462,4 +2483,9 @@ export interface ProjectsDirectoryEntry {
 /** What {@link PROJECTS_PATH} answers. */
 export interface ProjectsDirectory {
   projects: ProjectsDirectoryEntry[];
+}
+
+/** `config:set-disabled-session-plugins` (HIVE-176): the whole list, as the switches show it. */
+export interface SetDisabledSessionPluginsRequest {
+  plugins: string[];
 }

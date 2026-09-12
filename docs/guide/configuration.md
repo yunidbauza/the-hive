@@ -74,6 +74,7 @@ Any key not in this list makes the whole file invalid, and Settings says which.
 | `remote` | attach to a server | [Remote](remote.md#attach-from-a-laptop) |
 | `subscriptionAuth` | sessions drop `ANTHROPIC_API_KEY` so `claude` uses your Claude plan; default on | [Tour › header](tour.md#the-header) |
 | `sessionMetrics` | read context and usage from each session's status line; default on | [Tour › header](tour.md#the-header) |
+| `disabledSessionPlugins` | plugin names a Hive session does not load; default `["workstream", "superpowers"]`, and `[]` loads them all | [Skills › How skills reach a session](skills.md#how-skills-reach-a-session) |
 
 ## Project keys
 

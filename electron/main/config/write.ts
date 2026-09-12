@@ -17,6 +17,7 @@ import {
   DEFAULT_BIND,
   DEFAULT_CLAUDE_COMMAND,
   DEFAULT_IMPORT_LOGIN_ENV,
+  DEFAULT_DISABLED_SESSION_PLUGINS,
   DEFAULT_SESSION_METRICS,
   DEFAULT_SUBSCRIPTION_AUTH,
   DEFAULT_JIRA,
@@ -268,6 +269,8 @@ export function writeConfig(
       subscriptionAuth:
         validated.subscriptionAuth ?? DEFAULT_SUBSCRIPTION_AUTH,
       sessionMetrics: validated.sessionMetrics ?? DEFAULT_SESSION_METRICS,
+      disabledSessionPlugins:
+        validated.disabledSessionPlugins ?? [...DEFAULT_DISABLED_SESSION_PLUGINS],
       importLoginEnv: validated.importLoginEnv ?? DEFAULT_IMPORT_LOGIN_ENV,
       env: validated.env ?? {},
       projects,

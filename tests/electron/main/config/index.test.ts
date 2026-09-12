@@ -1517,6 +1517,40 @@ describe('project keys', () => {
     });
   });
 
+  describe('disabledSessionPlugins (HIVE-176)', () => {
+    it('defaults when absent, keeps an explicit empty list, and reports a malformed one', async () => {
+      writeConfig({ version: 2, projects: [] });
+      expect((await loadConfig()).disabledSessionPlugins).toEqual(['workstream', 'superpowers']);
+
+      writeConfig({ version: 2, projects: [], disabledSessionPlugins: [] });
+      expect((await loadConfig()).disabledSessionPlugins).toEqual([]);
+
+      writeConfig({ version: 2, projects: [], disabledSessionPlugins: ['a', 'a', 'b'] });
+      expect((await loadConfig()).disabledSessionPlugins).toEqual(['a', 'b']);
+
+      writeConfig({ version: 2, projects: [], disabledSessionPlugins: 'workstream' });
+      const bad = await loadConfig();
+      expect(bad.disabledSessionPlugins).toEqual(['workstream', 'superpowers']);
+      expect(bad.errors.join('\n')).toMatch(/disabledSessionPlugins: expected an array of plugin names/);
+    });
+
+    it('writes the whole list, an empty one included, and touches nothing else', async () => {
+      const path = writeConfig({ version: 2, projects: [], sessionMetrics: false });
+      const module = await mutable();
+
+      let snapshot = module.setDisabledSessionPlugins({ plugins: ['superpowers'] });
+      expect(snapshot.disabledSessionPlugins).toEqual(['superpowers']);
+      expect(JSON.parse(readFileSync(path, 'utf8'))).toMatchObject({
+        disabledSessionPlugins: ['superpowers'],
+        sessionMetrics: false,
+      });
+
+      snapshot = module.setDisabledSessionPlugins({ plugins: [] });
+      expect(snapshot.disabledSessionPlugins).toEqual([]);
+      expect(JSON.parse(readFileSync(path, 'utf8')).disabledSessionPlugins).toEqual([]);
+    });
+  });
+
   describe('setProjectAutoMerge (HIVE-166)', () => {
     it('writes the consent onto the entry, both ways, and touches nothing else', async () => {
       const one = join(sandbox, 'one');

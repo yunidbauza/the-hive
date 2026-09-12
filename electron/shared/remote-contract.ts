@@ -54,7 +54,7 @@ import { isThisMachineAction } from './notification-contract';
 /**
  * 3 → 4 (HIVE-166): `CH` gained `config:set-project-auto-merge`.
  */
-export const REMOTE_PROTOCOL_VERSION = 4;
+export const REMOTE_PROTOCOL_VERSION = 5;
 
 /**
  * What a frame is for.
@@ -128,6 +128,7 @@ export const FRAME_KIND = {
   [CH.configReorderProjects]: 'call',
   [CH.configSetProjectKey]: 'call',
   [CH.configSetProjectAutoMerge]: 'call',
+  [CH.configSetDisabledSessionPlugins]: 'call',
   [CH.configSetRuntime]: 'call',
   [CH.configSetProjectRuntime]: 'call',
   [CH.configDiagnoseCommand]: 'call',
@@ -394,6 +395,12 @@ export const CHANNEL_AUTHORIZATION = {
     unattended, which is the consequence that grade names.
   */
   [CH.configSetProjectAutoMerge]: 'execute',
+  /*
+    HIVE-176. A list of plugin names that end up as `enabledPlugins: false`
+    in the settings file sessions start with: it can only turn a plugin off
+    for Hive sessions, never on, and names nothing but plugins.
+  */
+  [CH.configSetDisabledSessionPlugins]: 'mutate',
   [CH.configSetRuntime]: 'execute',
   [CH.configSetProjectRuntime]: 'execute',
   [CH.configDiagnoseCommand]: 'execute',

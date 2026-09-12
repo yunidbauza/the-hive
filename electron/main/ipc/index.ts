@@ -72,6 +72,7 @@ import {
   parseLedgerReadQuery,
   parseRemoveProjectRequest,
   parseRenameProjectRequest,
+  parseSetDisabledSessionPluginsRequest,
   parseSetProjectAutoMergeRequest,
   parseSetProjectKeyRequest,
   parseReorderProjectsRequest,
@@ -192,6 +193,7 @@ import {
   resetConfig,
   setJira,
   setNotifications,
+  setDisabledSessionPlugins,
   setProjectAutoMerge,
   setProjectKey,
   setProjectRuntime,
@@ -271,7 +273,8 @@ import {
 } from '../sessions/history';
 import { onShutdown } from '../shutdown';
 import { createSkillsRuntime, type SkillsRuntime } from '../skills';
-import { PLUGIN_DIR } from '../skills/paths';
+import { readSessionPluginOverrides } from '../skills/available';
+import { installedPluginsFile, PLUGIN_DIR } from '../skills/paths';
 import {
   checkForUpdatesInteractively,
   setUpdateNotificationSink,
@@ -2195,6 +2198,9 @@ export function registerIpcHandlers(
     userDataPath: app.getPath('userData'),
     // Read per call, so a config reload is picked up (HIVE-79).
     sessionMetrics: () => getConfig().sessionMetrics,
+    // HIVE-176. Resolved against the plugin registry at every write.
+    enabledPlugins: () =>
+      readSessionPluginOverrides(installedPluginsFile(), getConfig().disabledSessionPlugins),
     // The same, for the hostname a container reaches this machine by (HIVE-132).
     hostAlias: () => getConfig().receiver.hostAlias,
     // Every hostname the guard admits, not just the global one — see
@@ -2457,6 +2463,8 @@ export function registerIpcHandlers(
     */
     doneUrl: () => hooks.doneUrl(),
     ready: seeded,
+    // HIVE-176. The plugin names the Settings switches list.
+    installedPlugins: installedPluginsFile,
   });
 
   /*
@@ -3491,6 +3499,19 @@ export function registerIpcHandlers(
     CH.configSetProjectAutoMerge,
     (_event, payload): ConfigSnapshot =>
       setProjectAutoMerge(parseSetProjectAutoMergeRequest(payload)),
+  );
+
+  /*
+    HIVE-176. The config first, then the session settings file from it, so
+    the next session started is the first to see the change.
+  */
+  handle(
+    CH.configSetDisabledSessionPlugins,
+    async (_event, payload): Promise<ConfigSnapshot> => {
+      const snapshot = setDisabledSessionPlugins(parseSetDisabledSessionPluginsRequest(payload));
+      await hooks.rewriteSettings();
+      return snapshot;
+    },
   );
 
   handle(

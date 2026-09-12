@@ -27,6 +27,7 @@ import {
   type RepointProjectRequest,
   type SetJiraRequest,
   type SetNotificationsRequest,
+  type SetDisabledSessionPluginsRequest,
   type SetProjectAutoMergeRequest,
   type SetProjectKeyRequest,
   type SetProjectRuntimeRequest,
@@ -35,6 +36,7 @@ import {
   type SetRuntimeRequest,
   type SetServerRequest,
   type SetSlackRequest,
+  DEFAULT_DISABLED_SESSION_PLUGINS,
 } from '@shared/config-contract';
 import { resolveNotificationPrefs } from '@shared/notification-contract';
 
@@ -149,6 +151,8 @@ export function loadConfig(): ConfigSnapshot {
     */
     subscriptionAuth: parsed.subscriptionAuth ?? DEFAULT_SUBSCRIPTION_AUTH,
     sessionMetrics: parsed.sessionMetrics ?? DEFAULT_SESSION_METRICS,
+    // Absent means the default list (HIVE-176); an explicit `[]` is a decision.
+    disabledSessionPlugins: parsed.disabledSessionPlugins ?? [...DEFAULT_DISABLED_SESSION_PLUGINS],
     // Absent means on (HIVE-84) — see `DEFAULT_IMPORT_LOGIN_ENV` for why the
     // default has to be the one that makes a packaged build work.
     importLoginEnv: parsed.importLoginEnv ?? DEFAULT_IMPORT_LOGIN_ENV,
@@ -618,6 +622,21 @@ export function setProjectAutoMerge(request: SetProjectAutoMergeRequest): Config
         ),
       };
     }),
+  );
+}
+
+/**
+ * Which plugins a Hive session does not load (HIVE-176).
+ *
+ * The whole list is written, never merged: the Settings switches send exactly
+ * what they show. An explicit `[]` is kept rather than deleted, so a user who
+ * turned everything back on is not handed the default list again.
+ */
+export function setDisabledSessionPlugins(
+  request: SetDisabledSessionPluginsRequest,
+): ConfigSnapshot {
+  return commit(
+    writeConfig((draft) => ({ ...draft, disabledSessionPlugins: request.plugins })),
   );
 }
 

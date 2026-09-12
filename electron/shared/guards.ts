@@ -20,6 +20,7 @@ import {
   isProjectKey,
   isServerBindHost,
   unsafeEnvReason,
+  SESSION_PLUGIN_NAME,
 } from './config-contract';
 import type {
   AddProjectRequest,
@@ -46,6 +47,7 @@ import type {
   SetJiraRequest,
   SetJiraTokenRequest,
   SetNotificationsRequest,
+  SetDisabledSessionPluginsRequest,
   SetProjectAutoMergeRequest,
   SetProjectKeyRequest,
   SetProjectRuntimeRequest,
@@ -727,6 +729,32 @@ export function parseSetProjectKeyRequest(input: unknown): SetProjectKeyRequest 
     id: assertId(raw.id, 'setProjectKey.id'),
     key: assertProjectKey(raw.key, 'setProjectKey.key'),
   };
+}
+
+/** The most plugin names one request may carry (HIVE-176). */
+const MAX_SESSION_PLUGINS = 64;
+
+/**
+ * Payload guard for `config:set-disabled-session-plugins` (HIVE-176). Names
+ * only, the registry's own alphabet, deduplicated: these land in a file the
+ * user hand-edits and become `enabledPlugins` keys in every session's settings.
+ */
+export function parseSetDisabledSessionPluginsRequest(
+  input: unknown,
+): SetDisabledSessionPluginsRequest {
+  const raw = assertShape(input, ['plugins'], 'setDisabledSessionPlugins');
+  if (!Array.isArray(raw.plugins)) {
+    throw new TypeError('setDisabledSessionPlugins.plugins must be an array');
+  }
+  if (raw.plugins.length > MAX_SESSION_PLUGINS) {
+    throw new TypeError('setDisabledSessionPlugins.plugins: too many');
+  }
+  for (const name of raw.plugins) {
+    if (typeof name !== 'string' || !SESSION_PLUGIN_NAME.test(name)) {
+      throw new TypeError('setDisabledSessionPlugins.plugins: expected plugin names');
+    }
+  }
+  return { plugins: [...new Set(raw.plugins as string[])] };
 }
 
 /** Payload guard for `config:set-project-auto-merge` (HIVE-166). */

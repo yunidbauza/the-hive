@@ -747,6 +747,7 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
      */
     'resetConfig',
     'revealConfig',
+    'setDisabledSessionPlugins',
     /**
      * HIVE-67's connection settings — the site and the account email.
      *

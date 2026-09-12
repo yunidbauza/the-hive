@@ -18,6 +18,7 @@ import {
   type SkillsSnapshot,
 } from '@shared/skills-contract';
 
+import { readInstalledPluginNames } from './available';
 import { copyInto } from './import';
 import { importSkill as importPackage, isSkillPackage } from './import-skill';
 import { PLUGIN_DIR, isSkillManifest, resolveInSkill, skillsRoot } from './paths';
@@ -144,6 +145,8 @@ export interface SkillsRuntime {
 
 export interface SkillsRuntimeOptions {
   userDataPath: string;
+  /** The Claude Code plugin registry, read for the snapshot's plugin names (HIVE-176). */
+  installedPlugins?: () => string;
   /**
    * The app's version, for the generated manifest.
    *
@@ -187,6 +190,7 @@ export function createSkillsRuntime({
   version,
   doneUrl,
   ready,
+  installedPlugins,
 }: SkillsRuntimeOptions): SkillsRuntime {
   const pluginRoot = join(userDataPath, PLUGIN_DIR);
   let written = false;
@@ -269,7 +273,7 @@ export function createSkillsRuntime({
     row to dim an oversized file or grey out a symlink without a second round
     trip. What still never crosses this boundary is a file's *body*.
   */
-  const snapshot = (read: SkillsRead): SkillsSnapshot => ({
+  const snapshot = async (read: SkillsRead): Promise<SkillsSnapshot> => ({
     skills: read.skills.map(({ name, description, manifest }) => ({
       name,
       description,
@@ -282,6 +286,7 @@ export function createSkillsRuntime({
       valid: false,
     })),
     skillsRoot: skillsRoot(),
+    plugins: installedPlugins === undefined ? [] : await readInstalledPluginNames(installedPlugins()),
   });
 
   /**

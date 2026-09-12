@@ -35,6 +35,7 @@ import {
   parseWriteRequest,
   parsePrLookup,
   parseJiraTransitionByName,
+  parseSetDisabledSessionPluginsRequest,
 } from '../../../electron/shared/guards';
 
 const validSpawn = { sessionId: 'sess-1', projectId: 'proj-1', cols: 80, rows: 24 };
@@ -1906,6 +1907,30 @@ describe('parseJiraTransitionByName (HIVE-174)', () => {
       { key: 'HIVE-7', status: 31 },
     ]) {
       expect(() => parseJiraTransitionByName(bad)).toThrow(/jiraTransition/);
+    }
+  });
+});
+
+describe('parseSetDisabledSessionPluginsRequest (HIVE-176)', () => {
+  it('accepts plugin names, deduplicated, and an empty list', () => {
+    expect(parseSetDisabledSessionPluginsRequest({ plugins: ['workstream', 'jira-writer', 'workstream'] })).toEqual({
+      plugins: ['workstream', 'jira-writer'],
+    });
+    expect(parseSetDisabledSessionPluginsRequest({ plugins: [] })).toEqual({ plugins: [] });
+  });
+
+  it('refuses anything but an array of registry-shaped names', () => {
+    for (const bad of [
+      {},
+      { plugins: 'workstream' },
+      { plugins: ['work stream'] },
+      { plugins: ['workstream@claude-kit'] },
+      { plugins: ['../x'] },
+      { plugins: [1] },
+      { plugins: Array.from({ length: 65 }, (_, i) => `p${i}`) },
+      { plugins: [], extra: true },
+    ]) {
+      expect(() => parseSetDisabledSessionPluginsRequest(bad)).toThrow(/setDisabledSessionPlugins/);
     }
   });
 });
