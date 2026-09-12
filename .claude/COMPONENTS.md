@@ -555,6 +555,19 @@ the disk and the buffer disagree, and the CodeMirror surface itself.
 - **Notices are amber, never red.** An agent rewriting a file under you is the
   entire point of the app, not a failure.
 
+### `<PlanRail />` and `<PlanGlyph />`
+
+`src/features/plan/components/` — HIVE-181, built. The plan panel: a 34px glyph
+rail mounted by `center-stage.tsx` beside the terminal region (a sibling, never
+inside `components/terminal/`). Props only — `plan`, `pinned`,
+`onPinnedChange` — so the slice reads no store; the composition root passes
+`usePlan` and `appearance-store`'s pin. `PlanGlyph` is one task's 16px ring:
+numbered on `border-term-track` while pending, green and `ccpulse` while in
+progress, a filled `bg-green` check when done, "proposed" for a plan-mode task.
+The drawer peeks over the terminal by CSS (`group-hover`, `group-focus-within`)
+and docks at 232px when pinned. See `docs/component-patterns.md`, *The plan
+rail*.
+
 ### Region placeholders
 
 Still bare panels, owned by the story that fills each in.
