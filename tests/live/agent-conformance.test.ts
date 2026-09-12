@@ -195,6 +195,8 @@ const ASKER = 'probe-asker';
 
 /** The agent a *session* asks, to prove the wake is not the overmind's alone. */
 const RESPONDER = 'probe-responder';
+/** The builder's shape (HIVE-170): asks the party the job named, not the overmind. */
+const REPLYTO = 'probe-replyto';
 
 /**
  * The agent whose `tools:` does not include `Bash` (HIVE-119).
@@ -344,6 +346,7 @@ const SOCKET = 'probe-socket';
 const AGENTS = [
   NAME,
   ASKER,
+  REPLYTO,
   RESPONDER,
   FENCE,
   INTERVAL,
@@ -569,6 +572,44 @@ Read your ledger inbox, then do exactly one of these and end your turn:
   codeword in place of <codeword>). Do not write the codeword anywhere else.
 
 Say nothing else.
+`;
+
+/**
+ * The builder's shape (HIVE-170): a job names the party to ask, and that party
+ * is not the party that posted the job.
+ *
+ * Read the body for what it does not say: nothing names the overmind or the
+ * session. The only path from the job to the ask's `to` is the `reply-to:`
+ * line, which is what makes the assertion on `to` an assertion about the
+ * addressing rather than about answering back whoever asked.
+ */
+const REPLYTO_MD = `---
+name: ${REPLYTO}
+description: Asks the party its job named, then answers the job when told.
+icon: Ghost
+model: haiku
+wake:
+  on: [ledger]
+tools: [TodoWrite]
+limits:
+  turns: 8
+  rotate_after: 50
+---
+This is a conformance probe. Do not read files, search the disk, or run
+commands — there is nothing here to find.
+
+Read your ledger inbox, then do exactly one of these and end your turn:
+
+- If your inbox contains an **answer**, call \`ledger_answer\` with \`thread\`
+  set to the id named in your own earlier ask's \`meta.intent\` and the body
+  "probe built". If you cannot see that ask any more, answer the oldest open
+  ask addressed to you instead.
+- Otherwise take the oldest open ask addressed to you. Its body has a line
+  \`reply-to: <party>\`. Call \`ledger_ask\` with \`to\` set to exactly that
+  party, the body "which colour?", \`options\` ["red", "blue"], and
+  \`meta.intent\` set to "answer <the id of the ask you took> when told".
+
+Never address the overmind unless the reply-to line says so. Say nothing else.
 `;
 
 /**
@@ -872,6 +913,7 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
     for (const [name, body] of [
       [NAME, AGENT_MD],
       [ASKER, ASKER_MD],
+      [REPLYTO, REPLYTO_MD],
       [RESPONDER, RESPONDER_MD],
       [FENCE, fenceMd(marker)],
       [INTERVAL, INTERVAL_MD],
@@ -1626,6 +1668,57 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
    * The discoverer must also *not* have done the work itself, which is why its
    * body forbids it: an agent that reviewed the PR and reported done would
    * satisfy a weaker assertion while proving nothing about the directory.
+   */
+  /**
+   * The builder's addressing (HIVE-170), in two wakes.
+   *
+   * The job is posted by the session and names the **overmind** as `reply-to`,
+   * the `work-on --detach` shape. The two parties differ on purpose: an agent
+   * that ignored the line and asked back whoever asked it would address the
+   * session, and the assertion on `to` would catch it. The overmind answers,
+   * the agent resumes the same conversation, and the job it was handed is
+   * closed to the session that posted it.
+   */
+  it('asks the party its job named, and answers the job when that party replies (HIVE-170)', async () => {
+    const before = spawns.length;
+    const first = settled(REPLYTO);
+    const job = ledger.append({
+      from: SESSION,
+      to: REPLYTO,
+      kind: 'ask',
+      body: `Build HIVE-000: a probe\nreply-to: ${OVERMIND}`,
+    });
+    expect(job.ok).toBe(true);
+    expect(spawns).toHaveLength(before + 1);
+    await first;
+
+    // The question went to the party the job named, not back to the asker.
+    const asked = ledger.read({}).openAsks.filter((ask) => ask.from === REPLYTO);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]?.to).toBe(OVERMIND);
+
+    // The overmind answers; the agent resumes and closes the job it was given.
+    const second = settled(REPLYTO);
+    const answered = ledger.answer({ thread: asked[0]?.id ?? '', body: 'red' }, OVERMIND);
+    expect(answered.ok).toBe(true);
+    expect(spawns).toHaveLength(before + 2);
+    expect(spawns[before + 1]?.args ?? []).toContain('--resume');
+    await second;
+
+    const entries = await onDisk();
+    const closes = entries.filter(
+      (entry) =>
+        entry['from'] === REPLYTO &&
+        entry['kind'] === 'answer' &&
+        entry['thread'] === (job.ok ? job.id : undefined),
+    );
+    expect(closes).toHaveLength(1);
+    expect(closes[0]?.['to']).toBe(SESSION);
+  }, 300_000);
+
+  /**
+   * The agent that must find a peer it was never told about (HIVE-127): see
+   * {@link DISCOVERER} for why the definition names the tool and not the peer.
    */
   it('discovers a peer it was never told about, and the ask wakes that peer', async () => {
     const before = spawns.length;

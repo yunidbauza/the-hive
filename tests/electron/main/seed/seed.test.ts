@@ -227,7 +227,12 @@ describe('seedShipped', () => {
 
     expect(report.created.length).toBeGreaterThan(0);
     expect(report.created).toEqual(
-      expect.arrayContaining(['agents/shipper/AGENT.md', 'agents/acr/AGENT.md', 'agents/fixer/AGENT.md']),
+      expect.arrayContaining([
+        'agents/shipper/AGENT.md',
+        'agents/acr/AGENT.md',
+        'agents/fixer/AGENT.md',
+        'agents/builder/AGENT.md',
+      ]),
     );
     const read = await readUserSkills(join(target, 'skills'));
     expect(read.invalid).toEqual([]);
