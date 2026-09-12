@@ -65,6 +65,9 @@ describe('shipped agents', () => {
     expect(allows('gh pr checks 1 --repo o/r')).toBe(true);
     expect(allows('git -C /w merge --ff-only origin/feat')).toBe(true);
     expect(allows('gh workflow list --repo o/r --json name,path,state')).toBe(true);
+    // The guard merge-pr and sync read before touching a person's checkout.
+    expect(allows('git -C /w status --porcelain')).toBe(true);
+    expect(allows('git -C /w branch --show-current')).toBe(true);
   });
 });
 

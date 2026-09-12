@@ -63,7 +63,7 @@ import { createStatusTracker } from '../hooks/tracker';
 import { createPtyIpc, type PtyIpc, type ResumeResult } from '../ipc/pty';
 import type { SurfaceId } from '../ipc/surfaces';
 import type { McpRuntime } from '../mcp';
-import { createPlans } from '../plans';
+import { createPlans, type Plans } from '../plans';
 import type { PtyHostSupervisor } from '../pty-host/supervisor';
 import type { SkillsRuntime } from '../skills';
 
@@ -488,6 +488,8 @@ export interface Sessions {
   diagnostics(): PtyDiagnostics[];
   /** Every live plan (HIVE-179), for `CH.plansList` and the attach snapshot. */
   plans(): PlansSnapshot;
+  /** The plans store itself, for the builder-progress fan-out (HIVE-180). */
+  planStore(): Plans;
   dispose(): void;
 }
 
@@ -2848,6 +2850,8 @@ export function createSessions(options: SessionsOptions): Sessions {
     diagnostics: () => ptyIpc.diagnostics(),
 
     plans: () => ({ plans: plans.list() }),
+
+    planStore: () => plans,
 
     dispose() {
       bootstrap.dispose();
