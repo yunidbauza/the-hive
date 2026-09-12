@@ -1142,7 +1142,7 @@ describe('hive-store', () => {
             expect(useHiveStore.getState().spawnTerminalBeside('builder')).not.toBeNull();
           });
 
-          it('says so when the agent has posted no worktree, or a checkout no project maps', () => {
+          it('says so when the agent has posted no worktree, no checkout, or a checkout no project maps', () => {
             seedDistinctProject();
             useHiveStore.getState().hydrateAgents([builder()]);
             const before = useHiveStore.getState().order.length;
@@ -1150,8 +1150,15 @@ describe('hive-store', () => {
             run('term builder');
             expect(lastLine()).toMatchObject({ text: '  builder has named no worktree yet', color: 'red' });
 
+            useHiveStore.getState().hydrateLedger([post({ worktree: '/home/x/.hive/work/builder/hive-7' })]);
+            run('term builder');
+            expect(lastLine()).toMatchObject({
+              text: '  builder named a worktree but no checkout — no project to start the shell under',
+              color: 'red',
+            });
+
             useHiveStore.getState().hydrateLedger([
-              post({ worktree: '/home/x/.hive/work/builder/hive-7', checkout: '/repos/elsewhere' }),
+              { ...post({ worktree: '/home/x/.hive/work/builder/hive-7', checkout: '/repos/elsewhere' }), id: '20260911-120001-0002' },
             ]);
             run('term builder');
             expect(lastLine()).toMatchObject({
@@ -1160,7 +1167,43 @@ describe('hive-store', () => {
             });
 
             expect(useHiveStore.getState().order).toHaveLength(before);
+          });
+
+          it('writes the same refusal to the console from the beside action, so the chord and the button say why', () => {
+            useHiveStore.getState().hydrateAgents([builder()]);
+            const before = useHiveStore.getState().orchLines.length;
+
             expect(useHiveStore.getState().spawnTerminalBeside('builder')).toBeNull();
+
+            expect(useHiveStore.getState().orchLines).toHaveLength(before + 1);
+            expect(lastLine()).toMatchObject({ text: '  builder has named no worktree yet', color: 'red' });
+          });
+
+          it('leaves a session id to the project lookup: only an agent is taken here', () => {
+            seedDistinctProject();
+            const before = useHiveStore.getState().order.length;
+
+            run('term hero-refresh');
+
+            expect(useHiveStore.getState().order).toHaveLength(before);
+            expect(lastLine()).toMatchObject({
+              text: `  unknown project: hero-refresh — try a key from Settings › Projects (${projectKeys().join(', ')})`,
+              color: 'red',
+            });
+          });
+
+          it('lets a project keyed like an agent keep the verb when the agent has nothing to open', () => {
+            const current = projectConfigSnapshot()!;
+            setProjectConfigForTest({
+              ...current,
+              projects: [{ ...current.projects[0]!, id: 'acr-tools', key: 'acr', name: 'ACR', path: '/repos/acr' }],
+            });
+            useHiveStore.getState().hydrateAgents([{ ...builder(), name: 'acr' }]);
+
+            run('term acr');
+
+            const id = useHiveStore.getState().order.at(-1)!;
+            expect(useHiveStore.getState().entities[id]).toMatchObject({ kind: 'terminal', project: 'acr-tools' });
           });
         });
 
@@ -1210,12 +1253,26 @@ describe('hive-store', () => {
           });
         });
 
-        it('with no argument and an agent selected prints the usage line', () => {
+        it('with no argument and an agent selected prints why there is nothing to open, not the usage line', () => {
+          useHiveStore.getState().hydrateAgents([
+            {
+              name: 'slack-agent',
+              description: 'Watches the channel.',
+              icon: 'Robot',
+              status: 'sleeping',
+              wake: { on: ['slack.mention'], everyMs: 300_000 },
+              mcp: [],
+              tools: [],
+              rotateAfter: 50,
+              skipsSinceRun: 0,
+              runs: [],
+            },
+          ]);
           useUiStore.getState().setSelId('slack-agent');
           const before = useHiveStore.getState().order.length;
           run('term');
           expect(useHiveStore.getState().order).toHaveLength(before);
-          expect(lastLine()).toMatchObject({ text: '  usage: term [<project>|<agent>] — or select a session first' });
+          expect(lastLine()).toMatchObject({ text: '  slack-agent has named no worktree yet', color: 'red' });
         });
       });
 

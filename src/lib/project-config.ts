@@ -1,3 +1,4 @@
+import { containsPath } from '@lib/explorer/session-root';
 import type {
   AddProjectRequest,
   BrowseListing,
@@ -977,18 +978,22 @@ export function projectPath(projectId: string): string | null {
 /**
  * The project whose checkout is, or holds, `path` (HIVE-172), or `null`.
  *
- * Prefix on a path boundary: `/repos/the-hive` owns `/repos/the-hive/src`
+ * `containsPath`'s boundary rule: `/repos/the-hive` owns `/repos/the-hive/src`
  * and not `/repos/the-hive-docs`. Unmapped projects have no path and own
  * nothing.
  */
 export function projectIdForPath(path: string): string | null {
-  const entry = snapshot?.projects.find(
-    (project) =>
-      project.status === 'ok' &&
-      project.path !== null &&
-      (path === project.path || path.startsWith(`${project.path}/`)),
-  );
-  return entry?.id ?? null;
+  let best: { id: string; depth: number } | null = null;
+  for (const project of snapshot?.projects ?? []) {
+    if (project.status !== 'ok' || project.path === null) continue;
+    if (!containsPath(project.path, path)) continue;
+    // The deepest checkout that holds the path: a sub-project mapped inside
+    // a monorepo root wins over the root, whatever order the config lists.
+    if (best === null || project.path.length > best.depth) {
+      best = { id: project.id, depth: project.path.length };
+    }
+  }
+  return best?.id ?? null;
 }
 
 /** Which field of a project answered to what the user typed (HIVE-94). */

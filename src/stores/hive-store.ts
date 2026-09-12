@@ -321,7 +321,6 @@ export interface SetSessionTicketOptions {
   source?: 'prompt' | 'branch' | 'rename';
 }
 
-/** What `spawnTerminal` may be told beyond the project (entry points). */
 /**
  * Where a terminal for an agent starts (HIVE-172): the worktree its newest
  * `post` names, under the project whose checkout that post also names. A
@@ -344,6 +343,7 @@ function agentTerminalSite(
   return { project, cwd: site.worktree };
 }
 
+/** What `spawnTerminal` may be told beyond the project (entry points). */
 export interface SpawnTerminalOptions {
   /**
    * Where the shell starts. Absent means the project's path. "Terminal here"
@@ -2129,9 +2129,17 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       return get().spawnTerminal(entity.project, cwd === undefined ? {} : { cwd });
     }
     if (isAgent(entity)) {
-      // An agent's "here" is the worktree it last posted (HIVE-172).
+      // An agent's "here" is the worktree it last posted (HIVE-172). A refusal
+      // is written to the console: the chord and the bar's button have no
+      // other surface, and a click that does nothing says nothing.
       const site = agentTerminalSite(entity.id, get().ledger);
-      return typeof site === 'string' ? null : get().spawnTerminal(site.project, { cwd: site.cwd });
+      if (typeof site === 'string') {
+        set((state) => ({
+          orchLines: capLines([...state.orchLines, line(`  ${site}`, 'red')]),
+        }));
+        return null;
+      }
+      return get().spawnTerminal(site.project, { cwd: site.cwd });
     }
     return null;
   },
@@ -2866,12 +2874,23 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           const agent = ref.kind === 'found' ? get().entities[ref.id] : undefined;
           if (agent !== undefined && isAgent(agent)) {
             const site = agentTerminalSite(agent.id, get().ledger);
-            if (typeof site === 'string') {
+            if (typeof site !== 'string') {
+              get().spawnTerminal(site.project, { cwd: site.cwd });
+              return;
+            }
+            /*
+              An agent named like a project key (`acr` is a legal key) must
+              not take the verb away from the project: with nothing to open
+              on the agent, a ref that also names a project falls through.
+            */
+            const snapshot = projectConfigSnapshot();
+            const alsoProject =
+              snapshot !== null &&
+              resolveProjectRef(command.project, snapshot.projects).kind !== 'none';
+            if (!alsoProject) {
               pushOrch(`  ${site}`, 'red');
               return;
             }
-            get().spawnTerminal(site.project, { cwd: site.cwd });
-            return;
           }
           const target = resolveProjectForConsole(command.project);
           if (target === null) return;
@@ -2881,6 +2900,13 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         // Bare: beside the fleet table's caret. The console is the stage, so
         // the selected row is the only "session you are looking at" it has.
         const selected = useUiStore.getState().selId;
+        const chosen = selected === null ? undefined : get().entities[selected];
+        if (chosen !== undefined && isAgent(chosen)) {
+          // A session *is* selected; the usage line would be wrong. The
+          // refusal, when there is one, is `spawnTerminalBeside`'s (HIVE-172).
+          get().spawnTerminalBeside(chosen.id);
+          return;
+        }
         if (selected === null || get().spawnTerminalBeside(selected) === null) {
           pushOrch(`  ${USAGE.term}`, 'red');
         }

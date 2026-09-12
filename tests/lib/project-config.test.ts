@@ -1015,19 +1015,43 @@ describe('projectContainerised', () => {
 
 describe('projectIdForPath (HIVE-172)', () => {
   it('owns the checkout itself and anything under it, on a path boundary', () => {
-    setProjectConfigForTest(
-      snapshot([
-        { id: 'the-hive', status: 'ok' },
-        { id: 'the-hive-docs', status: 'ok' },
-        { id: 'gone', status: 'missing' },
-      ]),
-    );
+    const current = snapshot([
+      { id: 'the-hive', status: 'ok' },
+      { id: 'the-hive-docs', status: 'ok' },
+      { id: 'gone', status: 'ok' },
+    ]);
+    setProjectConfigForTest({
+      ...current,
+      // A path the config still holds for a project that is not `ok` owns nothing.
+      projects: current.projects.map((project) =>
+        project.id === 'gone' ? { ...project, status: 'missing' as const } : project,
+      ),
+    });
 
     expect(projectIdForPath('/repos/the-hive')).toBe('the-hive');
     expect(projectIdForPath('/repos/the-hive/src/app.ts')).toBe('the-hive');
     expect(projectIdForPath('/repos/the-hive-docs/README.md')).toBe('the-hive-docs');
     expect(projectIdForPath('/repos/gone')).toBeNull();
+    expect(projectIdForPath('/repos/gone/src')).toBeNull();
     expect(projectIdForPath('/elsewhere')).toBeNull();
+  });
+
+  it('prefers the deepest checkout that holds the path, whatever the config order', () => {
+    const current = snapshot([
+      { id: 'mono', status: 'ok' },
+      { id: 'web', status: 'ok' },
+    ]);
+    setProjectConfigForTest({
+      ...current,
+      projects: current.projects.map((project) =>
+        project.id === 'web' ? { ...project, path: '/repos/mono/apps/web' } : { ...project, path: '/repos/mono' },
+      ),
+    });
+
+    expect(projectIdForPath('/repos/mono/apps/web')).toBe('web');
+    expect(projectIdForPath('/repos/mono/apps/web/src')).toBe('web');
+    expect(projectIdForPath('/repos/mono/apps/api')).toBe('mono');
+    expect(projectIdForPath('/repos/mono')).toBe('mono');
   });
 
   it('answers null before any snapshot arrived', () => {

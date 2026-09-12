@@ -74,8 +74,10 @@ git -C "$WT" push origin HEAD:<branch>      # after each round's commits
 ```
 
 Then install and baseline as above. Put the path in every `ledger_post` you
-write for the job, as `meta.worktree`, so the shipper can tear it down after
-the merge and a person can open a terminal on it.
+write for the job, as `meta.worktree`, with the project checkout it was cut
+from as `meta.checkout` (the `repo` path your job named): the shipper tears
+the worktree down after the merge, and `term <your name>` in the console puts
+a person's terminal on it, under the project the checkout maps to.
 
 Every command from here on is `cd "$WT" && …` or `git -C "$WT" …`, and every
 commit is preceded by `git -C "$WT" branch --show-current` reading the branch
