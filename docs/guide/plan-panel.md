@@ -49,8 +49,9 @@ higher one in this list wins:
 
 The rail appears as soon as the session's plan has a task, and only in that
 session's terminal view. When every task is done the count turns to `✓`, and a
-few seconds later the rail leaves. It also leaves when the conversation ends: a
-`/clear`, `/done`, a restart, or the terminal closing.
+few seconds later the rail leaves. It also leaves whenever the conversation ends:
+`/clear`, `/done`, a plain `/exit`, a crash or a kill, a restart, or the terminal
+closing.
 
 ## The count on the session row
 
