@@ -2017,6 +2017,16 @@ session that planned it, builds it task by task in a worktree under
 the draft PR, and asks the shipper. A question the plan does not answer goes
 to the job's `reply-to` party, the planning session first, and the live suite
 proves that addressing across two wakes (`asks the party its job named`).
+Its progress is two posts per task, both in the build ask's thread
+(`thread: <the ask's id>`): `meta: { ticket, stage: "build", task: N, state:
+"started" }` when the task starts, and `meta: { ticket, stage: "build", task:
+N, worktree, checkout }` when its commit lands (HIVE-180). The plan panel reads
+them: `electron/main/plans/builder-progress.ts` links a build ask from a session
+whose plan is that `hive:plan` file, ticks task N from the builder's posts in
+that thread, and ends the build on the answer — `failed:` or `blocked:` marks
+it, anything else completes every task. A post without `thread` is invisible
+to it, and the live suite pins the shape (`posts each task's start and its
+commit`).
 The fixer (HIVE-169) takes a PR and its findings by `ledger_ask`,
 works on the branch where it is already checked out (git allows one worktree
 per branch, and the builder's may still stand) or in a worktree of its own

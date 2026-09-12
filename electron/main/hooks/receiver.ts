@@ -75,7 +75,7 @@ import {
 import { sessionNameFromPrompt } from '@shared/session-contract';
 
 import { entryContext } from '../ledger/context';
-import { TASK_TOOL_NAMES, type PlanToolCall } from '../plans';
+import { isPlanFilePath, TASK_TOOL_NAMES, type PlanToolCall } from '../plans';
 
 import { createOriginGuard, secretEquals } from './http-guard';
 import { parseMetrics } from './metrics';
@@ -772,6 +772,26 @@ export function createReceiver(options: ReceiverOptions): Receiver {
    * conservatism as the other prefix regexes here.
    */
   const TOOL_NAME_IN_PREFIX = /"tool_name"\s*:\s*"([A-Za-z0-9_]+)"/;
+
+  /**
+   * And for a `Write` or `Edit`'s `file_path`, which the plan panel needs to
+   * re-read a plan file whose whole new content pushed the body past the cap
+   * (HIVE-180).
+   *
+   * `file_path` is the first key of both tools' `tool_input`, so it survives
+   * any truncation that `tool_name` does. The same refusal as `CWD_IN_PREFIX`:
+   * a value carrying a backslash escape is not read, and a plan path never
+   * carries one.
+   */
+  const FILE_PATH_IN_PREFIX = /"file_path"\s*:\s*"([^"\\]*)"/;
+
+  /**
+   * And `agent_id`, so a truncated subagent `Write` is still known as the
+   * subagent's (HIVE-180). It precedes `tool_name` on the wire (claude
+   * 2.1.269, `tests/fixtures/hooks`). Read for the plan gate only: what a
+   * truncated body publishes as status is unchanged.
+   */
+  const AGENT_ID_IN_PREFIX = /"agent_id"\s*:\s*"([^"\\]+)"/;
 
   /**
    * And once more for `session_id`, which correlates an agent's `Stop` with the
@@ -1726,33 +1746,59 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       });
 
     /*
-      The plan panel's source 1 (HIVE-179). Whole bodies only: a truncated
-      one has lost `tool_input`'s tail and a half-read plan is worse than a
-      late one. The main agent only: a subagent's task shares the session's
-      id space but is not the session's plan. PreToolUse is ignored — the id
-      exists only in the response. `agentId` is only ever read off a whole
-      body, which is why `!truncated` is required rather than decorative.
+      The plan panel's sources (HIVE-179, HIVE-180). The main agent only: a
+      subagent's work shares the session's id space but is not the session's
+      plan, so `agent_id` is read off a truncated prefix too. PreToolUse is
+      ignored — a task's id exists only in the response, and a denied call
+      never ran.
+
+      The task tools and plan mode: whole bodies only, since a truncated one
+      has lost `tool_input`'s tail and a half-read plan is worse than a late
+      one. A truncated plan-mode plan is dropped and said so.
+
+      A `Write` or `Edit` to a `.hive/plans/*.md` file: handed over with its
+      `file_path` and nothing else — main re-reads the file itself, under
+      confinement — and so a truncated body still counts, by the path in its
+      prefix.
 
       Caught here rather than left to the caller's try: a plan is a view, and
       a throw in it must not cost the session the status `publish` below.
     */
-    if (
-      event === 'PostToolUse' &&
-      !truncated &&
-      agentId === undefined &&
-      typeof toolName === 'string' &&
-      TASK_TOOL_NAMES.has(toolName)
-    ) {
-      try {
-        onPlanTool({
-          entityId,
-          toolName,
-          toolInput,
-          toolResponse,
-          ...(typeof cwd === 'string' && cwd !== '' ? { cwd } : {}),
-        });
-      } catch (cause) {
-        console.error('[hive] onPlanTool threw; the plan missed one call:', cause);
+    if (event === 'PostToolUse' && typeof toolName === 'string') {
+      const callerAgent = truncated ? AGENT_ID_IN_PREFIX.exec(body)?.[1] : agentId;
+      const cwdField = typeof cwd === 'string' && cwd !== '' ? { cwd } : {};
+      let call: PlanToolCall | undefined;
+      if (callerAgent === undefined) {
+        if (toolName === 'Write' || toolName === 'Edit') {
+          const filePath = truncated
+            ? FILE_PATH_IN_PREFIX.exec(body)?.[1]
+            : (toolInput as { file_path?: unknown } | null | undefined)?.file_path;
+          if (isPlanFilePath(filePath)) {
+            call = {
+              entityId,
+              toolName,
+              toolInput: { file_path: filePath },
+              toolResponse: undefined,
+              ...(truncated ? { truncated: true as const } : {}),
+              ...cwdField,
+            };
+          }
+        } else if (TASK_TOOL_NAMES.has(toolName) || toolName === 'ExitPlanMode') {
+          if (!truncated) {
+            call = { entityId, toolName, toolInput, toolResponse, ...cwdField };
+          } else if (toolName === 'ExitPlanMode') {
+            console.warn(
+              `[hive] plan mode plan over ${String(HOOK_MAX_BODY_BYTES)} bytes, dropped (${entityId})`,
+            );
+          }
+        }
+      }
+      if (call !== undefined) {
+        try {
+          onPlanTool(call);
+        } catch (cause) {
+          console.error('[hive] onPlanTool threw; the plan missed one call:', cause);
+        }
       }
     }
 
