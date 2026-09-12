@@ -815,8 +815,13 @@ describe('createToolHandlers — the Jira tools (HIVE-174)', () => {
     }));
     expect(textOf(await moved.callTool('jira_transition', { key: 'HIVE-7', status: 'In Review' }))).toBe('HIVE-7 is now In Review (transition "Start review").');
 
-    const same = createToolHandlers(stub({ jiraTransition: async () => ({ ok: true, value: { issue, transition: null } }) }));
-    expect(textOf(await same.callTool('jira_transition', { key: 'HIVE-7', status: 'In Progress' }))).toBe('HIVE-7 already stands at In Progress; nothing was changed.');
+    const jiraTransition = vi.fn(async () => ({
+      ok: true as const,
+      value: { issue, transition: null, skipped: 'already In Progress; nothing was changed' },
+    }));
+    const same = createToolHandlers(stub({ jiraTransition }));
+    expect(textOf(await same.callTool('jira_transition', { key: 'HIVE-7', status: 'In Progress', from: 'To Do' }))).toBe('HIVE-7: already In Progress; nothing was changed.');
+    expect(jiraTransition).toHaveBeenCalledWith({ key: 'HIVE-7', status: 'In Progress', from: 'To Do' });
   });
 
   it('reports a comment as Jira recorded it', async () => {
@@ -843,6 +848,20 @@ describe('createToolHandlers — the Jira tools (HIVE-174)', () => {
     expect(untouched.jiraGet).not.toHaveBeenCalled();
     expect(untouched.jiraTransition).not.toHaveBeenCalled();
     expect(untouched.jiraComment).not.toHaveBeenCalled();
+  });
+
+  it('carries the refusal\'s details and retry hint to the model', async () => {
+    const handlers = createToolHandlers(stub({
+      jiraComment: async () => ({
+        ok: false,
+        error: { kind: 'bad-query', message: 'That comment could not be turned into a valid document.', details: ['code mark is exclusive at paragraph 2'] },
+      }),
+      jiraGet: async () => ({ ok: false, error: { kind: 'rate-limited', message: 'Jira asked for a pause.', retryAfter: 30 } }),
+    }));
+    expect(textOf(await handlers.callTool('jira_comment', { key: 'HIVE-7', markdown: '`x`' }))).toBe(
+      'jira_comment: That comment could not be turned into a valid document. (bad-query); code mark is exclusive at paragraph 2',
+    );
+    expect(textOf(await handlers.callTool('jira_get', { key: 'HIVE-7' }))).toBe('jira_get: Jira asked for a pause. (rate-limited); retry after 30s');
   });
 
   it('adfBlocksToText keeps structure and drops marks', () => {

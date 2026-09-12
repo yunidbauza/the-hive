@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AgentDefinition } from '../../../../electron/shared/agent-contract';
+import { HIVE_STANDING_GRANTS } from '../../../../electron/shared/ledger-tools';
 import {
   systemPromptFor,
   wakeCommand,
@@ -82,8 +83,11 @@ describe('wakeCommand', () => {
     const args = build().args;
 
     expect(args[args.indexOf('--allowedTools') + 1]).toBe(
-      'mcp__hive__*,Read,Grep',
+      `${HIVE_STANDING_GRANTS.join(',')},Read,Grep`,
     );
+    // The writes to the person's Jira are not in the standing set (HIVE-174).
+    expect(args[args.indexOf('--allowedTools') + 1]).not.toContain('mcp__hive__*');
+    expect(args[args.indexOf('--allowedTools') + 1]).not.toContain('jira_transition');
   });
 
   it('caps turns from the definition limits', () => {
@@ -208,7 +212,7 @@ describe('wakeCommand', () => {
   it('grants the ledger tools and the definition to the fence', () => {
     const { env } = build({ def: def({ tools: ['Read', 'Grep'] }) });
     expect(JSON.parse(env['HIVE_GRANTS']!)).toEqual([
-      'mcp__hive__*',
+      ...HIVE_STANDING_GRANTS,
       'ToolSearch',
       'Read',
       'Grep',
@@ -218,7 +222,7 @@ describe('wakeCommand', () => {
   it('adds a one-shot grant for this wake only', () => {
     const withOnce = build({ def: def({ tools: ['Read'] }), grants: ['Bash'] });
     expect(JSON.parse(withOnce.env['HIVE_GRANTS']!)).toEqual([
-      'mcp__hive__*',
+      ...HIVE_STANDING_GRANTS,
       'ToolSearch',
       'Read',
       'Bash',
@@ -226,7 +230,7 @@ describe('wakeCommand', () => {
 
     const next = build({ def: def({ tools: ['Read'] }) });
     expect(JSON.parse(next.env['HIVE_GRANTS']!)).toEqual([
-      'mcp__hive__*',
+      ...HIVE_STANDING_GRANTS,
       'ToolSearch',
       'Read',
     ]);

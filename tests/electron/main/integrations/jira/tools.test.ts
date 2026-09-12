@@ -70,25 +70,74 @@ describe('jiraToolsFor (HIVE-174)', () => {
     expect(result).toEqual(ok({ issue: issue({ status: 'In Review' }), transition: transitions[1] }));
   });
 
-  it('transition accepts the transition name too, leaves an issue already there alone, and names the reachable ones otherwise', async () => {
-    const byName = source();
-    await jiraToolsFor(byName).transition({ key: 'HIVE-7', status: 'Start work' });
-    expect(byName.applyTransition).toHaveBeenCalledWith({ key: 'HIVE-7', transitionId: '21' });
-
+  it('transition never goes backwards, honours from, and matches only the target status', async () => {
     const already = source();
-    expect(await jiraToolsFor(already).transition({ key: 'HIVE-7', status: 'to do' })).toEqual(ok({ issue: issue(), transition: null }));
+    expect(await jiraToolsFor(already).transition({ key: 'HIVE-7', status: 'to do' })).toEqual(
+      ok({ issue: issue(), transition: null, skipped: 'already To Do; nothing was changed' }),
+    );
     expect(already.transitions).not.toHaveBeenCalled();
-    expect(already.applyTransition).not.toHaveBeenCalled();
 
-    const nowhere = source();
-    expect(await jiraToolsFor(nowhere).transition({ key: 'HIVE-7', status: 'Done' })).toEqual({
+    const elsewhere = source({ issue: async () => ok(issue({ status: 'In Review', statusCategory: 'in-progress' })) });
+    expect(await jiraToolsFor(elsewhere).transition({ key: 'HIVE-7', status: 'In Progress', from: 'To Do' })).toEqual(
+      ok({
+        issue: issue({ status: 'In Review', statusCategory: 'in-progress' }),
+        transition: null,
+        skipped: 'stands at In Review, not To Do; nothing was changed',
+      }),
+    );
+    expect(elsewhere.applyTransition).not.toHaveBeenCalled();
+
+    const done = source({
+      issue: async () => ok(issue({ status: 'Done', statusCategory: 'done' })),
+      transitions: async () => ok([{ id: '11', name: 'Reopen', to: { name: 'In Progress', statusCategory: 'in-progress' } }]),
+    });
+    expect(await jiraToolsFor(done).transition({ key: 'HIVE-7', status: 'In Progress' })).toEqual(
+      ok({
+        issue: issue({ status: 'Done', statusCategory: 'done' }),
+        transition: null,
+        skipped: 'moving from Done to In Progress would be backwards; nothing was changed',
+      }),
+    );
+    expect(done.applyTransition).not.toHaveBeenCalled();
+
+    // A transition *named* Done that lands on Closed is not a move to Done.
+    const misnamed = source({
+      transitions: async () => ok([{ id: '41', name: 'Done', to: { name: 'Closed', statusCategory: 'done' } }]),
+    });
+    expect(await jiraToolsFor(misnamed).transition({ key: 'HIVE-7', status: 'Done' })).toEqual({
       ok: false,
       error: {
         kind: 'bad-query',
-        message: 'HIVE-7 is To Do and has no transition to "Done"; from here it can go to "In Progress", "In Review".',
+        message: 'HIVE-7 is To Do and has no transition to "Done"; from here it can go to "Closed".',
       },
     });
-    expect(nowhere.applyTransition).not.toHaveBeenCalled();
+    expect(misnamed.applyTransition).not.toHaveBeenCalled();
+  });
+
+  it('transition retries a stale workflow once, then reports it', async () => {
+    const stale = { ok: false as const, error: { kind: 'stale' as const, message: 'moved' } };
+    let applies = 0;
+    const recovers = source({
+      applyTransition: vi.fn(async () => {
+        applies += 1;
+        return applies === 1 ? stale : ok(issue({ status: 'In Review' }));
+      }),
+    });
+    const result = await jiraToolsFor(recovers).transition({ key: 'HIVE-7', status: 'In Review' });
+    expect(result.ok && result.value.issue.status).toBe('In Review');
+    expect(recovers.transitions).toHaveBeenCalledTimes(2);
+
+    const twice = source({ applyTransition: vi.fn(async () => stale) });
+    expect(await jiraToolsFor(twice).transition({ key: 'HIVE-7', status: 'In Review' })).toEqual(stale);
+    expect(twice.applyTransition).toHaveBeenCalledTimes(2);
+  });
+
+  it('get says when the comments read hit its cap', async () => {
+    const full = Array.from({ length: 50 }, (_, i) => ({ id: String(i), author: 'a', created: 'c', body: [] }));
+    const result = await jiraToolsFor(source({ comments: async () => ok(full) })).get({ key: 'HIVE-7' });
+    expect(result.ok && result.value.partial).toEqual([
+      'comments: only the oldest 50 were read; the thread may be longer',
+    ]);
   });
 
   it('comment passes through', async () => {

@@ -8,7 +8,7 @@ wake:
   check: always
   on: [ledger]
 skills: [ship, merge-pr]
-tools: [Read, Write, Skill, Bash(gh pr view *), Bash(gh pr checks *), Bash(gh pr ready *), Bash(gh repo view *), Bash(gh workflow list *), Bash(gh workflow view *), Bash(git -C * fetch *), Bash(git -C * merge *), Bash(git -C * push *), Bash(git -C * rev-parse *), Bash(git -C * rev-list *), Bash(git -C * worktree *), Bash(git -C * branch *), Bash(git -C * checkout *), Bash(git -C * pull *), Bash(git -C * log *), Bash(git -C * diff *), Bash(jira-writer *)]
+tools: [Read, Write, Skill, Bash(gh pr view *), Bash(gh pr checks *), Bash(gh pr ready *), Bash(gh repo view *), Bash(gh workflow list *), Bash(gh workflow view *), Bash(git -C * fetch *), Bash(git -C * merge *), Bash(git -C * push *), Bash(git -C * rev-parse *), Bash(git -C * rev-list *), Bash(git -C * worktree *), Bash(git -C * branch *), Bash(git -C * checkout *), Bash(git -C * pull *), Bash(git -C * log *), Bash(git -C * diff *), Bash(jira-writer *), mcp__hive__jira_transition]
 autonomy: act
 limits:
   turns: 60

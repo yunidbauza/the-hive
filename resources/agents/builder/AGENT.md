@@ -6,7 +6,7 @@ model: opus
 wake:
   on: [ledger]
 skills: [worktree, execute, tdd, debug, verify]
-tools: [Read, Edit, Write, Grep, Glob, Bash, Agent, Skill, TodoWrite, ToolSearch]
+tools: [Read, Edit, Write, Grep, Glob, Bash, Agent, Skill, TodoWrite, ToolSearch, mcp__hive__jira_transition]
 autonomy: act
 limits:
   turns: 300
@@ -48,8 +48,9 @@ rules are yours to keep, and every implementer you dispatch inherits them:
 3. `hive:worktree`, agent path: `<hive>/work/builder/<repo-name>-<slug>` on
    `<branch>` off the fetched default branch, where `<hive>` is what `pwd`
    answers minus `/work/builder`. When a ticket is named:
-   `mcp__hive__jira_transition { key, status: "In Progress" }`; it leaves a
-   ticket already past To Do alone. Never move a ticket backwards.
+   `mcp__hive__jira_transition { key, status: "In Progress", from: "To Do" }`;
+   `from` is what leaves a ticket already past To Do alone, and the tool
+   refuses a backwards move on its own. Never move a ticket backwards.
 4. `hive:execute` on the plan, with its drift check after every task (the
    section the skill marks builder-only). Log one `ledger_post` per completed
    task, `meta: { ticket, stage: "build", task: N, worktree, checkout }`, the

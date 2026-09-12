@@ -119,8 +119,8 @@ back to the overmind.
 
 *Inline (`--inline`, no `builder` on this machine, or a plan of one task).*
 `hive:worktree` on `feat/<key>-<slug>`, Jira → In Progress
-(`mcp__hive__jira_transition { key, status: "In Progress" }`, which leaves a
-ticket already past To Do alone; without the Hive's tools, read the status with
+(`mcp__hive__jira_transition { key, status: "In Progress", from: "To Do" }`,
+where `from` leaves a ticket already past To Do alone; without the Hive's tools, read the status with
 `jira-writer get_issue <KEY> status` and, if it is still To Do, take the In
 Progress id from `jira-writer get_transitions <KEY>` and call `jira-writer
 transition_issue <KEY> <id>`), `hive:execute`, `hive:verify`, then:

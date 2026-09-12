@@ -269,9 +269,20 @@ export function createToolHandlers(
     );
   };
 
-  /** A Jira refusal as a tool error: the kind and the sentence, nothing quoted from a server. */
-  const jiraFailed = (tool: string, error: JiraError): CallToolResult =>
-    failed(`${tool}: ${error.message} (${error.kind})`);
+  /**
+   * A Jira refusal as a tool error: the kind, the sentence, and the app's own
+   * diagnosis when it has one (a missing field, an ADF rule). `details` is
+   * composed and bounded in `client.ts`, never a quoted server body.
+   */
+  const jiraFailed = (tool: string, error: JiraError): CallToolResult => {
+    const notes = [
+      ...(error.details ?? []),
+      ...(error.retryAfter === undefined ? [] : [`retry after ${error.retryAfter}s`]),
+    ];
+    return failed(
+      `${tool}: ${error.message} (${error.kind})${notes.length === 0 ? '' : `; ${notes.join('; ')}`}`,
+    );
+  };
 
   /** The ticket, rendered for a model (HIVE-174): prose first, the record beside it. */
   const jiraGet = async (args: Record<string, unknown>): Promise<CallToolResult> => {
@@ -287,19 +298,24 @@ export function createToolHandlers(
   const jiraTransition = async (args: Record<string, unknown>): Promise<CallToolResult> => {
     const key = stringArg(args, 'key');
     const status = stringArg(args, 'status');
+    const from = stringArg(args, 'from');
     if (key === undefined || status === undefined) {
       return failed('jira_transition needs key and status');
     }
 
-    const result = await client.jiraTransition({ key, status });
+    const result = await client.jiraTransition({
+      key,
+      status,
+      ...(from === undefined ? {} : { from }),
+    });
     if (!result.ok) return jiraFailed('jira_transition', result.error);
 
-    const { issue, transition } = result.value;
+    const { issue, transition, skipped } = result.value;
     return ok(
       transition === null
-        ? `${issue.key} already stands at ${issue.status}; nothing was changed.`
+        ? `${issue.key}: ${skipped ?? 'nothing was changed'}.`
         : `${issue.key} is now ${issue.status} (transition "${transition.name}").`,
-      { issue, transition },
+      { issue, transition, ...(skipped === undefined ? {} : { skipped }) },
     );
   };
 

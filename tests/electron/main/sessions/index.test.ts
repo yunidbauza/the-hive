@@ -3409,3 +3409,35 @@ describe('createSessions forwards the projects and PR lookups (HIVE-173)', () =>
     expect(started?.['onPrLookup']).toBe(onPrLookup);
   });
 });
+
+/** HIVE-174: `onJira` rides the same forward as the two lookups above. */
+describe('createSessions forwards the Jira tools (HIVE-174)', () => {
+  it('hands hooks.start the very object it was given', () => {
+    const onJira = {
+      get: () => Promise.reject(new Error('not exercised')),
+      transition: () => Promise.reject(new Error('not exercised')),
+      comment: () => Promise.reject(new Error('not exercised')),
+    };
+    let started: Record<string, unknown> | undefined;
+
+    createSessions({
+      supervisor,
+      send: () => {},
+      config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
+      newSessionUuid: () => TEST_UUID,
+      onJira,
+      hooks: {
+        settingsPathFor: () => undefined,
+        envFor: () => ({}),
+        start: (opts: Record<string, unknown>) => {
+          started = opts;
+          return Promise.resolve();
+        },
+        stop: () => Promise.resolve(),
+      } as unknown as Parameters<typeof createSessions>[0]['hooks'],
+    });
+
+    expect(started?.['onJira']).toBe(onJira);
+  });
+});

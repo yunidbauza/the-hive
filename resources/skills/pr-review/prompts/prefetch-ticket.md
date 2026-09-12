@@ -23,11 +23,16 @@ ticket asks for and what is still left. Judge nothing here.
 2. **Read it, trying each route in order until one answers.** Re-validate the key
    against the pattern above before it goes into any command or URL, whatever it
    came from.
-   1. **The Atlassian MCP, if this run has it.** Run `ToolSearch` with the query
+   1. **The Hive's own Jira integration (HIVE-174).** Run `ToolSearch` with the
+      query `hive jira`. If `mcp__hive__jira_get` exists, call it with the key: it
+      answers the summary, status, description, parent, comments and links in
+      one call. The Hive keeps its Jira token in its own process, so this route
+      never puts a credential in front of you.
+   2. **The Atlassian MCP, if this run has it.** Run `ToolSearch` with the query
       `jira issue` and use a tool whose name reads as "get issue" (Atlassian's
       `getJiraIssue`). Pass each parameter as a direct field, never as a
       serialised JSON string.
-   2. **The `jira-writer` plugin, if it is installed.** Resolve its launcher, then
+   3. **The `jira-writer` plugin, if it is installed.** Resolve its launcher, then
       call it:
       ```bash
       JW=$(command -v jira-writer || ls -td ~/.claude/plugins/cache/*/jira-writer/*/bin/jira-writer 2>/dev/null | head -1)
@@ -37,17 +42,12 @@ ticket asks for and what is still left. Judge nothing here.
       `JIRA_DOMAIN`, `JIRA_EMAIL` and `JIRA_API_KEY` from the environment and
       falls back to the Atlassian MCP on its own. A non-zero exit, or output
       that is not that JSON, is a failed route.
-   3. **The Hive's own Jira integration (HIVE-174).** Run `ToolSearch` with the
-      query `hive jira`. If `mcp__hive__jira_get` exists, call it with the key: it
-      answers the summary, status, description, parent, comments and links in
-      one call. The Hive keeps its Jira token in its own process, so this route
-      never puts a credential in front of you.
 3. **Extract the scope** from whichever route answered:
    - `summary` and `status`
    - `acceptanceCriteria`: a custom field if the site has one, otherwise the
      "Acceptance criteria" section of the description, as a list of items
    - `description` as plain text. Convert ADF to text and drop images.
-   - `subtasks`: `{ key, summary, status }` each
+   - `subtasks`: `{ key, summary, status }` each (the Hive route carries `parent` and `links`, not children; leave it empty there)
    - `parent`: the epic or parent key, if any
 
 ## Output

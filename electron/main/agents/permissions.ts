@@ -33,7 +33,7 @@ import { patchFrontmatter } from './patch';
  * {@link OVERMIND}. Without that check the fence was self-service: the ledger
  * deliberately lets an asker close its own thread (`ledger/index.ts` — "the
  * asker itself can always close its own question"), and every agent holds
- * `mcp__hive__*` unconditionally (`waker.ts`), so an agent could escalate in
+ * the standing Hive grants unconditionally (`waker.ts`), so an agent could escalate in
  * two tool calls with no human anywhere: call `Bash` → denied, an ask written
  * `from: <itself>` → `ledger_read` the thread it can see → `ledger_answer`
  * with `'allow-tool'` → this module appends `Bash` to that agent's own

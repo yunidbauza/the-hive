@@ -5,6 +5,8 @@ import {
   AGENTS_TOOL,
   APPROVE_TOOL,
   ASK_INTENT_GUIDANCE,
+  HIVE_CONSENT_TOOLS,
+  HIVE_STANDING_GRANTS,
   LEDGER_TOOLS,
   LEDGER_TOOL_NAMES,
   JIRA_COMMENT_TOOL,
@@ -14,6 +16,10 @@ import {
   PROJECTS_TOOL,
 } from '@shared/ledger-tools';
 import { matches } from '@shared/permission-rules';
+
+/** What the fence answers for a name under the grants every agent holds. */
+const standing = (name: string): boolean =>
+  HIVE_STANDING_GRANTS.some((rule) => matches(rule, name, {}));
 
 describe('ledger-tools', () => {
   it('ships exactly the nine tools the epic names', () => {
@@ -248,8 +254,8 @@ describe('AGENTS_TOOL', () => {
     grant) and `waker.ts:297` (`HOOK_ENV_GRANTS`, which the fence consults)
     both put this exact rule in front of it.
   */
-  it('is covered by the wildcard every agent is granted, with no `tools:` entry', () => {
-    expect(matches('mcp__hive__*', `mcp__hive__${AGENTS_TOOL.name}`, {})).toBe(true);
+  it('is covered by the standing grants every agent holds, with no `tools:` entry', () => {
+    expect(standing(`mcp__hive__${AGENTS_TOOL.name}`)).toBe(true);
   });
 });
 
@@ -268,9 +274,9 @@ describe('PROJECTS_TOOL and PR_TOOL (HIVE-173)', () => {
     expect(PR_TOOL.inputSchema.properties?.['number']).toMatchObject({ type: 'integer' });
   });
 
-  it('are covered by the wildcard every agent is granted', () => {
-    expect(matches('mcp__hive__*', `mcp__hive__${PROJECTS_TOOL.name}`, {})).toBe(true);
-    expect(matches('mcp__hive__*', `mcp__hive__${PR_TOOL.name}`, {})).toBe(true);
+  it('are covered by the standing grants every agent holds', () => {
+    expect(standing(`mcp__hive__${PROJECTS_TOOL.name}`)).toBe(true);
+    expect(standing(`mcp__hive__${PR_TOOL.name}`)).toBe(true);
   });
 
   it('tell the model why to reach for them: the config file and gh api are the alternatives', () => {
@@ -280,12 +286,27 @@ describe('PROJECTS_TOOL and PR_TOOL (HIVE-173)', () => {
 });
 
 describe('the Jira tools (HIVE-174)', () => {
-  it('are named for the short mcp__hive__ form, outside the ledger vocabulary, under the wildcard grant', () => {
+  it('are named for the short mcp__hive__ form, outside the ledger vocabulary', () => {
     for (const tool of [JIRA_GET_TOOL, JIRA_TRANSITION_TOOL, JIRA_COMMENT_TOOL]) {
       expect(tool.name).toMatch(/^jira_/);
       expect(LEDGER_TOOL_NAMES).not.toContain(tool.name);
-      expect(matches('mcp__hive__*', `mcp__hive__${tool.name}`, {})).toBe(true);
     }
+  });
+
+  it('the read stands; the two writes need a tools: entry or a card', () => {
+    expect(standing(`mcp__hive__${JIRA_GET_TOOL.name}`)).toBe(true);
+    for (const tool of [JIRA_TRANSITION_TOOL, JIRA_COMMENT_TOOL]) {
+      expect(standing(`mcp__hive__${tool.name}`)).toBe(false);
+      expect(HIVE_CONSENT_TOOLS).toContain(`mcp__hive__${tool.name}`);
+      expect(tool.description).toMatch(/consent on a card/);
+    }
+  });
+
+  it('the standing grants cover every ledger tool and approve, and nothing outside the server', () => {
+    for (const name of LEDGER_TOOL_NAMES) expect(standing(`mcp__hive__${name}`)).toBe(true);
+    expect(standing(`mcp__hive__${APPROVE_TOOL.name}`)).toBe(true);
+    expect(standing('mcp__other__ledger_read')).toBe(false);
+    expect(standing('Bash')).toBe(false);
   });
 
   it('require what each needs and nothing more', () => {
@@ -296,6 +317,6 @@ describe('the Jira tools (HIVE-174)', () => {
 
   it('tell the model the CLI is the fallback, and that a ticket never moves backwards', () => {
     expect(JIRA_GET_TOOL.description).toMatch(/jira-writer/);
-    expect(JIRA_TRANSITION_TOOL.description).toMatch(/never move a ticket backwards/i);
+    expect(JIRA_TRANSITION_TOOL.description).toMatch(/would move backwards/i);
   });
 });

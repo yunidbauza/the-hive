@@ -1894,17 +1894,26 @@ const MAX_STATUS_NAME = 64;
  * name a person would read in Jira: short, printable, non-empty.
  */
 export function parseJiraTransitionByName(input: unknown): JiraTransitionByName {
-  const raw = assertShape(input, ['key', 'status'], 'jiraTransition');
-  const status = assertString(raw.status, 'jiraTransition.status').trim();
-  if (status === '') return fail('jiraTransition.status: must not be empty');
-  if (status.length > MAX_STATUS_NAME) return fail('jiraTransition.status: too long');
+  const raw = assertShape(input, ['key', 'status'], 'jiraTransition', ['from']);
+  const status = assertStatusName(raw.status, 'jiraTransition.status');
+  return {
+    key: assertJiraIssueKey(raw.key, 'jiraTransition.key'),
+    status,
+    ...(raw.from === undefined ? {} : { from: assertStatusName(raw.from, 'jiraTransition.from') }),
+  };
+}
+
+function assertStatusName(value: unknown, label: string): string {
+  const status = assertString(value, label).trim();
+  if (status === '') return fail(`${label}: must not be empty`);
+  if (status.length > MAX_STATUS_NAME) return fail(`${label}: too long`);
   for (const char of status) {
     const code = char.codePointAt(0) ?? 0;
     if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) {
-      return fail('jiraTransition.status: control characters are not allowed');
+      return fail(`${label}: control characters are not allowed`);
     }
   }
-  return { key: assertJiraIssueKey(raw.key, 'jiraTransition.key'), status };
+  return status;
 }
 
 export function parseApplyJiraTransitionRequest(

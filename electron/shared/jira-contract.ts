@@ -403,11 +403,13 @@ export interface JiraToolKeyRequest {
   key: string;
 }
 
-/** `{ key, status }`: a transition named by where it goes, not by its id. */
+/** `{ key, status, from? }`: a transition named by where it goes, not by its id. */
 export interface JiraTransitionByName {
   key: string;
-  /** The target status name, matched case-insensitively against `to.name`, then the transition's own name. */
+  /** The target status name, matched case-insensitively against the transition's `to.name`. */
   status: string;
+  /** When given, the move applies only from this status; anywhere else is a no-op that says so. */
+  from?: string;
 }
 
 /** `{ key, markdown }`: what `jira_comment` takes. Structurally `AddJiraCommentRequest`. */
@@ -444,10 +446,15 @@ export interface JiraToolIssue {
   partial: string[];
 }
 
-/** What `jira_transition` answers. `transition` is `null` when the issue already stood at that status. */
+/**
+ * What `jira_transition` answers. `transition` is `null` when nothing was
+ * applied, and `skipped` then says why: the issue already stood there, it
+ * was not at `from`, or the move would have gone backwards.
+ */
 export interface JiraToolTransitionReply {
   issue: JiraIssue;
   transition: JiraTransition | null;
+  skipped?: string;
 }
 
 /**

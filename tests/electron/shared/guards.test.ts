@@ -1888,6 +1888,12 @@ describe('parsePrLookup (HIVE-173)', () => {
 describe('parseJiraTransitionByName (HIVE-174)', () => {
   it('accepts a key and a short printable status, trimmed, and nothing else', () => {
     expect(parseJiraTransitionByName({ key: 'HIVE-7', status: '  In Review ' })).toEqual({ key: 'HIVE-7', status: 'In Review' });
+    expect(parseJiraTransitionByName({ key: 'HIVE-7', status: 'In Progress', from: ' To Do ' })).toEqual({
+      key: 'HIVE-7',
+      status: 'In Progress',
+      from: 'To Do',
+    });
+    expect(() => parseJiraTransitionByName({ key: 'HIVE-7', status: 'Done', from: '' })).toThrow(/jiraTransition\.from/);
 
     for (const bad of [
       {},

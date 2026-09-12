@@ -2976,6 +2976,40 @@ describe('the Jira routes (HIVE-174)', () => {
     expect(body.reason).not.toContain('/Users');
   });
 
+  it('answers the not-wired refusal, as a JiraResult, when nothing composed the tools', async () => {
+    const bare = createReceiver({
+      knowsSession: (entityId) => entityId === CALLER,
+      onEvent: () => {},
+      onTicketIntent: () => {},
+      onPromptName: () => {},
+      onCleared: () => {},
+      onDone: () => {},
+      onReady: () => {},
+      onMetrics: () => {},
+      ...noLedger,
+      ...noAgents,
+    });
+    const started = await bare.start();
+    try {
+      const response = await fetch(`${new URL(started as string).origin}${JIRA_GET_PATH}`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          [HOOK_HEADER_TOKEN]: bare.tokenFor(CALLER),
+          [HOOK_HEADER_SESSION]: CALLER,
+        },
+        body: JSON.stringify({ key: 'HIVE-7' }),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        ok: false,
+        error: { kind: 'bad-query', message: 'the Jira integration is not wired to this receiver' },
+      });
+    } finally {
+      await bare.stop();
+    }
+  });
+
   it('refuses an unknown id and a foreign token on every Jira route', async () => {
     for (const path of [JIRA_GET_PATH, JIRA_TRANSITION_PATH, JIRA_COMMENT_PATH]) {
       const unknown = await post(path, '{}', { [HOOK_HEADER_SESSION]: 'nobody-at-all' });
@@ -3192,6 +3226,14 @@ describe('the MCP route', () => {
       }),
       onPrLookup: (_caller, lookup) =>
         Promise.resolve({ pr: null, reason: `in-process: ${lookup.repo}#${lookup.number}` }),
+      // HIVE-174: and the Jira tools, a refusal that must reach the model as a sentence.
+      onJira: {
+        get: (request) =>
+          Promise.resolve({ ok: false, error: { kind: 'not-found', message: `${request.key} does not exist.` } }),
+        transition: () => Promise.reject(new Error('not exercised')),
+        comment: () =>
+          Promise.resolve({ ok: true, value: { id: '4', author: 'me', created: 'now', body: [] } }),
+      },
       onLedgerRead: (_caller, query) => ledger.read(query),
       onLedgerPost: (caller, request) => {
         posted.push({ caller, request });
@@ -3432,6 +3474,38 @@ describe('the MCP route', () => {
     const refused = (await bad.json()) as { result: { content: { text: string }[]; isError: boolean } };
     expect(refused.result.isError).toBe(true);
     expect(refused.result.content[0]?.text).toMatch(/owner\/name/);
+  });
+
+  it('serves the Jira tools through the in-process client, refusals as sentences (HIVE-174)', async () => {
+    const got = await rpc({
+      jsonrpc: '2.0',
+      id: 31,
+      method: 'tools/call',
+      params: { name: 'jira_get', arguments: { key: 'HIVE-9' } },
+    });
+    const refused = (await got.json()) as { result: { content: { text: string }[]; isError: boolean } };
+    expect(refused.result.isError).toBe(true);
+    expect(refused.result.content[0]?.text).toBe('jira_get: HIVE-9 does not exist. (not-found)');
+
+    const said = await rpc({
+      jsonrpc: '2.0',
+      id: 32,
+      method: 'tools/call',
+      params: { name: 'jira_comment', arguments: { key: 'HIVE-9', markdown: 'hi' } },
+    });
+    const done = (await said.json()) as { result: { content: { text: string }[]; isError: boolean } };
+    expect(done.result.isError).toBe(false);
+    expect(done.result.content[0]?.text).toBe('Commented on HIVE-9: comment 4 by me at now.');
+
+    const bad = await rpc({
+      jsonrpc: '2.0',
+      id: 33,
+      method: 'tools/call',
+      params: { name: 'jira_transition', arguments: { key: 'HIVE-9', status: 'x'.repeat(65) } },
+    });
+    const malformed = (await bad.json()) as { result: { content: { text: string }[]; isError: boolean } };
+    expect(malformed.result.isError).toBe(true);
+    expect(malformed.result.content[0]?.text).toMatch(/jiraTransition\.status/);
   });
 
   it('refuses a request carrying a browser Origin', async () => {
