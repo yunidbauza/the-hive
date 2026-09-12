@@ -25,6 +25,7 @@ New here? Start with [Getting started](guide/getting-started.md), then
 | [The overmind console](guide/overmind-console.md) | The fleet table and every console command, with examples |
 | [The inbox](guide/inbox.md) | Why a card appears, how to answer it, and how to quiet it |
 | [Jira and pull requests](guide/work-and-prs.md) | Connect Jira, start from a ticket, follow your PRs |
+| [Working a ticket](guide/workflow.md) | From a ticket to Done: the skills, the agents, and what the cards show |
 | [Files and the editor](guide/explorer.md) | Browse, search and edit the session's repository |
 | [Custom skills](guide/skills.md) | Write slash commands that only Hive sessions get |
 

@@ -80,13 +80,13 @@ describe('readAvailableSkillNames', () => {
   });
 
   it('namespaces a plugin’s skills as plugin:skill', async () => {
-    const install = at('cache', 'superpowers', '6.3.0');
+    const install = at('cache', 'jira-writer', '1.11.0');
 
-    await skill(join(install, 'skills'), 'brainstorming');
-    await registry({ 'superpowers@claude-plugins-official': install });
+    await skill(join(install, 'skills'), 'jira-writer');
+    await registry({ 'jira-writer@claude-kit': install });
 
     expect((await readAvailableSkillNames(roots())).all).toContain(
-      'superpowers:brainstorming',
+      'jira-writer:jira-writer',
     );
   });
 

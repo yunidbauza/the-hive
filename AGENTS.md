@@ -50,6 +50,19 @@ done.** Neither is optional, and no rule may be disabled inline to make a task p
 
 ## Working a ticket
 
+The workflow is the Hive's own, shipped as skills under `~/.hive/skills` and
+agents under `~/.hive/agents` (Epic HIVE-161; the user guide is
+[`docs/guide/workflow.md`](docs/guide/workflow.md)). A ticket starts with
+`hive:work-on`, a vague request with `hive:goal-on`. Both run `hive:brainstorm`
+when the shape is open, `hive:plan` when the work is more than one step, then
+`hive:execute` inline, or hand the plan to the **builder** agent when one is on
+the machine and the plan has more than one task. `hive:verify` runs the gates
+before any claim of done. The draft PR goes to the **shipper** by `ledger_ask`;
+`hive:ship` drives it stage by stage, the **acr** agent reviews the whole
+branch once, the **fixer** works the findings, and `hive:merge-pr` merges and
+moves the ticket to Done. Nothing here depends on a plugin from outside the
+repository.
+
 Two audits now. A week of sessions (Sep 2026) found the hours going to
 confirmation prompts and to a serial implement-review-re-review chain. HIVE-144
 then proved the first half fixed and the second half untouched: four human turns
@@ -85,8 +98,10 @@ implementation hours inside the review chain. These rules follow from both:
 - **Never sleep-poll a subagent.** Its task notification is the wake-up; a
   `sleep N; git log` loop overshoots by up to its own length every time.
 - **The tail runs unattended.** After the reconciliation go-ahead, the flow
-  pushes, opens the draft PR and invokes ship in the same turn; auto-merge for
-  this repo is on in `~/.claude/workstream/ship-config.json`.
+  pushes, opens the draft PR and asks the shipper in the same turn. Auto-merge
+  is a project's `autoMerge` flag in `~/.hive/config.json` (Settings ›
+  Projects): the shipper's merge call is granted for that repository and the
+  approval wait is skipped.
 - **A failing e2e spec is re-run alone before it counts as red.** Playwright is
   pinned to two workers here because the timeout flake scales with parallelism;
   it lowers the flake, it does not remove it. A spec that passes alone is a
@@ -106,6 +121,7 @@ implementation hours inside the review chain. These rules follow from both:
 | The map: processes, fences, which deep dive owns what | [`docs/architecture.md`](docs/architecture.md) |
 | What a feature does for the user (the guides, indexed) | [`docs/README.md`](docs/README.md) |
 | The ledger, parties, asks and claims; agent definitions | [`docs/agents-and-ledger.md`](docs/agents-and-ledger.md) |
+| A ticket from the Work tab to Done: the skills, the agents, the cards | [`docs/guide/workflow.md`](docs/guide/workflow.md) |
 | Any UI task — tokens and type scale, then atoms and props | [`.claude/DESIGN-SYSTEM.md`](.claude/DESIGN-SYSTEM.md) · [`.claude/COMPONENTS.md`](.claude/COMPONENTS.md) |
 
 The visual source of truth is [`.claude/DESIGN-SYSTEM.md`](.claude/DESIGN-SYSTEM.md):

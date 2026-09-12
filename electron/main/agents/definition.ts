@@ -321,7 +321,7 @@ export function parseAgent(source: string, ctx: ParseContext): ParseResult {
 
       An agent runs as a `claude -p` process on this machine, which loads the
       user's own `~/.claude/skills` and their installed plugins whether or not
-      this file names them. Refusing `superpowers:brainstorming` here therefore
+      this file names them. Refusing `jira-writer:jira-writer` here therefore
       refused a skill the agent could reach anyway — a validator holding an
       opinion the runtime does not share, and on a machine with an empty
       `~/.hive/skills` (the default) it refused *every* name.
