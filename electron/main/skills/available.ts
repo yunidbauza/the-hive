@@ -12,7 +12,7 @@ import { isSkillFolder } from './read';
  * and that was wrong in both directions. Too narrow, because an agent runs as a
  * `claude -p` process on this machine: it loads the user's `~/.claude/skills`
  * and their installed plugins whether or not the definition names them, so
- * refusing `superpowers:brainstorming` refused a skill the agent could reach
+ * refusing `jira-writer:jira-writer` refused a skill the agent could reach
  * regardless. And wrong in practice, because `~/.hive/skills` is empty on a
  * fresh install — which made the field refuse *every* name a person could type.
  *
@@ -139,7 +139,7 @@ function installPaths(json: string): Map<string, string> {
 
     if (first === undefined) continue;
 
-    // `superpowers@claude-plugins-official` → `superpowers`. The marketplace
+    // `jira-writer@claude-kit` → `jira-writer`. The marketplace
     // is not part of how a skill is addressed.
     const name = key.split('@')[0] ?? '';
 

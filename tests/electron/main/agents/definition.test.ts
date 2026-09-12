@@ -264,14 +264,14 @@ describe('parseAgent — refusals', () => {
   it('accepts a name from outside the hive, including a plugin skill', () => {
     const source = GOOD.replace(
       'skills: [jira-writer, release-notes]',
-      'skills: [graphify, superpowers:brainstorming]',
+      'skills: [graphify, jira-writer:jira-writer]',
     );
 
     expect(
       definition(source, {
-        skillNames: ['graphify', 'superpowers:brainstorming'],
+        skillNames: ['graphify', 'jira-writer:jira-writer'],
       }).skills,
-    ).toEqual(['graphify', 'superpowers:brainstorming']);
+    ).toEqual(['graphify', 'jira-writer:jira-writer']);
   });
 
   it('refuses an unknown integration, naming it', () => {

@@ -248,7 +248,7 @@ export const AGENT_ICON_NAMES: readonly string[] = [
  * made before it became a picker.
  */
 const LIST_FIELDS = [
-  { path: 'skills', label: 'skills', hint: '[jira-writer, superpowers:brainstorming]' },
+  { path: 'skills', label: 'skills', hint: '[work-on, jira-writer:jira-writer]' },
   { path: 'tools', label: 'tools', hint: '[Read, Grep]' },
 ] as const;
 

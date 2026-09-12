@@ -156,5 +156,6 @@ because the key came from its own arguments. Never from a branch name.
 - Ending the turn on "draft PR created". Ask the shipper in the same turn.
 - Answering a builder question the spec does not answer. That one is the
   person's.
-- A `superpowers:` name anywhere. This skill and its siblings are the whole
-  process.
+- A plugin skill from outside the Hive as a step of the process. This skill
+  and its siblings are the whole process; the Jira CLI fallbacks are tools,
+  not steps.

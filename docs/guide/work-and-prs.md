@@ -55,6 +55,7 @@ ticket does not say which repository it belongs to. Pick the project and press E
 </picture>
 
 The session is named for the ticket, and names stay unique: `ABC-123`, then `ABC-123-2`.
+From here, [Working a ticket](workflow.md) walks the rest of the way to Done.
 
 ## The PRs tab
 
