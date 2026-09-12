@@ -65,6 +65,7 @@ import type {
   WriteFileRequest,
 } from './fs-contract';
 import { MAX_FILE_BYTES } from './fs-contract';
+import type { PrLookup } from './github-contract';
 import type {
   AckRequest,
   PromptReport,
@@ -2664,4 +2665,30 @@ export function parseLedgerAnswerRequest(input: unknown): LedgerAnswerRequest {
   if (meta !== undefined) request.meta = meta;
 
   return request;
+}
+
+/**
+ * `owner/name` as GitHub spells them: an owner is alphanumerics and hyphens,
+ * at most 39; a name adds `_` and `.`, at most 100, and is never `.` or `..`.
+ * The slug is only ever compared to a sweep's records, never used as a path,
+ * so this is about refusing nonsense early with a sentence, not about safety.
+ */
+const REPO_SLUG = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/(?!\.\.?$)[A-Za-z0-9_.-]{1,100}$/;
+
+/**
+ * The body of a `PR_PATH` request (HIVE-173). Strict on both fields: the
+ * caller is a model, and "400, repo must be owner/name" is something it can act
+ * on where a lookup that quietly matched nothing is not.
+ */
+export function parsePrLookup(input: unknown): PrLookup {
+  const source = asRecord(input, 'pr lookup');
+  const repo = source.repo;
+  if (typeof repo !== 'string' || !REPO_SLUG.test(repo)) {
+    throw new TypeError('pr lookup.repo must be owner/name');
+  }
+  const number = source.number;
+  if (typeof number !== 'number' || !Number.isInteger(number) || number < 1) {
+    throw new TypeError('pr lookup.number must be a positive integer');
+  }
+  return { repo, number };
 }

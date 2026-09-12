@@ -7,6 +7,8 @@ import {
   ASK_INTENT_GUIDANCE,
   LEDGER_TOOLS,
   LEDGER_TOOL_NAMES,
+  PR_TOOL,
+  PROJECTS_TOOL,
 } from '@shared/ledger-tools';
 import { matches } from '@shared/permission-rules';
 
@@ -245,5 +247,31 @@ describe('AGENTS_TOOL', () => {
   */
   it('is covered by the wildcard every agent is granted, with no `tools:` entry', () => {
     expect(matches('mcp__hive__*', `mcp__hive__${AGENTS_TOOL.name}`, {})).toBe(true);
+  });
+});
+
+describe('PROJECTS_TOOL and PR_TOOL (HIVE-173)', () => {
+  it('are named for the short mcp__hive__ form and stay outside the ledger vocabulary', () => {
+    expect(PROJECTS_TOOL.name).toBe('projects');
+    expect(PR_TOOL.name).toBe('pr');
+    expect(LEDGER_TOOL_NAMES).not.toContain('projects');
+    expect(LEDGER_TOOL_NAMES).not.toContain('pr');
+  });
+
+  it('projects takes no arguments; pr requires the repo slug and the number', () => {
+    expect(PROJECTS_TOOL.inputSchema.properties).toEqual({});
+    expect(PROJECTS_TOOL.inputSchema.required).toBeUndefined();
+    expect(PR_TOOL.inputSchema.required).toEqual(['repo', 'number']);
+    expect(PR_TOOL.inputSchema.properties?.['number']).toMatchObject({ type: 'integer' });
+  });
+
+  it('are covered by the wildcard every agent is granted', () => {
+    expect(matches('mcp__hive__*', `mcp__hive__${PROJECTS_TOOL.name}`, {})).toBe(true);
+    expect(matches('mcp__hive__*', `mcp__hive__${PR_TOOL.name}`, {})).toBe(true);
+  });
+
+  it('tell the model why to reach for them: the config file and gh api are the alternatives', () => {
+    expect(PROJECTS_TOOL.description).toMatch(/config file/i);
+    expect(PR_TOOL.description).toMatch(/gh api/);
   });
 });

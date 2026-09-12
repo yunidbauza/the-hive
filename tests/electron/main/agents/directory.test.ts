@@ -6,7 +6,8 @@ import type {
   AgentsSnapshot,
   AgentSummary,
 } from '../../../../electron/shared/agent-contract';
-import { agentsDirectoryFor } from '../../../../electron/main/agents/directory';
+import type { ConfigSnapshot } from '../../../../electron/shared/config-contract';
+import { agentsDirectoryFor, projectsDirectoryFor } from '../../../../electron/main/agents/directory';
 
 /**
  * The directory a peer sees (HIVE-127).
@@ -168,5 +169,61 @@ describe('agentsDirectoryFor', () => {
 
     expect(peer?.accepts).not.toBe(source.wake.on);
     expect(peer?.tools).not.toBe(source.tools);
+  });
+});
+
+describe('projectsDirectoryFor (HIVE-173)', () => {
+  const project = {
+    id: 'the-hive',
+    key: 'hive',
+    name: 'The Hive',
+    path: '/repos/the-hive',
+    icon: 'ph-folder',
+    origin: 'local' as const,
+    status: 'ok' as const,
+    isRepo: true,
+  };
+  const snapshot = (projects: ConfigSnapshot['projects']): ConfigSnapshot =>
+    ({ projects }) as unknown as ConfigSnapshot;
+
+  it('projects each project to what an agent may see, and nothing of the machine', () => {
+    const directory = projectsDirectoryFor(
+      snapshot([
+        { ...project, autoMerge: true, env: { SECRET: 'x' }, shell: '/bin/zsh', claudeCommand: 'claude' },
+        {
+          ...project,
+          id: 'boxed',
+          key: 'bx',
+          container: { workspace: '/workspace', hiveDir: '/hive' } as never,
+        },
+        { ...project, id: 'gone', key: 'g', path: null, status: 'missing' },
+      ]),
+    );
+
+    expect(directory).toEqual({
+      projects: [
+        {
+          id: 'the-hive',
+          key: 'hive',
+          name: 'The Hive',
+          path: '/repos/the-hive',
+          status: 'ok',
+          origin: 'local',
+          autoMerge: true,
+        },
+        expect.objectContaining({ id: 'boxed', autoMerge: false, container: { workspace: '/workspace' } }),
+        expect.objectContaining({ id: 'gone', path: null, status: 'missing', autoMerge: false }),
+      ],
+    });
+    for (const entry of directory.projects) {
+      expect(Object.keys(entry)).not.toContain('env');
+      expect(Object.keys(entry)).not.toContain('shell');
+      expect(Object.keys(entry)).not.toContain('claudeCommand');
+      expect(Object.keys(entry)).not.toContain('icon');
+    }
+  });
+
+  it('answers an empty list for an empty config', () => {
+    expect(projectsDirectoryFor(snapshot([]))).toEqual({ projects: [] });
   });
 });

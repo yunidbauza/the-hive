@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 
 import type { AgentContainer, AgentsDirectory } from '@shared/agent-contract';
+import type { ProjectsDirectory } from '@shared/config-contract';
 import {
   DEFAULT_BIND,
   DEFAULT_RECEIVER,
@@ -8,6 +9,7 @@ import {
   type ReceiverBindConfig,
   type ResolvedContainer,
 } from '@shared/config-contract';
+import type { PrLookup, PrLookupReply } from '@shared/github-contract';
 import {
   HOOK_ENV_RECEIVER_URL,
   HOOK_ENV_SESSION,
@@ -173,6 +175,9 @@ export interface HookHandlers {
    * either of them.
    */
   onAgentsList: (caller: string) => Promise<AgentsDirectory>;
+  /** HIVE-173: the two workflow lookups; the receiver has honest defaults for both. */
+  onProjectsList?: (caller: string) => ProjectsDirectory;
+  onPrLookup?: (caller: string, lookup: PrLookup) => Promise<PrLookupReply>;
   onEvent: (event: HookStatusEvent) => void;
   /**
    * A hook event from an agent's headless turn (HIVE-115).
@@ -391,6 +396,8 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       knowsSession,
       knowsAgent,
       onAgentsList,
+      onProjectsList,
+      onPrLookup,
       onEvent,
       onAgentEvent,
       onTicketIntent,
@@ -430,6 +437,8 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
         onLedgerRead: (_caller, query) => ledger.read(query),
         onLedgerPost: (caller, request) => ledger.append({ ...request, from: caller }),
         onAgentsList,
+        onProjectsList,
+        onPrLookup,
         knowsSession,
         knowsAgent,
         /*

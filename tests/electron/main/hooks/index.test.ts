@@ -8,7 +8,11 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentContainer } from '../../../../electron/shared/agent-contract';
-import type { ResolvedContainer } from '../../../../electron/shared/config-contract';
+import {
+  PROJECTS_PATH,
+  type ResolvedContainer,
+} from '../../../../electron/shared/config-contract';
+import { PR_PATH } from '../../../../electron/shared/github-contract';
 import {
   HOOK_ENV_TOKEN,
   HOOK_HEADER_SESSION,
@@ -901,5 +905,65 @@ describe('the receiver bind comes from config', () => {
     });
 
     expect(status).toBe(204);
+  });
+});
+
+/**
+ * The two workflow lookups reach the receiver through `start` (HIVE-173).
+ *
+ * Pinned because the receiver has honest defaults for both: a `start` that
+ * dropped either would answer an empty directory and "not wired", two
+ * plausible sentences a model would believe, and every other test here would
+ * stay green.
+ */
+describe('start forwards the projects and PR lookups (HIVE-173)', () => {
+  let dir: string;
+  let ledger: Ledger;
+  let runtime: HookRuntime | undefined;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'hive-hooks-lookups-'));
+    ledger = createLedger({ dir, knowsParty: () => true });
+  });
+
+  afterEach(async () => {
+    await runtime?.stop();
+    runtime = undefined;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('answers what the composition supplied, on both routes', async () => {
+    runtime = createHookRuntime({ userDataPath: dir, sessionMetrics: () => false, ledger });
+    await runtime.start({
+      ...noopHandlers,
+      onProjectsList: () => ({
+        projects: [
+          { id: 'p', key: 'p', name: 'P', path: '/repos/p', status: 'ok', origin: 'local', autoMerge: true },
+        ],
+      }),
+      onPrLookup: (_caller, lookup) =>
+        Promise.resolve({ pr: null, reason: `composed: ${lookup.repo}#${lookup.number}` }),
+    });
+    const env = runtime.envFor('sess-a');
+    const post = (path: string, body: unknown) =>
+      fetch(`${env['HIVE_RECEIVER_URL']}${path}`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          [HOOK_HEADER_SESSION]: 'sess-a',
+          [HOOK_HEADER_TOKEN]: env['HIVE_HOOK_TOKEN'] ?? '',
+        },
+        body: JSON.stringify(body),
+      });
+
+    const projects = await post(PROJECTS_PATH, {});
+    expect(projects.status).toBe(200);
+    expect(await projects.json()).toEqual({
+      projects: [{ id: 'p', key: 'p', name: 'P', path: '/repos/p', status: 'ok', origin: 'local', autoMerge: true }],
+    });
+
+    const pr = await post(PR_PATH, { repo: 'acme/p', number: 3 });
+    expect(pr.status).toBe(200);
+    expect(await pr.json()).toEqual({ pr: null, reason: 'composed: acme/p#3' });
   });
 });

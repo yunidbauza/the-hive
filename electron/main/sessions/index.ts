@@ -2,12 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
 import type { AgentsDirectory } from '@shared/agent-contract';
+import type { ProjectsDirectory } from '@shared/config-contract';
 import {
   AUTH_ENV_KEYS,
   ENV_PLACEHOLDER,
   type ConfigSnapshot,
   type ProjectConfig,
 } from '@shared/config-contract';
+import type { PrLookup, PrLookupReply } from '@shared/github-contract';
 import {
   HOOK_ENV_RECEIVER_URL,
   type HookNotificationType,
@@ -217,6 +219,9 @@ export interface SessionsOptions {
    * answer there rather than a degraded one.
    */
   onAgentsList?: (caller: string) => Promise<AgentsDirectory>;
+  /** HIVE-173: forwarded to the receiver untouched; its defaults stand when absent. */
+  onProjectsList?: (caller: string) => ProjectsDirectory;
+  onPrLookup?: (caller: string, lookup: PrLookup) => Promise<PrLookupReply>;
   /**
    * An agent's headless turn ended — its `Stop` hook (HIVE-115).
    *
@@ -518,6 +523,8 @@ export function createSessions(options: SessionsOptions): Sessions {
     // An empty directory rather than a refusal: a build with no agent runtime
     // genuinely has no peers, and that is an answer, not a failure.
     onAgentsList = () => Promise.resolve({ agents: [] }),
+    onProjectsList,
+    onPrLookup,
     onAgentTurnEnded,
   } = options;
 
@@ -953,6 +960,8 @@ export function createSessions(options: SessionsOptions): Sessions {
       right now.
     */
     onAgentsList,
+    onProjectsList,
+    onPrLookup,
     /**
      * An agent's hooks, and the end of the road for them (HIVE-115).
      *

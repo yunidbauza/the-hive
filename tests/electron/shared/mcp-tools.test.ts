@@ -13,6 +13,9 @@ const stub = (overrides: Partial<ReceiverClient> = {}): ReceiverClient => ({
   // An empty directory rather than a refusal (HIVE-127): most tests here never
   // touch it, and "nobody else is here" is its honest resting state.
   agents: vi.fn(async () => ({ agents: [] })),
+  // HIVE-173: the same resting states, for the same reason.
+  projects: vi.fn(async () => ({ projects: [] })),
+  pr: vi.fn(async () => ({ pr: null, reason: 'not exercised' })),
   ...overrides,
 });
 
@@ -25,7 +28,7 @@ describe('createToolHandlers — listing', () => {
     `agents` (HIVE-127), then `approve` last — the tools a model is meant to
     call ahead of the one only the CLI ever reaches, on its behalf.
   */
-  it('lists the eleven shared definitions unchanged', () => {
+  it('lists the thirteen shared definitions unchanged', () => {
     const handlers = createToolHandlers(stub());
     expect(handlers.listTools().map((tool) => tool.name)).toEqual([
       'ledger_read',
@@ -38,6 +41,8 @@ describe('createToolHandlers — listing', () => {
       'ledger_failed',
       'ledger_handoff',
       'agents',
+      'projects',
+      'pr',
       'approve',
     ]);
   });
@@ -637,5 +642,91 @@ describe('createToolHandlers — agents', () => {
 
   it('is listed, so a model can find it', () => {
     expect(createToolHandlers(stub()).listTools().map((tool) => tool.name)).toContain('agents');
+  });
+});
+
+describe('createToolHandlers — projects and pr (HIVE-173)', () => {
+  const project = {
+    id: 'the-hive',
+    key: 'hive',
+    name: 'The Hive',
+    path: '/repos/the-hive',
+    status: 'ok' as const,
+    origin: 'local' as const,
+    autoMerge: true,
+  };
+  const record = {
+    number: 214,
+    title: 'feat: a thing',
+    url: 'https://github.com/acme/the-hive/pull/214',
+    repo: 'the-hive',
+    owner: 'acme',
+    branch: 'feat/thing',
+    state: 'open' as const,
+    findings: 2,
+    checks: 'passing' as const,
+    updatedAt: '2026-09-11T10:00:00Z',
+  };
+
+  it('lists projects with their path, consent and container mount', async () => {
+    const handlers = createToolHandlers(
+      stub({
+        projects: async () => ({
+          projects: [
+            project,
+            { ...project, id: 'boxed', key: 'bx', autoMerge: false, container: { workspace: '/workspace' } },
+            { ...project, id: 'gone', key: 'g', path: null, status: 'missing' as const },
+          ],
+        }),
+      }),
+    );
+
+    const result = await handlers.callTool('projects', {});
+    const text = textOf(result);
+
+    expect(result.isError).toBe(false);
+    expect(text).toContain('the-hive (key hive, "The Hive") — /repos/the-hive [ok, local; auto-merge on]');
+    expect(text).toContain('ok, local; auto-merge off; in a container, checkout mounted at /workspace');
+    expect(text).toContain('not on this machine (missing)');
+    expect(result.structuredContent).toMatchObject({ projects: [project, expect.anything(), expect.anything()] });
+  });
+
+  it('says when no project is configured', async () => {
+    const result = await createToolHandlers(stub()).callTool('projects', {});
+    expect(textOf(result)).toMatch(/no projects are configured/i);
+    expect(result.structuredContent).toEqual({ projects: [] });
+  });
+
+  it('answers a PR record as one readable line and as structured content', async () => {
+    const pr = vi.fn(async () => ({ pr: record }));
+    const handlers = createToolHandlers(stub({ pr }));
+
+    const result = await handlers.callTool('pr', { repo: 'acme/the-hive', number: 214 });
+
+    expect(pr).toHaveBeenCalledWith({ repo: 'acme/the-hive', number: 214 });
+    expect(result.isError).toBe(false);
+    expect(textOf(result)).toContain('acme/the-hive#214 "feat: a thing" — open; 2 unresolved review thread(s); checks passing');
+    expect(result.structuredContent).toEqual({ pr: record });
+  });
+
+  it('reports a missing record with the reason, as an answer and not an error', async () => {
+    const handlers = createToolHandlers(stub({ pr: async () => ({ pr: null, reason: 'not in the sweep of 2 repositories' }) }));
+    const result = await handlers.callTool('pr', { repo: 'acme/the-hive', number: 9 });
+
+    expect(result.isError).toBe(false);
+    expect(textOf(result)).toContain('No record of acme/the-hive#9: not in the sweep of 2 repositories');
+    expect(result.structuredContent).toEqual({ pr: null, reason: 'not in the sweep of 2 repositories' });
+  });
+
+  it('refuses a lookup without a slug or with a number that is not a positive integer, calling nothing', async () => {
+    const pr = vi.fn();
+    const handlers = createToolHandlers(stub({ pr }));
+
+    for (const args of [{}, { repo: 'acme/the-hive' }, { repo: 'acme/the-hive', number: '214' }, { repo: 'acme/the-hive', number: 0 }]) {
+      const result = await handlers.callTool('pr', args);
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toMatch(/pr needs repo/);
+    }
+    expect(pr).not.toHaveBeenCalled();
   });
 });

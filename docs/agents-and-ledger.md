@@ -918,7 +918,7 @@ spawns, so a model with shell access could still `curl` the
 receiver directly using another session's header value. Closing that is
 tracked separately, not attempted here. If any of the three is missing — the
 process was started outside The Hive, or by hand in a plain terminal —
-`createHandlers` still lists all eleven tools (so
+`createHandlers` still lists all thirteen tools (so
 `/mcp` shows a connected server, not a broken one) but every *call* answers
 with a sentence explaining why the ledger is out of reach, rather than the
 server refusing to start.
@@ -944,8 +944,8 @@ enough to earn their own schema.
 `--permission-prompt-tool` and the model is never meant to call, and `agents`,
 described next. That array is the ledger vocabulary the agent
 preamble teaches — one entry per ledger kind — and neither of these writes an
-entry. `tools/list` reports eleven, in that order: the nine, then `agents`,
-then `approve` last.
+entry. `tools/list` reports thirteen, in that order: the nine, then `agents`,
+`projects` and `pr` (HIVE-173), then `approve` last.
 
 ### The agents directory: `mcp__hive__agents`
 
@@ -1017,7 +1017,8 @@ not for looks up who is, addresses the ask, and — because `wake.on: [ledger]`
 already routes it — actually wakes them. This adds no verb; the user never
 types anything.
 
-**The route.** `AGENTS_PATH` (`/agents`) is the receiver's seventh, POST like
+**The route.** `AGENTS_PATH` (`/agents`) was the receiver's seventh (`/projects`
+and `/pr` followed in HIVE-173), POST like
 every other, with a body cap of zero because it reads none. It is the only
 **async** handler on that server — the directory is read from disk per call —
 which is why `Route.handle` admits a `Promise<Reply>`. A failed read answers
@@ -1062,6 +1063,40 @@ finds the tools named the short way — the nine ledger ones and `agents` — th
 the identity in the environment, not anything the model typed, is what lands in
 a written line's `from`, and that a refusal's reason reaches the model as
 readable text.
+
+### Projects and pull requests: `mcp__hive__projects`, `mcp__hive__pr`
+
+Two read-only lookups served beside the directory (HIVE-173), on the same
+server and reached by the same short names.
+
+`mcp__hive__projects` answers the config's projects as an agent may see them:
+`id`, `key`, `name`, the host `path` (or `null` when this machine does not have
+it), `status`, `origin`, `autoMerge`, and `container.workspace` when the project
+runs in one. It exists so an ask body can say `the-hive` and the agent can turn
+that into a checkout path, and so the shipper reads auto-merge consent through
+a tool rather than by opening `~/.hive/config.json`. The projection
+(`projectsDirectoryFor`, beside `agentsDirectoryFor`) is a whitelist: `env`,
+`shell` and `claudeCommand` never cross.
+
+`mcp__hive__pr { repo: "owner/name", number }` answers the Hive's own
+`PrRecord` for one PR, from the same GitHub sweep the PRs panel runs, run
+fresh on each call since main keeps no snapshot of it:
+`state`, `findings` (unresolved review threads), `checks`, `branch`, `url`,
+`updatedAt`. The shipper holds no `gh api` (a REST or GraphQL merge hides
+behind that glob), so this is how its gate gets a contemporaneous thread count.
+A PR the sweep does not list answers `pr: null` with a reason, which is a real
+answer: the sweep covers PRs the user authored, open or merged in the last day,
+on configured projects only.
+
+**The routes.** `PROJECTS_PATH` (`/projects`) reads no body and answers
+synchronously from the config in memory; `PR_PATH` (`/pr`) takes a small JSON
+body, capped at `PR_LOOKUP_MAX_BYTES`, parsed by `parsePrLookup` in
+`guards.ts`, and answers `400` with the guard's sentence on a malformed one. A
+lookup that throws answers `500` with a fixed sentence, as `/agents` does, since
+a `gh` failure can quote a path. Both handlers are optional on the receiver with
+honest defaults, an empty list and "not wired", so a receiver composed without
+a config (the live suites) still answers. Both are granted by the same
+`mcp__hive__*` wildcard as everything else here.
 
 ## Agent definitions
 

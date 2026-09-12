@@ -3373,3 +3373,39 @@ describe('terminals', () => {
     });
   });
 });
+
+/**
+ * HIVE-173. `createSessions` forwards the two lookups to `hooks.start`
+ * untouched. Pinned for the reason the hooks suite pins its half: the
+ * receiver's defaults for both are plausible answers, so a dropped forward
+ * fails nothing else.
+ */
+describe('createSessions forwards the projects and PR lookups (HIVE-173)', () => {
+  it('hands hooks.start the very functions it was given', () => {
+    const onProjectsList = () => ({ projects: [] });
+    const onPrLookup = () => Promise.resolve({ pr: null, reason: 'from the test' });
+    let started: Record<string, unknown> | undefined;
+
+    createSessions({
+      supervisor,
+      send: () => {},
+      config: () => CONFIG,
+      userDataPath: USER_DATA_PATH,
+      newSessionUuid: () => TEST_UUID,
+      onProjectsList,
+      onPrLookup,
+      hooks: {
+        settingsPathFor: () => undefined,
+        envFor: () => ({}),
+        start: (opts: Record<string, unknown>) => {
+          started = opts;
+          return Promise.resolve();
+        },
+        stop: () => Promise.resolve(),
+      } as unknown as Parameters<typeof createSessions>[0]['hooks'],
+    });
+
+    expect(started?.['onProjectsList']).toBe(onProjectsList);
+    expect(started?.['onPrLookup']).toBe(onPrLookup);
+  });
+});

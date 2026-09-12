@@ -33,6 +33,7 @@ import {
   parseSpawnRequest,
   parseSpawnTerminalRequest,
   parseWriteRequest,
+  parsePrLookup,
 } from '../../../electron/shared/guards';
 
 const validSpawn = { sessionId: 'sess-1', projectId: 'proj-1', cols: 80, rows: 24 };
@@ -1856,5 +1857,29 @@ describe('parseSpawnTerminalRequest', () => {
     expect(() => parseSpawnTerminalRequest({ ...validTerminal, sessionId: 7 })).toThrow(
       /spawn-terminal\.sessionId/,
     );
+  });
+});
+
+describe('parsePrLookup (HIVE-173)', () => {
+  it('accepts owner/name and a positive integer, and nothing else', () => {
+    expect(parsePrLookup({ repo: 'acme/nova-web', number: 7 })).toEqual({ repo: 'acme/nova-web', number: 7 });
+    expect(parsePrLookup({ repo: 'Acme-1/the.hive_v2', number: 214 })).toEqual({ repo: 'Acme-1/the.hive_v2', number: 214 });
+
+    for (const bad of [
+      {},
+      { repo: 'nova-web', number: 7 },
+      { repo: 'acme/nova/web', number: 7 },
+      { repo: 'acme/nova web', number: 7 },
+      { repo: 'acme/..', number: 7 },
+      { repo: 'ac_me/nova', number: 7 },
+      { repo: `${'a'.repeat(40)}/nova`, number: 7 },
+      { repo: 'acme/nova', number: '7' },
+      { repo: 'acme/nova', number: 0 },
+      { repo: 'acme/nova', number: 1.5 },
+      [],
+      'acme/nova#7',
+    ]) {
+      expect(() => parsePrLookup(bad)).toThrow(/pr lookup/);
+    }
   });
 });
