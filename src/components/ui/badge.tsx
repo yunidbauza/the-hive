@@ -20,6 +20,12 @@ interface BadgeProps {
   count: number;
   tone?: BadgeTone;
   /**
+   * Drawn and announced in place of `count`, for a count that is not a single
+   * number — plan progress reads `3/7` (HIVE-182). `count` still decides
+   * whether the badge renders at all.
+   */
+  text?: string;
+  /**
    * What the number means, for screen readers — e.g. `'unread notifications'`.
    * A bare digit is meaningless out of visual context.
    *
@@ -39,8 +45,9 @@ interface BadgeProps {
  * `min-w-4` with horizontal padding keeps single digits circular and lets
  * three-digit counts grow into a lozenge rather than clipping.
  */
-export function Badge({ count, tone = 'danger', label, className }: BadgeProps) {
+export function Badge({ count, tone = 'danger', text, label, className }: BadgeProps) {
   if (count <= 0) return null;
+  const shown = text ?? String(count);
 
   return (
     <span
@@ -51,8 +58,8 @@ export function Badge({ count, tone = 'danger', label, className }: BadgeProps) 
         className,
       )}
     >
-      {label ? <span aria-hidden="true">{count}</span> : count}
-      {label ? <span className="sr-only">{`${count} ${label}`}</span> : null}
+      {label ? <span aria-hidden="true">{shown}</span> : shown}
+      {label ? <span className="sr-only">{`${shown} ${label}`}</span> : null}
     </span>
   );
 }

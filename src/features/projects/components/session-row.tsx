@@ -1,8 +1,9 @@
 import { cn } from '@/lib/utils';
 import { branchLabel, entityLabel, isSession } from '@/types/entity';
 
+import { Badge } from '@components/ui/badge';
 import { StatusDot, statusLabel, statusText } from '@components/ui/status-dot';
-import { useEntity, useOpenEntity } from '@stores/hive-store';
+import { useEntity, useOpenEntity, usePlanProgress } from '@stores/hive-store';
 import { useActiveTab } from '@stores/ui-store';
 
 interface SessionRowProps {
@@ -24,6 +25,8 @@ export function SessionRow({ id }: SessionRowProps) {
   const entity = useEntity(id);
   const activeTab = useActiveTab();
   const openEntity = useOpenEntity();
+  // Before the guard: a hook cannot sit behind an early return (HIVE-182).
+  const progress = usePlanProgress(id);
 
   if (!entity || !isSession(entity)) return null;
 
@@ -53,6 +56,19 @@ export function SessionRow({ id }: SessionRowProps) {
         >
           {statusLabel(entity.status, entity.idleDetail)}
         </span>
+        {/*
+          The session's plan progress (HIVE-182), after the status label: the
+          dot and the label keep priority, and the count is only ever extra.
+        */}
+        {progress === undefined ? null : (
+          <Badge
+            count={progress.total}
+            text={`${String(progress.done)}/${String(progress.total)}`}
+            tone="green"
+            label="tasks done"
+            className="shrink-0"
+          />
+        )}
       </span>
 
       <span className="w-full truncate pl-[15px] text-left font-mono text-[10.5px] text-subtle">

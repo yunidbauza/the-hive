@@ -87,6 +87,32 @@ describe('Badge', () => {
     expect(container.firstChild).toHaveClass('text-on-brand');
   });
 
+  /**
+   * HIVE-182: a count that is not a single number — plan progress reads
+   * `3/7`. `text` replaces what is drawn and announced; `count` still decides
+   * whether the badge renders at all.
+   */
+  it('draws and announces text in place of the count when given', () => {
+    render(<Badge count={7} text="3/7" tone="green" label="tasks done" />);
+
+    expect(screen.getByText('3/7')).toBeInTheDocument();
+    expect(screen.getByText('3/7 tasks done')).toHaveClass('sr-only');
+    expect(screen.queryByText('7')).toBeNull();
+  });
+
+  it('still renders nothing at a zero count, whatever the text', () => {
+    const { container } = render(<Badge count={0} text="0/0" tone="green" label="tasks done" />);
+
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('draws text as decoration when no label is given', () => {
+    const { container } = render(<Badge count={3} text="1/3" tone="green" />);
+
+    expect(container.firstChild).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByText('1/3')).toBeInTheDocument();
+  });
+
   it('keeps a three-digit count from clipping', () => {
     const { container } = render(
       <Badge count={128} label="unread notifications" />,
