@@ -1985,7 +1985,20 @@ export function createSessions(options: SessionsOptions): Sessions {
     spawn({ ...request, task: undefined });
   }
 
-  /** A size the renderer reported before its entity's pty existed. See `resize`. */
+  /**
+   * A size the renderer reported before its entity's pty existed. See `resize`.
+   *
+   * Kept across a refused spawn (at capacity, host blocked) on purpose: the
+   * surface is still mounted at an unchanged size, so no fresh measure follows
+   * a retry, and the spawn request itself only ever carries the transport's
+   * 80×24 placeholder. Dropping the entry here would spawn the retry at the
+   * very size this map exists to replace. Never stale, because every later
+   * resize overwrites it.
+   *
+   * ponytail: an entity refused and then abandoned leaves one entry that is
+   * never evicted — two numbers per id the user created. Evict on entity
+   * removal if main ever learns of one.
+   */
   const sizeBeforeSpawn = new Map<string, { cols: number; rows: number }>();
 
   /**
