@@ -222,7 +222,7 @@ import {
 import { createHookRuntime } from '../hooks';
 import { readGhStatus, runCommand } from '../integrations/gh';
 import { createGithub } from '../integrations/github';
-import { lookupPr } from '../integrations/github/lookup';
+import { answerPrLookup } from '../integrations/github/lookup';
 import { runAsync, type RunAsync } from '../integrations/github/run';
 import { createJira } from '../integrations/jira';
 import { credentialFile } from '../integrations/jira/auth';
@@ -3087,14 +3087,14 @@ export function registerIpcHandlers(
       HIVE-173. `github` is declared further down this function. The callback
       runs only when a request arrives, after this whole body has executed, so
       the binding is initialised by then. The sweep is the same one the PRs
-      panel runs, run fresh here: main keeps no snapshot of it. And the same
-      await `githubPrs` makes first (HIVE-84): a shipper wake inside the
-      boot window would otherwise read launchd's four-entry PATH and be told
-      `gh` is not installed.
+      panel runs: its last result when recent and holding the PR, a fresh one
+      otherwise (`answerPrLookup`). And the same await `githubPrs` makes
+      first (HIVE-84): a shipper wake inside the boot window would otherwise
+      read launchd's four-entry PATH and be told `gh` is not installed.
     */
     onPrLookup: async (_caller, lookup) => {
       await loginEnvStatus();
-      return lookupPr(await github.prs(), lookup);
+      return answerPrLookup(github, lookup);
     },
     /*
       HIVE-174. `jira` is declared further down for the same reason `github`

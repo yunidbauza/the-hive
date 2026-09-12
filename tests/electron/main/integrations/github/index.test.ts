@@ -306,6 +306,56 @@ describe('createGithub', () => {
     await expect(github.prs()).resolves.toMatchObject({ ok: true });
   });
 
+  it('keeps the last good sweep for a lookup, until it is older than asked', async () => {
+    let now = Date.parse('2026-08-09T12:00:00Z');
+    const github = createGithub({
+      config: () => config([project()]),
+      env: () => ({ PATH: withGh() }),
+      run: runner(),
+      now: () => now,
+    });
+
+    expect(github.latestPrs(90_000)).toBeNull();
+    await github.prs();
+
+    now += 90_000;
+    expect(github.latestPrs(90_000)?.prs[0]?.number).toBe(482);
+    now += 1;
+    expect(github.latestPrs(90_000)).toBeNull();
+  });
+
+  it('keeps nothing from a failed sweep', async () => {
+    const github = createGithub({
+      config: () => config([project({ isRepo: false })]),
+      env: () => ({ PATH: withGh() }),
+      run: runner(),
+      now: () => 0,
+    });
+
+    await github.prs();
+
+    expect(github.latestPrs(90_000)).toBeNull();
+  });
+
+  it('shares one sweep between callers that arrive while it runs', async () => {
+    const run = vi.fn<RunAsync>(runner());
+    const github = createGithub({
+      config: () => config([project()]),
+      env: () => ({ PATH: withGh() }),
+      run,
+      now: () => Date.parse('2026-08-09T12:00:00Z'),
+    });
+    const sweeps = () => run.mock.calls.filter(([, args]) => args[0] === 'api').length;
+
+    const [first, second] = await Promise.all([github.prs(), github.prs()]);
+    expect(second).toBe(first);
+    expect(sweeps()).toBe(1);
+
+    // Done is done: the next caller starts its own.
+    await github.prs();
+    expect(sweeps()).toBe(2);
+  });
+
   /** The directory→repository memo survives between sweeps. */
   it('does not re-ask which repository a project is on every sweep', async () => {
     const run = vi.fn<RunAsync>(runner());
