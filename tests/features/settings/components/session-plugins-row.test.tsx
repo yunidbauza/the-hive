@@ -115,6 +115,8 @@ describe('SessionPluginsRow (HIVE-176, HIVE-177)', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Done' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    // Focus goes back to the button that opened it, not to <body>.
+    expect(screen.getByRole('button', { name: 'Manage Installed Plugins' })).toHaveFocus();
     await manage();
     expect(screen.getByLabelText('Filter plugins')).toHaveValue('');
   });

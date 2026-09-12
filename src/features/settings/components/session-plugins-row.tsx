@@ -9,6 +9,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
 } from '@components/ui/dialog';
 import { Switch } from '@components/ui/switch';
 import { TextField } from '@components/ui/text-field';
@@ -107,15 +108,17 @@ export function SessionPluginsRow() {
           if (!next) setFilter('');
         }}
       >
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="shrink-0 text-brand hover:underline"
-        >
-          Manage Installed Plugins
-        </button>
+        {/* A trigger, so closing the dialog returns focus to this button. */}
+        <DialogTrigger asChild>
+          <button type="button" className="shrink-0 text-brand hover:underline">
+            Manage Installed Plugins
+          </button>
+        </DialogTrigger>
 
-        <DialogContent className="gap-0 border-border bg-panel p-0 sm:max-w-[560px]">
+        <DialogContent
+          showCloseButton={false}
+          className="gap-0 border-border bg-panel p-0 sm:max-w-[560px]"
+        >
           <DialogHeader className="gap-1 border-b border-border-soft px-3.5 pt-3 pb-2.5">
             <DialogTitle className="text-[13px] font-semibold text-ink">
               Manage Installed Plugins
