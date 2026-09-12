@@ -444,6 +444,37 @@ describe('appearance-store — rail widths', () => {
   });
 });
 
+/** The plan drawer's pin (HIVE-181): a layout choice, persisted like the rails. */
+describe('appearance-store — planPinned', () => {
+  it('defaults to unpinned', () => {
+    expect(useAppearanceStore.getState().planPinned).toBe(false);
+  });
+
+  it('pins and unpins, and persists the choice', () => {
+    useAppearanceStore.getState().setPlanPinned(true);
+
+    expect(useAppearanceStore.getState().planPinned).toBe(true);
+    const raw = localStorage.getItem(APPEARANCE_STORAGE_KEY);
+    expect((JSON.parse(raw as string) as { state: { planPinned: unknown } }).state.planPinned).toBe(true);
+
+    useAppearanceStore.getState().setPlanPinned(false);
+
+    expect(useAppearanceStore.getState().planPinned).toBe(false);
+  });
+
+  it('hydrates a stored state from before the field existed to unpinned', async () => {
+    localStorage.setItem(
+      APPEARANCE_STORAGE_KEY,
+      JSON.stringify({ version: 3, state: { theme: 'light', railCollapsedRight: true } }),
+    );
+
+    await useAppearanceStore.persist.rehydrate();
+
+    expect(useAppearanceStore.getState().planPinned).toBe(false);
+    expect(useAppearanceStore.getState().railCollapsedRight).toBe(true);
+  });
+});
+
 describe('appearance-store — persistence', () => {
   it('writes only the whitelisted preferences to localStorage', () => {
     useAppearanceStore.getState().setTheme('light');
@@ -464,6 +495,7 @@ describe('appearance-store — persistence', () => {
       railWidthRight: null,
       railCollapsedLeft: false,
       railCollapsedRight: false,
+      planPinned: false,
       teamName: 'Swarm Command',
       editorPlacement: 'full',
       editorSplitAxis: 'vertical',

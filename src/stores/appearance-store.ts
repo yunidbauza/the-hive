@@ -127,6 +127,13 @@ interface AppearanceState {
   railCollapsedRight: boolean;
 
   /**
+   * The plan drawer docked beside the terminal (HIVE-181). A layout choice,
+   * persisted with the rail widths: unpinned, the drawer only peeks over the
+   * terminal on hover or focus.
+   */
+  planPinned: boolean;
+
+  /**
    * The line under the wordmark, top-left — whose hive this is.
    *
    * Appearance rather than config, on this store's own test: it is a fact about
@@ -251,6 +258,8 @@ interface AppearanceState {
   setRailCollapsed: (side: RailSide, collapsed: boolean) => void;
   /** The click-the-active-tab gesture, and both keyboard chords. */
   toggleRailCollapsed: (side: RailSide) => void;
+  /** Dock the plan drawer beside the terminal, or let it peek again (HIVE-181). */
+  setPlanPinned: (pinned: boolean) => void;
   setTeamName: (name: string) => void;
   setSystemDark: (dark: boolean) => void;
 
@@ -608,6 +617,7 @@ const initialAppearanceState = {
   railWidthRight: null as number | null,
   railCollapsedLeft: false,
   railCollapsedRight: false,
+  planPinned: false,
   teamName: DEFAULT_TEAM_NAME,
 
   /** Full stage: the editor is a place you go, not a permanent tax on the terminal. */
@@ -649,6 +659,7 @@ interface PersistedAppearanceState {
   railWidthRight: number | null;
   railCollapsedLeft: boolean;
   railCollapsedRight: boolean;
+  planPinned: boolean;
   teamName: string;
   editorPlacement: EditorPlacement;
   editorSplitAxis: EditorSplitAxis;
@@ -875,6 +886,8 @@ export const useAppearanceStore = create<AppearanceState>()(
             : { railCollapsedRight: !state.railCollapsedRight },
         ),
 
+      setPlanPinned: (planPinned) => set({ planPinned }),
+
       /**
        * Stored exactly as typed.
        *
@@ -1000,6 +1013,7 @@ export const useAppearanceStore = create<AppearanceState>()(
         railWidthRight: state.railWidthRight,
         railCollapsedLeft: state.railCollapsedLeft,
         railCollapsedRight: state.railCollapsedRight,
+        planPinned: state.planPinned,
         teamName: state.teamName,
         editorPlacement: state.editorPlacement,
         editorSplitAxis: state.editorSplitAxis,
@@ -1196,6 +1210,11 @@ export const useAppearanceSettings = () =>
   useAppearanceStore(useShallow(appearanceSettingsSelector));
 export const useAppearanceActions = () =>
   useAppearanceStore(useShallow(appearanceActionsSelector));
+
+/** Whether the plan drawer is docked beside the terminal (HIVE-181). */
+export const usePlanPinned = () => useAppearanceStore((state) => state.planPinned);
+/** Dock or undock the plan drawer (HIVE-181). */
+export const useSetPlanPinned = () => useAppearanceStore((state) => state.setPlanPinned);
 
 /**
  * Everything the CodeMirror surface needs, resolved.
