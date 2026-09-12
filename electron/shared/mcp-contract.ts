@@ -2,6 +2,15 @@ import type { AgentsDirectory } from './agent-contract';
 import type { ProjectsDirectory } from './config-contract';
 import type { PrLookup, PrLookupReply } from './github-contract';
 import type {
+  JiraComment,
+  JiraResult,
+  JiraToolCommentRequest,
+  JiraToolIssue,
+  JiraToolKeyRequest,
+  JiraToolTransitionReply,
+  JiraTransitionByName,
+} from './jira-contract';
+import type {
   LedgerPostRequest,
   LedgerReadQuery,
   LedgerSnapshot,
@@ -162,6 +171,10 @@ export interface ReceiverClient {
   projects(): Promise<ProjectsDirectory>;
   /** One PR record from the Hive's own GitHub sweep (HIVE-173). */
   pr(lookup: PrLookup): Promise<PrLookupReply>;
+  /** The Jira tools (HIVE-174), each a `JiraResult` so a Jira refusal is an answer, not a transport error. */
+  jiraGet(request: JiraToolKeyRequest): Promise<JiraResult<JiraToolIssue>>;
+  jiraTransition(request: JiraTransitionByName): Promise<JiraResult<JiraToolTransitionReply>>;
+  jiraComment(request: JiraToolCommentRequest): Promise<JiraResult<JiraComment>>;
 }
 
 /** The path `POST /mcp` is served on (HIVE-130). */

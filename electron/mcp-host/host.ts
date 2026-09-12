@@ -5,7 +5,16 @@ import {
   HOOK_ENV_SESSION,
   HOOK_ENV_TOKEN,
 } from '@shared/hook-contract';
-import { AGENTS_TOOL, APPROVE_TOOL, LEDGER_TOOLS, PR_TOOL, PROJECTS_TOOL } from '@shared/ledger-tools';
+import {
+  AGENTS_TOOL,
+  APPROVE_TOOL,
+  JIRA_COMMENT_TOOL,
+  JIRA_GET_TOOL,
+  JIRA_TRANSITION_TOOL,
+  LEDGER_TOOLS,
+  PR_TOOL,
+  PROJECTS_TOOL,
+} from '@shared/ledger-tools';
 import type { CallToolResult } from '@shared/mcp-contract';
 import { createToolHandlers } from '@shared/mcp-tools';
 
@@ -114,7 +123,16 @@ export function createHandlers(
       // The same list the reachable path serves, deliberately: a tool set that
       // differed by how the process was started would make `/mcp` report a
       // different server than the one an agent actually gets.
-      listTools: () => [...LEDGER_TOOLS, AGENTS_TOOL, PROJECTS_TOOL, PR_TOOL, APPROVE_TOOL],
+      listTools: () => [
+        ...LEDGER_TOOLS,
+        AGENTS_TOOL,
+        PROJECTS_TOOL,
+        PR_TOOL,
+        JIRA_GET_TOOL,
+        JIRA_TRANSITION_TOOL,
+        JIRA_COMMENT_TOOL,
+        APPROVE_TOOL,
+      ],
       callTool: async () =>
         unreachable(
           'The ledger is not reachable: this process was started outside The Hive, or the app is not running. Nothing was written.',

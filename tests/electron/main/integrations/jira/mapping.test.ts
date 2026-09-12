@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   toIssue,
+  toIssueDetail,
   toStatusCategory,
   toTransition,
 } from '../../../../../electron/main/integrations/jira/mapping';
@@ -315,5 +316,32 @@ describe('toTransition (HIVE-70)', () => {
     for (const nasty of [7, [], 'x', { id: 1, name: 2, to: 3 }]) {
       expect(() => toTransition(nasty)).not.toThrow();
     }
+  });
+});
+
+describe('toIssueDetail (HIVE-174)', () => {
+  it('maps the description to blocks and the parent to its key and summary', () => {
+    expect(
+      toIssueDetail({
+        key: 'HIVE-7',
+        fields: {
+          description: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Body' }] }] },
+          parent: { key: 'HIVE-1', fields: { summary: 'The epic' } },
+        },
+      }),
+    ).toEqual({
+      description: [{ kind: 'paragraph', runs: [{ text: 'Body', marks: [] }] }],
+      parent: { key: 'HIVE-1', summary: 'The epic' },
+    });
+  });
+
+  it('answers empty and null for an issue with neither, and null for a shape that is not an issue', () => {
+    expect(toIssueDetail({ key: 'HIVE-7', fields: { description: null } })).toEqual({ description: [], parent: null });
+    expect(toIssueDetail({ key: 'HIVE-7', fields: { parent: { key: 'HIVE-1' } } })).toEqual({
+      description: [],
+      parent: { key: 'HIVE-1', summary: '' },
+    });
+    expect(toIssueDetail({ key: 'HIVE-7' })).toBeNull();
+    expect(toIssueDetail('nope')).toBeNull();
   });
 });

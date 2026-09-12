@@ -29,9 +29,11 @@ overmind instead of this session.
 
 ## Steps
 
-**1. Fetch the ticket.** `jira-writer get_issue <KEY>` (the `jira-writer`
-skill; the Atlassian MCP tools if it is not installed; never raw REST). Keep
-the fetch lean:
+**1. Fetch the ticket.** `mcp__hive__jira_get { key }` when this session has
+the Hive's tools: the description, the parent, every comment and link in one
+call, through the token the Work tab holds. Otherwise `jira-writer get_issue
+<KEY>` (the `jira-writer` skill; the Atlassian MCP tools if it is not
+installed; never raw REST). Keep the fetch lean:
 
 - Full body and every comment of the target ticket.
 - The Epic's summary, not its body.
@@ -116,11 +118,12 @@ back to the overmind.
 *Detached (`--detach`).* `reply-to: overmind`, then `/done` now.
 
 *Inline (`--inline`, no `builder` on this machine, or a plan of one task).*
-`hive:worktree` on `feat/<key>-<slug>`, Jira → In Progress (read the current
-status with `jira-writer get_issue <KEY> status`; if it is still To Do, take
-the In Progress id from `jira-writer get_transitions <KEY>` and call
-`jira-writer transition_issue <KEY> <id>`), `hive:execute`, `hive:verify`,
-then:
+`hive:worktree` on `feat/<key>-<slug>`, Jira → In Progress
+(`mcp__hive__jira_transition { key, status: "In Progress" }`, which leaves a
+ticket already past To Do alone; without the Hive's tools, read the status with
+`jira-writer get_issue <KEY> status` and, if it is still To Do, take the In
+Progress id from `jira-writer get_transitions <KEY>` and call `jira-writer
+transition_issue <KEY> <id>`), `hive:execute`, `hive:verify`, then:
 
 1. The full gate on the exact tree you will push: lint, type-check, the unit
    suite, and e2e or a browser drive when the change has a UI surface.

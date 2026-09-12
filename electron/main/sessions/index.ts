@@ -24,6 +24,7 @@ import {
   type PtyDiagnostics,
   type SessionLostEvent,
 } from '@shared/ipc-contract';
+import type { JiraToolHandlers } from '@shared/jira-contract';
 import type { SessionMetricsEvent } from '@shared/metrics-contract';
 import { MAX_SESSIONS } from '@shared/pty-host-protocol';
 import type { ResumePoint } from '@shared/remote-contract';
@@ -222,6 +223,8 @@ export interface SessionsOptions {
   /** HIVE-173: forwarded to the receiver untouched; its defaults stand when absent. */
   onProjectsList?: (caller: string) => ProjectsDirectory;
   onPrLookup?: (caller: string, lookup: PrLookup) => Promise<PrLookupReply>;
+  /** HIVE-174: forwarded to the receiver untouched. */
+  onJira?: JiraToolHandlers;
   /**
    * An agent's headless turn ended — its `Stop` hook (HIVE-115).
    *
@@ -525,6 +528,7 @@ export function createSessions(options: SessionsOptions): Sessions {
     onAgentsList = () => Promise.resolve({ agents: [] }),
     onProjectsList,
     onPrLookup,
+    onJira,
     onAgentTurnEnded,
   } = options;
 
@@ -962,6 +966,7 @@ export function createSessions(options: SessionsOptions): Sessions {
     onAgentsList,
     onProjectsList,
     onPrLookup,
+    onJira,
     /**
      * An agent's hooks, and the end of the road for them (HIVE-115).
      *

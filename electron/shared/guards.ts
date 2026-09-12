@@ -74,7 +74,7 @@ import type {
   SpawnTerminalRequest,
   WriteRequest,
 } from './ipc-contract';
-import { ISSUE_KEY_PATTERN } from './jira-contract';
+import { ISSUE_KEY_PATTERN, type JiraTransitionByName } from './jira-contract';
 import {
   LEDGER_KINDS,
   type LedgerAnswerRequest,
@@ -1885,6 +1885,26 @@ export function parseAddJiraCommentRequest(
     key: assertJiraIssueKey(raw.key, 'addJiraComment.key'),
     markdown,
   };
+}
+
+const MAX_STATUS_NAME = 64;
+
+/**
+ * `{ key, status }` for the `jira_transition` tool (HIVE-174). The status is a
+ * name a person would read in Jira: short, printable, non-empty.
+ */
+export function parseJiraTransitionByName(input: unknown): JiraTransitionByName {
+  const raw = assertShape(input, ['key', 'status'], 'jiraTransition');
+  const status = assertString(raw.status, 'jiraTransition.status').trim();
+  if (status === '') return fail('jiraTransition.status: must not be empty');
+  if (status.length > MAX_STATUS_NAME) return fail('jiraTransition.status: too long');
+  for (const char of status) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) {
+      return fail('jiraTransition.status: control characters are not allowed');
+    }
+  }
+  return { key: assertJiraIssueKey(raw.key, 'jiraTransition.key'), status };
 }
 
 export function parseApplyJiraTransitionRequest(

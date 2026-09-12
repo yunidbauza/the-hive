@@ -1098,6 +1098,40 @@ honest defaults, an empty list and "not wired", so a receiver composed without
 a config (the live suites) still answers. Both are granted by the same
 `mcp__hive__*` wildcard as everything else here.
 
+### Jira through the Hive: `mcp__hive__jira_get`, `jira_transition`, `jira_comment`
+
+Three tools (HIVE-174) over the Jira integration the Work tab already uses,
+through the token the app holds. An agent, or a container, reads and writes
+tickets with nothing on its PATH and no Atlassian credential in its
+environment; the skills prefer them and fall back to `jira-writer` where they
+are absent.
+
+`jira_get { key }` answers the issue (`JiraIssue`), its description and parent
+(`JiraIssueDetail`, a new read on the integration: its own field list, so the
+search that shares `JIRA_FIELDS` with the issue read does not grow a
+description per row), every comment and every link, plus `partial`: the side
+reads that failed, each as `what: why`. The issue itself must read; the rest
+degrades, because a model with the summary and half the thread can still
+work. The text a model is handed renders the ADF as markdown-ish prose
+(`adfBlocksToText`) and is bounded by `JIRA_TEXT_MAX`; the record beside it is
+whole.
+
+`jira_transition { key, status }` moves an issue by target status name: the
+transition whose `to.name` matches, then one whose own name does, applied by
+id. An issue already at that status is left alone and says so, since every
+skill reads "if it is still To Do". A status nothing reaches answers with the
+ones that do.
+
+`jira_comment { key, markdown }` is `addComment`, unchanged.
+
+**The routes.** `/jira/get`, `/jira/transition` and `/jira/comment`, one
+handler shape: refuse, cap (`JIRA_TOOL_MAX_BYTES`), parse with the same guards
+the IPC channels use, answer. Jira's own refusals travel inside the 200 as a
+`JiraResult`, so a model reads "HIVE-9 does not exist" rather than a transport
+error; a thrown error is a fixed sentence, as `/agents` gives. The handlers
+arrive as one optional `onJira`, composed in `ipc/index.ts` by `jiraToolsFor`
+over the integration and defaulting to a "not wired" refusal.
+
 ## Agent definitions
 
 An agent is a file before it is anything else: `~/.hive/agents/<name>/AGENT.md`,

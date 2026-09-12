@@ -344,6 +344,53 @@ export const PR_TOOL: McpToolDefinition = {
 };
 
 /**
+ * The Jira tools (HIVE-174): the ticket, a transition, a comment, through the
+ * token the Work tab holds. They replace `jira-writer` on an agent's PATH and
+ * the Atlassian credential in a container's environment; the skills prefer
+ * them and fall back to the CLI where they are absent.
+ */
+export const JIRA_GET_TOOL: McpToolDefinition = {
+  name: 'jira_get',
+  description:
+    'Read one Jira issue through The Hive: its summary, status, type, priority, assignee and URL, the description as text, its parent (the Epic, for a story) and every comment and link. Use it before working a ticket, and to read a status back after a transition. Prefer it over jira-writer: it uses the token The Hive already holds, so nothing is needed on your PATH or in your environment.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      key: { type: 'string', description: 'The issue key, like HIVE-123.' },
+    },
+    required: ['key'],
+  },
+};
+
+export const JIRA_TRANSITION_TOOL: McpToolDefinition = {
+  name: 'jira_transition',
+  description:
+    'Move a Jira issue to a status by name ("In Progress", "In Review", "Done"), through The Hive. It finds the transition whose target is that status and applies it; an issue already at that status is left alone and reported as such. A status no transition reaches answers with the ones that are reachable. Never move a ticket backwards.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      key: { type: 'string', description: 'The issue key, like HIVE-123.' },
+      status: { type: 'string', description: 'The target status name, as Jira shows it.' },
+    },
+    required: ['key', 'status'],
+  },
+};
+
+export const JIRA_COMMENT_TOOL: McpToolDefinition = {
+  name: 'jira_comment',
+  description:
+    'Add a comment to a Jira issue through The Hive. `markdown` is plain markdown: paragraphs, headings, lists, fenced code and links; it is converted to the document format Jira stores. Answers with the comment as Jira recorded it.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      key: { type: 'string', description: 'The issue key, like HIVE-123.' },
+      markdown: { type: 'string', description: 'The comment, as markdown.' },
+    },
+    required: ['key', 'markdown'],
+  },
+};
+
+/**
  * The agents directory — served beside the ledger tools, and not one of them
  * (HIVE-127).
  *

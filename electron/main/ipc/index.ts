@@ -223,6 +223,7 @@ import { lookupPr } from '../integrations/github/lookup';
 import { runAsync, type RunAsync } from '../integrations/github/run';
 import { createJira } from '../integrations/jira';
 import { credentialFile } from '../integrations/jira/auth';
+import { jiraToolsFor } from '../integrations/jira/tools';
 import { createSlackBridge, type SlackBridge } from '../integrations/slack/bridge';
 import { openSlackSocket, openSlackWeb } from '../integrations/slack/clients';
 import { signInToSlack, signOutOfSlack } from '../integrations/slack/login';
@@ -3052,6 +3053,17 @@ export function registerIpcHandlers(
     onPrLookup: async (_caller, lookup) => {
       await loginEnvStatus();
       return lookupPr(await github.prs(), lookup);
+    },
+    /*
+      HIVE-174. `jira` is declared further down for the same reason `github`
+      is, and the same argument covers it: each method runs on a request, after
+      this body has executed. Built per call so nothing here captures a binding
+      before it exists.
+    */
+    onJira: {
+      get: (request) => jiraToolsFor(jira).get(request),
+      transition: (request) => jiraToolsFor(jira).transition(request),
+      comment: (request) => jiraToolsFor(jira).comment(request),
     },
     /*
       The uuid is forwarded, not dropped: `noteTurnEnded` ignores a `Stop`

@@ -7,6 +7,9 @@ import {
   ASK_INTENT_GUIDANCE,
   LEDGER_TOOLS,
   LEDGER_TOOL_NAMES,
+  JIRA_COMMENT_TOOL,
+  JIRA_GET_TOOL,
+  JIRA_TRANSITION_TOOL,
   PR_TOOL,
   PROJECTS_TOOL,
 } from '@shared/ledger-tools';
@@ -273,5 +276,26 @@ describe('PROJECTS_TOOL and PR_TOOL (HIVE-173)', () => {
   it('tell the model why to reach for them: the config file and gh api are the alternatives', () => {
     expect(PROJECTS_TOOL.description).toMatch(/config file/i);
     expect(PR_TOOL.description).toMatch(/gh api/);
+  });
+});
+
+describe('the Jira tools (HIVE-174)', () => {
+  it('are named for the short mcp__hive__ form, outside the ledger vocabulary, under the wildcard grant', () => {
+    for (const tool of [JIRA_GET_TOOL, JIRA_TRANSITION_TOOL, JIRA_COMMENT_TOOL]) {
+      expect(tool.name).toMatch(/^jira_/);
+      expect(LEDGER_TOOL_NAMES).not.toContain(tool.name);
+      expect(matches('mcp__hive__*', `mcp__hive__${tool.name}`, {})).toBe(true);
+    }
+  });
+
+  it('require what each needs and nothing more', () => {
+    expect(JIRA_GET_TOOL.inputSchema.required).toEqual(['key']);
+    expect(JIRA_TRANSITION_TOOL.inputSchema.required).toEqual(['key', 'status']);
+    expect(JIRA_COMMENT_TOOL.inputSchema.required).toEqual(['key', 'markdown']);
+  });
+
+  it('tell the model the CLI is the fallback, and that a ticket never moves backwards', () => {
+    expect(JIRA_GET_TOOL.description).toMatch(/jira-writer/);
+    expect(JIRA_TRANSITION_TOOL.description).toMatch(/never move a ticket backwards/i);
   });
 });

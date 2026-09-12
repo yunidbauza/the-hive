@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AGENTS_PATH } from '@shared/agent-contract';
 import { PROJECTS_PATH } from '@shared/config-contract';
 import { PR_PATH } from '@shared/github-contract';
+import { JIRA_COMMENT_PATH, JIRA_GET_PATH, JIRA_TRANSITION_PATH } from '@shared/jira-contract';
 import { HOOK_HEADER_SESSION, HOOK_HEADER_TOKEN } from '@shared/hook-contract';
 import {
   LEDGER_POST_PATH,
@@ -223,5 +224,27 @@ describe('projects() and pr() (HIVE-173)', () => {
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe(`http://127.0.0.1:4100${PR_PATH}`);
     expect(JSON.parse(init.body as string)).toEqual({ repo: 'acme/nova', number: 7 });
+  });
+});
+
+describe('the Jira calls (HIVE-174)', () => {
+  it('post each request as the body of its own route and return the JiraResult whole', async () => {
+    const refusal = { ok: false, error: { kind: 'not-found', message: 'HIVE-9 does not exist.' } };
+    const cases = [
+      ['jiraGet', JIRA_GET_PATH, { key: 'HIVE-9' }],
+      ['jiraTransition', JIRA_TRANSITION_PATH, { key: 'HIVE-9', status: 'Done' }],
+      ['jiraComment', JIRA_COMMENT_PATH, { key: 'HIVE-9', markdown: 'hi' }],
+    ] as const;
+
+    for (const [method, path, request] of cases) {
+      const fetchImpl = vi.fn(async () => jsonResponse(200, refusal));
+      const answer = await (client(fetchImpl as never)[method] as (r: unknown) => Promise<unknown>)(request);
+      expect(answer).toEqual(refusal);
+
+      const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+      expect(url).toBe(`http://127.0.0.1:4100${path}`);
+      expect(JSON.parse(init.body as string)).toEqual(request);
+      expect(init.headers).toMatchObject({ [HOOK_HEADER_SESSION]: 'sess-a', [HOOK_HEADER_TOKEN]: 'tok-1' });
+    }
   });
 });

@@ -18,6 +18,7 @@ import {
   type HookStatusEvent,
   type HookTicketIntentEvent,
 } from '@shared/hook-contract';
+import type { JiraToolHandlers } from '@shared/jira-contract';
 import type { SessionMetrics } from '@shared/metrics-contract';
 
 import {
@@ -178,6 +179,8 @@ export interface HookHandlers {
   /** HIVE-173: the two workflow lookups; the receiver has honest defaults for both. */
   onProjectsList?: (caller: string) => ProjectsDirectory;
   onPrLookup?: (caller: string, lookup: PrLookup) => Promise<PrLookupReply>;
+  /** HIVE-174: the Jira tools; the receiver's default refuses with a reason. */
+  onJira?: JiraToolHandlers;
   onEvent: (event: HookStatusEvent) => void;
   /**
    * A hook event from an agent's headless turn (HIVE-115).
@@ -398,6 +401,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       onAgentsList,
       onProjectsList,
       onPrLookup,
+      onJira,
       onEvent,
       onAgentEvent,
       onTicketIntent,
@@ -439,6 +443,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
         onAgentsList,
         onProjectsList,
         onPrLookup,
+        onJira,
         knowsSession,
         knowsAgent,
         /*

@@ -920,3 +920,49 @@ describe('applyTransition (HIVE-70)', () => {
     expect(JSON.stringify(result)).not.toContain(TOKEN);
   });
 });
+
+describe('detail (HIVE-174)', () => {
+  it('reads the description and the parent with their own field list, and maps them', async () => {
+    const seen: string[] = [];
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: pages(
+        [
+          {
+            key: 'HIVE-68',
+            fields: {
+              description: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Body' }] }] },
+              parent: { key: 'HIVE-1', fields: { summary: 'The epic' } },
+            },
+          },
+        ],
+        seen,
+      ),
+    }).detail({ key: 'HIVE-68' });
+
+    const url = new URL(seen[0] ?? '');
+    expect(url.pathname).toBe('/rest/api/3/issue/HIVE-68');
+    expect(url.searchParams.get('fields')).toBe('description,parent');
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        description: [{ kind: 'paragraph', runs: [{ text: 'Body', marks: [] }] }],
+        parent: { key: 'HIVE-1', summary: 'The epic' },
+      },
+    });
+  });
+
+  it('refuses an answer that is not an issue without quoting it', async () => {
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: pages(['not an issue']),
+    }).detail({ key: 'HIVE-68' });
+
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: 'unknown', message: "Jira's answer for HIVE-68 could not be read." },
+    });
+  });
+});

@@ -381,3 +381,82 @@ export interface JiraLink {
 
 /** How many comments are read at once. Bounded, like every other list. */
 export const JIRA_MAX_COMMENTS = 50;
+
+/**
+ * The receiver routes the Jira tools are served on (HIVE-174).
+ *
+ * Three routes, one per tool, each with the same small JSON body shape the
+ * Work tab's IPC channels take, parsed by the same guards. They exist so an
+ * agent or a container reads and writes tickets through the token the app
+ * already holds, with no `jira-writer` on its PATH and no credential in its
+ * environment.
+ */
+export const JIRA_GET_PATH = '/jira/get';
+export const JIRA_TRANSITION_PATH = '/jira/transition';
+export const JIRA_COMMENT_PATH = '/jira/comment';
+
+/** The body cap on the three routes: a comment's markdown, JSON-escaped, with room. */
+export const JIRA_TOOL_MAX_BYTES = 64 * 1024;
+
+/** `{ key }`: what `jira_get` takes. Structurally `JiraIssueRequest`. */
+export interface JiraToolKeyRequest {
+  key: string;
+}
+
+/** `{ key, status }`: a transition named by where it goes, not by its id. */
+export interface JiraTransitionByName {
+  key: string;
+  /** The target status name, matched case-insensitively against `to.name`, then the transition's own name. */
+  status: string;
+}
+
+/** `{ key, markdown }`: what `jira_comment` takes. Structurally `AddJiraCommentRequest`. */
+export interface JiraToolCommentRequest {
+  key: string;
+  markdown: string;
+}
+
+/** The parent, when the issue has one: an Epic for a story, a story for a subtask. */
+export interface JiraParentRef {
+  key: string;
+  summary: string;
+}
+
+/**
+ * The fields the Work tab never needed and an agent does (HIVE-174): the
+ * description and the parent. Read by its own request so the search, which
+ * shares `JIRA_FIELDS` with the issue read, does not grow a description per
+ * row.
+ */
+export interface JiraIssueDetail {
+  description: AdfBlock[];
+  parent: JiraParentRef | null;
+}
+
+/** What `jira_get` answers: the issue, everything around it, and what could not be read. */
+export interface JiraToolIssue {
+  issue: JiraIssue;
+  /** `null` when the detail read failed; `partial` says so. */
+  detail: JiraIssueDetail | null;
+  comments: JiraComment[];
+  links: JiraLink[];
+  /** The parts that failed, each as `what: why`, so a degraded answer says it is one. */
+  partial: string[];
+}
+
+/** What `jira_transition` answers. `transition` is `null` when the issue already stood at that status. */
+export interface JiraToolTransitionReply {
+  issue: JiraIssue;
+  transition: JiraTransition | null;
+}
+
+/**
+ * The three answers, as the receiver serves them and the tools call them.
+ * Implemented by `jiraToolsFor` in main over the Jira integration; the
+ * receiver takes it as one optional option with a "not wired" default.
+ */
+export interface JiraToolHandlers {
+  get(request: JiraToolKeyRequest): Promise<JiraResult<JiraToolIssue>>;
+  transition(request: JiraTransitionByName): Promise<JiraResult<JiraToolTransitionReply>>;
+  comment(request: JiraToolCommentRequest): Promise<JiraResult<JiraComment>>;
+}

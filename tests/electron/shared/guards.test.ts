@@ -34,6 +34,7 @@ import {
   parseSpawnTerminalRequest,
   parseWriteRequest,
   parsePrLookup,
+  parseJiraTransitionByName,
 } from '../../../electron/shared/guards';
 
 const validSpawn = { sessionId: 'sess-1', projectId: 'proj-1', cols: 80, rows: 24 };
@@ -1880,6 +1881,25 @@ describe('parsePrLookup (HIVE-173)', () => {
       'acme/nova#7',
     ]) {
       expect(() => parsePrLookup(bad)).toThrow(/pr lookup/);
+    }
+  });
+});
+
+describe('parseJiraTransitionByName (HIVE-174)', () => {
+  it('accepts a key and a short printable status, trimmed, and nothing else', () => {
+    expect(parseJiraTransitionByName({ key: 'HIVE-7', status: '  In Review ' })).toEqual({ key: 'HIVE-7', status: 'In Review' });
+
+    for (const bad of [
+      {},
+      { key: 'HIVE-7' },
+      { key: 'nope', status: 'Done' },
+      { key: 'HIVE-7', status: '' },
+      { key: 'HIVE-7', status: '   ' },
+      { key: 'HIVE-7', status: 'x'.repeat(65) },
+      { key: 'HIVE-7', status: 'Done\u0007' },
+      { key: 'HIVE-7', status: 31 },
+    ]) {
+      expect(() => parseJiraTransitionByName(bad)).toThrow(/jiraTransition/);
     }
   });
 });

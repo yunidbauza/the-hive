@@ -37,9 +37,10 @@ ticket asks for and what is still left. Judge nothing here.
       `JIRA_DOMAIN`, `JIRA_EMAIL` and `JIRA_API_KEY` from the environment and
       falls back to the Atlassian MCP on its own. A non-zero exit, or output
       that is not that JSON, is a failed route.
-   3. **The Hive's own Jira integration, once it exposes one.** Run `ToolSearch`
-      with the query `hive jira`. If `mcp__hive__jira_issue` exists, call it with
-      the key. The Hive keeps its Jira token in its own process, so this route
+   3. **The Hive's own Jira integration (HIVE-174).** Run `ToolSearch` with the
+      query `hive jira`. If `mcp__hive__jira_get` exists, call it with the key: it
+      answers the summary, status, description, parent, comments and links in
+      one call. The Hive keeps its Jira token in its own process, so this route
       never puts a credential in front of you.
 3. **Extract the scope** from whichever route answered:
    - `summary` and `status`

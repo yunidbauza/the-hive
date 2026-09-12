@@ -219,13 +219,15 @@ Then exactly one rule:
 | P1 | any | one, matching one of them or the branch has none | transition it |
 | P2 | one or more | one, matching none | transition nothing; report both |
 | P3 | none | none | skip; note it |
-| P4 | one | none | remote-link check on that key through `jira-writer get_remote_links`: a link naming this PR or branch confirms; otherwise transition nothing, report the candidate |
+| P4 | one | none | remote-link check on that key through `mcp__hive__jira_get { key }` (its `links`; `jira-writer get_remote_links` without the Hive's tools): a link naming this PR or branch confirms; otherwise transition nothing, report the candidate |
 | P5 | two or more | none | transition nothing; report all |
 
-Transition to **Done**: `jira-writer get_transitions <KEY>` gives the id of
-the Done transition, then `jira-writer transition_issue <KEY> <id>`, then read
-the status back with `jira-writer get_issue <KEY> status`. Print, and repeat
-in the report:
+Transition to **Done**: `mcp__hive__jira_transition { key, status: "Done" }`,
+then read the status back with `mcp__hive__jira_get { key }`. Without the
+Hive's tools: `jira-writer get_transitions <KEY>` gives the id of the Done
+transition, then `jira-writer transition_issue <KEY> <id>`, then read the
+status back with `jira-writer get_issue <KEY> status`. Print, and repeat in
+the report:
 
 ```
 step 5: rule <P#>: supplied key: <KEY|none>, branch keys: [<K1>, …|none], action: <…>
