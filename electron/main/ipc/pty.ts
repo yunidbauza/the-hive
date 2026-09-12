@@ -141,6 +141,8 @@ export interface PtyIpc {
   spawn(request: PtySpawn): void;
   write(sessionId: string, data: string): void;
   resize(sessionId: string, cols: number, rows: number): void;
+  /** Force a SIGWINCH at the current size. See the host's `refresh`. */
+  refresh(sessionId: string): void;
   kill(sessionId: string): void;
   /**
    * A surface has parsed everything through `seq`.
@@ -663,6 +665,12 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
       }
 
       channel.trailingResize = { cols, rows };
+    },
+
+    refresh(sessionId) {
+      const channel = channels.get(sessionId);
+      if (!channel || channel.exited) return;
+      supervisor.refresh(sessionId);
     },
 
     kill(sessionId) {

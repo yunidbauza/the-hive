@@ -67,6 +67,10 @@ export function createPtyHost({
         sessions.resize(command.sessionId, command.cols, command.rows);
         return;
 
+      case 'refresh':
+        sessions.refresh(command.sessionId);
+        return;
+
       case 'kill':
         sessions.kill(command.sessionId, command.signal);
         return;

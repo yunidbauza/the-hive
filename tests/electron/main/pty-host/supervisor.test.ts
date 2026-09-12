@@ -179,7 +179,7 @@ describe('lazy start', () => {
 });
 
 describe('session ownership', () => {
-  it.each(['write', 'resize', 'kill'] as const)(
+  it.each(['write', 'resize', 'refresh', 'kill'] as const)(
     'rejects %s for an unknown session rather than forwarding it',
     (verb) => {
       const errors = vi.fn();
@@ -189,6 +189,7 @@ describe('session ownership', () => {
 
       if (verb === 'write') supervisor.write('ghost', 'x');
       if (verb === 'resize') supervisor.resize('ghost', 80, 24);
+      if (verb === 'refresh') supervisor.refresh('ghost');
       if (verb === 'kill') supervisor.kill('ghost');
 
       expect(host().sent).toHaveLength(before);

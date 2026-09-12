@@ -359,6 +359,7 @@ export function createContext() {
       send: (line) => manager.write(sessionId, `${line}\r`),
       write: (data) => manager.write(sessionId, data),
       resize: (c, r) => manager.resize(sessionId, c, r),
+      refresh: () => manager.refresh(sessionId),
       kill: (signal) => manager.kill(sessionId, signal),
       pause: () => manager.pause(sessionId),
       resume: () => manager.resume(sessionId),

@@ -76,6 +76,7 @@ export interface PtyHostSupervisor {
   spawn(request: Omit<SpawnCommand, 'type'>): void;
   write(sessionId: string, data: string): void;
   resize(sessionId: string, cols: number, rows: number): void;
+  refresh(sessionId: string): void;
   kill(sessionId: string, signal?: string): void;
   /**
    * Stop / start the pty reading its fd (story 093).
@@ -358,6 +359,11 @@ export function createPtyHostSupervisor(
     resize(sessionId, cols, rows) {
       if (!owned(sessionId, 'resize')) return;
       post({ type: 'resize', sessionId, cols, rows });
+    },
+
+    refresh(sessionId) {
+      if (!owned(sessionId, 'refresh')) return;
+      post({ type: 'refresh', sessionId });
     },
 
     kill(sessionId, signal) {

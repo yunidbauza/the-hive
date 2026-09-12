@@ -140,6 +140,7 @@ function fakeSupervisor(): PtyHostSupervisor {
     ),
     write: vi.fn(),
     resize: vi.fn(),
+    refresh: vi.fn(),
     kill: vi.fn((sessionId: string) => killed.push(sessionId)),
     pause: vi.fn(),
     resume: vi.fn(),
@@ -702,6 +703,35 @@ describe('identity: the renderer only ever sees entity ids', () => {
     expect(() => sessions.resize('ghost', 80, 24)).not.toThrow();
     expect(() => sessions.kill('ghost')).not.toThrow();
     expect(supervisor.write).not.toHaveBeenCalled();
+  });
+
+  it('spawns at a size the renderer reported before the pty existed', () => {
+    /*
+      The renderer measures on mount; `ptySpawn` awaits the login env, the
+      skills sync and the MCP start before it opens. Dropping that measure
+      left Claude at the 80×24 spawn default until the window was dragged.
+    */
+    sessions.resize('hero-refresh', 132, 41);
+    sessions.open(OPEN);
+
+    expect(spawned[0]).toMatchObject({ cols: 132, rows: 41 });
+  });
+
+  it('refreshes a live session through its pty session id', () => {
+    sessions.open(OPEN);
+
+    sessions.refresh('hero-refresh');
+
+    expect(supervisor.refresh).toHaveBeenCalledWith(mintedFor('hero-refresh'));
+  });
+
+  it('leaves a terminal and an unknown entity alone on refresh', () => {
+    sessions.openTerminal({ entityId: 'term-1', projectId: 'nova-web', cols: 80, rows: 24 });
+
+    sessions.refresh('term-1');
+    sessions.refresh('ghost');
+
+    expect(supervisor.refresh).not.toHaveBeenCalled();
   });
 
   /**

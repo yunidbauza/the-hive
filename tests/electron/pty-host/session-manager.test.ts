@@ -434,6 +434,43 @@ describe('resize', () => {
   });
 });
 
+describe('refresh', () => {
+  it('takes a row off and puts it back, so the size really changes twice', () => {
+    manager.spawn(SPAWN, emit);
+    manager.resize('hero-refresh', 120, 40);
+    pty().resize.mockClear();
+
+    manager.refresh('hero-refresh');
+
+    // The same size twice would raise no SIGWINCH at all: the kernel only
+    // signals a change.
+    expect(pty().resize.mock.calls).toEqual([
+      [120, 39],
+      [120, 40],
+    ]);
+  });
+
+  it('adds a row instead when there is only one', () => {
+    manager.spawn({ ...SPAWN, rows: 1 }, emit);
+
+    manager.refresh('hero-refresh');
+
+    expect(pty().resize.mock.calls).toEqual([
+      [80, 2],
+      [80, 1],
+    ]);
+  });
+
+  it('ignores an exited session', () => {
+    manager.spawn(SPAWN, emit);
+    pty().emitExit(0);
+
+    manager.refresh('hero-refresh');
+
+    expect(pty().resize).not.toHaveBeenCalled();
+  });
+});
+
 describe('kill', () => {
   it('hangs the group up rather than terminating it', async () => {
     vi.useFakeTimers();

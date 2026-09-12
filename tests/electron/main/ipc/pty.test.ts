@@ -53,6 +53,7 @@ function fakeSupervisor(): PtyHostSupervisor {
     spawn: vi.fn(),
     write: vi.fn(),
     resize: vi.fn(),
+    refresh: vi.fn(),
     kill: vi.fn(),
     pause: vi.fn(),
     resume: vi.fn(),
@@ -582,6 +583,23 @@ describe('resize throttling', () => {
     ipc.resize('ghost', 100, 30);
 
     expect(supervisor.resize).not.toHaveBeenCalled();
+  });
+});
+
+describe('refresh', () => {
+  it('forwards to the supervisor for a live session', () => {
+    ipc.refresh('a');
+
+    expect(supervisor.refresh).toHaveBeenCalledWith('a');
+  });
+
+  it('ignores an unknown or exited session', () => {
+    ipc.refresh('ghost');
+    emitExit({ sessionId: 'a', exitCode: 0 });
+    vi.advanceTimersByTime(50);
+    ipc.refresh('a');
+
+    expect(supervisor.refresh).not.toHaveBeenCalled();
   });
 });
 
