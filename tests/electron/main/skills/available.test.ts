@@ -80,13 +80,14 @@ describe('readAvailableSkillNames', () => {
   });
 
   it('namespaces a plugin’s skills as plugin:skill', async () => {
-    const install = at('cache', 'jira-writer', '1.11.0');
+    const install = at('cache', 'acme-notes', '2.0.0');
 
-    await skill(join(install, 'skills'), 'jira-writer');
-    await registry({ 'jira-writer@claude-kit': install });
+    // Distinct halves, so a transposed or doubled segment cannot pass.
+    await skill(join(install, 'skills'), 'release-notes');
+    await registry({ 'acme-notes@acme': install });
 
     expect((await readAvailableSkillNames(roots())).all).toContain(
-      'jira-writer:jira-writer',
+      'acme-notes:release-notes',
     );
   });
 

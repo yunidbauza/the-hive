@@ -50,18 +50,9 @@ done.** Neither is optional, and no rule may be disabled inline to make a task p
 
 ## Working a ticket
 
-The workflow is the Hive's own, shipped as skills under `~/.hive/skills` and
-agents under `~/.hive/agents` (Epic HIVE-161; the user guide is
-[`docs/guide/workflow.md`](docs/guide/workflow.md)). A ticket starts with
-`hive:work-on`, a vague request with `hive:goal-on`. Both run `hive:brainstorm`
-when the shape is open, `hive:plan` when the work is more than one step, then
-`hive:execute` inline, or hand the plan to the **builder** agent when one is on
-the machine and the plan has more than one task. `hive:verify` runs the gates
-before any claim of done. The draft PR goes to the **shipper** by `ledger_ask`;
-`hive:ship` drives it stage by stage, the **acr** agent reviews the whole
-branch once, the **fixer** works the findings, and `hive:merge-pr` merges and
-moves the ticket to Done. Nothing here depends on a plugin from outside the
-repository.
+The workflow is the Hive's own (Epic HIVE-161; the guide is [`docs/guide/workflow.md`](docs/guide/workflow.md)):
+`hive:work-on` for a ticket or `hive:goal-on` for a request, then `hive:brainstorm`, `hive:plan` and `hive:execute`
+in the **builder** agent when the machine has one (inline otherwise), `hive:verify`; the **shipper** runs `hive:ship`.
 
 Two audits now. A week of sessions (Sep 2026) found the hours going to
 confirmation prompts and to a serial implement-review-re-review chain. HIVE-144
@@ -69,10 +60,10 @@ then proved the first half fixed and the second half untouched: four human turns
 in 17h34m, the orchestrator idle 29 minutes out of 853, and still 6.8 of the 14.2
 implementation hours inside the review chain. These rules follow from both:
 
-- **Execute plans inline.** Subagent-driven development is for a plan that spans
-  two or more subsystems with no shared test harness (main process + renderer +
-  a live suite) *and* touches a risk surface (auth, tokens, a wire protocol,
-  concurrency). One subsystem runs inline, however many tasks it has.
+- **Within a session, execute plans inline.** The builder above is a separate process, not
+  a Task subagent; this rule is about Task subagents. Subagent-driven development is for a
+  plan that spans two or more subsystems with no shared test harness (main process +
+  renderer + a live suite) *and* touches a risk surface. One subsystem runs inline.
 - **The per-task review is conditional, and lean.** Only a task the plan marks
   risk-bearing gets a reviewer subagent; the rest the controller adjudicates by
   reading the diff itself. One reviewer, one pass, scoped to that task's diff and
@@ -98,10 +89,8 @@ implementation hours inside the review chain. These rules follow from both:
 - **Never sleep-poll a subagent.** Its task notification is the wake-up; a
   `sleep N; git log` loop overshoots by up to its own length every time.
 - **The tail runs unattended.** After the reconciliation go-ahead, the flow
-  pushes, opens the draft PR and asks the shipper in the same turn. Auto-merge
-  is a project's `autoMerge` flag in `~/.hive/config.json` (Settings ›
-  Projects): the shipper's merge call is granted for that repository and the
-  approval wait is skipped.
+  pushes, opens the draft PR and asks the shipper in the same turn; a project's
+  `autoMerge` flag (Settings › Projects) skips the shipper's approval wait, else it is a card.
 - **A failing e2e spec is re-run alone before it counts as red.** Playwright is
   pinned to two workers here because the timeout flake scales with parallelism;
   it lowers the flake, it does not remove it. A spec that passes alone is a
@@ -121,7 +110,6 @@ implementation hours inside the review chain. These rules follow from both:
 | The map: processes, fences, which deep dive owns what | [`docs/architecture.md`](docs/architecture.md) |
 | What a feature does for the user (the guides, indexed) | [`docs/README.md`](docs/README.md) |
 | The ledger, parties, asks and claims; agent definitions | [`docs/agents-and-ledger.md`](docs/agents-and-ledger.md) |
-| A ticket from the Work tab to Done: the skills, the agents, the cards | [`docs/guide/workflow.md`](docs/guide/workflow.md) |
 | Any UI task — tokens and type scale, then atoms and props | [`.claude/DESIGN-SYSTEM.md`](.claude/DESIGN-SYSTEM.md) · [`.claude/COMPONENTS.md`](.claude/COMPONENTS.md) |
 
 The visual source of truth is [`.claude/DESIGN-SYSTEM.md`](.claude/DESIGN-SYSTEM.md):

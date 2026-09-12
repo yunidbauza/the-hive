@@ -23,8 +23,9 @@ under `~/.hive/agents`. Nothing depends on a plugin from outside.
 | Merge and close the ticket | the shipper | `merge-pr` |
 
 Your session stays on the line the whole way. An agent that needs a decision asks the
-session that gave it the job, and the card lands in your [inbox](inbox.md). If that session
-is gone, the ask is redirected to you on the overmind.
+session that gave it the job: the question lands in that terminal as a ledger marker and the
+session puts it to you. If that session is gone, the ask is redirected to your
+[inbox](inbox.md) instead.
 
 ## Start
 
@@ -35,10 +36,11 @@ or type the key in any session:
 /work-on HIVE-123
 ```
 
-`work-on` reads the ticket through the Hive's Jira connection, moves it to In Progress, and
-classifies the work: a one-step change runs straight through; anything with an open design
-question goes to `brainstorm`, which asks you its questions in one batch and writes the
-answer down; anything with more than one step gets a plan.
+`work-on` reads the ticket through the Hive's Jira connection, reconciles it with the code,
+reports, and stops for your go-ahead. Then `brainstorm` sorts the work, asking its questions
+in one batch: a spike, a bounded change with a short design in the chat, or an architectural
+one whose design is written down. Anything with more than one step gets a plan. The ticket
+moves to In Progress when the build starts, and only from To Do.
 
 A request with no ticket takes the same road through `goal-on`:
 
@@ -54,7 +56,8 @@ progress without opening the session.
 ## Plan and build
 
 `plan` writes tasks of about twenty minutes each, every one with the test that proves it. The
-plan is a file in the repository, and it is what a builder run or an inline run executes.
+plan is a file under the repository's `.hive/plans`, ignored by git, and it is what a builder
+run or an inline run executes.
 
 Then one of two things happens:
 
@@ -107,24 +110,30 @@ one click refuses.
 ## Without the agents
 
 Every agent is optional. A machine with no builder builds inline. A machine with no shipper
-runs `ship` in the session that opened the PR, and `ship` then asks the session's own
-subagents to review and fix. A machine with no acr asks you whether the review happened
-elsewhere. The skills check `mcp__hive__agents` before they delegate, so nothing is ever
-addressed to an agent that is not there.
+ends `work-on` at "the draft PR is ready", and `/ship` in a session prints the intake it would
+have sent and stops; you review, mark ready and merge by hand, or add a shipper. A shipper
+with no acr asks you whether the review happened elsewhere. The skills check
+`mcp__hive__agents` before they delegate, so nothing is ever addressed to an agent that is
+not there.
 
 ## The tools the agents use
 
-Agents and sessions reach the Hive through MCP tools, all granted by the same `mcp__hive__*`
-rule:
+Agents and sessions reach the Hive through MCP tools. The reads and the ledger are granted to
+every agent; the two that write to your Jira are not, and an agent calls them only with a
+`tools:` entry or your consent on a card:
 
-| Tool | Answers |
-| --- | --- |
-| `ledger_*` | the shared log: post, ask, answer, claim, release, done, failed, hand off |
-| `agents` | who else is on this machine and what each can do |
-| `projects` | the config's projects: id, key, path, `autoMerge`, container workspace |
-| `pr` | one pull request from the Hive's own GitHub sweep, with its unresolved-thread count |
-| `jira_get`, `jira_transition`, `jira_comment` | the ticket, a status move by name, a comment, through the token the Work tab holds |
+| Tool | Answers | Grant |
+| --- | --- | --- |
+| `ledger_*` | the shared log: post, ask, answer, claim, release, done, failed, hand off | standing |
+| `agents` | who else is on this machine and what each can do | standing |
+| `projects` | the config's projects: id, key, path, `autoMerge`, container workspace | standing |
+| `pr` | one pull request from the Hive's own GitHub sweep, with its unresolved-thread count | standing |
+| `jira_get` | the ticket: description, parent, comments and links, through the token the Work tab holds | standing |
+| `jira_transition` | a status move by name; never backwards | `tools:` entry or a card |
+| `jira_comment` | a comment, from markdown | `tools:` entry or a card |
+| `approve` | the fence's own prompt tool; the CLI calls it, you never do | standing |
 
-The Jira tools are why a builder in a container needs no `jira-writer` on its PATH and no
+The builder and the shipper list `jira_transition`; nobody shipped lists `jira_comment`. The
+Jira tools are why a builder in a container needs no `jira-writer` on its PATH and no
 Atlassian credential in its environment. The skills prefer them and fall back to the CLI
 where a session runs without the Hive.
