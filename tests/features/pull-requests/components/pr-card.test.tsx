@@ -35,6 +35,22 @@ describe('PrCard', () => {
     expect(screen.getByText('nova-web')).toBeInTheDocument();
   });
 
+  it('adds the shipper\'s stage from the ledger as one more badge (HIVE-171)', () => {
+    useHiveStore.getState().hydrateLedger([
+      {
+        id: 's1',
+        ts: 1,
+        from: 'shipper',
+        kind: 'post',
+        body: 'stage',
+        meta: { pr: 482, repo: 'acme/nova-web', stage: 'approval' },
+      },
+    ]);
+    render(<PrCard pr={pr()} />);
+
+    expect(screen.getByText('ship: approval')).toBeInTheDocument();
+  });
+
   it('renders the badges the rule table composes', () => {
     render(<PrCard pr={pr({ state: 'draft', findings: 0, checks: 'running' })} />);
 

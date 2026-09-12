@@ -263,6 +263,67 @@ export function thread(entries: readonly LedgerEntry[], id: string): LedgerEntry
  * and `parseLedgerReadQuery` admits `0` as valid, so it was reachable from
  * both boundaries.
  */
+/**
+ * The shipper's latest stage for one PR, or nothing (HIVE-171).
+ *
+ * The shipper posts one `post` per stage change with `meta: { pr, repo, stage }`
+ * (`resources/skills/ship/SKILL.md`), `repo` as `owner/name`. The renderer's
+ * `Pr` carries only the short name, so the match is on the slug's tail,
+ * case-insensitive as GitHub's own names are. Newest wins; the ledger is
+ * appended in order and mirrored in order, so the last match is the latest.
+ * Read from the log, never stored: one truth per number on screen.
+ */
+export function shipStageFor(
+  entries: readonly LedgerEntry[],
+  repo: string,
+  n: number,
+): string | undefined {
+  const suffix = `/${repo}`.toLowerCase();
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i]!;
+    if (entry.from !== 'shipper' || entry.kind !== 'post') continue;
+    const meta = entry.meta ?? {};
+    const slug = meta['repo'];
+    const stage = meta['stage'];
+    if (meta['pr'] !== n || typeof slug !== 'string' || typeof stage !== 'string') continue;
+    if (!slug.toLowerCase().endsWith(suffix)) continue;
+    return stage;
+  }
+  return undefined;
+}
+
+/** What the builder last reported for a ticket (HIVE-171). */
+export interface BuildProgress {
+  stage: string;
+  /** The task it finished, when the post named one. */
+  task?: number;
+}
+
+/**
+ * The builder's latest progress for one ticket, or nothing (HIVE-171).
+ *
+ * The builder posts one `post` per completed task with
+ * `meta: { ticket, stage: "build", task, worktree }` (`resources/agents/builder`).
+ * Same reading rule as {@link shipStageFor}: the newest matching post.
+ */
+export function buildProgressFor(
+  entries: readonly LedgerEntry[],
+  ticketKey: string,
+): BuildProgress | undefined {
+  const key = ticketKey.toUpperCase();
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i]!;
+    if (entry.from !== 'builder' || entry.kind !== 'post') continue;
+    const meta = entry.meta ?? {};
+    const ticket = meta['ticket'];
+    const stage = meta['stage'];
+    if (typeof ticket !== 'string' || ticket.toUpperCase() !== key || typeof stage !== 'string') continue;
+    const task = meta['task'];
+    return typeof task === 'number' ? { stage, task } : { stage };
+  }
+  return undefined;
+}
+
 export function keepNewest(entries: LedgerEntry[], limit: number | undefined): LedgerEntry[] {
   if (limit === undefined) return entries;
   if (limit <= 0) return [];

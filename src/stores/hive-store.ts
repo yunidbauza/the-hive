@@ -87,7 +87,14 @@ import {
   type LedgerSnapshot,
   type OpenAsk,
 } from '@shared/ledger-contract';
-import { matches, openAsks, thread } from '@shared/ledger-derive';
+import {
+  buildProgressFor,
+  matches,
+  openAsks,
+  shipStageFor,
+  thread,
+  type BuildProgress,
+} from '@shared/ledger-derive';
 import type { SessionMetrics } from '@shared/metrics-contract';
 import { NOTIFICATION_CAP } from '@shared/notification-contract';
 import {
@@ -7395,6 +7402,22 @@ export const useLedgerEntries = (filter?: LedgerReadQuery): LedgerEntry[] => {
     () => (filter === undefined ? entries : entries.filter((entry) => matches(entry, filter))),
     [entries, filter],
   );
+};
+
+/**
+ * The shipper's latest stage for a PR, for its card's badge (HIVE-171).
+ *
+ * A string or `undefined`, so it needs no memo and no shallow compare;
+ * `shipStageFor` walks the capped tail from the newest entry back.
+ */
+export const useShipStage = (repo: string, n: number): string | undefined =>
+  useHiveStore((state) => shipStageFor(state.ledger, repo, n));
+
+/** The builder's latest progress on a ticket, for its card's line (HIVE-171). */
+export const useBuildProgress = (ticketKey: string): BuildProgress | undefined => {
+  const entries = useHiveStore((state) => state.ledger);
+
+  return useMemo(() => buildProgressFor(entries, ticketKey), [entries, ticketKey]);
 };
 
 /**

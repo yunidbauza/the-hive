@@ -10,6 +10,7 @@ import {
   INBOUND_NAME_MAX,
   INBOUND_TEXT_MAX,
   asInbound,
+  buildProgressFor,
   claims,
   expiredAsks,
   keepNewest,
@@ -17,6 +18,7 @@ import {
   nextRef,
   openAsks,
   resolveRef,
+  shipStageFor,
   thread,
   ttlOf,
 } from '../../../electron/shared/ledger-derive';
@@ -29,6 +31,34 @@ const entry = (over: Partial<LedgerEntry> & Pick<LedgerEntry, 'id'>): LedgerEntr
   kind: 'post',
   body: '',
   ...over,
+});
+
+describe('shipStageFor and buildProgressFor (HIVE-171)', () => {
+  const posts = [
+    entry({ id: 'p1', from: 'shipper', body: 'stage', meta: { pr: 214, repo: 'yunidbauza/the-hive', stage: 'intake' } }),
+    entry({ id: 'p2', from: 'shipper', body: 'stage', meta: { pr: 214, repo: 'Yunidbauza/The-Hive', stage: 'ci' } }),
+    entry({ id: 'p3', from: 'shipper', body: 'stage', meta: { pr: 9, repo: 'behiques/incorpx', stage: 'merge' } }),
+    entry({ id: 'p4', from: 'drone', body: 'stage', meta: { pr: 214, repo: 'yunidbauza/the-hive', stage: 'forged' } }),
+    entry({ id: 'b1', from: 'builder', body: 'task', meta: { ticket: 'HIVE-7', stage: 'build', task: 2 } }),
+    entry({ id: 'b2', from: 'builder', body: 'task', meta: { ticket: 'hive-7', stage: 'build', task: 3 } }),
+    entry({ id: 'b3', from: 'builder', body: 'task', meta: { ticket: 'HIVE-8', stage: 'verify' } }),
+  ];
+
+  it('reads the newest shipper stage for a PR by number and the slug tail, case-insensitively', () => {
+    expect(shipStageFor(posts, 'the-hive', 214)).toBe('ci');
+    expect(shipStageFor(posts, 'incorpx', 9)).toBe('merge');
+  });
+
+  it('answers nothing for a PR nobody shipped, and ignores posts from anyone but the shipper', () => {
+    expect(shipStageFor(posts, 'the-hive', 1)).toBeUndefined();
+    expect(shipStageFor(posts.filter((e) => e.from !== 'shipper'), 'the-hive', 214)).toBeUndefined();
+  });
+
+  it('reads the newest builder progress for a ticket, key case-insensitive, task optional', () => {
+    expect(buildProgressFor(posts, 'HIVE-7')).toEqual({ stage: 'build', task: 3 });
+    expect(buildProgressFor(posts, 'HIVE-8')).toEqual({ stage: 'verify' });
+    expect(buildProgressFor(posts, 'HIVE-9')).toBeUndefined();
+  });
 });
 
 describe('openAsks', () => {

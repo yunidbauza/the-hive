@@ -735,6 +735,12 @@ exists for.
 
 ## Derived state
 
+Two more derivations joined the two below in HIVE-171, and read the same way:
+`shipStageFor(entries, repo, n)` is the shipper's newest `post` for a PR
+(`meta.pr`, `meta.repo` matched on the slug's tail) and `buildProgressFor(entries, key)`
+the builder's newest for a ticket. The PR card and the ticket card read them
+through `useShipStage` and `useBuildProgress`; nothing is stored.
+
 Two questions get asked constantly and answered nowhere on disk: *is this ask
 still open*, and *who holds this task*. Both are computed, not stored, by pure
 functions in `electron/shared/ledger-derive.ts`:
