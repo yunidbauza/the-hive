@@ -21,7 +21,7 @@ import {
 
 import { SwarmCreature } from '@components/ui/swarm-creature';
 import { REMOTE_DISABLED_REASON } from '@config/runtime';
-import { SessionPluginsGroup } from '@features/settings/components/session-plugins-group';
+import { SessionPluginsRow } from '@features/settings/components/session-plugins-row';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
 import { SkillBundle } from '@features/settings/components/skill-bundle';
 import { SkillDiscardConfirm } from '@features/settings/components/skill-discard-confirm';
@@ -798,6 +798,7 @@ export function SkillsSection() {
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-5 py-4">
         <SettingsSectionHeader title="Skills" description={description} />
+        <SessionPluginsRow />
 
         {/*
           The dashed card from `projects-section.tsx`, not the shared
@@ -836,8 +837,6 @@ export function SkillsSection() {
           )}
         </div>
 
-        <SessionPluginsGroup />
-
         <p className="mt-auto pt-2 text-[11px] text-subtle">
           Skills folder: {snapshot.skillsRoot}
         </p>
@@ -848,6 +847,7 @@ export function SkillsSection() {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-hidden px-5 py-4">
       <SettingsSectionHeader title="Skills" description={description} />
+      <SessionPluginsRow />
 
       {/*
         `min-w-0` on the editor column, for the reason `skill-editor.tsx`'s
@@ -1044,8 +1044,6 @@ export function SkillsSection() {
           )}
         </div>
       </div>
-
-      <SessionPluginsGroup />
 
       <p className="text-[11px] text-subtle">
         Skills folder: {snapshot.skillsRoot}

@@ -68,7 +68,8 @@ skill is named by its frontmatter; a `SKILL.md` with no frontmatter or no `name`
 A skill that fails validation shows in Settings with its reason and is not injected.
 
 A session The Hive starts also loads your own Claude Code plugins, except the ones switched
-off under **Settings › Skills › Plugins in Hive sessions**. `workstream` and `superpowers` are
+off in **Settings › Skills › Manage Installed Plugins**; the row beside that button names the
+ones that are off (or counts them, when the names would not fit). `workstream` and `superpowers` are
 off by default, because their skills overlap the Hive's own: `workstream:work-on` beside
 `hive:work-on` makes "work on HIVE-123" a coin toss. The switch only affects sessions the app
 starts, from the next one on; `claude` started anywhere else still loads every plugin you

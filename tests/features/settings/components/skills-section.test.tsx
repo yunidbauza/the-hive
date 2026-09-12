@@ -161,17 +161,17 @@ describe('SkillsSection', () => {
     ).toBeInTheDocument();
   });
 
-  it('offers the plugin switches in the empty state and beside the list (HIVE-176)', () => {
+  it('offers the plugin row in the empty state and beside the list (HIVE-176, HIVE-177)', () => {
     setProjectConfigForTest(emptySnapshot('/tmp/config.json'));
     try {
       setSkillsForTest(snapshot({ plugins: ['workstream'] }));
       const { unmount } = render(<SkillsSection />);
-      expect(screen.getByRole('switch', { name: 'workstream' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Manage Installed Plugins' })).toBeInTheDocument();
       unmount();
 
       setSkillsForTest({ ...withSkills('deploy'), plugins: ['workstream'] });
       render(<SkillsSection />);
-      expect(screen.getByRole('switch', { name: 'workstream' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Manage Installed Plugins' })).toBeInTheDocument();
     } finally {
       resetProjectConfig();
     }
