@@ -7,7 +7,7 @@ import { TicketPrRow } from '@features/work/components/ticket-pr-row';
 import { TicketSessionRow } from '@features/work/components/ticket-session-row';
 import { TicketTransitionMenu } from '@features/work/components/ticket-transition-menu';
 import { CATEGORY_TEXT, STATUS_PILL } from '@features/work/ticket-presentation';
-import { useTicketPrs, useTicketSessions } from '@stores/hive-store';
+import { useBuildProgress, useTicketPrs, useTicketSessions } from '@stores/hive-store';
 
 interface TicketCardProps {
   ticket: Ticket;
@@ -24,6 +24,7 @@ interface TicketCardProps {
 export function TicketCard({ ticket }: TicketCardProps) {
   const sessions = useTicketSessions(ticket.key);
   const prs = useTicketPrs(ticket.key);
+  const build = useBuildProgress(ticket.key);
 
   return (
     <article className="flex flex-col gap-[7px] rounded-xl border border-border-soft px-3 py-[var(--cc-card-py)]">
@@ -77,6 +78,17 @@ export function TicketCard({ ticket }: TicketCardProps) {
       </div>
 
       <h3 className="text-[12.5px] leading-[1.4] text-ink">{ticket.title}</h3>
+
+      {/*
+        What the builder last said about this ticket (HIVE-171), read off the
+        ledger tail. Absent when no builder has touched it, which is every
+        ticket worked inline.
+      */}
+      {build === undefined ? null : (
+        <div className="font-mono text-[10.5px] text-subtle">
+          builder · {build.task === undefined ? build.stage : `task ${build.task} done`}
+        </div>
+      )}
 
       {/*
         The sessions working this ticket, then the way to start another —

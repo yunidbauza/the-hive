@@ -64,7 +64,7 @@ export const ASK_INTENT_GUIDANCE =
  * does not do. `intent` on an ask is likewise its own key, not this one.
  */
 const META_DESCRIPTION =
-  'Optional structured detail carried with the entry — a ticket key, a PR number, a Slack timestamp. Free-form, with keys The Hive reads: if you posted a message in Slack, put its permalink at `slack.permalink` — `{"slack": {"permalink": "https://…slack.com/archives/…"}}` — and the card gets an "Open in Slack" link straight to it. Naming it in your body text instead does nothing.';
+  'Optional structured detail carried with the entry — a ticket key, a PR number, a Slack timestamp. Free-form, with keys The Hive reads: if you posted a message in Slack, put its permalink at `slack.permalink` — `{"slack": {"permalink": "https://…slack.com/archives/…"}}` — and the card gets an "Open in Slack" link straight to it. Naming it in your body text instead does nothing. The workflow agents\' riders are read the same way (HIVE-171): a post from `shipper` with `{"pr": 214, "repo": "owner/name", "stage": "ci"}` puts a `ship: ci` badge on that PR\'s card, and a post from `builder` with `{"ticket": "ABC-12", "stage": "build", "task": 3}` puts `task 3 done` on the ticket\'s; `pr` and `task` are numbers.';
 
 const meta = {
   type: 'object',

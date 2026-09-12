@@ -73,3 +73,11 @@ filters the list. The Hive stores no GitHub token; `gh` uses its own login, or `
 
 If the tab stays empty, run `gh auth status`. **Settings › Integrations › Command line** shows
 which `gh` The Hive found and who it is signed in as.
+
+## What the agents are doing
+
+When the workflow agents are on a piece of work, the cards say so. A ticket the builder is
+building shows `builder · task N done` under its title; a PR the shipper is shipping shows one
+more badge, `ship: <stage>`, beside the GitHub ones. Both are read off the ledger: the badge
+goes when the shipper releases its claim on the PR, the builder line when the ledger tail
+rolls past it, and a ticket worked inline shows nothing extra.

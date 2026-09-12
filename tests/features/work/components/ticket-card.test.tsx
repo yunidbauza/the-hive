@@ -37,6 +37,22 @@ describe('TicketCard', () => {
     useUiStore.getState().reset();
   });
 
+  it('shows the builder\'s latest task for the ticket, read off the ledger (HIVE-171)', () => {
+    useHiveStore.getState().hydrateLedger([
+      {
+        id: 'b1',
+        ts: 1,
+        from: 'builder',
+        kind: 'post',
+        body: 'task',
+        meta: { ticket: ticket().key, stage: 'build', task: 4 },
+      },
+    ]);
+    render(<TicketCard ticket={ticket()} />);
+
+    expect(screen.getByText('builder · task 4 done')).toBeInTheDocument();
+  });
+
   it('lists the sessions working the ticket', () => {
     render(<TicketCard ticket={ticket()} />);
 

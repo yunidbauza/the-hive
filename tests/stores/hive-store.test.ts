@@ -60,11 +60,13 @@ import {
   useProjectSessions,
   useReattachEpoch,
   useRemoteLink,
+  useBuildProgress,
   useIsAgentId,
   useLedgerEntries,
   useNavOrder,
   useOpenAskCount,
   useSessionNameReports,
+  useShipStage,
   useTerminalHostIds,
   useThread,
 } from '@stores/hive-store';
@@ -5280,6 +5282,31 @@ describe('the ledger slice', () => {
 
     const { result } = renderHook(() => useThread('1'));
     expect(result.current.map((found) => found.id)).toEqual(['1', '3']);
+  });
+
+  it('reads the workflow stage off the tail and keeps the answer stable until the ledger moves (HIVE-171)', () => {
+    useHiveStore.getState().hydrateLedger([
+      entry({ id: '1', from: 'shipper', kind: 'post', meta: { pr: 4, repo: 'acme/nova', stage: 'ci' } }),
+      entry({ id: '2', from: 'builder', kind: 'post', meta: { ticket: 'ACME-9', stage: 'build', task: 2 } }),
+    ]);
+
+    const ship = renderHook(() => useShipStage('acme/nova', 4));
+    const build = renderHook(() => useBuildProgress('ACME-9'));
+    expect(ship.result.current).toBe('ci');
+    expect(build.result.current).toEqual({ stage: 'build', task: 2 });
+
+    const before = build.result.current;
+    act(() => useHiveStore.getState().setSessionStatus('hero-refresh', 'working'));
+    build.rerender();
+    expect(build.result.current).toBe(before);
+
+    act(() =>
+      useHiveStore.getState().hydrateLedger([
+        entry({ id: '3', from: 'shipper', kind: 'post', meta: { pr: 4, repo: 'acme/nova', stage: 'merge' } }),
+      ]),
+    );
+    ship.rerender();
+    expect(ship.result.current).toBe('merge');
   });
 
   /**

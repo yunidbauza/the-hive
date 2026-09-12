@@ -781,6 +781,14 @@ cannot. It qualifies for `electron/shared/` the same way `guards.ts` does:
 pure, dependency-free logic with no runtime imports and nothing Node- or
 DOM-specific in it — see the note on that file below.
 
+Two more derivations read the same way (HIVE-171). `shipStageFor(entries, slug, n)` is
+the shipper's newest `post` for a PR, `meta.pr` and `meta.repo` compared against the
+whole `owner/name`, and it answers nothing once the shipper has released its
+`owner/name#N` claim. `buildProgressFor(entries, key)` is the builder's newest for a
+ticket. The PR card and the ticket card read them through `useShipStage` and
+`useBuildProgress`; nothing is stored. Both keys are named in the ledger tools' `meta`
+description, because that description is the only place the model is told the shape.
+
 ## The routes
 
 The hook receiver (`electron/main/hooks/receiver.ts`) — the same loopback

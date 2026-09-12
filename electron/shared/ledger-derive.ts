@@ -254,6 +254,99 @@ export function thread(entries: readonly LedgerEntry[], id: string): LedgerEntry
 }
 
 /**
+ * The longest `meta.stage` a card renders. A rider is bounded nowhere on disk
+ * (see {@link INBOUND_TEXT_MAX}), and a `Tag` does not truncate.
+ */
+export const STAGE_TEXT_MAX = 32;
+
+/**
+ * A whole number written as a number or as its decimal digits, else nothing.
+ *
+ * `meta` is model-written and schema-free, and `"pr": "214"` is one token away
+ * from `"pr": 214`. Read strictly, the wrong one would fail silently and read
+ * exactly like "the shipper has not touched this PR".
+ */
+const wholeNumberOf = (value: unknown): number | undefined => {
+  if (typeof value === 'number') return Number.isInteger(value) ? value : undefined;
+  if (typeof value === 'string' && /^\d+$/.test(value)) return Number(value);
+  return undefined;
+};
+
+/**
+ * The shipper's latest stage for one PR, or nothing (HIVE-171).
+ *
+ * The shipper posts one `post` per stage change with `meta: { pr, repo, stage }`
+ * (`resources/skills/ship/SKILL.md`), `repo` as `owner/name`, and its claim on
+ * the PR is the key `owner/name#N`. The whole slug is compared, case-insensitive
+ * as GitHub's own names are: two repos with one short name under different
+ * owners must not share a badge. Newest wins; the ledger is appended in order
+ * and mirrored in order, so the last match is the latest. A `release` of the
+ * claim ends the reading: the shipper is no longer holding the PR, so a merged
+ * card does not go on wearing the closing stage. Read from the log, never
+ * stored: one truth per number on screen.
+ */
+export function shipStageFor(
+  entries: readonly LedgerEntry[],
+  slug: string,
+  n: number,
+): string | undefined {
+  const wanted = slug.toLowerCase();
+  if (wanted === '') return undefined;
+  const claim = `${wanted}#${n}`;
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i]!;
+    if (entry.from !== 'shipper') continue;
+    if (entry.kind === 'release') {
+      if (taskOf(entry)?.toLowerCase() === claim) return undefined;
+      continue;
+    }
+    if (entry.kind !== 'post') continue;
+    const meta = entry.meta ?? {};
+    const repo = meta['repo'];
+    const stage = meta['stage'];
+    if (wholeNumberOf(meta['pr']) !== n || typeof repo !== 'string' || typeof stage !== 'string') {
+      continue;
+    }
+    if (repo.toLowerCase() !== wanted) continue;
+    return stage.slice(0, STAGE_TEXT_MAX);
+  }
+  return undefined;
+}
+
+/** What the builder last reported for a ticket (HIVE-171). */
+export interface BuildProgress {
+  stage: string;
+  /** The task it finished, when the post named one. */
+  task?: number;
+}
+
+/**
+ * The builder's latest progress for one ticket, or nothing (HIVE-171).
+ *
+ * The builder posts one `post` per completed task with
+ * `meta: { ticket, stage: "build", task, worktree }` (`resources/agents/builder`).
+ * Same reading rule as {@link shipStageFor}: the newest matching post.
+ */
+export function buildProgressFor(
+  entries: readonly LedgerEntry[],
+  ticketKey: string,
+): BuildProgress | undefined {
+  const key = ticketKey.toUpperCase();
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i]!;
+    if (entry.from !== 'builder' || entry.kind !== 'post') continue;
+    const meta = entry.meta ?? {};
+    const ticket = meta['ticket'];
+    const stage = meta['stage'];
+    if (typeof ticket !== 'string' || ticket.toUpperCase() !== key || typeof stage !== 'string') continue;
+    const task = wholeNumberOf(meta['task']);
+    const text = stage.slice(0, STAGE_TEXT_MAX);
+    return task === undefined ? { stage: text } : { stage: text, task };
+  }
+  return undefined;
+}
+
+/**
  * The newest `limit` entries, or all of them when no limit was given.
  *
  * A named function rather than an inline `slice`, because the inline version

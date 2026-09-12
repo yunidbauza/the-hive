@@ -87,7 +87,14 @@ import {
   type LedgerSnapshot,
   type OpenAsk,
 } from '@shared/ledger-contract';
-import { matches, openAsks, thread } from '@shared/ledger-derive';
+import {
+  buildProgressFor,
+  matches,
+  openAsks,
+  shipStageFor,
+  thread,
+  type BuildProgress,
+} from '@shared/ledger-derive';
 import type { SessionMetrics } from '@shared/metrics-contract';
 import { NOTIFICATION_CAP } from '@shared/notification-contract';
 import {
@@ -7398,6 +7405,25 @@ export const useLedgerEntries = (filter?: LedgerReadQuery): LedgerEntry[] => {
 };
 
 /**
+ * The shipper's latest stage for a PR, for its card's badge (HIVE-171).
+ *
+ * `slug` is `owner/name`. Memoised over the tail like `useBuildProgress`, so
+ * the scan runs once per ledger change rather than once per store change.
+ */
+export const useShipStage = (slug: string, n: number): string | undefined => {
+  const entries = useHiveStore((state) => state.ledger);
+
+  return useMemo(() => shipStageFor(entries, slug, n), [entries, slug, n]);
+};
+
+/** The builder's latest progress on a ticket, for its card's line (HIVE-171). */
+export const useBuildProgress = (ticketKey: string): BuildProgress | undefined => {
+  const entries = useHiveStore((state) => state.ledger);
+
+  return useMemo(() => buildProgressFor(entries, ticketKey), [entries, ticketKey]);
+};
+
+/**
  * Asks nobody has answered.
  *
  * `Date.now()` is read inside the memo, so `ageMs` is as fresh as the last
@@ -7448,6 +7474,7 @@ const resolvePrs = (
   records.map((pr) => ({
     n: pr.number,
     repo: pr.repo,
+    owner: pr.owner,
     title: pr.title,
     state: pr.state,
     findings: pr.findings,
