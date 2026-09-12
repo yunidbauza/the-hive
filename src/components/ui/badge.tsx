@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils';
 
-export type BadgeTone = 'danger' | 'brand' | 'muted';
+export type BadgeTone = 'danger' | 'brand' | 'muted' | 'green';
 
 const TONE_FILL: Record<BadgeTone, string> = {
   // `on-danger`, not `on-brand`: one token cannot be legible on both fills.
@@ -8,6 +8,12 @@ const TONE_FILL: Record<BadgeTone, string> = {
   brand: 'bg-brand-fill text-on-brand',
   // The tab-bar count (story 030): a quiet chip, not an alert.
   muted: 'bg-chip text-muted',
+  /*
+    Plan progress on a session row (HIVE-182). A tint, not a solid fill: it
+    sits beside a status dot that keeps priority, and green text on its own
+    15% tint reads in both themes with no "on-green" token to invent.
+  */
+  green: 'bg-green/15 text-green',
 };
 
 interface BadgeProps {

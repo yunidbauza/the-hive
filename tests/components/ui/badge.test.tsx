@@ -61,6 +61,11 @@ describe('Badge', () => {
 
     rerender(<Badge count={1} tone="muted" label="work items" />);
     expect(container.firstChild).toHaveClass('bg-chip', 'text-muted');
+
+    // HIVE-182: plan progress on a session row — a quiet green chip beside a
+    // status dot that keeps priority, green text on its own tint.
+    rerender(<Badge count={3} tone="green" label="tasks done" />);
+    expect(container.firstChild).toHaveClass('bg-green/15', 'text-green');
   });
 
   /**
