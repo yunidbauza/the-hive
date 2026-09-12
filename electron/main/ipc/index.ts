@@ -2173,6 +2173,8 @@ export function registerIpcHandlers(
   });
 
   handle(CH.ledgerList, (_event, payload) => ledger.read(parseLedgerReadQuery(payload)));
+  // Every live plan (HIVE-179). Before `createSessions` there are none to list.
+  handle(CH.plansList, () => sessions?.plans() ?? { plans: [] });
   handle(CH.ledgerPost, (_event, payload) =>
     /*
       `from` is supplied here, never taken from the renderer — the same rule

@@ -26,6 +26,7 @@ import {
 } from '@shared/ipc-contract';
 import type { JiraToolHandlers } from '@shared/jira-contract';
 import type { SessionMetricsEvent } from '@shared/metrics-contract';
+import type { PlansSnapshot } from '@shared/plan-contract';
 import { MAX_SESSIONS } from '@shared/pty-host-protocol';
 import type { ResumePoint } from '@shared/remote-contract';
 import {
@@ -485,6 +486,8 @@ export interface Sessions {
    */
   containerRemoval(entityId: string): Promise<void>;
   diagnostics(): PtyDiagnostics[];
+  /** Every live plan (HIVE-179), for `CH.plansList` and the attach snapshot. */
+  plans(): PlansSnapshot;
   dispose(): void;
 }
 
@@ -1150,6 +1153,8 @@ export function createSessions(options: SessionsOptions): Sessions {
        * running.
        */
       statusTracker.reset(entityId);
+      // The plan belonged to the conversation `/clear` just retired (HIVE-179).
+      plans.drop(entityId);
       /*
         A declaration belongs to the conversation that made it (HIVE-93).
         `/clear` retires that conversation and opens a successor on the same
@@ -1368,6 +1373,7 @@ export function createSessions(options: SessionsOptions): Sessions {
   }
 
   function publishFinished(entityId: string): void {
+    plans.drop(entityId);
     /*
       Asked rather than assumed. `history.resumable` is the only thing that knows
       whether a uuid still names this terminal's conversation — a `/clear`
@@ -1390,6 +1396,7 @@ export function createSessions(options: SessionsOptions): Sessions {
    * said into one of the two kinds this function forwards untouched.
    */
   function publishTerminalEnded(entityId: string, ending: TerminalEnding): void {
+    plans.drop(entityId);
     send(CH.sessionTerminalEnded, { entityId, ending } satisfies SessionTerminalEndedEvent);
   }
 
@@ -2833,11 +2840,14 @@ export function createSessions(options: SessionsOptions): Sessions {
     containerRemoval: (entityId) => containerRemovals.get(entityId) ?? Promise.resolve(),
     diagnostics: () => ptyIpc.diagnostics(),
 
+    plans: () => ({ plans: plans.list() }),
+
     dispose() {
       bootstrap.dispose();
       activity.dispose();
       ptyIpc.dispose();
       disposeErrors();
+      plans.dispose();
       /**
        * The socket goes down with everything else.
        *
