@@ -1788,6 +1788,13 @@ export function createSessions(options: SessionsOptions): Sessions {
       `terminated` status published moments later put it straight back.
     */
     lastStatus.delete(entityId);
+    /*
+      The plan belongs to the conversation this process was running (HIVE-179).
+      Dropped on every ending, not only `/done`'s: a kill, a plain `/exit` or
+      a crash never reaches `publishFinished`, and a restart reuses the entity
+      id, so a plan left standing would take the next conversation's tasks.
+    */
+    plans.drop(entityId);
     /**
      * Per-generation too, and for a sharper reason than the other two: a
      * restarted session reuses the entity id, and a retained entry would make

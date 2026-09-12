@@ -2382,6 +2382,48 @@ describe('/done', () => {
 
       expect(h.finishedFor('hero-refresh')).toBe(1);
       expect(h.planPushes('hero-refresh').at(-1)).toEqual({ entityId: 'hero-refresh', plan: null });
+      expect(h.sessions.plans()).toEqual({ plans: [] });
+    });
+
+    /*
+      Any ending, not only a declared one (HIVE-179 review). A kill, a plain
+      `/exit` or a crash never reaches `publishFinished`, and a restart reuses
+      the entity id: a plan left standing would have the next conversation's
+      tasks appended to the last one's.
+    */
+    it('drops the plan when the session exits without /done', () => {
+      const h = finished();
+      const sessionId = h.open();
+      h.planTool(createAlpha('hero-refresh'));
+
+      emitExit({ sessionId, exitCode: 0 });
+
+      expect(h.finishedFor('hero-refresh')).toBe(0);
+      expect(h.planPushes('hero-refresh').at(-1)).toEqual({ entityId: 'hero-refresh', plan: null });
+      expect(h.sessions.plans()).toEqual({ plans: [] });
+    });
+
+    it('starts a restarted session on a fresh plan', async () => {
+      const h = finished();
+      const first = h.open();
+      h.planTool(createAlpha('hero-refresh'));
+
+      // The restart's teardown waits for the old generation's exit.
+      const restarted = h.restart();
+      await Promise.resolve();
+      emitExit({ sessionId: first, exitCode: 0 });
+      vi.advanceTimersByTime(8);
+      await restarted;
+      h.planTool({ ...createAlpha('hero-refresh'), toolInput: { subject: 'Beta' } });
+
+      expect(h.sessions.plans()).toEqual({
+        plans: [
+          {
+            ...alphaPlan('hero-refresh'),
+            tasks: [{ id: '1', title: 'Beta', status: 'pending' }],
+          },
+        ],
+      });
     });
 
     it("drops the plan when a terminal's shell ends", () => {
@@ -2392,6 +2434,7 @@ describe('/done', () => {
       emitExit({ sessionId: mintedFor('term-01'), exitCode: 0 });
 
       expect(h.planPushes('term-01').at(-1)).toEqual({ entityId: 'term-01', plan: null });
+      expect(h.sessions.plans()).toEqual({ plans: [] });
     });
   });
 

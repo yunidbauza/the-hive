@@ -415,7 +415,8 @@ vi.mock('../../../../electron/main/sessions', () => ({
     observedCwd: () => undefined,
     containerRemoval: async () => {},
     diagnostics: () => [],
-    plans: () => ({ plans: [] }),
+    // A sentinel no fallback could produce, so the plans:list test proves the wiring (HIVE-179).
+    plans: () => ({ plans: [{ entityId: 'sess-sentinel', source: 'task-tools', tasks: [], allDone: false }] }),
     dispose: vi.fn(),
     releaseSurface: (surfaceId: string) => surfaceReleases.flowControl(surfaceId),
   }),
@@ -858,8 +859,10 @@ describe('the attach snapshot (HIVE-144)', () => {
     for (const channel of SNAPSHOT_CHANNELS) {
       expect(snapshot).toHaveProperty(channel);
     }
-    // HIVE-179: the plans read answers the sessions layer's snapshot.
-    expect(snapshot[CH.plansList]).toEqual({ plans: [] });
+    // HIVE-179: the plans read answers the sessions layer's own snapshot, not a fallback.
+    expect(snapshot[CH.plansList]).toEqual({
+      plans: [{ entityId: 'sess-sentinel', source: 'task-tools', tasks: [], allDone: false }],
+    });
   });
 
   it('omits a channel whose read throws, without losing the others', async () => {
