@@ -37,6 +37,20 @@ import { createPathMap } from '../sessions/path-map';
  * HIVE-119's permission-prompt tool, which is the mechanism built for it.
  */
 
+/**
+ * Every subagent an agent dispatches runs in the foreground.
+ *
+ * Measured at 2.1.269: under `-p` the model picks foreground or background per
+ * `Agent` call, and a background subagent never calls
+ * `--permission-prompt-tool`. Behind `permissions.ask: ["*"]` every one of its
+ * calls is denied on the spot, granted tool or not, with no ask on the ledger.
+ * That is how acr's reviewers lost every tool, eight in a row. Foreground
+ * subagents route through `mcp__hive__approve` like the agent itself.
+ *
+ * It also turns off background Bash, which a headless turn cannot wait on.
+ */
+const FOREGROUND_ONLY = { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' };
+
 export interface WakePaths {
   settings: string;
   pluginDir: string;
@@ -429,6 +443,7 @@ export function wakeCommand(input: WakeInput): WakeCommand {
       env: {
         [HOOK_ENV_GRANTS]: merged[HOOK_ENV_GRANTS] as string,
         HIVE_AGENT: '1',
+        ...FOREGROUND_ONLY,
         ...hook,
       },
       cwd: paths.workdir,
@@ -446,7 +461,7 @@ export function wakeCommand(input: WakeInput): WakeCommand {
   return {
     file: input.claudePath,
     args,
-    env: { ...merged, ...env.hook, HIVE_AGENT: '1' },
+    env: { ...merged, ...env.hook, HIVE_AGENT: '1', ...FOREGROUND_ONLY },
     cwd: paths.workdir,
   };
 }
