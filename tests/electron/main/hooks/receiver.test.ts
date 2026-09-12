@@ -4483,3 +4483,158 @@ describe('hook receiver: task tools reach onPlanTool (HIVE-179)', () => {
     error.mockRestore();
   });
 });
+
+/**
+ * The plan panel's sources 2 and 3 (HIVE-180): a `Write` or `Edit` to a
+ * `.hive/plans/*.md` file, and plan mode's approved plan. A plan-file write
+ * steers a disk read in main, so what passes here is a trust question: the
+ * path must look like a plan file, the call must be the main agent's — on a
+ * truncated body too — and plan mode's whole plan is never half-read.
+ */
+describe('hook receiver: plan files and plan mode reach onPlanTool (HIVE-180)', () => {
+  const PLAN_PATH = '/repo/.hive/plans/2026-09-12-x.md';
+  const SUBAGENT = { agent_id: 'ad74678b565585bbf', agent_type: 'general-purpose' };
+
+  let receiver: Receiver;
+  let url: string;
+  let planCalls: PlanToolCall[];
+
+  beforeEach(async () => {
+    planCalls = [];
+    receiver = createReceiver({
+      onEvent: () => {},
+      onCleared: () => {},
+      onTicketIntent: () => {},
+      onPlanTool: (call) => planCalls.push(call),
+      onPromptName: () => {},
+      onMetrics: () => {},
+      onDone: () => {},
+      onReady: () => {},
+      knowsSession: (entityId) => entityId === 'sess-01',
+      ...noLedger,
+      ...noAgents,
+    });
+    const started = await receiver.start();
+    expect(started).not.toBeNull();
+    url = started as string;
+  });
+
+  afterEach(async () => {
+    await receiver.stop();
+  });
+
+  /** Keys in claude's own wire order: `agent_id` before `tool_name`, `file_path` first in `tool_input`. */
+  const toolBody = (
+    toolName: string,
+    toolInput: unknown,
+    extra: Record<string, unknown> = {},
+    event = 'PostToolUse',
+  ) => ({
+    session_id: '43fa9e8a-46e9-4c16-9b5c-549db8c85ef8',
+    cwd: '/repo',
+    ...extra,
+    hook_event_name: event,
+    tool_name: toolName,
+    tool_input: toolInput,
+    tool_response: { ok: true },
+  });
+
+  const post = (body: unknown) =>
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [HOOK_HEADER_TOKEN]: receiver.tokenFor('sess-01'),
+        [HOOK_HEADER_SESSION]: 'sess-01',
+      },
+      body: JSON.stringify(body),
+    });
+
+  it('hands a Write to a plan file to onPlanTool, with the path and cwd only', async () => {
+    const response = await post(toolBody('Write', { file_path: PLAN_PATH, content: '## Task 1: A' }));
+
+    expect(response.status).toBe(204);
+    expect(planCalls).toEqual([
+      { entityId: 'sess-01', toolName: 'Write', toolInput: { file_path: PLAN_PATH }, toolResponse: undefined, cwd: '/repo' },
+    ]);
+  });
+
+  it('hands an Edit to a plan file to onPlanTool', async () => {
+    await post(toolBody('Edit', { file_path: PLAN_PATH, old_string: '- [ ]', new_string: '- [x]' }));
+
+    expect(planCalls.map((call) => [call.toolName, call.toolInput])).toEqual([
+      ['Edit', { file_path: PLAN_PATH }],
+    ]);
+  });
+
+  it('ignores a write to any file that is not a plan file', async () => {
+    await post(toolBody('Write', { file_path: '/repo/src/a.md', content: 'x' }));
+    await post(toolBody('Write', { file_path: '/repo/.hive/specs/x.md', content: 'x' }));
+    await post(toolBody('Write', { file_path: '/repo/.hive/plans/sub/x.md', content: 'x' }));
+    await post(toolBody('Write', { file_path: '/repo/.hive/plans/x.txt', content: 'x' }));
+
+    expect(planCalls).toEqual([]);
+  });
+
+  it('ignores the PreToolUse of a plan-file write', async () => {
+    await post(toolBody('Write', { file_path: PLAN_PATH, content: 'x' }, {}, 'PreToolUse'));
+
+    expect(planCalls).toEqual([]);
+  });
+
+  it('still hands over a truncated plan-file Write, by the path in its prefix', async () => {
+    const body = toolBody('Write', { file_path: PLAN_PATH, content: 'x'.repeat(70 * 1024) });
+    expect(JSON.stringify(body).length).toBeGreaterThan(HOOK_MAX_BODY_BYTES);
+
+    const response = await post(body);
+
+    expect(response.status).toBe(204);
+    expect(planCalls).toEqual([
+      {
+        entityId: 'sess-01',
+        toolName: 'Write',
+        toolInput: { file_path: PLAN_PATH },
+        toolResponse: undefined,
+        truncated: true,
+        cwd: '/repo',
+      },
+    ]);
+  });
+
+  it("never hands over a subagent's plan-file write, whole or truncated", async () => {
+    await post(toolBody('Write', { file_path: PLAN_PATH, content: 'x' }, SUBAGENT));
+    await post(toolBody('Write', { file_path: PLAN_PATH, content: 'x'.repeat(70 * 1024) }, SUBAGENT));
+
+    expect(planCalls).toEqual([]);
+  });
+
+  it("hands plan mode's approved plan to onPlanTool", async () => {
+    await post(toolBody('ExitPlanMode', { plan: '### One\n### Two' }));
+
+    expect(planCalls).toHaveLength(1);
+    expect(planCalls[0]).toMatchObject({
+      entityId: 'sess-01',
+      toolName: 'ExitPlanMode',
+      toolInput: { plan: '### One\n### Two' },
+      cwd: '/repo',
+    });
+  });
+
+  it('drops a truncated plan-mode plan, and says so once', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const response = await post(toolBody('ExitPlanMode', { plan: 'x'.repeat(70 * 1024) }));
+
+    expect(response.status).toBe(204);
+    expect(planCalls).toEqual([]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('plan mode'));
+    warn.mockRestore();
+  });
+
+  it("never hands over a subagent's ExitPlanMode", async () => {
+    await post(toolBody('ExitPlanMode', { plan: '### One' }, SUBAGENT));
+
+    expect(planCalls).toEqual([]);
+  });
+});

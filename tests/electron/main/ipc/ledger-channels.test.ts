@@ -127,10 +127,11 @@ vi.mock('../../../../electron/main/sessions/index', async (importOriginal) => {
     await importOriginal<typeof import('../../../../electron/main/sessions/index')>();
   return {
     ...actual,
-    createSessions: (options: Parameters<typeof actual.createSessions>[0]) => ({
-      ...actual.createSessions(options),
-      entities: () => liveIds,
-    }),
+    createSessions: (options: Parameters<typeof actual.createSessions>[0]) => {
+      const real = actual.createSessions(options);
+      capturedPlanStore = real.planStore();
+      return { ...real, entities: () => liveIds };
+    },
   };
 });
 
@@ -143,6 +144,8 @@ vi.mock('../../../../electron/main/sessions/index', async (importOriginal) => {
 let capturedKnowsParty: ((id: string) => boolean) | undefined;
 let capturedIsGoneSession: ((id: string) => boolean) | undefined;
 let capturedOnChangeListener: ((entry: unknown) => void) | undefined;
+/** The real sessions' plans store (HIVE-180), so a test can give a session a plan-file plan. */
+let capturedPlanStore: import('../../../../electron/main/plans').Plans | undefined;
 /**
  * `knowsParty`'s answer evaluated *inside* the `createLedger` call itself —
  * the one moment `sessions` is provably still `null`, because
@@ -353,6 +356,60 @@ describe('ledger:changed — the push channel (HIVE-111)', () => {
  * early on an `ask` and sent nothing, so a user whose rail sat on the explorer
  * — or was collapsed — got the window forward and no card anywhere on it.
  */
+/**
+ * Builder progress rides the ledger fan-out (HIVE-180): a build ask from a
+ * session whose plan is that plan file, then the builder's post in the ask's
+ * thread, reaches the renderer as a ticked plan.
+ */
+describe('ledger fan-out ticks a build onto its plan (HIVE-180)', () => {
+  it("a builder's task post completes that task on the asking session's plan", () => {
+    const send = vi.fn();
+    windows.push({ isDestroyed: () => false, webContents: { send } });
+    liveIds = ['sess-01'];
+    capturedPlanStore?.offer('sess-01', 'plan-file', {
+      entityId: 'sess-01',
+      source: 'plan-file',
+      file: '/repo/.hive/plans/p.md',
+      allDone: false,
+      tasks: [
+        { id: '1', title: 'One', status: 'pending', steps: [] },
+        { id: '2', title: 'Two', status: 'pending', steps: [] },
+      ],
+    });
+
+    capturedOnChangeListener?.({
+      id: 'A1',
+      ts: 1,
+      kind: 'ask',
+      from: 'sess-01',
+      to: 'builder',
+      body: 'Build it',
+      meta: { stage: 'build', plan: '.hive/plans/p.md' },
+    });
+    capturedOnChangeListener?.({
+      id: 'P1',
+      ts: 2,
+      kind: 'post',
+      from: 'builder',
+      thread: 'A1',
+      body: 'task 1 done',
+      meta: { stage: 'build', task: 1 },
+    });
+
+    const pushes = send.mock.calls.filter(([channel]) => channel === CH.planChanged);
+    expect(pushes.at(-1)?.[1]).toMatchObject({
+      entityId: 'sess-01',
+      plan: {
+        build: { askId: 'A1', state: 'building' },
+        tasks: [
+          { id: '1', status: 'completed' },
+          { id: '2', status: 'pending' },
+        ],
+      },
+    });
+  });
+});
+
 describe('notifications:act — an ask focuses the window and reveals the card (HIVE-118)', () => {
   /**
    * The fix itself: main names the cause, the renderer picks the destination.

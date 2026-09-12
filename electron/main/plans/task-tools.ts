@@ -11,7 +11,24 @@ export interface PlanToolCall {
   toolInput: unknown;
   toolResponse: unknown;
   cwd?: string;
+  /**
+   * The body was over the hook route's cap and only its prefix was read
+   * (HIVE-180). Only a plan-file `Write` or `Edit` is ever handed over like
+   * this, carrying nothing but `file_path`.
+   */
+  truncated?: true;
 }
+
+/**
+ * A `hive:plan` file: `<anything>/.hive/plans/<name>.md`, one level deep
+ * (HIVE-180). A path with an escaped quote never reaches here — the prefix
+ * read refuses it — and main confines the read to the session's cwd besides.
+ */
+export const PLAN_FILE_PATH = /\/\.hive\/plans\/[^/]+\.md$/;
+
+/** Whether a hook payload's `file_path` names a plan file. */
+export const isPlanFilePath = (value: unknown): value is string =>
+  typeof value === 'string' && PLAN_FILE_PATH.test(value);
 
 /** Claude's task tools. `TodoWrite` is not offered by 2.1.269 `-p`, but older builds send it. */
 export const TASK_TOOL_NAMES: ReadonlySet<string> = new Set(['TaskCreate', 'TaskUpdate', 'TodoWrite']);

@@ -52,9 +52,12 @@ rules are yours to keep, and every implementer you dispatch inherits them:
    `from` is what leaves a ticket already past To Do alone, and the tool
    refuses a backwards move on its own. Never move a ticket backwards.
 4. `hive:execute` on the plan, with its drift check after every task (the
-   section the skill marks builder-only). Log one `ledger_post` per completed
-   task, `meta: { ticket, stage: "build", task: N, worktree, checkout }`, the
-   last two as the `worktree` skill says.
+   section the skill marks builder-only). At the start of each task, one
+   `ledger_post` with `thread: <the ask's id>`, `meta: { ticket, stage:
+   "build", task: N, state: "started" }`. When the task's commit lands, one
+   `ledger_post` with `thread: <the ask's id>`, `meta: { ticket, stage:
+   "build", task: N, worktree, checkout }`, the last two as the `worktree`
+   skill says. N is the plan's task number.
 5. `hive:verify`. Red after two fix attempts: `ledger_answer` the asker
    `failed: <the gate and its last lines>`, release the claim, and stop. Not
    `ledger_failed`: that raises a card and reaches nobody who asked.
