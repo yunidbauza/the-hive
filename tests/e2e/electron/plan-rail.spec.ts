@@ -167,6 +167,11 @@ test('the plan rail appears, peeks without a refit, pins with one, ticks, and le
     await page.screenshot({ path: testInfo.outputPath('plan-rail-light-pinned.png') });
     await page.evaluate(() => {
       delete document.body.dataset.theme;
+      document.body.setAttribute('data-density', 'compact');
+    });
+    await page.screenshot({ path: testInfo.outputPath('plan-rail-dark-compact-pinned.png') });
+    await page.evaluate(() => {
+      document.body.removeAttribute('data-density');
     });
 
     await page.getByRole('button', { name: 'Unpin plan' }).click();
