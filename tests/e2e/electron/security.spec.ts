@@ -911,6 +911,7 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
      * `mutate` for exactly that reason (`remote-contract.ts`).
      */
     'setServer',
+    'setSessionPlugin',
     'setSlack',
     'startClone',
   ]);

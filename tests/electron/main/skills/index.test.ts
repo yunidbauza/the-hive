@@ -1303,3 +1303,19 @@ describe('createSkillsRuntime — a zip that is not a skill', () => {
     expect(await readdir(join(hiveDir, 'skills', 'host', 'assets'))).toEqual(['template.zip']);
   });
 });
+
+describe('the snapshot lists the installed plugins (HIVE-176)', () => {
+  it('reads their names from the registry it was given, and none without one', async () => {
+    const registryFile = join(userDataPath, 'installed_plugins.json');
+    await mkdir(userDataPath, { recursive: true });
+    await writeFile(
+      registryFile,
+      JSON.stringify({ version: 2, plugins: { 'workstream@claude-kit': [{ scope: 'user', installPath: '/p/w' }] } }),
+      'utf8',
+    );
+
+    const withRegistry = createSkillsRuntime({ userDataPath, version: '1.0.0', installedPlugins: () => registryFile });
+    expect((await withRegistry.list()).plugins).toEqual(['workstream']);
+    expect((await runtime().list()).plugins).toEqual([]);
+  });
+});

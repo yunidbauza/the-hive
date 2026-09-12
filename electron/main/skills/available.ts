@@ -1,6 +1,8 @@
 import { access, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { SESSION_PLUGIN_NAME } from '@shared/config-contract';
+
 import { isSkillFolder } from './read';
 
 /**
@@ -207,4 +209,68 @@ export async function readAvailableSkillNames(
     all: [...new Set([...hive, ...user, ...plugins])].sort(),
     hive: [...hive].sort(),
   };
+}
+
+/** Every key in the registry, `name@marketplace` as installed (HIVE-176). */
+function registryKeys(json: string): string[] {
+  try {
+    const plugins = (JSON.parse(json) as { plugins?: unknown } | null)?.plugins;
+    return typeof plugins === 'object' && plugins !== null ? Object.keys(plugins) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Installed plugin names a switch can act on, sorted (HIVE-176): the part
+ * before `@` of the same keys {@link sessionPluginOverrides} reads, so a
+ * listed switch always has a key behind it. A name outside the guard's
+ * alphabet, or `hive`, is left out: it could never be switched off.
+ */
+export function installedPluginNames(json: string): string[] {
+  const names = registryKeys(json)
+    .map((key) => key.split('@')[0] ?? '')
+    .filter((name) => SESSION_PLUGIN_NAME.test(name) && name !== 'hive');
+  return [...new Set(names)].sort();
+}
+
+/**
+ * `enabledPlugins` overrides that keep the named plugins out of a Hive
+ * session (HIVE-176): every registry key whose name is listed, set `false`.
+ *
+ * Keyed by the exact `name@marketplace`, because that is the only key Claude
+ * Code honours, and measured against a real `claude`: a `--settings` file
+ * carrying these drops the plugins for that run and leaves the rest loaded.
+ */
+export function sessionPluginOverrides(
+  json: string,
+  disabled: readonly string[],
+): Record<string, false> {
+  const off = new Set(disabled);
+  const overrides: Record<string, false> = {};
+  for (const key of registryKeys(json)) {
+    if (off.has(key.split('@')[0] ?? '')) overrides[key] = false;
+  }
+  return overrides;
+}
+
+/** {@link sessionPluginOverrides} from the registry file; `{}` when there is none. */
+export async function readSessionPluginOverrides(
+  file: string,
+  disabled: readonly string[],
+): Promise<Record<string, false>> {
+  try {
+    return sessionPluginOverrides(await readFile(file, 'utf8'), disabled);
+  } catch {
+    return {};
+  }
+}
+
+/** {@link installedPluginNames} from the registry file; `[]` when there is none. */
+export async function readInstalledPluginNames(file: string): Promise<string[]> {
+  try {
+    return installedPluginNames(await readFile(file, 'utf8'));
+  } catch {
+    return [];
+  }
 }

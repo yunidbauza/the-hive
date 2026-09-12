@@ -81,7 +81,7 @@ const MAIN_ONLY: ReadonlyMap<string, FrameKind> = new Map([
 
 describe('remote contract: coverage', () => {
   it('classifies every channel exactly once for frame kind', () => {
-    expect(entries).toHaveLength(135);
+    expect(entries).toHaveLength(136);
     expect(Object.keys(FRAME_KIND).sort()).toEqual([...Object.values(CH)].sort());
   });
 
@@ -120,11 +120,11 @@ describe('remote contract: frame kinds match the preload bridge', () => {
     expect(frameKindOf(channel)).toBe(expected);
   });
 
-  it('splits 103 call, 6 notify and 26 event', () => {
+  it('splits 104 call, 6 notify and 26 event', () => {
     const tally = { call: 0, notify: 0, event: 0 };
     for (const kind of Object.values(FRAME_KIND)) tally[kind] += 1;
 
-    expect(tally).toEqual({ call: 103, notify: 6, event: 26 });
+    expect(tally).toEqual({ call: 104, notify: 6, event: 26 });
   });
 
   /**
@@ -201,7 +201,7 @@ describe('remote contract: authorization', () => {
     const tally = { read: 0, mutate: 0, execute: 0 };
     for (const authz of Object.values(CHANNEL_AUTHORIZATION)) tally[authz] += 1;
 
-    expect(tally).toEqual({ read: 57, mutate: 44, execute: 34 });
+    expect(tally).toEqual({ read: 57, mutate: 44, execute: 35 });
   });
 
   /**
@@ -536,7 +536,7 @@ describe('remote contract: the version handshake', () => {
   });
 
   it('is protocol 3: 2 carried a generation (HIVE-144), 3 caught up on unbumped channels (HIVE-140 audit)', () => {
-    expect(REMOTE_PROTOCOL_VERSION).toBe(4);
+    expect(REMOTE_PROTOCOL_VERSION).toBe(5);
   });
 });
 

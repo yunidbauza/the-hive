@@ -161,6 +161,22 @@ describe('SkillsSection', () => {
     ).toBeInTheDocument();
   });
 
+  it('offers the plugin switches in the empty state and beside the list (HIVE-176)', () => {
+    setProjectConfigForTest(emptySnapshot('/tmp/config.json'));
+    try {
+      setSkillsForTest(snapshot({ plugins: ['workstream'] }));
+      const { unmount } = render(<SkillsSection />);
+      expect(screen.getByRole('switch', { name: 'workstream' })).toBeInTheDocument();
+      unmount();
+
+      setSkillsForTest({ ...withSkills('deploy'), plugins: ['workstream'] });
+      render(<SkillsSection />);
+      expect(screen.getByRole('switch', { name: 'workstream' })).toBeInTheDocument();
+    } finally {
+      resetProjectConfig();
+    }
+  });
+
   it('shows the empty state and the CTA with no skills', () => {
     setSkillsForTest(snapshot());
 

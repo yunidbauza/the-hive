@@ -35,6 +35,7 @@ import {
   parseWriteRequest,
   parsePrLookup,
   parseJiraTransitionByName,
+  parseSetSessionPluginRequest,
 } from '../../../electron/shared/guards';
 
 const validSpawn = { sessionId: 'sess-1', projectId: 'proj-1', cols: 80, rows: 24 };
@@ -1906,6 +1907,29 @@ describe('parseJiraTransitionByName (HIVE-174)', () => {
       { key: 'HIVE-7', status: 31 },
     ]) {
       expect(() => parseJiraTransitionByName(bad)).toThrow(/jiraTransition/);
+    }
+  });
+});
+
+describe('parseSetSessionPluginRequest (HIVE-176)', () => {
+  it('accepts one registry-shaped name and a boolean', () => {
+    expect(parseSetSessionPluginRequest({ plugin: 'jira-writer', off: true })).toEqual({ plugin: 'jira-writer', off: true });
+    expect(parseSetSessionPluginRequest({ plugin: 'ui.ux_pro-max', off: false })).toEqual({ plugin: 'ui.ux_pro-max', off: false });
+  });
+
+  it('refuses anything else, and the app\'s own plugin', () => {
+    for (const bad of [
+      {},
+      { plugin: 'workstream' },
+      { plugin: 'work stream', off: true },
+      { plugin: 'workstream@claude-kit', off: true },
+      { plugin: '../x', off: true },
+      { plugin: 1, off: true },
+      { plugin: 'hive', off: true },
+      { plugin: 'workstream', off: 'yes' },
+      { plugin: 'workstream', off: true, extra: 1 },
+    ]) {
+      expect(() => parseSetSessionPluginRequest(bad)).toThrow(/setSessionPlugin/);
     }
   });
 });

@@ -20,6 +20,7 @@ import {
   isProjectKey,
   isServerBindHost,
   unsafeEnvReason,
+  SESSION_PLUGIN_NAME,
 } from './config-contract';
 import type {
   AddProjectRequest,
@@ -46,6 +47,7 @@ import type {
   SetJiraRequest,
   SetJiraTokenRequest,
   SetNotificationsRequest,
+  SetSessionPluginRequest,
   SetProjectAutoMergeRequest,
   SetProjectKeyRequest,
   SetProjectRuntimeRequest,
@@ -727,6 +729,22 @@ export function parseSetProjectKeyRequest(input: unknown): SetProjectKeyRequest 
     id: assertId(raw.id, 'setProjectKey.id'),
     key: assertProjectKey(raw.key, 'setProjectKey.key'),
   };
+}
+
+/**
+ * Payload guard for `config:set-session-plugin` (HIVE-176). A name in the
+ * registry's own alphabet, and never `hive`: the app's own plugin arrives by
+ * `--plugin-dir` and is not the user's to switch off here.
+ */
+export function parseSetSessionPluginRequest(input: unknown): SetSessionPluginRequest {
+  const raw = assertShape(input, ['plugin', 'off'], 'setSessionPlugin');
+  if (typeof raw.plugin !== 'string' || !SESSION_PLUGIN_NAME.test(raw.plugin) || raw.plugin === 'hive') {
+    throw new TypeError('setSessionPlugin.plugin: expected a plugin name');
+  }
+  if (typeof raw.off !== 'boolean') {
+    throw new TypeError('setSessionPlugin.off must be a boolean');
+  }
+  return { plugin: raw.plugin, off: raw.off };
 }
 
 /** Payload guard for `config:set-project-auto-merge` (HIVE-166). */

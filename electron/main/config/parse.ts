@@ -30,6 +30,7 @@ import {
   type ServerConfig,
   type ServerDevice,
   type SlackConfig,
+  SESSION_PLUGIN_NAME,
 } from '@shared/config-contract';
 import { PROJECT_KEY_HINT, isProjectKey } from '@shared/config-contract';
 import { assertId } from '@shared/guards';
@@ -89,6 +90,8 @@ export interface ParsedConfig {
   claudeCommand: string | null;
   /** Whether the app injects its own status line (HIVE-79). `null` = unstated. */
   sessionMetrics: boolean | null;
+  /** Plugin names a session does not load (HIVE-176). `null` = unstated. */
+  disabledSessionPlugins: string[] | null;
   /**
    * Whether sessions authenticate on the Claude.ai plan (HIVE-79).
    *
@@ -268,6 +271,8 @@ const TOP_LEVEL_KEYS = [
   'subscriptionAuth',
   // HIVE-79. Whether the app injects its own status line into sessions.
   'sessionMetrics',
+  // HIVE-176. Plugin names a Hive session does not load.
+  'disabledSessionPlugins',
   // HIVE-84. Whether the app asks the login shell for its `PATH` at startup.
   'importLoginEnv',
 ];
@@ -554,6 +559,28 @@ function optionalBoolean(
     return null;
   }
   return value;
+}
+
+/**
+ * `disabledSessionPlugins` (HIVE-176): an array of plugin names, deduplicated.
+ * Anything else is reported and read as unstated, so the default list applies
+ * rather than a half-parsed one.
+ */
+function optionalPluginNames(
+  record: Record<string, unknown>,
+  label: string,
+  errors: string[],
+): string[] | null {
+  const value = record.disabledSessionPlugins;
+  if (value === undefined) return null;
+  if (
+    !Array.isArray(value) ||
+    !value.every((name) => typeof name === 'string' && SESSION_PLUGIN_NAME.test(name))
+  ) {
+    errors.push(`${label}.disabledSessionPlugins: expected an array of plugin names, using the default`);
+    return null;
+  }
+  return [...new Set(value as string[])];
 }
 
 function optionalString(
@@ -1287,6 +1314,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
     claudeCommand: null,
     subscriptionAuth: null,
     sessionMetrics: null,
+    disabledSessionPlugins: null,
     importLoginEnv: null,
     projects: [],
     errors,
@@ -1344,6 +1372,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
     label,
     errors,
   );
+  const disabledSessionPlugins = optionalPluginNames(document, label, errors);
   const importLoginEnv = optionalBoolean(
     document,
     'importLoginEnv',
@@ -1363,6 +1392,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       claudeCommand,
       subscriptionAuth,
       sessionMetrics,
+      disabledSessionPlugins,
       importLoginEnv,
       env,
       notifications,
@@ -1384,6 +1414,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       claudeCommand,
       subscriptionAuth,
       sessionMetrics,
+      disabledSessionPlugins,
       importLoginEnv,
       env,
       notifications,
@@ -1501,6 +1532,7 @@ export function parseConfig(text: string, label: string): ParsedConfig {
     claudeCommand,
     subscriptionAuth,
     sessionMetrics,
+    disabledSessionPlugins,
     importLoginEnv,
     env,
     notifications,

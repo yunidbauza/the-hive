@@ -691,3 +691,19 @@ describe('agentSettings — freshness (HIVE-132)', () => {
     expect(settings.permissions.ask).toEqual(['*']);
   });
 });
+
+describe('the session settings file switches plugins off (HIVE-176)', () => {
+  it('writes enabledPlugins when there is something to switch off, and nothing otherwise', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hive-plugins-'));
+
+    const off = await writeHookSettings(dir, 'http://127.0.0.1:1/hook', undefined, undefined, 'http', {
+      'workstream@claude-kit': false,
+    });
+    expect(JSON.parse(await readFile(off, 'utf8'))).toMatchObject({
+      enabledPlugins: { 'workstream@claude-kit': false },
+    });
+
+    const none = await writeHookSettings(dir, 'http://127.0.0.1:1/hook', undefined, undefined, 'http', {});
+    expect(JSON.parse(await readFile(none, 'utf8'))).not.toHaveProperty('enabledPlugins');
+  });
+});

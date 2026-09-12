@@ -102,6 +102,12 @@ export interface SkillsSnapshot {
   invalid: SkillProblem[];
   /** Shown in the pane's footer, so the user can find the files themselves. */
   skillsRoot: string;
+  /**
+   * The user's installed Claude Code plugins, by name (HIVE-176), for the
+   * "Plugins in Hive sessions" switches. Absent where there is no registry to
+   * read, which is the browser target.
+   */
+  plugins?: string[];
 }
 
 /** One file, for the editor. */

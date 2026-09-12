@@ -103,6 +103,13 @@ export type { HookIdentity } from '@shared/hook-contract';
 
 export interface HookSettings {
   hooks: Record<string, unknown[]>;
+  /**
+   * Plugins switched off for Hive sessions (HIVE-176), `name@marketplace` to
+   * `false`. This file merges above the user's own settings, so a `false`
+   * here wins over their `true` for the sessions the app starts and nowhere
+   * else. Absent when nothing is switched off.
+   */
+  enabledPlugins?: Record<string, boolean>;
   statusLine?: {
     type: 'command';
     command: string;
@@ -517,6 +524,7 @@ export async function writeHookSettings(
   metricsUrl?: string,
   readyUrl?: string,
   transport: HookTransport = 'http',
+  enabledPlugins?: Record<string, boolean>,
 ): Promise<string> {
   await mkdir(join(userDataPath, HOOK_SETTINGS_DIR), { recursive: true });
 
@@ -538,6 +546,9 @@ export async function writeHookSettings(
   const path = join(userDataPath, HOOK_SETTINGS_FILE);
   const settings = hookSettings(url, readyUrl, undefined, transport);
   if (statusLine !== undefined) settings.statusLine = statusLine;
+  if (enabledPlugins !== undefined && Object.keys(enabledPlugins).length > 0) {
+    settings.enabledPlugins = enabledPlugins;
+  }
   await writeFile(path, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
 
   return path;

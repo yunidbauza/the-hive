@@ -64,7 +64,7 @@ vi.mock('../../../../electron/main/notifications/activate-here', () => ({
  *
  * The three channel lists below are derived from `FRAME_KIND` — the same
  * table `registerRemoteProxy` itself walks — but the counts asserted against
- * them (103, 6, 26, 109) are literals, not read back off the derived lists.
+ * them (104, 6, 26, 110) are literals, not read back off the derived lists.
  * `tests/shared/remote-contract.test.ts:82,125` pins the same four numbers
  * independently. A channel added to the contract without a home in this file
  * fails a count here, which is the point: a self-referential assertion could
@@ -222,7 +222,7 @@ afterEach(() => {
 
 describe('registerRemoteProxy', () => {
   it('binds every call channel to the client', () => {
-    expect(callChannels.length).toBe(103);
+    expect(callChannels.length).toBe(104);
 
     registerRemoteProxy({ client: fakeClient(), broadcaster: fakeBroadcaster() });
 
@@ -532,7 +532,7 @@ describe('registerRemoteProxy', () => {
   it('records every binding, so the mode can be switched back', () => {
     registerRemoteProxy({ client: fakeClient(), broadcaster: fakeBroadcaster() });
 
-    expect(remoteProxyBindingsSize()).toBe(109);
+    expect(remoteProxyBindingsSize()).toBe(110);
   });
 
   /**
@@ -1101,12 +1101,12 @@ describe('registerRemoteProxy', () => {
 
     resetRemoteProxy();
 
-    // 109 (103 call + 6 notify), the same literal `records every binding`
+    // 110 (104 call + 6 notify), the same literal `records every binding`
     // pins — not `callChannels.length + notifyChannels.length`, which would
     // recompute its own expectation from the same source the code under test
     // reads and could never catch a channel silently lost between the two.
-    expect(removeHandler).toHaveBeenCalledTimes(109);
-    expect(removeAllListeners).toHaveBeenCalledTimes(109);
+    expect(removeHandler).toHaveBeenCalledTimes(110);
+    expect(removeAllListeners).toHaveBeenCalledTimes(110);
     expect(remoteProxyBindingsSize()).toBe(0);
 
     client.emit('pty:data', { seq: 2 });
