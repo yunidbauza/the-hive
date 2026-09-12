@@ -344,6 +344,84 @@ export const PR_TOOL: McpToolDefinition = {
 };
 
 /**
+ * What every agent holds without naming it (HIVE-174): the ledger vocabulary,
+ * the reads, and the prompt tool the CLI calls on the agent's behalf.
+ *
+ * Named one by one rather than `mcp__hive__*`, because two tools on this
+ * server write to the user's Jira as the user, and a write to an external
+ * system is a `gh pr merge`, not a ledger append: it fires automation nobody
+ * can take back. Those two are {@link HIVE_CONSENT_TOOLS}: an agent lists them
+ * in `tools:` or its call becomes a card. `waker.ts` puts this list on
+ * `--allowedTools` and in `HOOK_ENV_GRANTS` unconditionally, so a new read
+ * tool is added here and nowhere else.
+ */
+export const HIVE_STANDING_GRANTS: readonly string[] = [
+  'mcp__hive__ledger_*',
+  'mcp__hive__agents',
+  'mcp__hive__projects',
+  'mcp__hive__pr',
+  'mcp__hive__jira_get',
+  'mcp__hive__approve',
+];
+
+/** The tools that write outside the Hive; consent is a `tools:` entry or a card. */
+export const HIVE_CONSENT_TOOLS: readonly string[] = [
+  'mcp__hive__jira_transition',
+  'mcp__hive__jira_comment',
+];
+
+/**
+ * The Jira tools (HIVE-174): the ticket, a transition, a comment, through the
+ * token the Work tab holds. They replace `jira-writer` on an agent's PATH and
+ * the Atlassian credential in a container's environment; the skills prefer
+ * them and fall back to the CLI where they are absent.
+ */
+export const JIRA_GET_TOOL: McpToolDefinition = {
+  name: 'jira_get',
+  description:
+    'Read one Jira issue through The Hive: its summary, status, type, priority, assignee and URL, the description as text, its parent (the Epic, for a story), every link, and the comments, oldest first, up to fifty (the answer says when there were more). Use it before working a ticket, and to read a status back after a transition. Prefer it over jira-writer: it uses the token The Hive already holds, so nothing is needed on your PATH or in your environment.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      key: { type: 'string', description: 'The issue key, like HIVE-123.' },
+    },
+    required: ['key'],
+  },
+};
+
+export const JIRA_TRANSITION_TOOL: McpToolDefinition = {
+  name: 'jira_transition',
+  description:
+    'Move a Jira issue to a status by name ("In Progress", "In Review", "Done"), through The Hive. It applies the transition whose target is that status. An issue already there is left alone; so is one that would move backwards (Done to In Progress, In Progress to To Do), and so is one not at `from` when you give it. Every no-op says why. A status no transition reaches answers with the ones that are reachable. This tool writes to the person\'s Jira: it needs a `tools:` entry or their consent on a card.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      key: { type: 'string', description: 'The issue key, like HIVE-123.' },
+      status: { type: 'string', description: 'The target status name, as Jira shows it.' },
+      from: {
+        type: 'string',
+        description: 'Optional. Apply only if the issue currently stands at this status; otherwise leave it alone and say so.',
+      },
+    },
+    required: ['key', 'status'],
+  },
+};
+
+export const JIRA_COMMENT_TOOL: McpToolDefinition = {
+  name: 'jira_comment',
+  description:
+    'Add a comment to a Jira issue through The Hive. `markdown` is plain markdown: paragraphs, headings, lists, fenced code and links; it is converted to the document format Jira stores. Answers with the comment as Jira recorded it. This tool writes to the person\'s Jira: it needs a `tools:` entry or their consent on a card.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      key: { type: 'string', description: 'The issue key, like HIVE-123.' },
+      markdown: { type: 'string', description: 'The comment, as markdown.' },
+    },
+    required: ['key', 'markdown'],
+  },
+};
+
+/**
  * The agents directory — served beside the ledger tools, and not one of them
  * (HIVE-127).
  *

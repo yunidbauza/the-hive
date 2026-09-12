@@ -1,6 +1,7 @@
 import type {
   JiraComment,
   JiraIssue,
+  JiraIssueDetail,
   JiraLink,
   JiraStatusCategory,
   JiraTransition,
@@ -226,5 +227,26 @@ export function toIssueLink(raw: unknown, site: string): JiraLink | null {
     url: `https://${site}/browse/${key}`,
     relationship,
     ...(status === null ? {} : { status }),
+  };
+}
+
+/**
+ * The description and the parent off a raw issue (HIVE-174). Never `null`:
+ * an issue with no description has an empty one, and one with no parent has
+ * none. Only the shape of the answer can fail, and that is the caller's
+ * "could not be read".
+ */
+export function toIssueDetail(raw: unknown): JiraIssueDetail | null {
+  if (!isRecord(raw) || !isRecord(raw.fields)) return null;
+  const fields = raw.fields;
+  const parent = isRecord(fields.parent) ? fields.parent : null;
+  const parentKey = parent === null ? null : text(parent.key);
+  const parentFields = parent !== null && isRecord(parent.fields) ? parent.fields : null;
+  return {
+    description: adfToBlocks(fields.description),
+    parent:
+      parentKey === null
+        ? null
+        : { key: parentKey, summary: (parentFields === null ? null : text(parentFields.summary)) ?? '' },
   };
 }

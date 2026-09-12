@@ -6,6 +6,7 @@ import type {
 } from '@shared/agent-contract';
 import { AUTH_ENV_KEYS, DEFAULT_ENV_ARG, isSessionEnvDenied } from '@shared/config-contract';
 import { HOOK_ENV_GRANTS, HOOK_ENV_RECEIVER_URL } from '@shared/hook-contract';
+import { HIVE_STANDING_GRANTS } from '@shared/ledger-tools';
 
 import { withHostAlias } from '../hooks/container-origin';
 import { createPathMap } from '../sessions/path-map';
@@ -310,7 +311,7 @@ export function wakeCommand(input: WakeInput): WakeCommand {
     inside(paths.mcpConfig),
     '--strict-mcp-config',
     '--allowedTools',
-    ['mcp__hive__*', ...def.tools].join(','),
+    [...HIVE_STANDING_GRANTS, ...def.tools].join(','),
     /*
       The fence (HIVE-119). `--allowedTools` above is a grant and cannot deny;
       what actually stops an ungranted call is the `permissions.ask: ["*"]` rule
@@ -375,7 +376,7 @@ export function wakeCommand(input: WakeInput): WakeCommand {
   }
 
   /*
-    `mcp__hive__*` is first and unconditional: an agent that cannot call
+    the standing Hive grants (`HIVE_STANDING_GRANTS`) is first and unconditional: an agent that cannot call
     `ledger_read` cannot read the inbox that would tell it why it was woken,
     and would deadlock on its own fence. `input.grants` is a one-shot
     `allow-once` for this wake only — never merged into `def.tools`.
@@ -387,14 +388,14 @@ export function wakeCommand(input: WakeInput): WakeCommand {
     before it can invoke it. `ToolSearch` never appears in any `def.tools` —
     nobody would think to grant a built-in — so without this the fence denies
     the very first thing an agent's preamble tells it to do: read its ledger
-    inbox. Granting `mcp__hive__*` is worthless if nothing can load the
+    inbox. Granting the standing Hive grants (`HIVE_STANDING_GRANTS`) is worthless if nothing can load the
     schema to call it. This grants no *capability*: `ToolSearch` only reveals
     tool schemas, and every tool it surfaces is still checked by the fence
     the moment it is actually called — so widening this list widens nothing
     an agent can do, only what it can find out it could ask to do.
   */
   merged[HOOK_ENV_GRANTS] = JSON.stringify([
-    'mcp__hive__*',
+    ...HIVE_STANDING_GRANTS,
     'ToolSearch',
     ...def.tools,
     ...(input.grants ?? []),

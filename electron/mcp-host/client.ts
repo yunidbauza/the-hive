@@ -3,6 +3,15 @@ import { PROJECTS_PATH, type ProjectsDirectory } from '@shared/config-contract';
 import { PR_PATH, type PrLookupReply } from '@shared/github-contract';
 import { HOOK_HEADER_SESSION, HOOK_HEADER_TOKEN } from '@shared/hook-contract';
 import {
+  JIRA_COMMENT_PATH,
+  JIRA_GET_PATH,
+  JIRA_TRANSITION_PATH,
+  type JiraComment,
+  type JiraResult,
+  type JiraToolIssue,
+  type JiraToolTransitionReply,
+} from '@shared/jira-contract';
+import {
   LEDGER_POST_PATH,
   LEDGER_READ_PATH,
   type LedgerSnapshot,
@@ -132,5 +141,9 @@ export function createReceiverClient({
     // HIVE-173: the same shape, the same empty body, for the same reason.
     projects: () => call<ProjectsDirectory>(PROJECTS_PATH, {}),
     pr: (lookup) => call<PrLookupReply>(PR_PATH, lookup),
+    // HIVE-174: three small bodies, the same headers; Jira's own refusals ride in the 200.
+    jiraGet: (request) => call<JiraResult<JiraToolIssue>>(JIRA_GET_PATH, request),
+    jiraTransition: (request) => call<JiraResult<JiraToolTransitionReply>>(JIRA_TRANSITION_PATH, request),
+    jiraComment: (request) => call<JiraResult<JiraComment>>(JIRA_COMMENT_PATH, request),
   };
 }

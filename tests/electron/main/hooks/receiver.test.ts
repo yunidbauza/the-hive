@@ -16,6 +16,13 @@ import {
 } from '../../../../electron/shared/config-contract';
 import { PR_PATH, type PrLookupReply } from '../../../../electron/shared/github-contract';
 import {
+  JIRA_COMMENT_PATH,
+  JIRA_GET_PATH,
+  JIRA_TOOL_MAX_BYTES,
+  JIRA_TRANSITION_PATH,
+  type JiraToolHandlers,
+} from '../../../../electron/shared/jira-contract';
+import {
   HOOK_HEADER_RUN,
   HOOK_HEADER_SESSION,
   HOOK_HEADER_TOKEN,
@@ -158,6 +165,28 @@ const ROUTES: {
     name: '/pr',
     url: (r) => `${r.origin as string}${PR_PATH}`,
     body: { repo: 'acme/nova', number: 1 },
+    ok: 200,
+    refused: 403,
+  },
+  // HIVE-174: unwired, each answers a JiraResult refusal inside a 200.
+  {
+    name: '/jira/get',
+    url: (r) => `${r.origin as string}${JIRA_GET_PATH}`,
+    body: { key: 'HIVE-1' },
+    ok: 200,
+    refused: 403,
+  },
+  {
+    name: '/jira/transition',
+    url: (r) => `${r.origin as string}${JIRA_TRANSITION_PATH}`,
+    body: { key: 'HIVE-1', status: 'Done' },
+    ok: 200,
+    refused: 403,
+  },
+  {
+    name: '/jira/comment',
+    url: (r) => `${r.origin as string}${JIRA_COMMENT_PATH}`,
+    body: { key: 'HIVE-1', markdown: 'hi' },
     ok: 200,
     refused: 403,
   },
@@ -2821,6 +2850,181 @@ describe('the projects and pr routes (HIVE-173)', () => {
   });
 });
 
+describe('the Jira routes (HIVE-174)', () => {
+  const CALLER = 'builder';
+  const ISSUE = {
+    key: 'HIVE-7',
+    summary: 'Ship the thing',
+    status: 'To Do',
+    statusCategory: 'todo' as const,
+    issueType: 'Story',
+    priority: null,
+    assignee: null,
+    updated: '2026-09-11T10:00:00Z',
+    url: 'https://x.atlassian.net/browse/HIVE-7',
+  };
+
+  let receiver: Receiver;
+  let url: string;
+  let calls: { tool: string; request: unknown }[];
+  let failNext: boolean;
+
+  beforeEach(async () => {
+    calls = [];
+    failNext = false;
+    const onJira: JiraToolHandlers = {
+      get: (request) => {
+        calls.push({ tool: 'get', request });
+        if (failNext) return Promise.reject(new Error('ECONNREFUSED /Users/someone/.hive'));
+        return Promise.resolve({ ok: true, value: { issue: ISSUE, detail: null, comments: [], links: [], partial: [] } });
+      },
+      transition: (request) => {
+        calls.push({ tool: 'transition', request });
+        return Promise.resolve({ ok: false, error: { kind: 'not-found', message: `${request.key} does not exist.` } });
+      },
+      comment: (request) => {
+        calls.push({ tool: 'comment', request });
+        return Promise.resolve({ ok: true, value: { id: '3', author: 'me', created: 'now', body: [] } });
+      },
+    };
+    receiver = createReceiver({
+      knowsSession: (entityId) => entityId === CALLER,
+      onEvent: () => {},
+      onTicketIntent: () => {},
+      onPromptName: () => {},
+      onCleared: () => {},
+      onDone: () => {},
+      onReady: () => {},
+      onMetrics: () => {},
+      ...noLedger,
+      ...noAgents,
+      onJira,
+    });
+    const started = await receiver.start();
+    expect(started).not.toBeNull();
+    url = started as string;
+  });
+
+  afterEach(async () => {
+    await receiver.stop();
+  });
+
+  const origin = () => new URL(url).origin;
+
+  const post = (path: string, body: string, headers: Record<string, string>) =>
+    fetch(`${origin()}${path}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [HOOK_HEADER_TOKEN]: receiver.tokenFor(headers[HOOK_HEADER_SESSION] ?? ''),
+        ...headers,
+      },
+      body,
+    });
+
+  it('answers each tool with its JiraResult, a refusal included, as a 200', async () => {
+    const got = await post(JIRA_GET_PATH, JSON.stringify({ key: 'HIVE-7' }), { [HOOK_HEADER_SESSION]: CALLER });
+    expect(got.status).toBe(200);
+    expect(await got.json()).toEqual({ ok: true, value: { issue: ISSUE, detail: null, comments: [], links: [], partial: [] } });
+
+    const moved = await post(JIRA_TRANSITION_PATH, JSON.stringify({ key: 'HIVE-9', status: 'Done' }), { [HOOK_HEADER_SESSION]: CALLER });
+    expect(moved.status).toBe(200);
+    expect(await moved.json()).toEqual({ ok: false, error: { kind: 'not-found', message: 'HIVE-9 does not exist.' } });
+
+    const said = await post(JIRA_COMMENT_PATH, JSON.stringify({ key: 'HIVE-7', markdown: 'hi' }), { [HOOK_HEADER_SESSION]: CALLER });
+    expect(said.status).toBe(200);
+    expect(await said.json()).toEqual({ ok: true, value: { id: '3', author: 'me', created: 'now', body: [] } });
+
+    expect(calls).toEqual([
+      { tool: 'get', request: { key: 'HIVE-7' } },
+      { tool: 'transition', request: { key: 'HIVE-9', status: 'Done' } },
+      { tool: 'comment', request: { key: 'HIVE-7', markdown: 'hi' } },
+    ]);
+  });
+
+  it('refuses a malformed body with 400 and the guard\'s sentence, calling nothing', async () => {
+    const cases: [string, unknown, RegExp][] = [
+      [JIRA_GET_PATH, { key: 'nope' }, /jiraIssue\.key/],
+      [JIRA_TRANSITION_PATH, { key: 'HIVE-7', status: '' }, /jiraTransition\.status/],
+      [JIRA_COMMENT_PATH, { key: 'HIVE-7', markdown: '' }, /addJiraComment\.markdown/],
+    ];
+    for (const [path, body, reason] of cases) {
+      const response = await post(path, JSON.stringify(body), { [HOOK_HEADER_SESSION]: CALLER });
+      expect(response.status).toBe(400);
+      expect(((await response.json()) as { reason: string }).reason).toMatch(reason);
+    }
+    expect(calls).toEqual([]);
+  });
+
+  it('refuses a body over the cap with 413', async () => {
+    const response = await post(
+      JIRA_COMMENT_PATH,
+      JSON.stringify({ key: 'HIVE-7', markdown: 'x'.repeat(JIRA_TOOL_MAX_BYTES + 10) }),
+      { [HOOK_HEADER_SESSION]: CALLER },
+    );
+    expect(response.status).toBe(413);
+    expect(calls).toEqual([]);
+  });
+
+  it('answers 500 with a fixed sentence when a handler throws, never the error text', async () => {
+    failNext = true;
+    const response = await post(JIRA_GET_PATH, JSON.stringify({ key: 'HIVE-7' }), { [HOOK_HEADER_SESSION]: CALLER });
+    const body = (await response.json()) as { reason: string };
+
+    expect(response.status).toBe(500);
+    expect(body.reason).toBe('Jira could not be reached through this receiver');
+    expect(body.reason).not.toContain('/Users');
+  });
+
+  it('answers the not-wired refusal, as a JiraResult, when nothing composed the tools', async () => {
+    const bare = createReceiver({
+      knowsSession: (entityId) => entityId === CALLER,
+      onEvent: () => {},
+      onTicketIntent: () => {},
+      onPromptName: () => {},
+      onCleared: () => {},
+      onDone: () => {},
+      onReady: () => {},
+      onMetrics: () => {},
+      ...noLedger,
+      ...noAgents,
+    });
+    const started = await bare.start();
+    try {
+      const response = await fetch(`${new URL(started as string).origin}${JIRA_GET_PATH}`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          [HOOK_HEADER_TOKEN]: bare.tokenFor(CALLER),
+          [HOOK_HEADER_SESSION]: CALLER,
+        },
+        body: JSON.stringify({ key: 'HIVE-7' }),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        ok: false,
+        error: { kind: 'bad-query', message: 'the Jira integration is not wired to this receiver' },
+      });
+    } finally {
+      await bare.stop();
+    }
+  });
+
+  it('refuses an unknown id and a foreign token on every Jira route', async () => {
+    for (const path of [JIRA_GET_PATH, JIRA_TRANSITION_PATH, JIRA_COMMENT_PATH]) {
+      const unknown = await post(path, '{}', { [HOOK_HEADER_SESSION]: 'nobody-at-all' });
+      expect(unknown.status).toBe(404);
+      const foreign = await fetch(`${origin()}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', [HOOK_HEADER_TOKEN]: 'not-mine', [HOOK_HEADER_SESSION]: CALLER },
+        body: '{}',
+      });
+      expect(foreign.status).toBe(403);
+    }
+    expect(calls).toEqual([]);
+  });
+});
+
 /**
  * The agents directory (HIVE-127).
  *
@@ -3022,6 +3226,14 @@ describe('the MCP route', () => {
       }),
       onPrLookup: (_caller, lookup) =>
         Promise.resolve({ pr: null, reason: `in-process: ${lookup.repo}#${lookup.number}` }),
+      // HIVE-174: and the Jira tools, a refusal that must reach the model as a sentence.
+      onJira: {
+        get: (request) =>
+          Promise.resolve({ ok: false, error: { kind: 'not-found', message: `${request.key} does not exist.` } }),
+        transition: () => Promise.reject(new Error('not exercised')),
+        comment: () =>
+          Promise.resolve({ ok: true, value: { id: '4', author: 'me', created: 'now', body: [] } }),
+      },
       onLedgerRead: (_caller, query) => ledger.read(query),
       onLedgerPost: (caller, request) => {
         posted.push({ caller, request });
@@ -3262,6 +3474,38 @@ describe('the MCP route', () => {
     const refused = (await bad.json()) as { result: { content: { text: string }[]; isError: boolean } };
     expect(refused.result.isError).toBe(true);
     expect(refused.result.content[0]?.text).toMatch(/owner\/name/);
+  });
+
+  it('serves the Jira tools through the in-process client, refusals as sentences (HIVE-174)', async () => {
+    const got = await rpc({
+      jsonrpc: '2.0',
+      id: 31,
+      method: 'tools/call',
+      params: { name: 'jira_get', arguments: { key: 'HIVE-9' } },
+    });
+    const refused = (await got.json()) as { result: { content: { text: string }[]; isError: boolean } };
+    expect(refused.result.isError).toBe(true);
+    expect(refused.result.content[0]?.text).toBe('jira_get: HIVE-9 does not exist. (not-found)');
+
+    const said = await rpc({
+      jsonrpc: '2.0',
+      id: 32,
+      method: 'tools/call',
+      params: { name: 'jira_comment', arguments: { key: 'HIVE-9', markdown: 'hi' } },
+    });
+    const done = (await said.json()) as { result: { content: { text: string }[]; isError: boolean } };
+    expect(done.result.isError).toBe(false);
+    expect(done.result.content[0]?.text).toBe('Commented on HIVE-9: comment 4 by me at now.');
+
+    const bad = await rpc({
+      jsonrpc: '2.0',
+      id: 33,
+      method: 'tools/call',
+      params: { name: 'jira_transition', arguments: { key: 'HIVE-9', status: 'x'.repeat(65) } },
+    });
+    const malformed = (await bad.json()) as { result: { content: { text: string }[]; isError: boolean } };
+    expect(malformed.result.isError).toBe(true);
+    expect(malformed.result.content[0]?.text).toMatch(/jiraTransition\.status/);
   });
 
   it('refuses a request carrying a browser Origin', async () => {

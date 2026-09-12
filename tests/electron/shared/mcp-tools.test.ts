@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { LedgerSnapshot } from '@shared/ledger-contract';
 
 import { ReceiverError, type ReceiverClient } from '@shared/mcp-contract';
-import { createToolHandlers } from '@shared/mcp-tools';
+import { adfBlocksToText, createToolHandlers, JIRA_TEXT_MAX } from '@shared/mcp-tools';
 
 const emptySnapshot: LedgerSnapshot = { entries: [], openAsks: [], claims: {} };
 
@@ -16,8 +16,17 @@ const stub = (overrides: Partial<ReceiverClient> = {}): ReceiverClient => ({
   // HIVE-173: the same resting states, for the same reason.
   projects: vi.fn(async () => ({ projects: [] })),
   pr: vi.fn(async () => ({ pr: null, reason: 'not exercised' })),
+  // HIVE-174: a Jira that is not wired, which is a JiraResult and not a throw.
+  jiraGet: vi.fn(async () => NOT_WIRED),
+  jiraTransition: vi.fn(async () => NOT_WIRED),
+  jiraComment: vi.fn(async () => NOT_WIRED),
   ...overrides,
 });
+
+const NOT_WIRED = {
+  ok: false as const,
+  error: { kind: 'bad-query' as const, message: 'the Jira integration is not wired to this receiver' },
+};
 
 const textOf = (result: { content: { text: string }[] }): string =>
   result.content.map((part) => part.text).join('');
@@ -28,7 +37,7 @@ describe('createToolHandlers — listing', () => {
     `agents` (HIVE-127), then `approve` last — the tools a model is meant to
     call ahead of the one only the CLI ever reaches, on its behalf.
   */
-  it('lists the thirteen shared definitions unchanged', () => {
+  it('lists the sixteen shared definitions unchanged', () => {
     const handlers = createToolHandlers(stub());
     expect(handlers.listTools().map((tool) => tool.name)).toEqual([
       'ledger_read',
@@ -43,6 +52,9 @@ describe('createToolHandlers — listing', () => {
       'agents',
       'projects',
       'pr',
+      'jira_get',
+      'jira_transition',
+      'jira_comment',
       'approve',
     ]);
   });
@@ -728,5 +740,136 @@ describe('createToolHandlers — projects and pr (HIVE-173)', () => {
       expect(textOf(result)).toMatch(/pr needs repo/);
     }
     expect(pr).not.toHaveBeenCalled();
+  });
+});
+
+describe('createToolHandlers — the Jira tools (HIVE-174)', () => {
+  const issue = {
+    key: 'HIVE-7',
+    summary: 'Ship the thing',
+    status: 'In Progress',
+    statusCategory: 'in-progress' as const,
+    issueType: 'Story',
+    priority: 'Medium',
+    assignee: null,
+    updated: '2026-09-11T10:00:00Z',
+    url: 'https://x.atlassian.net/browse/HIVE-7',
+  };
+  const para = (text: string) => ({ kind: 'paragraph' as const, runs: [{ text, marks: [] }] });
+  const whole = {
+    issue,
+    detail: {
+      description: [
+        { kind: 'heading' as const, level: 2, runs: [{ text: 'Goal', marks: [] }] },
+        para('Make it ship.'),
+        { kind: 'bullet' as const, depth: 1, runs: [{ text: 'first', marks: ['strong' as const] }] },
+        { kind: 'code' as const, language: 'ts', runs: [{ text: 'const x = 1;', marks: [] }] },
+        { kind: 'rule' as const, runs: [] },
+      ],
+      parent: { key: 'HIVE-1', summary: 'The epic' },
+    },
+    comments: [{ id: '9', author: 'Yunid', created: '2026-09-10T09:00:00Z', body: [para('Looks right.')] }],
+    links: [{ kind: 'issue' as const, title: 'HIVE-8 Next', url: 'https://x/HIVE-8', relationship: 'blocks', status: 'To Do' }],
+    partial: [],
+  };
+
+  it('renders the whole ticket as prose a model can read, and hands the record beside it', async () => {
+    const jiraGet = vi.fn(async () => ({ ok: true as const, value: whole }));
+    const result = await createToolHandlers(stub({ jiraGet })).callTool('jira_get', { key: 'HIVE-7' });
+    const text = textOf(result);
+
+    expect(jiraGet).toHaveBeenCalledWith({ key: 'HIVE-7' });
+    expect(result.isError).toBe(false);
+    expect(text).toContain('HIVE-7 "Ship the thing"');
+    expect(text).toContain('status: In Progress (in-progress); type: Story; priority: Medium; assignee: unassigned');
+    expect(text).toContain('parent: HIVE-1 "The epic"');
+    expect(text).toContain('## Goal\nMake it ship.\n  - first\n```ts\nconst x = 1;\n```\n---');
+    expect(text).toContain('## Comments (1)\n- Yunid, 2026-09-10T09:00:00Z:\n  Looks right.');
+    expect(text).toContain('- [issue] HIVE-8 Next (blocks; To Do) https://x/HIVE-8');
+    expect(result.structuredContent).toEqual(whole);
+  });
+
+  it('says what could not be read, and bounds the text while the record stays whole', async () => {
+    const long = {
+      ...whole,
+      detail: { description: [para('x'.repeat(JIRA_TEXT_MAX + 500))], parent: null },
+      comments: [],
+      links: [],
+      partial: ['description: timed out'],
+    };
+    const result = await createToolHandlers(stub({ jiraGet: async () => ({ ok: true, value: long }) })).callTool('jira_get', { key: 'HIVE-7' });
+    const text = textOf(result);
+
+    expect(text).toMatch(/more characters; the record beside this text is whole/);
+    expect(text.length).toBeLessThan(JIRA_TEXT_MAX + 200);
+    expect(result.structuredContent).toEqual(long);
+
+    const degraded = await createToolHandlers(stub({ jiraGet: async () => ({ ok: true, value: { ...whole, detail: null, partial: ['description: timed out'] } }) })).callTool('jira_get', { key: 'HIVE-7' });
+    expect(textOf(degraded)).toContain('## Description\n(not read)');
+    expect(textOf(degraded)).toContain('Could not be read: description: timed out.');
+  });
+
+  it('reports a transition, and an issue already there, in one sentence each', async () => {
+    const moved = createToolHandlers(stub({
+      jiraTransition: async () => ({ ok: true, value: { issue: { ...issue, status: 'In Review' }, transition: { id: '31', name: 'Start review', to: { name: 'In Review', statusCategory: 'in-progress' as const } } } }),
+    }));
+    expect(textOf(await moved.callTool('jira_transition', { key: 'HIVE-7', status: 'In Review' }))).toBe('HIVE-7 is now In Review (transition "Start review").');
+
+    const jiraTransition = vi.fn(async () => ({
+      ok: true as const,
+      value: { issue, transition: null, skipped: 'already In Progress; nothing was changed' },
+    }));
+    const same = createToolHandlers(stub({ jiraTransition }));
+    expect(textOf(await same.callTool('jira_transition', { key: 'HIVE-7', status: 'In Progress', from: 'To Do' }))).toBe('HIVE-7: already In Progress; nothing was changed.');
+    expect(jiraTransition).toHaveBeenCalledWith({ key: 'HIVE-7', status: 'In Progress', from: 'To Do' });
+  });
+
+  it('reports a comment as Jira recorded it', async () => {
+    const jiraComment = vi.fn(async () => ({ ok: true as const, value: { id: '12', author: 'Yunid', created: '2026-09-11T10:00:00Z', body: [para('hi')] } }));
+    const result = await createToolHandlers(stub({ jiraComment })).callTool('jira_comment', { key: 'HIVE-7', markdown: 'hi' });
+
+    expect(jiraComment).toHaveBeenCalledWith({ key: 'HIVE-7', markdown: 'hi' });
+    expect(textOf(result)).toBe('Commented on HIVE-7: comment 12 by Yunid at 2026-09-11T10:00:00Z.');
+  });
+
+  it('turns a Jira refusal into a tool error with its kind, and refuses missing arguments before calling', async () => {
+    const handlers = createToolHandlers(stub());
+    for (const [name, args] of [['jira_get', { key: 'HIVE-7' }], ['jira_transition', { key: 'HIVE-7', status: 'Done' }], ['jira_comment', { key: 'HIVE-7', markdown: 'x' }]] as const) {
+      const result = await handlers.callTool(name, args);
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toBe(`${name}: the Jira integration is not wired to this receiver (bad-query)`);
+    }
+
+    const untouched = stub();
+    const strict = createToolHandlers(untouched);
+    expect(textOf(await strict.callTool('jira_get', {}))).toMatch(/jira_get needs key/);
+    expect(textOf(await strict.callTool('jira_transition', { key: 'HIVE-7' }))).toMatch(/needs key and status/);
+    expect(textOf(await strict.callTool('jira_comment', { markdown: 'x' }))).toMatch(/needs key and markdown/);
+    expect(untouched.jiraGet).not.toHaveBeenCalled();
+    expect(untouched.jiraTransition).not.toHaveBeenCalled();
+    expect(untouched.jiraComment).not.toHaveBeenCalled();
+  });
+
+  it('carries the refusal\'s details and retry hint to the model', async () => {
+    const handlers = createToolHandlers(stub({
+      jiraComment: async () => ({
+        ok: false,
+        error: { kind: 'bad-query', message: 'That comment could not be turned into a valid document.', details: ['code mark is exclusive at paragraph 2'] },
+      }),
+      jiraGet: async () => ({ ok: false, error: { kind: 'rate-limited', message: 'Jira asked for a pause.', retryAfter: 30 } }),
+    }));
+    expect(textOf(await handlers.callTool('jira_comment', { key: 'HIVE-7', markdown: '`x`' }))).toBe(
+      'jira_comment: That comment could not be turned into a valid document. (bad-query); code mark is exclusive at paragraph 2',
+    );
+    expect(textOf(await handlers.callTool('jira_get', { key: 'HIVE-7' }))).toBe('jira_get: Jira asked for a pause. (rate-limited); retry after 30s');
+  });
+
+  it('adfBlocksToText keeps structure and drops marks', () => {
+    expect(adfBlocksToText([
+      { kind: 'heading', level: 9, runs: [{ text: 'H', marks: [] }] },
+      { kind: 'ordered', runs: [{ text: 'one', marks: ['em'] }, { text: ' two', marks: [] }] },
+      { kind: 'quote', runs: [{ text: 'q', marks: [] }] },
+      { kind: 'unknown', runs: [{ text: 'raw', marks: [] }] },
+    ])).toBe('###### H\n1. one two\n> q\nraw');
   });
 });

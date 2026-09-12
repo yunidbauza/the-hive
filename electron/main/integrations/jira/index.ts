@@ -18,6 +18,7 @@ import {
   JIRA_TOKEN_ENV,
   type JiraIdentity,
   type JiraIssue,
+  type JiraIssueDetail,
   type JiraResult,
   type JiraSearchResult,
   type JiraComment,
@@ -39,6 +40,7 @@ import { readEnvSite } from './env';
 import {
   toComment,
   toIssue,
+  toIssueDetail,
   toIssueLink,
   toRemoteLink,
   toTransition,
@@ -71,6 +73,12 @@ export interface Jira {
   search(request: JiraSearchRequest): Promise<JiraResult<JiraSearchResult>>;
   /** Read one issue by key (HIVE-68). */
   issue(request: JiraIssueRequest): Promise<JiraResult<JiraIssue>>;
+  /**
+   * The description and the parent (HIVE-174). Its own read rather than two
+   * more entries in `JIRA_FIELDS`, which the search shares: a description
+   * per search row would be paid on every poll for a tab that never shows one.
+   */
+  detail(request: JiraIssueRequest): Promise<JiraResult<JiraIssueDetail>>;
   /** The transitions available from this issue's current status (HIVE-70). */
   transitions(
     request: JiraTransitionsRequest,
@@ -266,6 +274,30 @@ export function createJira(deps: {
     return { ok: true, value: mapped };
   };
 
+  const readDetail = async (
+    request: JiraIssueRequest,
+  ): Promise<JiraResult<JiraIssueDetail>> => {
+    const connection = connect();
+    if (!connection.ok) return connection.error;
+
+    const result = await connection.client.get<unknown>(`${ISSUE}/${request.key}`, {
+      fields: 'description,parent',
+    });
+    if (!result.ok) return result;
+
+    const mapped = toIssueDetail(result.value);
+    if (mapped === null) {
+      return {
+        ok: false,
+        error: {
+          kind: 'unknown',
+          message: `Jira's answer for ${request.key} could not be read.`,
+        },
+      };
+    }
+    return { ok: true, value: mapped };
+  };
+
   return {
     status,
 
@@ -406,6 +438,7 @@ export function createJira(deps: {
      * a path segment, which is why the guard matches rather than escapes.
      */
     issue: readIssue,
+    detail: readDetail,
 
     /**
      * What this issue can become, right now (HIVE-70).

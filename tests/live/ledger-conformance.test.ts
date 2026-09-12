@@ -177,6 +177,10 @@ describe.skipIf(!RUN)('the hive MCP server, against a real claude', () => {
       // HIVE-173. The two workflow lookups, served beside the directory.
       'projects',
       'pr',
+      // HIVE-174. The Jira tools, through the token the app holds.
+      'jira_get',
+      'jira_transition',
+      'jira_comment',
     ]) {
       expect(out).toContain(`mcp__hive__${name}`);
     }

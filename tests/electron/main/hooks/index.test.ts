@@ -13,6 +13,7 @@ import {
   type ResolvedContainer,
 } from '../../../../electron/shared/config-contract';
 import { PR_PATH } from '../../../../electron/shared/github-contract';
+import { JIRA_GET_PATH } from '../../../../electron/shared/jira-contract';
 import {
   HOOK_ENV_TOKEN,
   HOOK_HEADER_SESSION,
@@ -965,5 +966,50 @@ describe('start forwards the projects and PR lookups (HIVE-173)', () => {
     const pr = await post(PR_PATH, { repo: 'acme/p', number: 3 });
     expect(pr.status).toBe(200);
     expect(await pr.json()).toEqual({ pr: null, reason: 'composed: acme/p#3' });
+  });
+});
+
+/** The Jira tools reach the receiver through `start` too (HIVE-174); same reason as above. */
+describe('start forwards the Jira tools (HIVE-174)', () => {
+  let dir: string;
+  let ledger: Ledger;
+  let runtime: HookRuntime | undefined;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'hive-hooks-jira-'));
+    ledger = createLedger({ dir, knowsParty: () => true });
+  });
+
+  afterEach(async () => {
+    await runtime?.stop();
+    runtime = undefined;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('answers what the composition supplied, not the receiver\'s not-wired default', async () => {
+    runtime = createHookRuntime({ userDataPath: dir, sessionMetrics: () => false, ledger });
+    await runtime.start({
+      ...noopHandlers,
+      onJira: {
+        get: (request) =>
+          Promise.resolve({ ok: false, error: { kind: 'not-found', message: `composed: ${request.key}` } }),
+        transition: () => Promise.reject(new Error('not exercised')),
+        comment: () => Promise.reject(new Error('not exercised')),
+      },
+    });
+    const env = runtime.envFor('sess-a');
+
+    const response = await fetch(`${env['HIVE_RECEIVER_URL']}${JIRA_GET_PATH}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [HOOK_HEADER_SESSION]: 'sess-a',
+        [HOOK_HEADER_TOKEN]: env['HIVE_HOOK_TOKEN'] ?? '',
+      },
+      body: JSON.stringify({ key: 'HIVE-7' }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: false, error: { kind: 'not-found', message: 'composed: HIVE-7' } });
   });
 });

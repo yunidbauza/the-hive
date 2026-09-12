@@ -918,7 +918,7 @@ spawns, so a model with shell access could still `curl` the
 receiver directly using another session's header value. Closing that is
 tracked separately, not attempted here. If any of the three is missing — the
 process was started outside The Hive, or by hand in a plain terminal —
-`createHandlers` still lists all thirteen tools (so
+`createHandlers` still lists all sixteen tools (so
 `/mcp` shows a connected server, not a broken one) but every *call* answers
 with a sentence explaining why the ledger is out of reach, rather than the
 server refusing to start.
@@ -944,8 +944,9 @@ enough to earn their own schema.
 `--permission-prompt-tool` and the model is never meant to call, and `agents`,
 described next. That array is the ledger vocabulary the agent
 preamble teaches — one entry per ledger kind — and neither of these writes an
-entry. `tools/list` reports thirteen, in that order: the nine, then `agents`,
-`projects` and `pr` (HIVE-173), then `approve` last.
+entry. `tools/list` reports sixteen, in that order: the nine, then `agents`,
+`projects` and `pr` (HIVE-173), the three Jira tools (HIVE-174), then
+`approve` last.
 
 ### The agents directory: `mcp__hive__agents`
 
@@ -1006,8 +1007,11 @@ register and drops invalid definitions — and joins `mergeRunState` for the liv
 hard-codes it.
 
 **It is granted to every agent with no `tools:` entry.** `waker.ts` puts
-`mcp__hive__*` on `--allowedTools` and in `HOOK_ENV_GRANTS` unconditionally, so
-the new name is covered by the wildcard the fence already consults.
+`HIVE_STANDING_GRANTS` (`ledger-tools.ts`) on `--allowedTools` and in
+`HOOK_ENV_GRANTS` unconditionally: the ledger vocabulary, the reads, and
+`approve`. It was `mcp__hive__*` until HIVE-174 put two writes to the person's
+Jira on the same server; those are `HIVE_CONSENT_TOOLS`, and an agent lists
+them in `tools:` or its call becomes a card.
 `ToolSearch` is granted just as unconditionally, which matters here: MCP tool
 schemas are deferred, so without it an agent could not reach even a granted
 tool.
@@ -1095,8 +1099,55 @@ body, capped at `PR_LOOKUP_MAX_BYTES`, parsed by `parsePrLookup` in
 lookup that throws answers `500` with a fixed sentence, as `/agents` does, since
 a `gh` failure can quote a path. Both handlers are optional on the receiver with
 honest defaults, an empty list and "not wired", so a receiver composed without
-a config (the live suites) still answers. Both are granted by the same
-`mcp__hive__*` wildcard as everything else here.
+a config (the live suites) still answers. Both are reads, and both are in the
+standing grants every agent holds.
+
+### Jira through the Hive: `mcp__hive__jira_get`, `jira_transition`, `jira_comment`
+
+Three tools (HIVE-174) over the Jira integration the Work tab already uses,
+through the token the app holds. An agent, or a container, reads and writes
+tickets with nothing on its PATH and no Atlassian credential in its
+environment; the skills prefer them and fall back to `jira-writer` where they
+are absent.
+
+`jira_get { key }` answers the issue (`JiraIssue`), its description and parent
+(`JiraIssueDetail`, a new read on the integration: its own field list, so the
+search that shares `JIRA_FIELDS` with the issue read does not grow a
+description per row), every comment and every link, plus `partial`: the side
+reads that failed, each as `what: why`. The issue itself must read; the rest
+degrades, because a model with the summary and half the thread can still
+work. The text a model is handed renders the ADF as markdown-ish prose
+(`adfBlocksToText`) and is bounded by `JIRA_TEXT_MAX`; the record beside it is
+whole.
+
+`jira_transition { key, status, from? }` moves an issue by target status name:
+the transition whose `to.name` matches, applied by id, retried once when the
+workflow moved underneath it. Three no-ops, each said in `skipped`: the issue
+already stands there; it is not at `from` when the caller gave one (the
+skills' "if it is still To Do"); or the target's status category is below the
+current one, which is "never move a ticket backwards" enforced rather than
+promised. A status nothing reaches answers with the ones that do.
+
+`jira_comment { key, markdown }` is `addComment`, unchanged.
+
+**The two writes are consented, not standing.** A transition fires
+automation nobody can take back and a comment is the person's name on a
+ticket, so neither is in `HIVE_STANDING_GRANTS`: the builder and the shipper
+list `mcp__hive__jira_transition` in `tools:`, nobody shipped lists
+`jira_comment`, and an agent without the entry gets the ordinary permission
+ask and inbox card. `jira_get` is a read and stands.
+
+The comments read is the oldest `JIRA_MAX_COMMENTS`; a full page is named in
+`partial`, because "every comment" and "the first fifty" are different
+answers.
+
+**The routes.** `/jira/get`, `/jira/transition` and `/jira/comment`, one
+handler shape: refuse, cap (`JIRA_TOOL_MAX_BYTES`), parse with the same guards
+the IPC channels use, answer. Jira's own refusals travel inside the 200 as a
+`JiraResult`, so a model reads "HIVE-9 does not exist" rather than a transport
+error; a thrown error is a fixed sentence, as `/agents` gives. The handlers
+arrive as one optional `onJira`, composed in `ipc/index.ts` by `jiraToolsFor`
+over the integration and defaulting to a "not wired" refusal.
 
 ## Agent definitions
 
@@ -1495,7 +1546,7 @@ channel only and never reaches `tools:`.
 
 **Four things the grant path does not trust.** Only the overmind may answer a
 permission ask: the ledger deliberately lets an asker close its own thread and
-every agent holds `mcp__hive__*`, so without an author check an agent could
+every agent holds the standing Hive grants, so without an author check an agent could
 deny-then-self-answer its way to a permanent `tools:` entry in two tool calls
 with no human. The same check is on the `event` that marks a grant consumed,
 or a forged one would spend a pending one-shot before the user ever saw the
@@ -1540,7 +1591,7 @@ append-only JSONL that never rotates and `store.all()` holds all of it in
 memory; the `updatedInput` an *allowed* call runs with is never trimmed.
 
 **`ToolSearch` is granted unconditionally** — in `HIVE_GRANTS` beside
-`mcp__hive__*`, never in `def.tools`. MCP tool schemas are deferred: the
+the standing Hive grants, never in `def.tools`. MCP tool schemas are deferred: the
 model must call the built-in `ToolSearch` to load a schema like
 `mcp__hive__ledger_read`'s before it can invoke that tool at all, so denying
 `ToolSearch` strands a fenced agent on the preamble's first instruction,

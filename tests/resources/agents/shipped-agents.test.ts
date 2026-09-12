@@ -67,3 +67,34 @@ describe('shipped agents', () => {
     expect(allows('gh workflow list --repo o/r --json name,path,state')).toBe(true);
   });
 });
+
+/**
+ * HIVE-174. A transition writes to the person's Jira, so it is not in the
+ * standing grants; the two agents that move tickets name it, and nobody
+ * shipped comments.
+ */
+describe('the Jira writes are consented, not standing', () => {
+  const toolsOf = (name: string): readonly string[] => {
+    const source = readFileSync(join(resources, 'agents', name, 'AGENT.md'), 'utf8');
+    const result = parseAgent(source, {
+      folder: name,
+      skillNames: shippedSkills,
+      hiveSkillNames: shippedSkills,
+      integrations: ['slack'],
+    });
+    if (!('def' in result)) throw new Error(`${name} does not parse`);
+    return result.def.tools;
+  };
+
+  it('builder and shipper hold jira_transition; acr and fixer do not; nobody holds jira_comment', () => {
+    for (const name of ['builder', 'shipper']) {
+      expect(toolsOf(name).some((rule) => matches(rule, 'mcp__hive__jira_transition', {}))).toBe(true);
+    }
+    for (const name of ['acr', 'fixer']) {
+      expect(toolsOf(name).some((rule) => matches(rule, 'mcp__hive__jira_transition', {}))).toBe(false);
+    }
+    for (const name of ['builder', 'shipper', 'acr', 'fixer']) {
+      expect(toolsOf(name).some((rule) => matches(rule, 'mcp__hive__jira_comment', {}))).toBe(false);
+    }
+  });
+});
