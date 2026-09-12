@@ -99,6 +99,7 @@ import {
 } from '@shared/ledger-derive';
 import type { SessionMetrics } from '@shared/metrics-contract';
 import { NOTIFICATION_CAP } from '@shared/notification-contract';
+import type { PlansSnapshot, SessionPlan } from '@shared/plan-contract';
 import {
   hiveNameFromTitle,
   soleTicketKeyIn,
@@ -419,6 +420,15 @@ interface HiveState {
    * the user can still select. `reset()` clears it with everything else.
    */
   metrics: Record<string, SessionMetrics>;
+  /**
+   * Every session's plan, keyed by entity id (HIVE-179).
+   *
+   * Main owns every rule — which source wins, the all-done grace, the drop on
+   * every ending — and this mirrors it: a push per change plus the
+   * `plans:list` snapshot. Cleared on a mode switch for the reason `metrics`
+   * is.
+   */
+  plans: Record<string, SessionPlan>;
 
   /** Replace the ticket list with real issues (HIVE-69). */
   hydrateTickets: (issues: JiraIssue[], capped: boolean) => void;
@@ -621,6 +631,10 @@ interface HiveState {
   hydrateLedger: (entries: LedgerEntry[]) => void;
   /** One entry landed — append it to the tail. */
   ledgerAppend: (entry: LedgerEntry) => void;
+  /** One session's plan changed; `null` means it has none any more (HIVE-179). */
+  setPlan: (entityId: string, plan: SessionPlan | null) => void;
+  /** Merge a `plans:list` snapshot by entity id, like {@link hydrateLedger}. */
+  hydratePlans: (plans: SessionPlan[]) => void;
   /**
    * Put last run's fleet back on the table (HIVE-87).
    *
@@ -809,7 +823,8 @@ interface HiveState {
    * would render the departed session's numbers against the newly attached
    * session wearing the same id — not a leak, a wrong answer shown with
    * confidence. `entities` was the other id-keyed slice, and it is already
-   * cleared above.
+   * cleared above. `plans` (HIVE-179) goes too: keyed by the same colliding
+   * ids, a stale plan would draw the departed session's tasks.
    *
    * And `staleTitles` (module state, not a field here — see the action's own
    * body): its keys name terminals in the mode being left, so once `entities`
@@ -1790,6 +1805,7 @@ const ATTACH_SNAPSHOT_HANDLERS: Partial<
     store.hydrateAgents((value as AgentsSnapshot).agents),
   [CH.ledgerList]: (value, store) =>
     store.hydrateLedger((value as LedgerSnapshot).entries),
+  [CH.plansList]: (value, store) => store.hydratePlans((value as PlansSnapshot).plans),
   [CH.notificationsList]: (value, store) =>
     store.hydrateNotifs(value as HiveNotification[]),
   [CH.githubPrs]: (value, store) => {
@@ -1810,6 +1826,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
   remoteLink: null,
   ledger: [],
   metrics: {},
+  plans: {},
   /**
    * Loading until the first read answers.
    *
@@ -3487,6 +3504,22 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         },
       };
     }),
+
+  setPlan: (entityId, plan) =>
+    set((state) => {
+      if (plan === null) {
+        if (!(entityId in state.plans)) return state;
+        const { [entityId]: _gone, ...rest } = state.plans;
+        return { ...state, plans: rest };
+      }
+      return { ...state, plans: { ...state.plans, [entityId]: plan } };
+    }),
+
+  hydratePlans: (plans) =>
+    set((state) => ({
+      ...state,
+      plans: { ...state.plans, ...Object.fromEntries(plans.map((plan) => [plan.entityId, plan])) },
+    })),
 
   hydrateLedger: (entries) =>
     set((state) => {
@@ -5478,6 +5511,8 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
         it is already cleared above).
       */
       metrics: {},
+      // Keyed by the same colliding ids as `metrics` (HIVE-179).
+      plans: {},
       /*
         Results, not just the request behind them.
 
@@ -5560,6 +5595,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       remoteLink: null,
       ledger: [],
       metrics: {},
+      plans: {},
       ticketSource: { kind: 'loading' },
       prSource: { kind: 'loading' },
       prSearch: NO_PR_SEARCH,

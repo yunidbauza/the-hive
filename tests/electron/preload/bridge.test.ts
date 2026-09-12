@@ -12,6 +12,7 @@ import {
   BRIDGE_KEYS,
   BRIDGE_LEDGER_KEYS,
   BRIDGE_NOTIFICATIONS_KEYS,
+  BRIDGE_PLANS_KEYS,
   BRIDGE_PTY_KEYS,
   BRIDGE_REMOTE_KEYS,
   BRIDGE_SERVER_KEYS,
@@ -210,6 +211,8 @@ describe('exposed surface', () => {
      * exposes.
      */
     expect(Object.keys(ledger()).sort()).toEqual([...BRIDGE_LEDGER_KEYS].sort());
+    /** HIVE-179's namespace, checked the same way: two reads, no write. */
+    expect(Object.keys(exposed.plans as object).sort()).toEqual([...BRIDGE_PLANS_KEYS].sort());
   });
 
   /** HIVE-111. `post` and `answer` take no `from` — see the contract. */
@@ -219,6 +222,28 @@ describe('exposed surface', () => {
 
   it('carries the ledger push channel in EVENT_CHANNELS', () => {
     expect(EVENT_CHANNELS).toContain(CH.ledgerChanged);
+  });
+
+  /** HIVE-179. Read-only: a page can list plans and hear them change, never write one. */
+  it('names every key of the plans bridge', () => {
+    expect([...BRIDGE_PLANS_KEYS]).toEqual(['list', 'onChanged']);
+  });
+
+  it('wires plans.list to plans:list and plans.onChanged to plan:changed', () => {
+    const plans = exposed.plans as {
+      list: () => Promise<unknown>;
+      onChanged: (callback: (event: unknown) => void) => () => void;
+    };
+
+    void plans.list();
+    expect(ipcRendererMock.invoke).toHaveBeenCalledWith(CH.plansList);
+
+    const seen: unknown[] = [];
+    plans.onChanged((event) => seen.push(event));
+    listeners.get(CH.planChanged)?.[0]?.({}, { entityId: 'sess-01', plan: null });
+
+    expect(seen).toEqual([{ entityId: 'sess-01', plan: null }]);
+    expect(EVENT_CHANNELS).toContain(CH.planChanged);
   });
 
   /**
