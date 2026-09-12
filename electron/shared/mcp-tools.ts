@@ -273,6 +273,7 @@ export function createToolHandlers(
     const lines = directory.projects.map((project) => {
       const where = project.path === null ? `not on this machine (${project.status})` : project.path;
       const notes = [
+        `${project.status}, ${project.origin}`,
         project.autoMerge ? 'auto-merge on' : 'auto-merge off',
         ...(project.container === undefined
           ? []

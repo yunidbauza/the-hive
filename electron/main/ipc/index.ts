@@ -3043,10 +3043,16 @@ export function registerIpcHandlers(
     /*
       HIVE-173. `github` is declared further down this function. The callback
       runs only when a request arrives, after this whole body has executed, so
-      the binding is initialised by then; the sweep it runs is the one the PRs
-      panel already polls.
+      the binding is initialised by then. The sweep is the same one the PRs
+      panel runs, run fresh here: main keeps no snapshot of it. And the same
+      await `githubPrs` makes first (HIVE-84): a shipper wake inside the
+      boot window would otherwise read launchd's four-entry PATH and be told
+      `gh` is not installed.
     */
-    onPrLookup: async (_caller, lookup) => lookupPr(await github.prs(), lookup),
+    onPrLookup: async (_caller, lookup) => {
+      await loginEnvStatus();
+      return lookupPr(await github.prs(), lookup);
+    },
     /*
       The uuid is forwarded, not dropped: `noteTurnEnded` ignores a `Stop`
       whose uuid does not match the run it is holding, which is what keeps a

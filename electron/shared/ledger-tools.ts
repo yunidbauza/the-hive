@@ -308,20 +308,6 @@ export const APPROVE_TOOL: McpToolDefinition = {
 };
 
 /**
- * The agents directory — served beside the ledger tools, and not one of them
- * (HIVE-127).
- *
- * Outside {@link LEDGER_TOOLS} for the reason {@link APPROVE_TOOL} is: that
- * list is the ledger vocabulary the agent preamble teaches, one entry per
- * ledger kind, and this writes no entry. Unlike `approve`, though, it *is* a
- * tool the model is meant to call, so `tools/list` reports it before that one.
- *
- * It takes no arguments on purpose. The caller's identity is the authenticated
- * `x-hive-session` header — which for an agent wake is that agent's own name —
- * so there is nothing to pass. A parameter naming who is asking is a parameter
- * a model can lie in.
- */
-/**
  * The projects directory (HIVE-173): what the config maps, so an ask body can
  * say `the-hive` and the agent can turn it into a checkout path and a consent
  * flag without reading `~/.hive/config.json` itself. No arguments, for
@@ -338,9 +324,9 @@ export const PROJECTS_TOOL: McpToolDefinition = {
 };
 
 /**
- * One PR record from the Hive\'s own GitHub sweep (HIVE-173): state, the
+ * One PR record from the Hive's own GitHub sweep (HIVE-173): state, the
  * unresolved review-thread count the PR badge shows (`findings`), checks,
- * branch and URL. It exists so the shipper\'s gate has a contemporaneous thread
+ * branch and URL. It exists so the shipper's gate has a contemporaneous thread
  * count without `gh api`, which no glob can keep from merging.
  */
 export const PR_TOOL: McpToolDefinition = {
@@ -357,6 +343,20 @@ export const PR_TOOL: McpToolDefinition = {
   },
 };
 
+/**
+ * The agents directory — served beside the ledger tools, and not one of them
+ * (HIVE-127).
+ *
+ * Outside {@link LEDGER_TOOLS} for the reason {@link APPROVE_TOOL} is: that
+ * list is the ledger vocabulary the agent preamble teaches, one entry per
+ * ledger kind, and this writes no entry. Unlike `approve`, though, it *is* a
+ * tool the model is meant to call, so `tools/list` reports it before that one.
+ *
+ * It takes no arguments on purpose. The caller's identity is the authenticated
+ * `x-hive-session` header — which for an agent wake is that agent's own name —
+ * so there is nothing to pass. A parameter naming who is asking is a parameter
+ * a model can lie in.
+ */
 export const AGENTS_TOOL: McpToolDefinition = {
   name: 'agents',
   description:

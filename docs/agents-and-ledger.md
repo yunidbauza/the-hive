@@ -918,7 +918,7 @@ spawns, so a model with shell access could still `curl` the
 receiver directly using another session's header value. Closing that is
 tracked separately, not attempted here. If any of the three is missing — the
 process was started outside The Hive, or by hand in a plain terminal —
-`createHandlers` still lists all eleven tools (so
+`createHandlers` still lists all thirteen tools (so
 `/mcp` shows a connected server, not a broken one) but every *call* answers
 with a sentence explaining why the ledger is out of reach, rather than the
 server refusing to start.
@@ -944,8 +944,8 @@ enough to earn their own schema.
 `--permission-prompt-tool` and the model is never meant to call, and `agents`,
 described next. That array is the ledger vocabulary the agent
 preamble teaches — one entry per ledger kind — and neither of these writes an
-entry. `tools/list` reports eleven, in that order: the nine, then `agents`,
-then `approve` last.
+entry. `tools/list` reports thirteen, in that order: the nine, then `agents`,
+`projects` and `pr` (HIVE-173), then `approve` last.
 
 ### The agents directory: `mcp__hive__agents`
 
@@ -1079,7 +1079,8 @@ a tool rather than by opening `~/.hive/config.json`. The projection
 `shell` and `claudeCommand` never cross.
 
 `mcp__hive__pr { repo: "owner/name", number }` answers the Hive's own
-`PrRecord` for one PR, from the GitHub sweep the PRs panel already polls:
+`PrRecord` for one PR, from the same GitHub sweep the PRs panel runs, run
+fresh on each call since main keeps no snapshot of it:
 `state`, `findings` (unresolved review threads), `checks`, `branch`, `url`,
 `updatedAt`. The shipper holds no `gh api` (a REST or GraphQL merge hides
 behind that glob), so this is how its gate gets a contemporaneous thread count.

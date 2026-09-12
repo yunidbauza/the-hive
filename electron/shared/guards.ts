@@ -2667,8 +2667,13 @@ export function parseLedgerAnswerRequest(input: unknown): LedgerAnswerRequest {
   return request;
 }
 
-/** `owner/name`, the characters GitHub allows in either half. */
-const REPO_SLUG = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+/**
+ * `owner/name` as GitHub spells them: an owner is alphanumerics and hyphens,
+ * at most 39; a name adds `_` and `.`, at most 100, and is never `.` or `..`.
+ * The slug is only ever compared to a sweep's records, never used as a path,
+ * so this is about refusing nonsense early with a sentence, not about safety.
+ */
+const REPO_SLUG = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/(?!\.\.?$)[A-Za-z0-9_.-]{1,100}$/;
 
 /**
  * The body of a `PR_PATH` request (HIVE-173). Strict on both fields: the

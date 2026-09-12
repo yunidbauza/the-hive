@@ -2679,14 +2679,6 @@ describe('the agent id space (HIVE-115)', () => {
   });
 });
 
-/**
- * The agents directory (HIVE-127).
- *
- * Its own receiver, like the agent-hooks suite above, because it is the only
- * one that needs `onAgentsList` to answer rather than refuse — and the only
- * one exercising an **async** route handler, which is the change to this
- * server that every other route on it now rides through.
- */
 describe('the projects and pr routes (HIVE-173)', () => {
   const CALLER = 'shipper';
   const PROJECT = {
@@ -2829,6 +2821,14 @@ describe('the projects and pr routes (HIVE-173)', () => {
   });
 });
 
+/**
+ * The agents directory (HIVE-127).
+ *
+ * Its own receiver, like the agent-hooks suite above, because it is the only
+ * one that needs `onAgentsList` to answer rather than refuse — and the only
+ * one exercising an **async** route handler, which is the change to this
+ * server that every other route on it now rides through.
+ */
 describe('the agents route', () => {
   const CALLER = 'scout';
 
@@ -3014,6 +3014,14 @@ describe('the MCP route', () => {
       knowsAgent: () => false,
       onAgentEvent: () => {},
       onAgentsList: async () => ({ agents: [] }) as AgentsDirectory,
+      // HIVE-173: the in-process client behind /mcp serves these two as well.
+      onProjectsList: () => ({
+        projects: [
+          { id: 'p', key: 'p', name: 'P', path: '/repos/p', status: 'ok', origin: 'local', autoMerge: false },
+        ],
+      }),
+      onPrLookup: (_caller, lookup) =>
+        Promise.resolve({ pr: null, reason: `in-process: ${lookup.repo}#${lookup.number}` }),
       onLedgerRead: (_caller, query) => ledger.read(query),
       onLedgerPost: (caller, request) => {
         posted.push({ caller, request });
@@ -3225,6 +3233,37 @@ describe('the MCP route', () => {
    * configurable allowlist is HIVE-131's; what this story owes is that a
    * browser-supplied Origin cannot reach the endpoint at all.
    */
+  it('serves projects and pr through the in-process client (HIVE-173)', async () => {
+    const projects = await rpc({
+      jsonrpc: '2.0',
+      id: 21,
+      method: 'tools/call',
+      params: { name: 'projects', arguments: {} },
+    });
+    const listed = (await projects.json()) as { result: { content: { text: string }[]; structuredContent: unknown } };
+    expect(listed.result.content[0]?.text).toContain('p (key p, "P") — /repos/p [ok, local; auto-merge off]');
+
+    const pr = await rpc({
+      jsonrpc: '2.0',
+      id: 22,
+      method: 'tools/call',
+      params: { name: 'pr', arguments: { repo: 'acme/p', number: 5 } },
+    });
+    const looked = (await pr.json()) as { result: { content: { text: string }[]; isError: boolean } };
+    expect(looked.result.isError).toBe(false);
+    expect(looked.result.content[0]?.text).toContain('No record of acme/p#5: in-process: acme/p#5');
+
+    const bad = await rpc({
+      jsonrpc: '2.0',
+      id: 23,
+      method: 'tools/call',
+      params: { name: 'pr', arguments: { repo: 'p', number: 5 } },
+    });
+    const refused = (await bad.json()) as { result: { content: { text: string }[]; isError: boolean } };
+    expect(refused.result.isError).toBe(true);
+    expect(refused.result.content[0]?.text).toMatch(/owner\/name/);
+  });
+
   it('refuses a request carrying a browser Origin', async () => {
     const response = await rpc(
       { jsonrpc: '2.0', id: 7, method: 'tools/list' },

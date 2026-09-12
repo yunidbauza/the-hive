@@ -685,8 +685,8 @@ describe('createToolHandlers — projects and pr (HIVE-173)', () => {
     const text = textOf(result);
 
     expect(result.isError).toBe(false);
-    expect(text).toContain('the-hive (key hive, "The Hive") — /repos/the-hive [auto-merge on]');
-    expect(text).toContain('auto-merge off; in a container, checkout mounted at /workspace');
+    expect(text).toContain('the-hive (key hive, "The Hive") — /repos/the-hive [ok, local; auto-merge on]');
+    expect(text).toContain('ok, local; auto-merge off; in a container, checkout mounted at /workspace');
     expect(text).toContain('not on this machine (missing)');
     expect(result.structuredContent).toMatchObject({ projects: [project, expect.anything(), expect.anything()] });
   });

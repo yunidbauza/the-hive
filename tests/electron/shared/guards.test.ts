@@ -1863,13 +1863,16 @@ describe('parseSpawnTerminalRequest', () => {
 describe('parsePrLookup (HIVE-173)', () => {
   it('accepts owner/name and a positive integer, and nothing else', () => {
     expect(parsePrLookup({ repo: 'acme/nova-web', number: 7 })).toEqual({ repo: 'acme/nova-web', number: 7 });
-    expect(parsePrLookup({ repo: 'Acme_1/the.hive', number: 214 })).toEqual({ repo: 'Acme_1/the.hive', number: 214 });
+    expect(parsePrLookup({ repo: 'Acme-1/the.hive_v2', number: 214 })).toEqual({ repo: 'Acme-1/the.hive_v2', number: 214 });
 
     for (const bad of [
       {},
       { repo: 'nova-web', number: 7 },
       { repo: 'acme/nova/web', number: 7 },
       { repo: 'acme/nova web', number: 7 },
+      { repo: 'acme/..', number: 7 },
+      { repo: 'ac_me/nova', number: 7 },
+      { repo: `${'a'.repeat(40)}/nova`, number: 7 },
       { repo: 'acme/nova', number: '7' },
       { repo: 'acme/nova', number: 0 },
       { repo: 'acme/nova', number: 1.5 },
