@@ -575,11 +575,13 @@ Say nothing else.
 `;
 
 /**
- * The agent a session asks (HIVE-120).
+ * The builder's shape (HIVE-170): a job names the party to ask, and that party
+ * is not the party that posted the job.
  *
- * It answers rather than asks, which is the half of "a session asks an agent"
- * that only a live run can show: the ask has to reach a real model, and the
- * `thread` has to come back off what `ledger_read` handed it.
+ * Read the body for what it does not say: nothing names the overmind or the
+ * session. The only path from the job to the ask's `to` is the `reply-to:`
+ * line, which is what makes the assertion on `to` an assertion about the
+ * addressing rather than about answering back whoever asked.
  */
 const REPLYTO_MD = `---
 name: ${REPLYTO}
@@ -610,6 +612,13 @@ Read your ledger inbox, then do exactly one of these and end your turn:
 Never address the overmind unless the reply-to line says so. Say nothing else.
 `;
 
+/**
+ * The agent a session asks (HIVE-120).
+ *
+ * It answers rather than asks, which is the half of "a session asks an agent"
+ * that only a live run can show: the ask has to reach a real model, and the
+ * `thread` has to come back off what `ledger_read` handed it.
+ */
 const RESPONDER_MD = `---
 name: ${RESPONDER}
 description: Answers the ask a session addressed to it.
@@ -1660,6 +1669,16 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
    * body forbids it: an agent that reviewed the PR and reported done would
    * satisfy a weaker assertion while proving nothing about the directory.
    */
+  /**
+   * The builder's addressing (HIVE-170), in two wakes.
+   *
+   * The job is posted by the session and names the **overmind** as `reply-to`,
+   * the `work-on --detach` shape. The two parties differ on purpose: an agent
+   * that ignored the line and asked back whoever asked it would address the
+   * session, and the assertion on `to` would catch it. The overmind answers,
+   * the agent resumes the same conversation, and the job it was handed is
+   * closed to the session that posted it.
+   */
   it('asks the party its job named, and answers the job when that party replies (HIVE-170)', async () => {
     const before = spawns.length;
     const first = settled(REPLYTO);
@@ -1667,20 +1686,20 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       from: SESSION,
       to: REPLYTO,
       kind: 'ask',
-      body: `Build HIVE-000: a probe\nreply-to: ${SESSION}`,
+      body: `Build HIVE-000: a probe\nreply-to: ${OVERMIND}`,
     });
     expect(job.ok).toBe(true);
     expect(spawns).toHaveLength(before + 1);
     await first;
 
-    // The question went to the session the job named, not to the overmind.
+    // The question went to the party the job named, not back to the asker.
     const asked = ledger.read({}).openAsks.filter((ask) => ask.from === REPLYTO);
     expect(asked).toHaveLength(1);
-    expect(asked[0]?.to).toBe(SESSION);
+    expect(asked[0]?.to).toBe(OVERMIND);
 
-    // The session answers; the agent resumes and closes the job it was given.
+    // The overmind answers; the agent resumes and closes the job it was given.
     const second = settled(REPLYTO);
-    const answered = ledger.answer({ thread: asked[0]?.id ?? '', body: 'red' }, SESSION);
+    const answered = ledger.answer({ thread: asked[0]?.id ?? '', body: 'red' }, OVERMIND);
     expect(answered.ok).toBe(true);
     expect(spawns).toHaveLength(before + 2);
     expect(spawns[before + 1]?.args ?? []).toContain('--resume');
@@ -1697,6 +1716,10 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
     expect(closes[0]?.['to']).toBe(SESSION);
   }, 300_000);
 
+  /**
+   * The agent that must find a peer it was never told about (HIVE-127): see
+   * {@link DISCOVERER} for why the definition names the tool and not the peer.
+   */
   it('discovers a peer it was never told about, and the ask wakes that peer', async () => {
     const before = spawns.length;
     const lineMark = lines.length;

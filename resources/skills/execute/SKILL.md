@@ -17,7 +17,8 @@ once it ships, or by the person until then).
 
 1. Read the plan and its spec once. One todo per task. Read the plan
    critically first: a gap that stops you is raised now, not at task six.
-2. `ledger_claim <ticket or plan slug>`. Progress lines go to
+2. `ledger_claim <ticket or plan slug>`, unless the caller already holds it
+   (the builder claims before it invokes this skill). Progress lines go to
    `<repo>/.hive/sdd/<plan-basename>/progress.md`, one line per task and one
    per ruling: `Ruling: <what>; <why>; <cost if wrong>`. Make sure
    `<repo>/.hive/.gitignore` exists with the single line `*` before the first

@@ -95,6 +95,7 @@ ledger_ask
     plan: .hive/plans/YYYY-MM-DD-<slug>.md
     spec: .hive/specs/YYYY-MM-DD-<slug>.md   (or: none)
     ship: yes
+    key-confirmed: yes                       (the key came from this invocation)
     reply-to: <this session's id>            (overmind with --detach)
   meta: { ticket: "<KEY>", repo: "...", plan: "...", stage: "build",
           intent: "wait for the builder; answer its questions from the spec" }
