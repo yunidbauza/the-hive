@@ -173,6 +173,17 @@ test('the plan rail appears, peeks without a refit, pins with one, ticks, and le
       else document.body.setAttribute('data-theme', original);
       document.body.setAttribute('data-density', 'compact');
     }, theme);
+    // Compact narrows both rails, so the stage widens and the terminal refits.
+    // The WebGL canvas clears when it is resized and repaints on the next
+    // animation frame, so a shot taken straight after the flip caught a blank
+    // pane: spec timing, not the app. Wait for the refit, then two frames.
+    await expect.poll(resizes, { timeout: 5_000 }).toBeGreaterThan(1);
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
     await page.screenshot({ path: testInfo.outputPath('plan-rail-dark-compact-pinned.png') });
     await page.evaluate(() => {
       document.body.removeAttribute('data-density');
