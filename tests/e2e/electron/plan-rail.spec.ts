@@ -161,14 +161,18 @@ test('the plan rail appears, peeks without a refit, pins with one, ticks, and le
     expect(await resizes()).toBe(1);
     await page.screenshot({ path: testInfo.outputPath('plan-rail-dark-pinned.png') });
 
+    // The app's own theme attribute, restored after the light shot rather than
+    // deleted: deleting it is not the same theme (HIVE-182).
+    const theme = await page.evaluate(() => document.body.getAttribute('data-theme'));
     await page.evaluate(() => {
       document.body.dataset.theme = 'light';
     });
     await page.screenshot({ path: testInfo.outputPath('plan-rail-light-pinned.png') });
-    await page.evaluate(() => {
-      delete document.body.dataset.theme;
+    await page.evaluate((original) => {
+      if (original === null) document.body.removeAttribute('data-theme');
+      else document.body.setAttribute('data-theme', original);
       document.body.setAttribute('data-density', 'compact');
-    });
+    }, theme);
     await page.screenshot({ path: testInfo.outputPath('plan-rail-dark-compact-pinned.png') });
     await page.evaluate(() => {
       document.body.removeAttribute('data-density');

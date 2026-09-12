@@ -1,5 +1,6 @@
 import { SegmentedControl, type SegmentedOption } from '@components/ui/segmented-control';
 import { SelectField, type SelectFieldOption } from '@components/ui/select-field';
+import { Switch } from '@components/ui/switch';
 import { TextField } from '@components/ui/text-field';
 import { SettingsGroup } from '@features/settings/components/settings-group';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
@@ -62,6 +63,7 @@ export function AppearanceSection() {
     setTerminalScrollback,
     setDensity,
     setTeamName,
+    setShowPlanPanel,
   } = useAppearanceActions();
 
   return (
@@ -114,6 +116,18 @@ export function AppearanceSection() {
             className="col-span-2 max-w-[204px]"
           />
         </div>
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="Plan panel"
+        description="Beside the terminal while a session works a plan."
+      >
+        <Switch
+          label="Show plan panel"
+          description="A slim task list beside the terminal. Off keeps the count on the session row, which costs no terminal columns."
+          checked={settings.showPlanPanel}
+          onCheckedChange={setShowPlanPanel}
+        />
       </SettingsGroup>
 
       <SettingsGroup
