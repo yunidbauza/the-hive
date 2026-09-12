@@ -313,6 +313,53 @@ export function shipStageFor(
   return undefined;
 }
 
+/** Where an agent is working (HIVE-172). */
+export interface AgentSite {
+  /** The worktree the agent's newest post named, absolute. */
+  worktree: string;
+  /** The project checkout that worktree belongs to, when the post named it. */
+  checkout?: string;
+}
+
+/**
+ * The worktree an agent is working in, or nothing (HIVE-172).
+ *
+ * The builder and the fixer post `meta.worktree` (and `meta.checkout`, the
+ * project checkout the worktree was cut from) on the posts of a job
+ * (`resources/skills/worktree`). Their worktrees live under `~/.hive/work`,
+ * outside every project path, which is why the checkout has to be named too:
+ * the renderer maps it to a project, and a terminal needs one.
+ *
+ * Three rules, all read newest-first as {@link shipStageFor} is:
+ * - A `release` from the agent ends the reading. Its job is over and the
+ *   shipper removes the worktree after the merge, so a path from before it is
+ *   a directory that is gone.
+ * - The newest post naming an absolute worktree names the worktree. A relative
+ *   path is ignored: it would resolve against wherever the shell started.
+ * - The checkout is the newest one posted *with that same worktree*. `meta` is
+ *   model-written, and one post that dropped the key must not lose the pair.
+ */
+export function agentSiteFor(
+  entries: readonly LedgerEntry[],
+  agent: string,
+): AgentSite | undefined {
+  let worktree: string | undefined;
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i]!;
+    if (entry.from !== agent) continue;
+    if (entry.kind === 'release') break;
+    if (entry.kind !== 'post') continue;
+    const meta = entry.meta ?? {};
+    const named = meta['worktree'];
+    if (typeof named !== 'string' || !named.startsWith('/')) continue;
+    if (worktree === undefined) worktree = named;
+    else if (named !== worktree) break;
+    const checkout = meta['checkout'];
+    if (typeof checkout === 'string') return { worktree, checkout };
+  }
+  return worktree === undefined ? undefined : { worktree };
+}
+
 /** What the builder last reported for a ticket (HIVE-171). */
 export interface BuildProgress {
   stage: string;

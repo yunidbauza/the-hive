@@ -32,6 +32,6 @@ describe('ADVERTISED_VERBS', () => {
     const at = CONSOLE_VERBS.indexOf('term');
     expect(at).toBe(CONSOLE_VERBS.indexOf('spawn') + 1);
     expect(ADVERTISED_VERBS).toContain('term');
-    expect(USAGE.term).toBe('usage: term [<project>] — or select a session first');
+    expect(USAGE.term).toBe('usage: term [<project>|<agent>] — or select a session first');
   });
 });

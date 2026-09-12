@@ -7,6 +7,7 @@ import {
   type LedgerEntry,
 } from '../../../electron/shared/ledger-contract';
 import {
+  agentSiteFor,
   INBOUND_NAME_MAX,
   INBOUND_TEXT_MAX,
   asInbound,
@@ -97,6 +98,48 @@ describe('shipStageFor and buildProgressFor (HIVE-171)', () => {
       entry({ id: 'c1', from: 'builder', kind: 'claim', body: 'claimed HIVE-9', meta: { ticket: 'HIVE-9', stage: 'build', task: 'HIVE-9' } }),
     ];
     expect(buildProgressFor(claimed, 'HIVE-9')).toBeUndefined();
+  });
+});
+
+describe('agentSiteFor (HIVE-172)', () => {
+  const HIVE_6 = '/home/x/.hive/work/builder/hive-6';
+  const HIVE_7 = '/home/x/.hive/work/builder/hive-7';
+  const posts = [
+    entry({ id: 'w0', from: 'builder', body: 'task', meta: { worktree: HIVE_6, checkout: '/repos/elsewhere' } }),
+    entry({ id: 'w1', from: 'builder', body: 'task', meta: { worktree: HIVE_7, checkout: '/repos/the-hive' } }),
+    entry({ id: 'w2', from: 'builder', body: 'task', meta: { worktree: 'relative/path', checkout: '/repos/the-hive' } }),
+    entry({ id: 'w3', from: 'fixer', body: 'round', meta: { worktree: '/home/x/.hive/work/fixer/nova-pr9' } }),
+    entry({ id: 'w4', from: 'shipper', body: 'stage', meta: { worktree: '/somewhere/else', stage: 'ci' } }),
+    entry({ id: 'w5', from: 'builder', kind: 'claim', body: 'claimed', meta: { task: 'HIVE-8', worktree: '/home/x/.hive/work/builder/claimed' } }),
+  ];
+
+  it('reads the newest absolute worktree the agent posted, with its checkout when named', () => {
+    expect(agentSiteFor(posts, 'builder')).toEqual({ worktree: HIVE_7, checkout: '/repos/the-hive' });
+    expect(agentSiteFor(posts, 'fixer')).toEqual({ worktree: '/home/x/.hive/work/fixer/nova-pr9' });
+  });
+
+  it('reads only posts: a claim naming a worktree is not a report of one', () => {
+    expect(agentSiteFor(posts, 'builder')?.worktree).not.toBe('/home/x/.hive/work/builder/claimed');
+  });
+
+  it('answers nothing for an agent that posted no worktree, and never reads another party', () => {
+    expect(agentSiteFor(posts, 'acr')).toBeUndefined();
+    expect(agentSiteFor(posts.filter((e) => e.from !== 'builder'), 'builder')).toBeUndefined();
+  });
+
+  it('stops at the agent\'s release: the job is over and the worktree is the shipper\'s to remove', () => {
+    const released = [...posts, entry({ id: 'r1', from: 'builder', kind: 'release', body: 'released', meta: { task: 'HIVE-7' } })];
+    expect(agentSiteFor(released, 'builder')).toBeUndefined();
+    expect(agentSiteFor(released, 'fixer')).toEqual({ worktree: '/home/x/.hive/work/fixer/nova-pr9' });
+    const next = [...released, entry({ id: 'w6', from: 'builder', body: 'task', meta: { worktree: HIVE_6, checkout: '/repos/next' } })];
+    expect(agentSiteFor(next, 'builder')).toEqual({ worktree: HIVE_6, checkout: '/repos/next' });
+  });
+
+  it('recovers the checkout from an earlier post of the same worktree, never from another one', () => {
+    const dropped = [...posts, entry({ id: 'w7', from: 'builder', body: 'task 2', meta: { worktree: HIVE_7 } })];
+    expect(agentSiteFor(dropped, 'builder')).toEqual({ worktree: HIVE_7, checkout: '/repos/the-hive' });
+    const moved = [...posts, entry({ id: 'w8', from: 'builder', body: 'task 1', meta: { worktree: '/home/x/.hive/work/builder/hive-8' } })];
+    expect(agentSiteFor(moved, 'builder')).toEqual({ worktree: '/home/x/.hive/work/builder/hive-8' });
   });
 });
 

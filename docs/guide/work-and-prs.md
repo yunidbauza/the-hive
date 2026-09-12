@@ -80,4 +80,6 @@ When the workflow agents are on a piece of work, the cards say so. A ticket the 
 building shows `builder · task N done` under its title; a PR the shipper is shipping shows one
 more badge, `ship: <stage>`, beside the GitHub ones. Both are read off the ledger: the badge
 goes when the shipper releases its claim on the PR, the builder line when the ledger tail
-rolls past it, and a ticket worked inline shows nothing extra.
+rolls past it, and a ticket worked inline shows nothing extra. To look at what the
+builder or the fixer has on disk, `term builder` in the console opens a terminal on
+the worktree it last posted.

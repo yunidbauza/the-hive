@@ -32,7 +32,7 @@ group. Drag the handle under the table to give the transcript more room.
 | `open <session>` | put a session on the centre stage |
 | `send <session> <message>` | type a message into a session and press Enter for you |
 | `spawn <project> <task>` | start a new session on a project |
-| `term [<project>]` | open a terminal in a project, or beside the selected session |
+| `term [<project>\|<agent>]` | open a terminal in a project, on an agent's current worktree, or beside the selected session |
 | `ledger [--open] [--events] [--from p] [--to p] [-n 20]` | print the tail of the [ledger](ledger.md) |
 | `ask <agent> <message>` | ask an agent a question |
 | `agents` | one line per agent |
