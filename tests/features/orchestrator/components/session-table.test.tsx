@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Session } from '@/types/entity';
 import type { AgentSummary } from '@shared/agent-contract';
+import type { PlanTaskStatus, SessionPlan } from '@shared/plan-contract';
 
 import { SessionTable } from '@features/orchestrator/components/session-table';
 import { useHiveStore } from '@stores/hive-store';
@@ -1106,5 +1107,65 @@ describe('SessionTable', () => {
 
       expect(screen.queryByText(/AGENTS/)).not.toBeInTheDocument();
     });
+  });
+});
+
+/**
+ * Plan progress in the fleet table (HIVE-182): the same green `done/total` as
+ * the projects-tree row, inside the row's status cell after its label — the
+ * one cell that must never truncate, so the column is sized for both.
+ */
+describe('SessionTable — plan progress', () => {
+  const plan = (entityId: string, statuses: PlanTaskStatus[]): SessionPlan => ({
+    entityId,
+    source: 'task-tools',
+    allDone: false,
+    tasks: statuses.map((status, index) => ({ id: String(index + 1), title: `T${String(index + 1)}`, status })),
+  });
+
+  const rowFor = (id: string): HTMLElement => {
+    const row = rows().find((candidate) => within(candidate).queryByText(id) !== null);
+    if (row === undefined) throw new Error(`no row for ${id}`);
+    return row;
+  };
+
+  beforeEach(() => {
+    useHiveStore.getState().reset();
+    seedDemoFleet();
+    useUiStore.getState().reset();
+  });
+
+  it('shows done/total inside the status cell, after the label', () => {
+    act(() =>
+      useHiveStore
+        .getState()
+        .setPlan('hero-refresh', plan('hero-refresh', ['completed', 'completed', 'in_progress', 'pending', 'pending'])),
+    );
+    render(<SessionTable />);
+
+    const row = rowFor('hero-refresh');
+    const count = within(row).getByText('2/5');
+    const cell = count.closest('[data-col="status"]');
+    expect(cell).not.toBeNull();
+    const label = within(cell as HTMLElement).getByText('working');
+    expect(label.compareDocumentPosition(count) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(row).getByText('2/5 tasks done')).toHaveClass('sr-only');
+  });
+
+  it('shows nothing on a row without a plan', () => {
+    act(() => useHiveStore.getState().setPlan('hero-refresh', plan('hero-refresh', ['pending'])));
+    render(<SessionTable />);
+
+    expect(within(rowFor('lead-form')).queryByText(/tasks done/)).toBeNull();
+    expect(within(rowFor('hero-refresh')).getByText('0/1')).toBeInTheDocument();
+  });
+
+  it('follows the plan as it changes', () => {
+    act(() => useHiveStore.getState().setPlan('hero-refresh', plan('hero-refresh', ['pending', 'pending'])));
+    render(<SessionTable />);
+
+    act(() => useHiveStore.getState().setPlan('hero-refresh', plan('hero-refresh', ['completed', 'pending'])));
+
+    expect(within(rowFor('hero-refresh')).getByText('1/2')).toBeInTheDocument();
   });
 });
