@@ -66,6 +66,14 @@ export const LEDGER_READ_DEFAULT_LIMIT = 50;
 /** How long a receiver call may take before the tool reports a failure. */
 export const RECEIVER_TIMEOUT_MS = 5_000;
 
+/**
+ * The `pr` call's own limit. A lookup the last sweep cannot answer runs a fresh
+ * one, three to four seconds and sometimes more, so five was too tight. Above
+ * the `gh` runner's twenty seconds, so a stuck sweep ends in `gh`'s own
+ * readable error rather than this timeout.
+ */
+export const PR_LOOKUP_TIMEOUT_MS = 25_000;
+
 /** The only JSON-RPC version MCP uses. */
 export const JSONRPC_VERSION = '2.0';
 
