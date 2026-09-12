@@ -31,7 +31,7 @@ the picker from re-rendering thirteen live terminals.
 - `src/stores/hive-store.ts` — domain state and the actions that mimic the future
   orchestrator daemon: `spawnSession`, `sendToEntity`, `runOrchCommand`,
   `markAllRead`, `markRead`, `pushNotif`, `appendEntityLines`. It also holds the
-  **ledger** slice — see below.
+  **ledger** and **plans** slices — see below.
 - `src/stores/ui-store.ts` — view state: `activeTab`, `selId`, `leftTab`,
   `railTab`, `collapsed`, picker fields, `showActivityRail`,
   `explorerExpanded`, `explorerProjectId`.
@@ -106,6 +106,38 @@ a stored copy would go stale the moment an answer landed. A consumer that must
 be right about an old ask asks main.
 
 The deep-dive is [`docs/agents-and-ledger.md`](agents-and-ledger.md).
+
+### The plans slice is a mirror too
+
+`hive-store.state.plans` is a `Record<entityId, SessionPlan>` — each session's
+task list, the thing the plan panel draws (HIVE-178). A session's own
+`TaskCreate`, `TaskUpdate` and `TodoWrite` calls reach main's hook receiver,
+and `electron/main/plans/` folds them into one plan per session. Only the main
+agent's whole-body `PostToolUse` counts: a subagent's task shares the session's
+id space but is not the session's plan, and a truncated body is ignored rather
+than half-read.
+
+Main owns every rule, so the renderer holds none of them. Which source wins
+when more than one offers a plan (task tools, then a plan file, then plan
+mode), how long an all-done plan stays on screen (`PLAN_GRACE_MS`, five
+seconds), and when a plan goes — `/clear`, `/done`, any other exit, a restart,
+a terminal's end — are all decided in main and arrive as the result.
+
+It reaches the store two ways, the ledger's two: a `plan:changed` push per
+change, which `setPlan` applies (`plan: null` deletes the key), and a
+`plans:list` read on mount that `hydratePlans` **merges** by entity id rather
+than replaces, for the ledger's reason — the push is armed before the read, so a
+change that lands while the read is in flight must survive it. `plans:list` is
+one of the attach snapshot's channels, so a reload or a server-mode client
+attaching sees the current plans at once.
+
+Two selectors read it: `usePlan(id)` returns the stored object, whose identity
+changes only when main publishes, and `usePlanProgress(id)` derives `{ done,
+total }` through `useShallow`, so a tick on one session's plan re-renders
+nothing that asked about another. `clearModeEntities` clears the slice on a
+mode switch for the reason it clears `metrics`: session ids are minted the same
+way on every machine, and a stale plan would draw the departed session's tasks
+against the newly attached one wearing the same id.
 
 ### The freshness rule
 
