@@ -61,6 +61,11 @@ describe('Badge', () => {
 
     rerender(<Badge count={1} tone="muted" label="work items" />);
     expect(container.firstChild).toHaveClass('bg-chip', 'text-muted');
+
+    // HIVE-182: plan progress on a session row — a quiet green chip beside a
+    // status dot that keeps priority, green text on its own tint.
+    rerender(<Badge count={3} tone="green" label="tasks done" />);
+    expect(container.firstChild).toHaveClass('bg-green/15', 'text-green');
   });
 
   /**
@@ -80,6 +85,32 @@ describe('Badge', () => {
 
     rerender(<Badge count={1} tone="brand" label="open pull requests" />);
     expect(container.firstChild).toHaveClass('text-on-brand');
+  });
+
+  /**
+   * HIVE-182: a count that is not a single number — plan progress reads
+   * `3/7`. `text` replaces what is drawn and announced; `count` still decides
+   * whether the badge renders at all.
+   */
+  it('draws and announces text in place of the count when given', () => {
+    render(<Badge count={7} text="3/7" tone="green" label="tasks done" />);
+
+    expect(screen.getByText('3/7')).toBeInTheDocument();
+    expect(screen.getByText('3/7 tasks done')).toHaveClass('sr-only');
+    expect(screen.queryByText('7')).toBeNull();
+  });
+
+  it('still renders nothing at a zero count, whatever the text', () => {
+    const { container } = render(<Badge count={0} text="0/0" tone="green" label="tasks done" />);
+
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('draws text as decoration when no label is given', () => {
+    const { container } = render(<Badge count={3} text="1/3" tone="green" />);
+
+    expect(container.firstChild).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByText('1/3')).toBeInTheDocument();
   });
 
   it('keeps a three-digit count from clipping', () => {

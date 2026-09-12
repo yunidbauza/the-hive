@@ -1,10 +1,12 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
+import { Profiler } from 'react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { SessionRow } from '@features/projects/components/session-row';
 import { useHiveStore } from '@stores/hive-store';
 import { useUiStore } from '@stores/ui-store';
+import type { PlanTaskStatus, SessionPlan } from '@shared/plan-contract';
 import { seedDemoFleet } from '@tests/support/demo-fleet';
 
 const row = () => screen.getByRole('button');
@@ -132,5 +134,73 @@ describe('SessionRow', () => {
     });
 
     expect(screen.getByText('needs input')).toBeInTheDocument();
+  });
+});
+
+/**
+ * Plan progress on the row (HIVE-182): a green `done/total` beside the status
+ * label, absent without a plan. The status dot stays first and keeps priority.
+ */
+describe('SessionRow — plan progress', () => {
+  const plan = (entityId: string, statuses: PlanTaskStatus[]): SessionPlan => ({
+    entityId,
+    source: 'task-tools',
+    allDone: false,
+    tasks: statuses.map((status, index) => ({ id: String(index + 1), title: `T${String(index + 1)}`, status })),
+  });
+
+  beforeEach(() => {
+    useHiveStore.getState().reset();
+    seedDemoFleet();
+    useUiStore.getState().reset();
+  });
+
+  it('shows done/total after the status label, and says what it counts', () => {
+    act(() => useHiveStore.getState().setPlan('hero-refresh', plan('hero-refresh', ['completed', 'in_progress', 'pending'])));
+    render(<SessionRow id="hero-refresh" />);
+
+    const count = within(row()).getByText('1/3');
+    expect(count).toBeInTheDocument();
+    expect(within(row()).getByText('1/3 tasks done')).toHaveClass('sr-only');
+    // After the status label, never before the dot.
+    const label = within(row()).getByText('working');
+    expect(label.compareDocumentPosition(count) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('shows nothing without a plan', () => {
+    render(<SessionRow id="hero-refresh" />);
+
+    expect(within(row()).queryByText(/tasks done/)).toBeNull();
+  });
+
+  it('follows the plan as tasks complete', () => {
+    act(() => useHiveStore.getState().setPlan('hero-refresh', plan('hero-refresh', ['completed', 'pending', 'pending'])));
+    render(<SessionRow id="hero-refresh" />);
+
+    act(() => useHiveStore.getState().setPlan('hero-refresh', plan('hero-refresh', ['completed', 'completed', 'pending'])));
+
+    expect(within(row()).getByText('2/3')).toBeInTheDocument();
+  });
+
+  it("re-renders only the row whose plan changed", () => {
+    let rendersA = 0;
+    let rendersB = 0;
+    render(
+      <>
+        <Profiler id="a" onRender={() => { rendersA += 1; }}>
+          <SessionRow id="hero-refresh" />
+        </Profiler>
+        <Profiler id="b" onRender={() => { rendersB += 1; }}>
+          <SessionRow id="lead-form" />
+        </Profiler>
+      </>,
+    );
+    const beforeA = rendersA;
+    const beforeB = rendersB;
+
+    act(() => useHiveStore.getState().setPlan('lead-form', plan('lead-form', ['completed', 'pending'])));
+
+    expect(rendersB).toBeGreaterThan(beforeB);
+    expect(rendersA).toBe(beforeA);
   });
 });

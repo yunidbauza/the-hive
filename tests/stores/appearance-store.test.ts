@@ -496,6 +496,7 @@ describe('appearance-store — persistence', () => {
       railCollapsedLeft: false,
       railCollapsedRight: false,
       planPinned: false,
+      showPlanPanel: true,
       teamName: 'Swarm Command',
       editorPlacement: 'full',
       editorSplitAxis: 'vertical',
@@ -1168,5 +1169,37 @@ describe('rail collapse migration', () => {
 
     expect(store.getState().railCollapsedLeft).toBe(false);
     expect(store.getState().railCollapsedRight).toBe(false);
+  });
+});
+
+/** The Show plan panel setting (HIVE-182): on by default, hides the rail only. */
+describe('appearance-store — showPlanPanel', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    useAppearanceStore.getState().reset();
+  });
+
+  it('defaults to showing the panel', () => {
+    expect(useAppearanceStore.getState().showPlanPanel).toBe(true);
+  });
+
+  it('hides and shows it, and persists the choice', () => {
+    useAppearanceStore.getState().setShowPlanPanel(false);
+
+    expect(useAppearanceStore.getState().showPlanPanel).toBe(false);
+    const raw = localStorage.getItem(APPEARANCE_STORAGE_KEY);
+    expect((JSON.parse(raw as string) as { state: { showPlanPanel: unknown } }).state.showPlanPanel).toBe(false);
+
+    useAppearanceStore.getState().setShowPlanPanel(true);
+
+    expect(useAppearanceStore.getState().showPlanPanel).toBe(true);
+  });
+
+  it('hydrates a stored state from before the field existed to shown', async () => {
+    localStorage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify({ version: 3, state: { theme: 'light' } }));
+
+    await useAppearanceStore.persist.rehydrate();
+
+    expect(useAppearanceStore.getState().showPlanPanel).toBe(true);
   });
 });

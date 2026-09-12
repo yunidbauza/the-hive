@@ -41,6 +41,7 @@ import {
   usePlanPinned,
   useSetEditorSplitRatio,
   useSetPlanPinned,
+  useShowPlanPanel,
   useTerminalAppearance,
 } from '@stores/appearance-store';
 import { useActiveFileKey, useHasOpenFiles } from '@stores/editor-store';
@@ -156,8 +157,10 @@ export function CenterStage() {
   );
   const planPinned = usePlanPinned();
   const setPlanPinned = useSetPlanPinned();
+  // Settings › Appearance › Show plan panel (HIVE-182): off hides the rail only.
+  const showPlanPanel = useShowPlanPanel();
   const planRail =
-    plan !== undefined && plan.tasks.length > 0 ? (
+    showPlanPanel && plan !== undefined && plan.tasks.length > 0 ? (
       <PlanRail plan={plan} pinned={planPinned} onPinnedChange={setPlanPinned} />
     ) : null;
 
