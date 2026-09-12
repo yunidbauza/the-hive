@@ -66,6 +66,43 @@ test('the counts stay on the header row', async ({ page }) => {
 });
 
 /**
+ * The counts never run under the theme button, at either density.
+ *
+ * The control cluster claims the activity rail's column, but its content is
+ * wider than that column at compact density (276px rail, 260px column), and a
+ * `justify-end` row that overflows spills to the **left** — over the counts.
+ * `scrollWidth` cannot see that overflow, since it only counts the end side, so
+ * the boxes are compared directly. Density is written the way `applyDensity`
+ * writes it, onto `<body>`.
+ */
+test.describe('the counts stay clear of the controls', () => {
+  for (const density of ['comfortable', 'compact'] as const) {
+    test(`at ${density} density`, async ({ page }) => {
+      await page.goto('/?sim=0');
+      await expect(page.getByTestId('status-counts')).toBeVisible();
+
+      if (density === 'compact') {
+        await page.evaluate(() => document.body.setAttribute('data-density', 'compact'));
+        await expect(page.getByRole('complementary', { name: 'Activity' })).toHaveCSS(
+          'width',
+          '276px',
+        );
+      }
+
+      const countsBox = await page.getByTestId('status-counts').boundingBox();
+      const themeBox = await page
+        .locator('header')
+        .getByRole('button', { name: /theme$/ })
+        .boundingBox();
+
+      // At least the 14px the counts keep from the model chip on their other
+      // side, less half a pixel for the counts' fractional text width.
+      expect(themeBox!.x - (countsBox!.x + countsBox!.width)).toBeGreaterThanOrEqual(13.5);
+    });
+  }
+});
+
+/**
  * Which zone gives when the header runs out of room.
  *
  * `model-chip.tsx` and `status-counts.tsx` both claim the chip is the thing
