@@ -11,6 +11,7 @@ import { useUiStore } from '@stores/ui-store';
 const pr = (overrides: Partial<Pr> = {}): Pr => ({
   n: 482,
   repo: 'nova-web',
+  owner: 'acme',
   title: 'Hero: semantic token refactor',
   state: 'open',
   findings: 2,
@@ -49,6 +50,22 @@ describe('PrCard', () => {
     render(<PrCard pr={pr()} />);
 
     expect(screen.getByText('ship: approval')).toBeInTheDocument();
+  });
+
+  it('shows no shipper badge for the same short name under another owner (HIVE-171)', () => {
+    useHiveStore.getState().hydrateLedger([
+      {
+        id: 's1',
+        ts: 1,
+        from: 'shipper',
+        kind: 'post',
+        body: 'stage',
+        meta: { pr: 482, repo: 'someone/nova-web', stage: 'approval' },
+      },
+    ]);
+    render(<PrCard pr={pr()} />);
+
+    expect(screen.queryByText('ship: approval')).not.toBeInTheDocument();
   });
 
   it('renders the badges the rule table composes', () => {

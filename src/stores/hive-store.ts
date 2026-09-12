@@ -7407,11 +7407,14 @@ export const useLedgerEntries = (filter?: LedgerReadQuery): LedgerEntry[] => {
 /**
  * The shipper's latest stage for a PR, for its card's badge (HIVE-171).
  *
- * A string or `undefined`, so it needs no memo and no shallow compare;
- * `shipStageFor` walks the capped tail from the newest entry back.
+ * `slug` is `owner/name`. Memoised over the tail like `useBuildProgress`, so
+ * the scan runs once per ledger change rather than once per store change.
  */
-export const useShipStage = (repo: string, n: number): string | undefined =>
-  useHiveStore((state) => shipStageFor(state.ledger, repo, n));
+export const useShipStage = (slug: string, n: number): string | undefined => {
+  const entries = useHiveStore((state) => state.ledger);
+
+  return useMemo(() => shipStageFor(entries, slug, n), [entries, slug, n]);
+};
 
 /** The builder's latest progress on a ticket, for its card's line (HIVE-171). */
 export const useBuildProgress = (ticketKey: string): BuildProgress | undefined => {
@@ -7471,6 +7474,7 @@ const resolvePrs = (
   records.map((pr) => ({
     n: pr.number,
     repo: pr.repo,
+    owner: pr.owner,
     title: pr.title,
     state: pr.state,
     findings: pr.findings,

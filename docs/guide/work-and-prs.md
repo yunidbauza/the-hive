@@ -56,13 +56,6 @@ ticket does not say which repository it belongs to. Pick the project and press E
 
 The session is named for the ticket, and names stay unique: `ABC-123`, then `ABC-123-2`.
 
-## What the agents are doing
-
-When the workflow agents hold a piece of work, the cards say so. A ticket the builder is
-building shows `builder · task N done` under its title; a PR the shipper holds shows one
-more badge, `ship: <stage>`, beside the GitHub ones. Both are read off the ledger and
-disappear with it; a ticket worked inline shows nothing extra.
-
 ## The PRs tab
 
 <img src="../assets/guide/07-prs-tab.png" alt="The PRs tab: an open pull request and two recent merges" width="340">
@@ -80,3 +73,11 @@ filters the list. The Hive stores no GitHub token; `gh` uses its own login, or `
 
 If the tab stays empty, run `gh auth status`. **Settings › Integrations › Command line** shows
 which `gh` The Hive found and who it is signed in as.
+
+## What the agents are doing
+
+When the workflow agents are on a piece of work, the cards say so. A ticket the builder is
+building shows `builder · task N done` under its title; a PR the shipper is shipping shows one
+more badge, `ship: <stage>`, beside the GitHub ones. Both are read off the ledger: the badge
+goes when the shipper releases its claim on the PR, the builder line when the ledger tail
+rolls past it, and a ticket worked inline shows nothing extra.

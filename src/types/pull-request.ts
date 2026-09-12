@@ -12,7 +12,10 @@ export type PrChecks = 'passing' | 'running' | 'failing';
  */
 export interface Pr {
   n: number;
+  /** The short name, what the card shows: `the-hive`, not `owner/the-hive`. */
   repo: string;
+  /** The owner, so two repos with one short name never share a ledger reading (HIVE-171). */
+  owner: string;
   title: string;
   state: PrListState;
   findings: number;

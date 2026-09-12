@@ -85,7 +85,7 @@ export function TicketCard({ ticket }: TicketCardProps) {
         ticket worked inline.
       */}
       {build === undefined ? null : (
-        <div className="font-mono text-[10.5px] text-subtle" data-build-stage={build.stage}>
+        <div className="font-mono text-[10.5px] text-subtle">
           builder · {build.task === undefined ? build.stage : `task ${build.task} done`}
         </div>
       )}

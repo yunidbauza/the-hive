@@ -75,15 +75,14 @@ interface PrCardProps {
  */
 export function PrCard({ pr }: PrCardProps) {
   const openEntity = useOpenEntity();
-  const stage = useShipStage(pr.repo, pr.n);
+  const stage = useShipStage(`${pr.owner}/${pr.repo}`, pr.n);
   /*
     The shipper's stage rides beside the GitHub badges (HIVE-171). Its own
     badge rather than a rule in `composeBadges`: that table is a pure function
     of the PR record, and this comes from the ledger.
   */
-  const badges = stage === undefined
-    ? composeBadges(pr)
-    : [...composeBadges(pr), { text: `ship: ${stage}`, tone: 'brand' as const }];
+  const badges = composeBadges(pr);
+  if (stage !== undefined) badges.push({ text: `ship: ${stage}`, tone: 'brand' });
   const isLive = pr.state !== 'merged';
 
   const openSession = () => {
