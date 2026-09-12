@@ -148,6 +148,14 @@ describe('wakeCommand', () => {
     expect(result['HIVE_AGENT']).toBe('1');
   });
 
+  it('keeps subagents in the foreground, whatever main inherited', () => {
+    const result = build({
+      env: { ...env, base: { ...env.base, CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '0' } },
+    }).env;
+
+    expect(result['CLAUDE_CODE_DISABLE_BACKGROUND_TASKS']).toBe('1');
+  });
+
   it('deletes the auth keys when the user is on subscription auth', () => {
     expect(build().env['ANTHROPIC_API_KEY']).toBeUndefined();
   });
@@ -493,10 +501,11 @@ describe('a container wake (HIVE-137)', () => {
     expect(command.container?.sessionUuid).toBe('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
   });
 
-  it("crosses only HIVE_* and the marker, re-addressed by the alias, never main's environment", () => {
+  it("crosses only HIVE_*, the marker and the foreground switch, re-addressed by the alias, never main's environment", () => {
     const command = built();
 
     expect(Object.keys(command.env).sort()).toEqual([
+      'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS',
       'HIVE_AGENT',
       'HIVE_GRANTS',
       'HIVE_HOOK_TOKEN',
