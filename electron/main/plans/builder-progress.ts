@@ -53,6 +53,12 @@ export function createBuilderProgress({
   function link(entry: LedgerEntry, meta: Record<string, unknown>): void {
     const planPath = meta.plan;
     if (meta.stage !== 'build' || typeof planPath !== 'string' || !knowsSession(entry.from)) return;
+    /*
+      A broadcast ask is never linked: nobody could tick it, and the ledger
+      lets any party answer a thread with no `to` — so any session or agent
+      could fail or complete a build that is not theirs.
+    */
+    if (entry.to === undefined) return;
     const plan = plans.get(entry.from);
     const suffix = `/${planPath.replace(/^\.?\//, '')}`;
     if (plan?.source !== 'plan-file' || plan.file === undefined || !plan.file.endsWith(suffix)) return;

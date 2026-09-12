@@ -111,6 +111,16 @@ describe('createBuilderProgress', () => {
     expect(statuses()).toEqual(['pending', 'pending', 'pending']);
   });
 
+  it('never links a broadcast ask, so no other party can end its build', () => {
+    const before = plans.get('sess-01');
+
+    progress.onEntry(ask({ to: undefined }));
+    progress.onEntry(entry({ kind: 'answer', from: 'sess-02', thread: 'A1', body: 'failed: not mine' }));
+    progress.onEntry(entry({ kind: 'answer', from: 'sess-02', thread: 'A1', body: 'done' }));
+
+    expect(plans.get('sess-01')).toBe(before);
+  });
+
   it('links nothing when the session has no plan file', () => {
     void plans.onTool({
       entityId: 'sess-02',
