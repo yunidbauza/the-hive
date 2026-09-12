@@ -157,7 +157,7 @@ describe('applySetRemote', () => {
  * `SetRemoteResult.changed` (HIVE-144 review, I1).
  *
  * The whole attach-snapshot path used to end here. `RemoteClient.snapshot()`
- * had no production caller, so a server built six `SNAPSHOT_CHANNELS` reads on
+ * had no production caller, so a server built seven `SNAPSHOT_CHANNELS` reads on
  * every accept, bounded them, sent them — and the client dropped them. And
  * nothing cleared entities across a switch, so the departed mode's metrics
  * rendered against the newly attached session wearing the same `sess-01`.

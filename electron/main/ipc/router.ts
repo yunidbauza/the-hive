@@ -360,7 +360,7 @@ export function attachedResumeTracker(): ResumeTracker | null {
  * The fleet the server sent with its accept frame, or `null` when this
  * process is not attached (HIVE-144 review, I1).
  *
- * `RemoteClient.snapshot()` had no production caller before this, so the six
+ * `RemoteClient.snapshot()` had no production caller before this, so the seven
  * `SNAPSHOT_CHANNELS` reads a server performs on every accept were computed,
  * bounded, sent, parsed and dropped. This is where they are picked up:
  * `applySetRemote` calls it either side of the switch, reports what moved as

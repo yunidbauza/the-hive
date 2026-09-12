@@ -833,7 +833,7 @@ describe('the attach replay loop (HIVE-143)', () => {
 describe('the attach snapshot (HIVE-144)', () => {
   it('answers an empty snapshot rather than throwing when no channel is registered yet', async () => {
     // `resetIpcHandlers` without a following `registerIpcHandlers`: every one
-    // of the six is `null` in the registry. `raceSnapshotRead` does not
+    // of the seven is `null` in the registry. `raceSnapshotRead` does not
     // special-case that — it calls `null` as a function and lets the
     // resulting `TypeError` land in its own `.catch` — so this proves that
     // path resolves cleanly to "omitted" rather than rejecting the whole call

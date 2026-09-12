@@ -733,6 +733,10 @@ export const CH = {
   ledgerAnswer: 'ledger:answer',
   /** Push: one entry landed, from any party. main → renderer. */
   ledgerChanged: 'ledger:changed',
+  /** Every live plan (HIVE-179). Boot hydration and the attach snapshot. */
+  plansList: 'plans:list',
+  /** Push: one session's plan changed, or went (`plan: null`). main → renderer. */
+  planChanged: 'plan:changed',
   /** What the app knows about a newer version of itself. */
   updatesStatus: 'updates:status',
   /**
@@ -1150,6 +1154,7 @@ export const EVENT_CHANNELS = [
   CH.notificationsActivate,
   CH.fsChanged,
   CH.ledgerChanged,
+  CH.planChanged,
   CH.agentsChanged,
   CH.agentsStatus,
   CH.agentsLines,

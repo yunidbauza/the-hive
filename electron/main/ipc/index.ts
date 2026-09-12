@@ -475,7 +475,7 @@ const noModeSwitcher: ModeSwitcher = () => {
  * `SNAPSHOT_CHANNELS` handler that called `surfaceFor` would register the
  * socket through `trackWindow` and have it graded a `window` surface — after
  * which `isForegroundFor` would read the *server's* `BrowserWindow` focus for a
- * device four time zones away. None of the six does today. One that grows the
+ * device four time zones away. None of the seven does today. One that grows the
  * dependency has to be tracked at attach instead.
  *
  * What is still absent is a **window**, and that is the fence that matters:
@@ -559,7 +559,7 @@ function handle<T>(
  * The payload each {@link SNAPSHOT_CHANNELS} entry is read with — the same one
  * `electron/preload/index.ts` sends for it, defaulting to `undefined` (HIVE-144).
  *
- * Every one of the six is called with no argument from the renderer at boot
+ * Every one of the seven is called with no argument from the renderer at boot
  * *except* `ledger:list`: its bridge method is `(query?) =>
  * ipcRenderer.invoke(CH.ledgerList, query ?? {})`, so `undefined` never
  * actually crosses that wire, and `parseLedgerReadQuery` — correctly — refuses
@@ -581,7 +581,7 @@ const SNAPSHOT_PAYLOAD: Partial<Record<Channel, unknown>> = {
  * cannot tell them apart).
  *
  * **Never rejects.** Every path resolves, which is what lets
- * {@link buildAttachSnapshot} run all six of these concurrently with a plain
+ * {@link buildAttachSnapshot} run all seven of these concurrently with a plain
  * `Promise.all` — one slow or broken read cannot take the others down with
  * it, and cannot make them wait for it either.
  *
@@ -632,7 +632,7 @@ function raceSnapshotRead(
     Promise.resolve()
       // The cast is the point, not a workaround for one: see the null branch
       // above. `await` on a non-promise is a no-op, so this one `.then` covers
-      // both `github:prs` (genuinely asynchronous) and the five that are not.
+      // both `github:prs` (genuinely asynchronous) and the six that are not.
       .then(() => (handler as CallHandler)(SNAPSHOT_PAYLOAD[channel], reporter))
       .then((value) => {
         /*
@@ -670,14 +670,14 @@ function raceSnapshotRead(
 }
 
 /**
- * Builds `AttachAccepted.snapshot` — the six {@link SNAPSHOT_CHANNELS} reads a
- * joining client needs to render the fleet without six round trips (HIVE-144).
+ * Builds `AttachAccepted.snapshot` — the seven {@link SNAPSHOT_CHANNELS} reads a
+ * joining client needs to render the fleet without seven round trips (HIVE-144).
  *
  * Calls each channel's handler through `remoteRegistry.call`, the exact
  * function a socket's own `call` frame would reach — the same one `handle`
  * above records — so there is no second source of truth for what a channel
  * answers. Read with {@link SNAPSHOT_PAYLOAD}'s entry for the channel, or
- * `undefined` when it has none — the payload every one of these six takes at
+ * `undefined` when it has none — the payload every one of these seven takes at
  * boot in the renderer.
  *
  * A snapshot is a convenience, not a precondition (Ruling 15, HIVE-144
@@ -685,9 +685,9 @@ function raceSnapshotRead(
  * registered is omitted, one whose handler throws or rejects is omitted, and
  * one that simply takes longer than {@link SNAPSHOT_READ_BUDGET_MS} is
  * omitted too — a slow read costs the same key a broken one would, never the
- * whole snapshot, and never the handshake itself. All six race that budget
+ * whole snapshot, and never the handshake itself. All seven race that budget
  * **concurrently** (`raceSnapshotRead`, via `Promise.all`), not one after
- * another: a sequential sum of six "safe" per-channel waits could still blow
+ * another: a sequential sum of seven "safe" per-channel waits could still blow
  * past the handshake's own deadline on its own, which a single shared budget
  * bounding the whole call cannot.
  *

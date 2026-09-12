@@ -107,9 +107,9 @@ export const ATTACH_HANDSHAKE_TIMEOUT_MS = 5_000;
  * the two numbers have to agree, or the server can time out a socket while a
  * read it has not yet given up on is still running. `buildAttachSnapshot`
  * (`electron/main/ipc/index.ts`) races every channel **concurrently** against
- * this one budget rather than sequentially against six of them, so the whole
+ * this one budget rather than sequentially against seven of them, so the whole
  * snapshot's wall-clock cost is bounded by this single number regardless of
- * how many of the six are slow at once — a sequential sum could exceed the
+ * how many of the seven are slow at once — a sequential sum could exceed the
  * handshake window on its own even with a "safe" per-channel value. 2 000 ms
  * leaves 3 000 ms of margin inside the 5 000 ms deadline above for everything
  * else the handshake still has to do before and after this read
