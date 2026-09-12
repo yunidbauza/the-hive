@@ -135,6 +135,23 @@ describe('AppearanceSection', () => {
     expect(useAppearanceStore.getState().teamName).toBe('');
   });
 
+  /**
+   * HIVE-182. On by default; off hides the glyph rail only — the count on the
+   * session row stays, and costs no terminal columns.
+   */
+  it('offers Show plan panel, on by default, and writes it when switched', async () => {
+    const user = userEvent.setup();
+    render(<AppearanceSection />);
+
+    const toggle = screen.getByRole('switch', { name: 'Show plan panel' });
+    expect(toggle).toBeChecked();
+
+    await user.click(toggle);
+
+    expect(useAppearanceStore.getState().showPlanPanel).toBe(false);
+    expect(toggle).not.toBeChecked();
+  });
+
   it('puts Themes first and calls the switch Mode', () => {
     render(<AppearanceSection />);
     // Level 3: the group headings (Themes, Mode, Terminal, Team, Density) —

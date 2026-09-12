@@ -11,6 +11,7 @@ import {
 } from '../../../__mocks__/@xterm/xterm';
 
 import { CenterStage } from '@components/layout/center-stage';
+import { SessionRow } from '@features/projects/components/session-row';
 import { useAppearanceStore } from '@stores/appearance-store';
 import { useEditorStore } from '@stores/editor-store';
 import { useHiveStore } from '@stores/hive-store';
@@ -870,5 +871,62 @@ describe('CenterStage — the plan rail (HIVE-181)', () => {
 
     expect(useAppearanceStore.getState().planPinned).toBe(true);
     expect(screen.getByRole('button', { name: 'Unpin plan' })).toHaveAttribute('aria-pressed', 'true');
+  });
+});
+
+/**
+ * Show plan panel (HIVE-182): off hides the glyph rail only. The count on the
+ * session row is a separate reading of the same plan, and stays.
+ */
+describe('CenterStage — Show plan panel (HIVE-182)', () => {
+  const plan = {
+    entityId: 'hero-refresh',
+    source: 'task-tools' as const,
+    allDone: false,
+    tasks: [
+      { id: '1', title: 'Task 1', status: 'pending' as const },
+      { id: '2', title: 'Task 2', status: 'pending' as const },
+    ],
+  };
+
+  beforeEach(() => {
+    useHiveStore.getState().reset();
+    seedDemoFleet();
+    useUiStore.getState().reset();
+    useAppearanceStore.getState().setShowPlanPanel(true);
+    resetTerminalInstances();
+    resetFitAddonInstances();
+    resetWebLinksAddonInstances();
+  });
+
+  afterEach(() => {
+    cleanup();
+    useAppearanceStore.getState().setShowPlanPanel(true);
+  });
+
+  it('hides the rail when the panel is switched off, and the row count stays', () => {
+    act(() => useHiveStore.getState().setPlan('hero-refresh', plan));
+    act(() => useAppearanceStore.getState().setShowPlanPanel(false));
+    render(
+      <>
+        <CenterStage />
+        <SessionRow id="hero-refresh" />
+      </>,
+    );
+    act(() => useUiStore.getState().openTab('hero-refresh'));
+
+    expect(screen.queryByRole('region', { name: 'Plan' })).toBeNull();
+    expect(screen.getByText('0/2')).toBeInTheDocument();
+  });
+
+  it('shows it again when switched back on', () => {
+    act(() => useHiveStore.getState().setPlan('hero-refresh', plan));
+    act(() => useAppearanceStore.getState().setShowPlanPanel(false));
+    render(<CenterStage />);
+    act(() => useUiStore.getState().openTab('hero-refresh'));
+
+    act(() => useAppearanceStore.getState().setShowPlanPanel(true));
+
+    expect(screen.getByRole('region', { name: 'Plan' })).toBeInTheDocument();
   });
 });

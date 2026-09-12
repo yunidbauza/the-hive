@@ -132,6 +132,12 @@ interface AppearanceState {
    * terminal on hover or focus.
    */
   planPinned: boolean;
+  /**
+   * Whether the plan panel shows beside the terminal at all (HIVE-182). Off
+   * hides the glyph rail only; the count on the session row stays, because it
+   * costs no terminal columns.
+   */
+  showPlanPanel: boolean;
 
   /**
    * The line under the wordmark, top-left — whose hive this is.
@@ -260,6 +266,8 @@ interface AppearanceState {
   toggleRailCollapsed: (side: RailSide) => void;
   /** Dock the plan drawer beside the terminal, or let it peek again (HIVE-181). */
   setPlanPinned: (pinned: boolean) => void;
+  /** Show or hide the plan panel beside the terminal (HIVE-182). */
+  setShowPlanPanel: (show: boolean) => void;
   setTeamName: (name: string) => void;
   setSystemDark: (dark: boolean) => void;
 
@@ -618,6 +626,7 @@ const initialAppearanceState = {
   railCollapsedLeft: false,
   railCollapsedRight: false,
   planPinned: false,
+  showPlanPanel: true,
   teamName: DEFAULT_TEAM_NAME,
 
   /** Full stage: the editor is a place you go, not a permanent tax on the terminal. */
@@ -660,6 +669,7 @@ interface PersistedAppearanceState {
   railCollapsedLeft: boolean;
   railCollapsedRight: boolean;
   planPinned: boolean;
+  showPlanPanel: boolean;
   teamName: string;
   editorPlacement: EditorPlacement;
   editorSplitAxis: EditorSplitAxis;
@@ -888,6 +898,8 @@ export const useAppearanceStore = create<AppearanceState>()(
 
       setPlanPinned: (planPinned) => set({ planPinned }),
 
+      setShowPlanPanel: (showPlanPanel) => set({ showPlanPanel }),
+
       /**
        * Stored exactly as typed.
        *
@@ -1014,6 +1026,7 @@ export const useAppearanceStore = create<AppearanceState>()(
         railCollapsedLeft: state.railCollapsedLeft,
         railCollapsedRight: state.railCollapsedRight,
         planPinned: state.planPinned,
+        showPlanPanel: state.showPlanPanel,
         teamName: state.teamName,
         editorPlacement: state.editorPlacement,
         editorSplitAxis: state.editorSplitAxis,
@@ -1119,6 +1132,7 @@ const appearanceActionsSelector = (state: AppearanceState) => ({
   setTerminalScrollback: state.setTerminalScrollback,
   setDensity: state.setDensity,
   setTeamName: state.setTeamName,
+  setShowPlanPanel: state.setShowPlanPanel,
 });
 
 const appearanceSettingsSelector = (state: AppearanceState) => ({
@@ -1128,6 +1142,7 @@ const appearanceSettingsSelector = (state: AppearanceState) => ({
   terminalScrollback: state.terminalScrollback,
   density: state.density,
   teamName: state.teamName,
+  showPlanPanel: state.showPlanPanel,
 });
 
 /**
@@ -1215,6 +1230,8 @@ export const useAppearanceActions = () =>
 export const usePlanPinned = () => useAppearanceStore((state) => state.planPinned);
 /** Dock or undock the plan drawer (HIVE-181). */
 export const useSetPlanPinned = () => useAppearanceStore((state) => state.setPlanPinned);
+/** Whether the plan panel shows beside the terminal (HIVE-182). */
+export const useShowPlanPanel = () => useAppearanceStore((state) => state.showPlanPanel);
 
 /**
  * Everything the CodeMirror surface needs, resolved.
