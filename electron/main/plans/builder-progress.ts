@@ -35,13 +35,18 @@ interface Link {
  * A plan that has since been replaced — another source, another file, another
  * build — is never edited on this build's word.
  */
+/** What `ipc/index.ts` feeds every ledger entry to (HIVE-180). */
+export interface BuilderProgress {
+  onEntry(entry: LedgerEntry): void;
+}
+
 export function createBuilderProgress({
   plans,
   knowsSession,
 }: {
   plans: Plans;
   knowsSession: (id: string) => boolean;
-}): { onEntry(entry: LedgerEntry): void } {
+}): BuilderProgress {
   const links = new Map<string, Link>();
 
   const edit = (askId: string, link: Link, change: (plan: SessionPlan) => SessionPlan): void => {

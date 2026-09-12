@@ -7,3 +7,4 @@ export {
   TASK_TOOL_NAMES,
   type PlanToolCall,
 } from './task-tools';
+export { createBuilderProgress, type BuilderProgress } from './builder-progress';

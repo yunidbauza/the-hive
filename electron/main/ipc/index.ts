@@ -257,6 +257,7 @@ import {
   recordNotificationRefusal,
 } from '../notifications/delivery';
 import { badgeDock, clearDockBadge } from '../notifications/dock-badge';
+import { createBuilderProgress, type BuilderProgress } from '../plans';
 import { registerPtyHost } from '../pty-host';
 import { seedShippedIntoHive } from '../seed';
 import {
@@ -728,6 +729,13 @@ let remoteListener: ReturnType<typeof createRemoteListener> | null = null;
 let remoteListenerPort: number | null = null;
 
 let sessions: Sessions | null = null;
+/**
+ * A builder's progress ticked onto the session that asked for the build
+ * (HIVE-180), or `null` until the first ledger entry after `sessions` exists.
+ * Built lazily inside the `ledger.onChange` listener, which is wired long
+ * before `createSessions` runs; cleared with `sessions` on a reset.
+ */
+let builderProgress: BuilderProgress | null = null;
 /** Releases the wake subscription `registerIpcHandlers` makes for `sessions`. */
 let stopDisplayWake: (() => void) | null = null;
 /**
@@ -2115,6 +2123,22 @@ export function registerIpcHandlers(
       deliver.onEntry(entry);
     } catch (cause) {
       console.warn(`[ledger] could not deliver ${entry.id}:`, cause);
+    }
+    /*
+      A build's progress, onto the plan of the session that asked for it
+      (HIVE-180). Guarded like `deliver`: a plan is a view, and a throw here
+      must not fail the write that triggered it.
+    */
+    try {
+      if (sessions !== null) {
+        builderProgress ??= createBuilderProgress({
+          plans: sessions.planStore(),
+          knowsSession: (id) => sessions?.entities().includes(id) ?? false,
+        });
+        builderProgress.onEntry(entry);
+      }
+    } catch (cause) {
+      console.warn(`[ledger] could not tick a build from ${entry.id}:`, cause);
     }
     /*
       The third and fourth consumers, sequenced against each other (HIVE-120,
@@ -5216,6 +5240,7 @@ export function resetIpcHandlers(options: { flush?: boolean } = {}): void {
   stopDisplayWake = null;
   sessions?.dispose();
   sessions = null;
+  builderProgress = null;
   cloneFlow?.dispose();
   cloneFlow = null;
   fsWatch?.dispose();
