@@ -1102,6 +1102,68 @@ describe('hive-store', () => {
           });
         });
 
+        describe('on an agent (HIVE-172)', () => {
+          const builder = (): AgentSummary => ({
+            name: 'builder',
+            description: 'Builds tickets.',
+            icon: 'Robot',
+            status: 'sleeping',
+            wake: { on: ['slack.mention'], everyMs: 300_000 },
+            mcp: [],
+            tools: [],
+            rotateAfter: 50,
+            skipsSinceRun: 0,
+            runs: [],
+          });
+          const post = (meta: Record<string, unknown>): LedgerEntry => ({
+            id: `20260911-120000-${String(Object.keys(meta).length).padStart(4, '0')}`,
+            ts: Date.now(),
+            from: 'builder',
+            kind: 'post',
+            body: 'task 1 done',
+            meta,
+          });
+
+          it('opens a terminal on the worktree the agent last posted, under the project its checkout maps to', () => {
+            seedDistinctProject();
+            useHiveStore.getState().hydrateAgents([builder()]);
+            useHiveStore.getState().hydrateLedger([
+              post({ worktree: '/home/x/.hive/work/builder/hive-7', checkout: '/repos/the-hive' }),
+            ]);
+
+            run('term builder');
+
+            const id = useHiveStore.getState().order.at(-1)!;
+            expect(useHiveStore.getState().entities[id]).toMatchObject({
+              kind: 'terminal',
+              project: 'the-hive',
+              cwd: '/home/x/.hive/work/builder/hive-7',
+            });
+            expect(useHiveStore.getState().spawnTerminalBeside('builder')).not.toBeNull();
+          });
+
+          it('says so when the agent has posted no worktree, or a checkout no project maps', () => {
+            seedDistinctProject();
+            useHiveStore.getState().hydrateAgents([builder()]);
+            const before = useHiveStore.getState().order.length;
+
+            run('term builder');
+            expect(lastLine()).toMatchObject({ text: '  builder has named no worktree yet', color: 'red' });
+
+            useHiveStore.getState().hydrateLedger([
+              post({ worktree: '/home/x/.hive/work/builder/hive-7', checkout: '/repos/elsewhere' }),
+            ]);
+            run('term builder');
+            expect(lastLine()).toMatchObject({
+              text: '  no project maps /repos/elsewhere — add it in Settings › Projects',
+              color: 'red',
+            });
+
+            expect(useHiveStore.getState().order).toHaveLength(before);
+            expect(useHiveStore.getState().spawnTerminalBeside('builder')).toBeNull();
+          });
+        });
+
         it('refuses an unknown project with the message spawn gives', () => {
           const before = useHiveStore.getState().order.length;
           run('term nope');
@@ -1143,7 +1205,7 @@ describe('hive-store', () => {
           run('term');
           expect(useHiveStore.getState().order).toHaveLength(before);
           expect(lastLine()).toMatchObject({
-            text: '  usage: term [<project>] — or select a session first',
+            text: '  usage: term [<project>|<agent>] — or select a session first',
             color: 'red',
           });
         });
@@ -1153,7 +1215,7 @@ describe('hive-store', () => {
           const before = useHiveStore.getState().order.length;
           run('term');
           expect(useHiveStore.getState().order).toHaveLength(before);
-          expect(lastLine()).toMatchObject({ text: '  usage: term [<project>] — or select a session first' });
+          expect(lastLine()).toMatchObject({ text: '  usage: term [<project>|<agent>] — or select a session first' });
         });
       });
 

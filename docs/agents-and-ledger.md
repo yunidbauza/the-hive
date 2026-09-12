@@ -788,6 +788,9 @@ whole `owner/name`, and it answers nothing once the shipper has released its
 ticket. The PR card and the ticket card read them through `useShipStage` and
 `useBuildProgress`; nothing is stored. Both keys are named in the ledger tools' `meta`
 description, because that description is the only place the model is told the shape.
+`agentSiteFor(entries, agent)` (HIVE-172) is the same reading for the agent's
+newest `meta.worktree` and `meta.checkout`; the console's `term <agent>` maps the
+checkout to a project and starts a shell in the worktree.
 
 ## The routes
 

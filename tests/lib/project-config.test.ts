@@ -31,6 +31,7 @@ import {
   setProjectConfigForTest,
   setServerConfig,
   subscribeProjectConfig,
+  projectIdForPath,
 } from '@lib/project-config';
 
 /**
@@ -1009,5 +1010,27 @@ describe('projectContainerised', () => {
     resetProjectConfig();
 
     expect(projectContainerised('nova-web')).toBe(false);
+  });
+});
+
+describe('projectIdForPath (HIVE-172)', () => {
+  it('owns the checkout itself and anything under it, on a path boundary', () => {
+    setProjectConfigForTest(
+      snapshot([
+        { id: 'the-hive', status: 'ok' },
+        { id: 'the-hive-docs', status: 'ok' },
+        { id: 'gone', status: 'missing' },
+      ]),
+    );
+
+    expect(projectIdForPath('/repos/the-hive')).toBe('the-hive');
+    expect(projectIdForPath('/repos/the-hive/src/app.ts')).toBe('the-hive');
+    expect(projectIdForPath('/repos/the-hive-docs/README.md')).toBe('the-hive-docs');
+    expect(projectIdForPath('/repos/gone')).toBeNull();
+    expect(projectIdForPath('/elsewhere')).toBeNull();
+  });
+
+  it('answers null before any snapshot arrived', () => {
+    expect(projectIdForPath('/repos/the-hive')).toBeNull();
   });
 });

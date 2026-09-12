@@ -313,6 +313,41 @@ export function shipStageFor(
   return undefined;
 }
 
+/** Where an agent is working (HIVE-172). */
+export interface AgentSite {
+  /** The worktree the agent's newest post named, absolute. */
+  worktree: string;
+  /** The project checkout that worktree belongs to, when the post named it. */
+  checkout?: string;
+}
+
+/**
+ * The worktree an agent last said it was working in, or nothing (HIVE-172).
+ *
+ * The builder and the fixer post `meta.worktree` (and `meta.checkout`, the
+ * project checkout the worktree was cut from) when they start on a job
+ * (`resources/agents/{builder,fixer}`). Their worktrees live under
+ * `~/.hive/work`, outside every project path, which is why the checkout has to
+ * be named too: the renderer maps it to a project, and a terminal needs one.
+ * Newest post wins, as in {@link shipStageFor}. A relative path is ignored: it
+ * would be resolved against whatever the shell happened to start in.
+ */
+export function agentSiteFor(
+  entries: readonly LedgerEntry[],
+  agent: string,
+): AgentSite | undefined {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i]!;
+    if (entry.from !== agent || entry.kind !== 'post') continue;
+    const meta = entry.meta ?? {};
+    const worktree = meta['worktree'];
+    if (typeof worktree !== 'string' || !worktree.startsWith('/')) continue;
+    const checkout = meta['checkout'];
+    return typeof checkout === 'string' ? { worktree, checkout } : { worktree };
+  }
+  return undefined;
+}
+
 /** What the builder last reported for a ticket (HIVE-171). */
 export interface BuildProgress {
   stage: string;

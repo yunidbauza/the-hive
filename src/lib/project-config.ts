@@ -974,6 +974,23 @@ export function projectPath(projectId: string): string | null {
   return entry.path;
 }
 
+/**
+ * The project whose checkout is, or holds, `path` (HIVE-172), or `null`.
+ *
+ * Prefix on a path boundary: `/repos/the-hive` owns `/repos/the-hive/src`
+ * and not `/repos/the-hive-docs`. Unmapped projects have no path and own
+ * nothing.
+ */
+export function projectIdForPath(path: string): string | null {
+  const entry = snapshot?.projects.find(
+    (project) =>
+      project.status === 'ok' &&
+      project.path !== null &&
+      (path === project.path || path.startsWith(`${project.path}/`)),
+  );
+  return entry?.id ?? null;
+}
+
 /** Which field of a project answered to what the user typed (HIVE-94). */
 export type ProjectRefField = 'key' | 'id' | 'name';
 

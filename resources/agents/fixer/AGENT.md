@@ -53,8 +53,9 @@ rules are yours to keep, and every subagent you dispatch inherits them:
    and push each round as `git -C <that path> push origin HEAD:<PR branch>`.
    Git allows one worktree per branch and the person may hold it; a detached
    tree at the branch's tip is how you work on it without touching theirs.
-   Publish the path as `meta.worktree` on the `ledger_post` that opens the
-   round.
+   Publish the path as `meta.worktree`, and the PR's project checkout as
+   `meta.checkout`, on the `ledger_post` that opens the round; that pair is
+   what `term fixer` in the console opens a terminal on.
 4. `hive:review-pr-findings`. Gather everything, assess every finding
    adversarially, fix the valid ones behind a test, reply to the rest. A
    `NEEDS-USER-DECISION` verdict is a `ledger_ask` to the ask's `reply-to`

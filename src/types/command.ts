@@ -60,6 +60,8 @@ export type ParsedCommand =
    * `project` is a raw reference like `spawn`'s — a key, an id or a quoted
    * name — and absent means "beside the selected session": the console is the
    * stage, so the fleet table's caret is the only thing on screen it can mean.
+   * An agent's name is accepted in the same slot (HIVE-172); the store, not the
+   * parser, tells them apart, because only it knows which agents exist.
    */
   | { kind: 'term'; raw: string; project?: string }
   /**
@@ -132,7 +134,7 @@ export const USAGE: Record<UsageCommand, string> = {
   open: 'usage: open <session>',
   send: 'usage: send <session> <message>',
   spawn: 'usage: spawn <project> <task>',
-  term: 'usage: term [<project>] — or select a session first',
+  term: 'usage: term [<project>|<agent>] — or select a session first',
   ledger: 'usage: ledger [--open] [--events] [--from <party>] [--to <party>] [-n <count>]',
   ask: 'usage: ask <agent> <message>',
   answer: 'usage: answer <id> <text>',

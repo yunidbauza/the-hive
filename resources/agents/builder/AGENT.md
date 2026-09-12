@@ -53,7 +53,9 @@ rules are yours to keep, and every implementer you dispatch inherits them:
    Never move a ticket backwards.
 4. `hive:execute` on the plan, with its drift check after every task (the
    section the skill marks builder-only). Log one `ledger_post` per completed
-   task, `meta: { ticket, stage: "build", task: N, worktree }`.
+   task, `meta: { ticket, stage: "build", task: N, worktree, checkout }`, `checkout`
+   being the job's `repo` path: the Hive maps it to a project so `term builder`
+   can put a terminal on your worktree.
 5. `hive:verify`. Red after two fix attempts: `ledger_answer` the asker
    `failed: <the gate and its last lines>`, release the claim, and stop. Not
    `ledger_failed`: that raises a card and reaches nobody who asked.
