@@ -17,7 +17,6 @@ import { useProjectConfig } from '@hooks/use-project-config';
 import { useSkills } from '@hooks/use-skills';
 import { setSessionPluginInConfig } from '@lib/project-config';
 import { cn } from '@lib/utils';
-import { DEFAULT_DISABLED_SESSION_PLUGINS } from '@shared/config-contract';
 
 /**
  * How many off plugins the row names before it counts them instead, and the
@@ -148,11 +147,6 @@ export function SessionPluginsRow() {
                 <Switch
                   key={name}
                   label={name}
-                  description={
-                    DEFAULT_DISABLED_SESSION_PLUGINS.includes(name)
-                      ? "Off by default: its skills duplicate the Hive's."
-                      : undefined
-                  }
                   checked={!disabled.includes(name)}
                   onCheckedChange={(on) => void setSessionPluginInConfig({ plugin: name, off: !on })}
                 />
