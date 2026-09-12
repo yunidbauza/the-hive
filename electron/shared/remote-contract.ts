@@ -53,6 +53,7 @@ import { isThisMachineAction } from './notification-contract';
  */
 /**
  * 3 → 4 (HIVE-166): `CH` gained `config:set-project-auto-merge`.
+ * 4 → 5 (HIVE-176): `CH` gained `config:set-session-plugin`.
  */
 export const REMOTE_PROTOCOL_VERSION = 5;
 
@@ -128,7 +129,7 @@ export const FRAME_KIND = {
   [CH.configReorderProjects]: 'call',
   [CH.configSetProjectKey]: 'call',
   [CH.configSetProjectAutoMerge]: 'call',
-  [CH.configSetDisabledSessionPlugins]: 'call',
+  [CH.configSetSessionPlugin]: 'call',
   [CH.configSetRuntime]: 'call',
   [CH.configSetProjectRuntime]: 'call',
   [CH.configDiagnoseCommand]: 'call',
@@ -396,11 +397,12 @@ export const CHANNEL_AUTHORIZATION = {
   */
   [CH.configSetProjectAutoMerge]: 'execute',
   /*
-    HIVE-176. A list of plugin names that end up as `enabledPlugins: false`
-    in the settings file sessions start with: it can only turn a plugin off
-    for Hive sessions, never on, and names nothing but plugins.
+    HIVE-176. It only ever turns a plugin off for Hive sessions, never on, but
+    a plugin carries hooks, and a user's guard plugin with a `PreToolUse` deny
+    is exactly what switching one off would silently remove. That changes what
+    runs in every session, the reading that put the auto-merge consent here.
   */
-  [CH.configSetDisabledSessionPlugins]: 'mutate',
+  [CH.configSetSessionPlugin]: 'execute',
   [CH.configSetRuntime]: 'execute',
   [CH.configSetProjectRuntime]: 'execute',
   [CH.configDiagnoseCommand]: 'execute',

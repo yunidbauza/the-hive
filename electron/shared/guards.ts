@@ -47,7 +47,7 @@ import type {
   SetJiraRequest,
   SetJiraTokenRequest,
   SetNotificationsRequest,
-  SetDisabledSessionPluginsRequest,
+  SetSessionPluginRequest,
   SetProjectAutoMergeRequest,
   SetProjectKeyRequest,
   SetProjectRuntimeRequest,
@@ -731,30 +731,20 @@ export function parseSetProjectKeyRequest(input: unknown): SetProjectKeyRequest 
   };
 }
 
-/** The most plugin names one request may carry (HIVE-176). */
-const MAX_SESSION_PLUGINS = 64;
-
 /**
- * Payload guard for `config:set-disabled-session-plugins` (HIVE-176). Names
- * only, the registry's own alphabet, deduplicated: these land in a file the
- * user hand-edits and become `enabledPlugins` keys in every session's settings.
+ * Payload guard for `config:set-session-plugin` (HIVE-176). A name in the
+ * registry's own alphabet, and never `hive`: the app's own plugin arrives by
+ * `--plugin-dir` and is not the user's to switch off here.
  */
-export function parseSetDisabledSessionPluginsRequest(
-  input: unknown,
-): SetDisabledSessionPluginsRequest {
-  const raw = assertShape(input, ['plugins'], 'setDisabledSessionPlugins');
-  if (!Array.isArray(raw.plugins)) {
-    throw new TypeError('setDisabledSessionPlugins.plugins must be an array');
+export function parseSetSessionPluginRequest(input: unknown): SetSessionPluginRequest {
+  const raw = assertShape(input, ['plugin', 'off'], 'setSessionPlugin');
+  if (typeof raw.plugin !== 'string' || !SESSION_PLUGIN_NAME.test(raw.plugin) || raw.plugin === 'hive') {
+    throw new TypeError('setSessionPlugin.plugin: expected a plugin name');
   }
-  if (raw.plugins.length > MAX_SESSION_PLUGINS) {
-    throw new TypeError('setDisabledSessionPlugins.plugins: too many');
+  if (typeof raw.off !== 'boolean') {
+    throw new TypeError('setSessionPlugin.off must be a boolean');
   }
-  for (const name of raw.plugins) {
-    if (typeof name !== 'string' || !SESSION_PLUGIN_NAME.test(name)) {
-      throw new TypeError('setDisabledSessionPlugins.plugins: expected plugin names');
-    }
-  }
-  return { plugins: [...new Set(raw.plugins as string[])] };
+  return { plugin: raw.plugin, off: raw.off };
 }
 
 /** Payload guard for `config:set-project-auto-merge` (HIVE-166). */

@@ -201,7 +201,7 @@ describe('remote contract: authorization', () => {
     const tally = { read: 0, mutate: 0, execute: 0 };
     for (const authz of Object.values(CHANNEL_AUTHORIZATION)) tally[authz] += 1;
 
-    expect(tally).toEqual({ read: 57, mutate: 45, execute: 34 });
+    expect(tally).toEqual({ read: 57, mutate: 44, execute: 35 });
   });
 
   /**

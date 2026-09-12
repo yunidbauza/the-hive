@@ -17,7 +17,7 @@ import type {
   RepointProjectRequest,
   SetJiraRequest,
   SetNotificationsRequest,
-  SetDisabledSessionPluginsRequest,
+  SetSessionPluginRequest,
   SetProjectAutoMergeRequest,
   SetProjectKeyRequest,
   SetProjectRuntimeRequest,
@@ -806,9 +806,9 @@ export const setProjectKeyInConfig = (
 ): Promise<void> => mutate((bridge) => bridge.config.setProjectKey(request));
 
 /** Set the plugins a Hive session does not load (HIVE-176). */
-export const setDisabledSessionPluginsInConfig = (
-  request: SetDisabledSessionPluginsRequest,
-): Promise<void> => mutate((bridge) => bridge.config.setDisabledSessionPlugins(request));
+export const setSessionPluginInConfig = (
+  request: SetSessionPluginRequest,
+): Promise<void> => mutate((bridge) => bridge.config.setSessionPlugin(request));
 
 /** Turn unattended merging on or off for one project (HIVE-166). */
 export const setProjectAutoMergeInConfig = (

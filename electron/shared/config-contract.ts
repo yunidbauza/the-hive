@@ -2485,7 +2485,13 @@ export interface ProjectsDirectory {
   projects: ProjectsDirectoryEntry[];
 }
 
-/** `config:set-disabled-session-plugins` (HIVE-176): the whole list, as the switches show it. */
-export interface SetDisabledSessionPluginsRequest {
-  plugins: string[];
+/**
+ * `config:set-session-plugin` (HIVE-176): one switch, one plugin. Main
+ * computes the list from the file as it stands, so two quick clicks cannot
+ * each send a list built from the same stale snapshot.
+ */
+export interface SetSessionPluginRequest {
+  plugin: string;
+  /** `true` keeps the plugin out of Hive sessions; `false` lets it load. */
+  off: boolean;
 }

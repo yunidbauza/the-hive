@@ -367,6 +367,11 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
   let settingsPath: string | null = null;
   /** The last successful session-settings write, replayable (HIVE-176). */
   let rewrite: (() => Promise<void>) | null = null;
+  /**
+   * Rewrites run one after another, so a slow one cannot land after a newer
+   * one and put an older list back (HIVE-176).
+   */
+  let rewriting: Promise<void> = Promise.resolve();
   let agentSettingsPath: string | null = null;
   /**
    * The receiver's `boundHost`, captured independently of `receiver` itself
@@ -406,14 +411,17 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       return settingsPath;
     },
 
-    async rewriteSettings() {
-      try {
-        await rewrite?.();
-      } catch (cause) {
-        // The file from the last write still stands; say so rather than throw
-        // into a Settings click that already saved the config.
-        console.info(`[hive] session settings could not be rewritten (${String(cause)})`);
-      }
+    rewriteSettings() {
+      rewriting = rewriting.then(async () => {
+        try {
+          await rewrite?.();
+        } catch (cause) {
+          // The file from the last write still stands; say so rather than
+          // throw into a Settings click or a spawn that should go ahead.
+          console.info(`[hive] session settings could not be rewritten (${String(cause)})`);
+        }
+      });
+      return rewriting;
     },
 
     agentSettingsPathFor() {

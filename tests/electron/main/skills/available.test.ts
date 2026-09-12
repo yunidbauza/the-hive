@@ -292,13 +292,16 @@ describe('the plugins a Hive session switches off (HIVE-176)', () => {
     expect(sessionPluginOverrides('not json', ['workstream'])).toEqual({});
   });
 
-  it('lists installed plugin names, sorted', () => {
+  it('lists installed plugin names a switch can act on, sorted', () => {
     expect(installedPluginNames(REGISTRY)).toEqual([
       'jira-writer',
       'superpowers',
       'workstream',
       'workstream-extras',
     ]);
+    // The app's own name, and one the guard would refuse, are never offered.
+    const odd = JSON.stringify({ plugins: { 'hive@local': [], 'bad name@x': [], 'ok@x': [] } });
+    expect(installedPluginNames(odd)).toEqual(['ok']);
   });
 
   it('reads both from the registry file, and answers empty when there is none', async () => {

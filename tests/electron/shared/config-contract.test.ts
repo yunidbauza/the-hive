@@ -13,6 +13,7 @@ import {
   isOrigin,
   isRemoteTarget,
   isTailnetHost,
+  DEFAULT_DISABLED_SESSION_PLUGINS,
 } from '../../../electron/shared/config-contract';
 
 describe('the receiver bind block', () => {
@@ -254,5 +255,13 @@ describe('isOrigin', () => {
     ]) {
       expect(isOrigin(value)).toBe(false);
     }
+  });
+});
+
+describe('the plugins a Hive session does not load (HIVE-176)', () => {
+  it('defaults to the two whose skills the Hive replaces, as a copy', () => {
+    const first = emptySnapshot('/home/dev/.hive/config.json');
+    expect(first.disabledSessionPlugins).toEqual(['workstream', 'superpowers']);
+    expect(first.disabledSessionPlugins).not.toBe(DEFAULT_DISABLED_SESSION_PLUGINS);
   });
 });

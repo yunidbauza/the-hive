@@ -1534,20 +1534,36 @@ describe('project keys', () => {
       expect(bad.errors.join('\n')).toMatch(/disabledSessionPlugins: expected an array of plugin names/);
     });
 
-    it('writes the whole list, an empty one included, and touches nothing else', async () => {
+    it('computes the list from the file, starting from the default, and touches nothing else', async () => {
       const path = writeConfig({ version: 2, projects: [], sessionMetrics: false });
       const module = await mutable();
 
-      let snapshot = module.setDisabledSessionPlugins({ plugins: ['superpowers'] });
-      expect(snapshot.disabledSessionPlugins).toEqual(['superpowers']);
+      let snapshot = module.setSessionPlugin({ plugin: 'jira-writer', off: true });
+      expect(snapshot.disabledSessionPlugins).toEqual(['jira-writer', 'superpowers', 'workstream']);
       expect(JSON.parse(readFileSync(path, 'utf8'))).toMatchObject({
-        disabledSessionPlugins: ['superpowers'],
+        disabledSessionPlugins: ['jira-writer', 'superpowers', 'workstream'],
         sessionMetrics: false,
       });
 
-      snapshot = module.setDisabledSessionPlugins({ plugins: [] });
+      // Two quick clicks, each from its own stale screen, both land.
+      module.setSessionPlugin({ plugin: 'workstream', off: false });
+      snapshot = module.setSessionPlugin({ plugin: 'superpowers', off: false });
+      expect(snapshot.disabledSessionPlugins).toEqual(['jira-writer']);
+
+      snapshot = module.setSessionPlugin({ plugin: 'jira-writer', off: false });
       expect(snapshot.disabledSessionPlugins).toEqual([]);
+      // An emptied list is a decision, kept as [] rather than deleted.
       expect(JSON.parse(readFileSync(path, 'utf8')).disabledSessionPlugins).toEqual([]);
+    });
+
+    it('answers the default from the write path too, for a file that never named the key', async () => {
+      writeConfig({ version: 2, projects: [] });
+      const module = await mutable();
+
+      expect(module.setRuntime({ importLoginEnv: false }).disabledSessionPlugins).toEqual([
+        'workstream',
+        'superpowers',
+      ]);
     });
   });
 

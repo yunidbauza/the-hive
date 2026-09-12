@@ -577,7 +577,7 @@ function optionalPluginNames(
     !Array.isArray(value) ||
     !value.every((name) => typeof name === 'string' && SESSION_PLUGIN_NAME.test(name))
   ) {
-    errors.push(`${label}.disabledSessionPlugins: expected an array of plugin names — using the default`);
+    errors.push(`${label}.disabledSessionPlugins: expected an array of plugin names, using the default`);
     return null;
   }
   return [...new Set(value as string[])];
@@ -1391,7 +1391,9 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       shell,
       claudeCommand,
       subscriptionAuth,
-      sessionMetrics,      disabledSessionPlugins,      importLoginEnv,
+      sessionMetrics,
+      disabledSessionPlugins,
+      importLoginEnv,
       env,
       notifications,
       jira,
@@ -1411,7 +1413,9 @@ export function parseConfig(text: string, label: string): ParsedConfig {
       shell,
       claudeCommand,
       subscriptionAuth,
-      sessionMetrics,      disabledSessionPlugins,      importLoginEnv,
+      sessionMetrics,
+      disabledSessionPlugins,
+      importLoginEnv,
       env,
       notifications,
       jira,
@@ -1527,7 +1531,9 @@ export function parseConfig(text: string, label: string): ParsedConfig {
     shell,
     claudeCommand,
     subscriptionAuth,
-    sessionMetrics,    disabledSessionPlugins,    importLoginEnv,
+    sessionMetrics,
+    disabledSessionPlugins,
+    importLoginEnv,
     env,
     notifications,
     jira,

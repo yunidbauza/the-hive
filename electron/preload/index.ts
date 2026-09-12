@@ -41,7 +41,7 @@ import type {
   SetJiraRequest,
   SetJiraTokenRequest,
   SetNotificationsRequest,
-  SetDisabledSessionPluginsRequest,
+  SetSessionPluginRequest,
   SetProjectAutoMergeRequest,
   SetProjectKeyRequest,
   SetProjectRuntimeRequest,
@@ -271,9 +271,9 @@ const bridge: HiveBridge = {
     setProjectAutoMerge: (request: SetProjectAutoMergeRequest): Promise<ConfigSnapshot> =>
       ipcRenderer.invoke(CH.configSetProjectAutoMerge, request),
     // HIVE-176. The whole list, as the Settings switches show it.
-    setDisabledSessionPlugins: (
-      request: SetDisabledSessionPluginsRequest,
-    ): Promise<ConfigSnapshot> => ipcRenderer.invoke(CH.configSetDisabledSessionPlugins, request),
+    setSessionPlugin: (
+      request: SetSessionPluginRequest,
+    ): Promise<ConfigSnapshot> => ipcRenderer.invoke(CH.configSetSessionPlugin, request),
     reorderProjects: (
       request: ReorderProjectsRequest,
     ): Promise<ConfigSnapshot> =>

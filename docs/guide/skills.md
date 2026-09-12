@@ -72,7 +72,9 @@ off under **Settings › Skills › Plugins in Hive sessions**. `workstream` and
 off by default, because their skills overlap the Hive's own: `workstream:work-on` beside
 `hive:work-on` makes "work on HIVE-123" a coin toss. The switch only affects sessions the app
 starts, from the next one on; `claude` started anywhere else still loads every plugin you
-enabled. Agents load none of your plugins either way.
+enabled. A hand edit of `disabledSessionPlugins` or a plugin installed while the app is open
+reaches the next session too: the settings file is rewritten before every spawn. Agents load
+none of your plugins either way.
 
 ## Skills the app ships
 

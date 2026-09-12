@@ -1,6 +1,8 @@
 import { access, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { SESSION_PLUGIN_NAME } from '@shared/config-contract';
+
 import { isSkillFolder } from './read';
 
 /**
@@ -188,6 +190,27 @@ async function pluginSkills(file: string): Promise<string[]> {
  * agent could be called `graphify`, refused on account of a folder The Hive
  * neither manages nor mentions.
  */
+export interface AvailableSkills {
+  all: string[];
+  hive: string[];
+}
+
+/** Every name, deduplicated and sorted so the set has one representation. */
+export async function readAvailableSkillNames(
+  roots: SkillRoots,
+): Promise<AvailableSkills> {
+  const [hive, user, plugins] = await Promise.all([
+    skillsUnder(roots.hive),
+    skillsUnder(roots.user),
+    pluginSkills(roots.installedPlugins),
+  ]);
+
+  return {
+    all: [...new Set([...hive, ...user, ...plugins])].sort(),
+    hive: [...hive].sort(),
+  };
+}
+
 /** Every key in the registry, `name@marketplace` as installed (HIVE-176). */
 function registryKeys(json: string): string[] {
   try {
@@ -198,9 +221,17 @@ function registryKeys(json: string): string[] {
   }
 }
 
-/** Installed plugin names, the part before `@`, sorted (HIVE-176). */
+/**
+ * Installed plugin names a switch can act on, sorted (HIVE-176): the part
+ * before `@` of the same keys {@link sessionPluginOverrides} reads, so a
+ * listed switch always has a key behind it. A name outside the guard's
+ * alphabet, or `hive`, is left out: it could never be switched off.
+ */
 export function installedPluginNames(json: string): string[] {
-  return [...installPaths(json).keys()].sort();
+  const names = registryKeys(json)
+    .map((key) => key.split('@')[0] ?? '')
+    .filter((name) => SESSION_PLUGIN_NAME.test(name) && name !== 'hive');
+  return [...new Set(names)].sort();
 }
 
 /**
@@ -242,25 +273,4 @@ export async function readInstalledPluginNames(file: string): Promise<string[]> 
   } catch {
     return [];
   }
-}
-
-export interface AvailableSkills {
-  all: string[];
-  hive: string[];
-}
-
-/** Every name, deduplicated and sorted so the set has one representation. */
-export async function readAvailableSkillNames(
-  roots: SkillRoots,
-): Promise<AvailableSkills> {
-  const [hive, user, plugins] = await Promise.all([
-    skillsUnder(roots.hive),
-    skillsUnder(roots.user),
-    pluginSkills(roots.installedPlugins),
-  ]);
-
-  return {
-    all: [...new Set([...hive, ...user, ...plugins])].sort(),
-    hive: [...hive].sort(),
-  };
 }

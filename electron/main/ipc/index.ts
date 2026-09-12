@@ -72,7 +72,7 @@ import {
   parseLedgerReadQuery,
   parseRemoveProjectRequest,
   parseRenameProjectRequest,
-  parseSetDisabledSessionPluginsRequest,
+  parseSetSessionPluginRequest,
   parseSetProjectAutoMergeRequest,
   parseSetProjectKeyRequest,
   parseReorderProjectsRequest,
@@ -193,7 +193,7 @@ import {
   resetConfig,
   setJira,
   setNotifications,
-  setDisabledSessionPlugins,
+  setSessionPlugin,
   setProjectAutoMerge,
   setProjectKey,
   setProjectRuntime,
@@ -2198,7 +2198,8 @@ export function registerIpcHandlers(
     userDataPath: app.getPath('userData'),
     // Read per call, so a config reload is picked up (HIVE-79).
     sessionMetrics: () => getConfig().sessionMetrics,
-    // HIVE-176. Resolved against the plugin registry at every write.
+    // HIVE-176. Resolved against the plugin registry at every write, and the
+    // file is rewritten before every spawn, so an install is picked up too.
     enabledPlugins: () =>
       readSessionPluginOverrides(installedPluginsFile(), getConfig().disabledSessionPlugins),
     // The same, for the hostname a container reaches this machine by (HIVE-132).
@@ -3397,6 +3398,8 @@ export function registerIpcHandlers(
       connects nothing until some unrelated agent edit happens to sync.
     */
     slackBridge?.sync();
+    // HIVE-176. `disabledSessionPlugins` is hand-editable too.
+    void hooks.rewriteSettings();
 
     return snapshot;
   });
@@ -3506,9 +3509,9 @@ export function registerIpcHandlers(
     the next session started is the first to see the change.
   */
   handle(
-    CH.configSetDisabledSessionPlugins,
+    CH.configSetSessionPlugin,
     async (_event, payload): Promise<ConfigSnapshot> => {
-      const snapshot = setDisabledSessionPlugins(parseSetDisabledSessionPluginsRequest(payload));
+      const snapshot = setSessionPlugin(parseSetSessionPluginRequest(payload));
       await hooks.rewriteSettings();
       return snapshot;
     },
@@ -4913,6 +4916,10 @@ export function registerIpcHandlers(
      * than any protocol that would tell us the tree changed.
      */
     await skills?.sync();
+    // HIVE-176. What the config and the plugin registry say now, before this
+    // session reads the settings file: a hand edit or a plugin installed since
+    // the last write both land here.
+    await hooks.rewriteSettings();
     /**
      * Wait for the MCP config write before a session can be spawned (HIVE-112).
      *
@@ -4994,6 +5001,10 @@ export function registerIpcHandlers(
     // And the same regeneration, for the same reason: a restart builds a fresh
     // command line, so it must see the skills the user has now (HIVE-96).
     await skills?.sync();
+    // HIVE-176. What the config and the plugin registry say now, before this
+    // session reads the settings file: a hand edit or a plugin installed since
+    // the last write both land here.
+    await hooks.rewriteSettings();
     // Same wait as `ptySpawn` above, for the same reason: a restart's `spawn()`
     // reads `mcp.configPathFor()` synchronously too (HIVE-112).
     await mcp.start();

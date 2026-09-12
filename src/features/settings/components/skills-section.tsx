@@ -836,6 +836,8 @@ export function SkillsSection() {
           )}
         </div>
 
+        <SessionPluginsGroup />
+
         <p className="mt-auto pt-2 text-[11px] text-subtle">
           Skills folder: {snapshot.skillsRoot}
         </p>

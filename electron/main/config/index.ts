@@ -27,7 +27,7 @@ import {
   type RepointProjectRequest,
   type SetJiraRequest,
   type SetNotificationsRequest,
-  type SetDisabledSessionPluginsRequest,
+  type SetSessionPluginRequest,
   type SetProjectAutoMergeRequest,
   type SetProjectKeyRequest,
   type SetProjectRuntimeRequest,
@@ -626,17 +626,26 @@ export function setProjectAutoMerge(request: SetProjectAutoMergeRequest): Config
 }
 
 /**
- * Which plugins a Hive session does not load (HIVE-176).
+ * Switch one plugin in or out of Hive sessions (HIVE-176).
  *
- * The whole list is written, never merged: the Settings switches send exactly
- * what they show. An explicit `[]` is kept rather than deleted, so a user who
- * turned everything back on is not handed the default list again.
+ * The list is read from the file being written, not from the caller: absent
+ * or malformed there means the default list, the same reading `loadConfig`
+ * makes. An emptied list is written as `[]` rather than deleted, so a user
+ * who turned everything back on is not handed the default list again.
  */
-export function setDisabledSessionPlugins(
-  request: SetDisabledSessionPluginsRequest,
-): ConfigSnapshot {
+export function setSessionPlugin(request: SetSessionPluginRequest): ConfigSnapshot {
   return commit(
-    writeConfig((draft) => ({ ...draft, disabledSessionPlugins: request.plugins })),
+    writeConfig((draft) => {
+      const stated = draft.disabledSessionPlugins;
+      const current =
+        Array.isArray(stated) && stated.every((name) => typeof name === 'string')
+          ? (stated as string[])
+          : [...DEFAULT_DISABLED_SESSION_PLUGINS];
+      const next = request.off
+        ? [...new Set([...current, request.plugin])].sort()
+        : current.filter((name) => name !== request.plugin);
+      return { ...draft, disabledSessionPlugins: next };
+    }),
   );
 }
 

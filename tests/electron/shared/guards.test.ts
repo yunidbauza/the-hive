@@ -35,7 +35,7 @@ import {
   parseWriteRequest,
   parsePrLookup,
   parseJiraTransitionByName,
-  parseSetDisabledSessionPluginsRequest,
+  parseSetSessionPluginRequest,
 } from '../../../electron/shared/guards';
 
 const validSpawn = { sessionId: 'sess-1', projectId: 'proj-1', cols: 80, rows: 24 };
@@ -1911,26 +1911,25 @@ describe('parseJiraTransitionByName (HIVE-174)', () => {
   });
 });
 
-describe('parseSetDisabledSessionPluginsRequest (HIVE-176)', () => {
-  it('accepts plugin names, deduplicated, and an empty list', () => {
-    expect(parseSetDisabledSessionPluginsRequest({ plugins: ['workstream', 'jira-writer', 'workstream'] })).toEqual({
-      plugins: ['workstream', 'jira-writer'],
-    });
-    expect(parseSetDisabledSessionPluginsRequest({ plugins: [] })).toEqual({ plugins: [] });
+describe('parseSetSessionPluginRequest (HIVE-176)', () => {
+  it('accepts one registry-shaped name and a boolean', () => {
+    expect(parseSetSessionPluginRequest({ plugin: 'jira-writer', off: true })).toEqual({ plugin: 'jira-writer', off: true });
+    expect(parseSetSessionPluginRequest({ plugin: 'ui.ux_pro-max', off: false })).toEqual({ plugin: 'ui.ux_pro-max', off: false });
   });
 
-  it('refuses anything but an array of registry-shaped names', () => {
+  it('refuses anything else, and the app\'s own plugin', () => {
     for (const bad of [
       {},
-      { plugins: 'workstream' },
-      { plugins: ['work stream'] },
-      { plugins: ['workstream@claude-kit'] },
-      { plugins: ['../x'] },
-      { plugins: [1] },
-      { plugins: Array.from({ length: 65 }, (_, i) => `p${i}`) },
-      { plugins: [], extra: true },
+      { plugin: 'workstream' },
+      { plugin: 'work stream', off: true },
+      { plugin: 'workstream@claude-kit', off: true },
+      { plugin: '../x', off: true },
+      { plugin: 1, off: true },
+      { plugin: 'hive', off: true },
+      { plugin: 'workstream', off: 'yes' },
+      { plugin: 'workstream', off: true, extra: 1 },
     ]) {
-      expect(() => parseSetDisabledSessionPluginsRequest(bad)).toThrow(/setDisabledSessionPlugins/);
+      expect(() => parseSetSessionPluginRequest(bad)).toThrow(/setSessionPlugin/);
     }
   });
 });

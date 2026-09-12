@@ -8,14 +8,14 @@ import type { SkillsSnapshot } from '@shared/skills-contract';
 import { SessionPluginsGroup } from '@features/settings/components/session-plugins-group';
 import { resetProjectConfig, setProjectConfigForTest } from '@lib/project-config';
 
-const setDisabledSessionPluginsInConfig = vi.fn();
+const setSessionPluginInConfig = vi.fn();
 let skills: SkillsSnapshot | null = null;
 
 vi.mock('@/lib/project-config', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/project-config')>();
   return {
     ...actual,
-    setDisabledSessionPluginsInConfig: (request: unknown) => setDisabledSessionPluginsInConfig(request),
+    setSessionPluginInConfig: (request: unknown) => setSessionPluginInConfig(request),
   };
 });
 
@@ -29,7 +29,7 @@ const withPlugins = (plugins: string[] | undefined): SkillsSnapshot => ({
 });
 
 beforeEach(() => {
-  setDisabledSessionPluginsInConfig.mockReset();
+  setSessionPluginInConfig.mockReset();
   setProjectConfigForTest({ ...emptySnapshot('/tmp/config.json'), disabledSessionPlugins: ['workstream'] });
 });
 
@@ -47,15 +47,15 @@ describe('SessionPluginsGroup (HIVE-176)', () => {
     expect(screen.getByRole('switch', { name: 'workstream' })).toHaveAttribute('aria-checked', 'false');
   });
 
-  it('writes the whole list when a switch moves, both ways', async () => {
+  it('sends the one plugin its switch names, both ways', async () => {
     skills = withPlugins(['jira-writer', 'workstream']);
     render(<SessionPluginsGroup />);
 
     await userEvent.click(screen.getByRole('switch', { name: 'jira-writer' }));
-    expect(setDisabledSessionPluginsInConfig).toHaveBeenLastCalledWith({ plugins: ['jira-writer', 'workstream'] });
+    expect(setSessionPluginInConfig).toHaveBeenLastCalledWith({ plugin: 'jira-writer', off: true });
 
     await userEvent.click(screen.getByRole('switch', { name: 'workstream' }));
-    expect(setDisabledSessionPluginsInConfig).toHaveBeenLastCalledWith({ plugins: [] });
+    expect(setSessionPluginInConfig).toHaveBeenLastCalledWith({ plugin: 'workstream', off: false });
   });
 
   it('says so when no plugin is installed, and renders nothing without a registry', () => {

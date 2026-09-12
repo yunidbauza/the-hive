@@ -1034,11 +1034,11 @@ describe('rewriteSettings (HIVE-176)', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('writes the plugins switched off at start, and the new list after a rewrite', async () => {
+  it('writes the plugins switched off at start, and the new list after a rewrite, both ways', async () => {
     let off: Record<string, boolean> = { 'workstream@claude-kit': false };
     runtime = createHookRuntime({
       userDataPath: dir,
-      sessionMetrics: () => false,
+      sessionMetrics: () => true,
       ledger,
       enabledPlugins: () => Promise.resolve(off),
     });
@@ -1046,10 +1046,42 @@ describe('rewriteSettings (HIVE-176)', () => {
     await runtime.rewriteSettings(); // before start: nothing to rewrite, and no throw
     await runtime.start(noopHandlers);
     const path = runtime.settingsPathFor()!;
-    expect(JSON.parse(await readFile(path, 'utf8')).enabledPlugins).toEqual({ 'workstream@claude-kit': false });
+    const first = JSON.parse(await readFile(path, 'utf8'));
+    expect(first.enabledPlugins).toEqual({ 'workstream@claude-kit': false });
 
     off = {};
     await runtime.rewriteSettings();
     expect(JSON.parse(await readFile(path, 'utf8'))).not.toHaveProperty('enabledPlugins');
+
+    off = { 'superpowers@claude-plugins-official': false };
+    await runtime.rewriteSettings();
+    const again = JSON.parse(await readFile(path, 'utf8'));
+    expect(again.enabledPlugins).toEqual({ 'superpowers@claude-plugins-official': false });
+    // The rewrite is the start write replayed: the status line and the hooks stay.
+    expect(again.statusLine).toEqual(first.statusLine);
+    expect(again.statusLine).toBeDefined();
+    expect(again.hooks).toEqual(first.hooks);
+  });
+
+  it('runs rewrites one after another, so the newest list is the one on disk', async () => {
+    const lists = [{ 'a@m': false }, { 'b@m': false }];
+    let calls = 0;
+    runtime = createHookRuntime({
+      userDataPath: dir,
+      sessionMetrics: () => false,
+      ledger,
+      // The first call after start is slow; a second, faster one was asked for later.
+      enabledPlugins: async () => {
+        calls += 1;
+        if (calls === 2) await new Promise((resolve) => setTimeout(resolve, 30));
+        return calls === 1 ? {} : (lists[calls - 2] ?? {});
+      },
+    });
+    await runtime.start(noopHandlers);
+
+    await Promise.all([runtime.rewriteSettings(), runtime.rewriteSettings()]);
+
+    const written = JSON.parse(await readFile(runtime.settingsPathFor()!, 'utf8'));
+    expect(written.enabledPlugins).toEqual({ 'b@m': false });
   });
 });
