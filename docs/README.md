@@ -22,6 +22,7 @@ New here? Start with [Getting started](guide/getting-started.md), then
 | Page | What you will learn |
 | --- | --- |
 | [Sessions and terminals](guide/sessions.md) | Start, watch, finish and resume sessions; plain terminals |
+| [The plan panel](guide/plan-panel.md) | The task rail beside a session's terminal, where its tasks come from, and the row count |
 | [The overmind console](guide/overmind-console.md) | The fleet table and every console command, with examples |
 | [The inbox](guide/inbox.md) | Why a card appears, how to answer it, and how to quiet it |
 | [Jira and pull requests](guide/work-and-prs.md) | Connect Jira, start from a ticket, follow your PRs |

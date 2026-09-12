@@ -52,7 +52,9 @@ Create and edit [agents](agents.md) with a form or as source.
 
 ## Appearance
 
-Mode, [themes](themes.md), terminal font and scrollback, team name, density.
+Mode, [themes](themes.md), terminal font and scrollback, the
+[plan panel](plan-panel.md) beside the terminal (**Show plan panel**; off keeps
+the count on the session row), team name, density.
 
 ## Editor
 
