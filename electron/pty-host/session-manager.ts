@@ -637,6 +637,24 @@ export function createSessionManager(
       session.pty.resize(nextCols, nextRows);
     },
 
+    refresh(sessionId) {
+      const session = sessions.get(sessionId);
+      if (!session || session.status !== 'live') return;
+
+      /**
+       * One row off and straight back: the window-drag fix, done for the user.
+       *
+       * Claude Code can take a zero size at startup or across a sleep, fall
+       * back to 80×24, and stay there until the next SIGWINCH. The kernel only
+       * raises SIGWINCH when the size really changes, so re-sending the same
+       * size would reach nobody. Rows rather than columns because a row off
+       * the bottom reflows nothing.
+       */
+      const { cols, rows } = session;
+      session.pty.resize(cols, rows > 1 ? rows - 1 : rows + 1);
+      session.pty.resize(cols, rows);
+    },
+
     kill(sessionId, sig = 'SIGHUP') {
       const session = sessions.get(sessionId);
       if (!session || session.status !== 'live') return;

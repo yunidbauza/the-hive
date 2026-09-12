@@ -56,6 +56,7 @@ function recordingSessions() {
     spawn: vi.fn(),
     write: vi.fn(),
     resize: vi.fn(),
+    refresh: vi.fn(),
     kill: vi.fn(),
     pause: vi.fn(),
     resume: vi.fn(),
@@ -98,17 +99,19 @@ describe('routing', () => {
     expect(sessions.spawn).toHaveBeenCalledWith(SPAWN, expect.any(Function));
   });
 
-  it('unpacks write, resize and kill into their operations', () => {
+  it('unpacks write, resize, refresh and kill into their operations', () => {
     const { port, send } = fakePort();
     const sessions = recordingSessions();
     createPtyHost({ port, sessions, exit: vi.fn() });
 
     send({ type: 'write', sessionId: 'a', data: 'ls\r' });
     send({ type: 'resize', sessionId: 'a', cols: 120, rows: 40 });
+    send({ type: 'refresh', sessionId: 'a' });
     send({ type: 'kill', sessionId: 'a', signal: 'SIGTERM' });
 
     expect(sessions.write).toHaveBeenCalledWith('a', 'ls\r');
     expect(sessions.resize).toHaveBeenCalledWith('a', 120, 40);
+    expect(sessions.refresh).toHaveBeenCalledWith('a');
     expect(sessions.kill).toHaveBeenCalledWith('a', 'SIGTERM');
   });
 

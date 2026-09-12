@@ -46,6 +46,27 @@ describe('resize', () => {
     await session.waitForOutput('GOT-WINCH', { timeout: 8_000 });
   });
 
+  it('a refresh delivers SIGWINCH and leaves the size where it was', async (context) => {
+    const session = await context.ready(context.open({ cols: 80, rows: 24 }));
+
+    /**
+     * The window-drag fix for a Claude Code stuck at a stale size. A same-size
+     * resize is dropped and the kernel would not signal it anyway, so the
+     * refresh has to change the size for real — and must end where it began.
+     */
+    session.send("trap 'echo GOT-WINCH' WINCH");
+    session.send(emitSentinel('TRAP-READY'));
+    await session.waitForOutput('TRAP-READY', { message: 'the trap to be installed' });
+    session.clear();
+
+    session.refresh();
+
+    await session.waitForOutput('GOT-WINCH', { timeout: 8_000 });
+    session.clear();
+    session.send('stty size');
+    await session.waitForOutput('24 80');
+  });
+
   it('a zero-size resize is dropped, and nothing crashes', async (context) => {
     const session = await context.ready(context.open({ cols: 80, rows: 24 }));
 

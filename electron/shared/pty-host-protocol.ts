@@ -56,6 +56,12 @@ export interface ResizeCommand {
   rows: number;
 }
 
+/** Raise SIGWINCH at the current size, so a child with a stale size redraws. */
+export interface RefreshCommand {
+  type: 'refresh';
+  sessionId: string;
+}
+
 export interface KillCommand {
   type: 'kill';
   sessionId: string;
@@ -88,6 +94,7 @@ export type HostCommand =
   | SpawnCommand
   | WriteCommand
   | ResizeCommand
+  | RefreshCommand
   | KillCommand
   | PauseCommand
   | ResumeCommand
