@@ -6,10 +6,12 @@ import { READY_SETTLE_MS } from '@features/sessions/hooks/use-session-boot';
 import {
   useClearSession,
   useFinishSession,
+  useHydratePlans,
   useMarkSessionReady,
   useMarkTerminalLost,
   useRemoveTerminal,
   useRenameSession,
+  useSetPlan,
   useSetSessionBranch,
   useSetSessionMetrics,
   useSetSessionStatus,
@@ -72,6 +74,8 @@ export function useSessionStatus(): void {
   const setTerminalForeground = useSetTerminalForeground();
   const markTerminalLost = useMarkTerminalLost();
   const removeTerminal = useRemoveTerminal();
+  const setPlan = useSetPlan();
+  const hydratePlans = useHydratePlans();
 
   useEffect(() => {
     // No bridge is the browser demo, where every transcript is a recording and
@@ -194,6 +198,23 @@ export function useSessionStatus(): void {
      */
     let live = true;
 
+    /**
+     * Plans (HIVE-179). Main owns every rule — which source wins, the
+     * all-done grace, the drop on every ending — so this mirrors each change
+     * and reads the whole set once on mount. Armed before the read, so a
+     * change that lands while `list()` is in flight is merged rather than
+     * lost. A failed read leaves the pushes to fill the slice in.
+     */
+    const disposePlans = bridge.plans.onChanged(({ entityId, plan }) => {
+      setPlan(entityId, plan);
+    });
+    void bridge.plans
+      .list()
+      .then(({ plans }) => {
+        if (live) hydratePlans(plans);
+      })
+      .catch(() => undefined);
+
     const disposeTicketIntent = bridge.session.onTicketIntent(
       ({ entityId, keys, source }) => {
         void (async () => {
@@ -263,6 +284,7 @@ export function useSessionStatus(): void {
       disposeMetrics();
       disposeForeground();
       disposeTerminalEnded();
+      disposePlans();
     };
   }, [
     setSessionStatus,
@@ -276,5 +298,7 @@ export function useSessionStatus(): void {
     setTerminalForeground,
     markTerminalLost,
     removeTerminal,
+    setPlan,
+    hydratePlans,
   ]);
 }

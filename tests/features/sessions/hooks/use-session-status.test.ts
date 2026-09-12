@@ -3,6 +3,7 @@ import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SessionMetricsEvent } from '@shared/metrics-contract';
+import type { PlanChangedEvent, PlansSnapshot, SessionPlan } from '@shared/plan-contract';
 import type {
   SessionBranchEvent,
   SessionClearedEvent,
@@ -42,6 +43,10 @@ let metricsListeners: ((event: SessionMetricsEvent) => void)[];
 let intentListeners: ((event: SessionTicketIntentEvent) => void)[];
 let foregroundListeners: ((event: SessionForegroundEvent) => void)[];
 let endedListeners: ((event: SessionTerminalEndedEvent) => void)[];
+/** HIVE-179: the plan pushes, and what `plans.list` answers at boot. */
+let planListeners: ((event: PlanChangedEvent) => void)[];
+let plansSnapshot: PlansSnapshot;
+let planListCalls: number;
 let disposals: number;
 /** What the hook handed to `session.note` (HIVE-87). */
 let notedTickets: SessionNoteRequest[];
@@ -145,8 +150,25 @@ function withBridge() {
         return Promise.resolve();
       },
     },
+    plans: {
+      list: () => {
+        planListCalls += 1;
+        return Promise.resolve(plansSnapshot);
+      },
+      onChanged: (callback: (event: PlanChangedEvent) => void) => {
+        planListeners.push(callback);
+        return () => {
+          disposals += 1;
+        };
+      },
+    },
   };
 }
+
+const emitPlan = (event: PlanChangedEvent) =>
+  act(() => {
+    for (const listener of planListeners) listener(event);
+  });
 
 const emit = (event: SessionStatusEvent) =>
   act(() => {
@@ -199,6 +221,9 @@ beforeEach(() => {
   intentListeners = [];
   foregroundListeners = [];
   endedListeners = [];
+  planListeners = [];
+  plansSnapshot = { plans: [] };
+  planListCalls = 0;
   notedTickets = [];
   issueCalls = [];
   issueReplies = {};
@@ -211,6 +236,55 @@ beforeEach(() => {
 afterEach(() => {
   delete (window as { hive?: unknown }).hive;
   vi.clearAllMocks();
+});
+
+/** Plans (HIVE-179): main owns the rules; the hook mirrors each change and hydrates once. */
+describe('useSessionStatus — plans', () => {
+  const plan: SessionPlan = {
+    entityId: 'hero-refresh',
+    source: 'task-tools',
+    tasks: [{ id: '1', title: 'Alpha', status: 'pending' }],
+    allDone: false,
+  };
+
+  it('mirrors a plan change, and a plan going', () => {
+    withBridge();
+    renderHook(() => useSessionStatus());
+
+    emitPlan({ entityId: 'hero-refresh', plan });
+
+    expect(useHiveStore.getState().plans['hero-refresh']).toEqual(plan);
+
+    emitPlan({ entityId: 'hero-refresh', plan: null });
+
+    expect('hero-refresh' in useHiveStore.getState().plans).toBe(false);
+  });
+
+  it('hydrates the plans once on mount', async () => {
+    plansSnapshot = { plans: [plan] };
+    withBridge();
+    renderHook(() => useSessionStatus());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(planListCalls).toBe(1);
+    expect(useHiveStore.getState().plans['hero-refresh']).toEqual(plan);
+  });
+
+  it('drops a snapshot that answers after unmount', async () => {
+    plansSnapshot = { plans: [plan] };
+    withBridge();
+    const { unmount } = renderHook(() => useSessionStatus());
+
+    unmount();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(useHiveStore.getState().plans).toEqual({});
+  });
 });
 
 describe('useSessionStatus', () => {
@@ -243,12 +317,12 @@ describe('useSessionStatus', () => {
     unmount();
 
     // Status, name (HIVE-61), cleared, finished (HIVE-93), ready (HIVE-101),
-    // branch, metrics, ticket-intent (HIVE-78), foreground and terminal-ended
-    // (terminals) — a leaked listener on any of them would keep writing to a
-    // store the unmounted shell no longer renders, the cleared one would go on
-    // minting sessions, and the finished one would go on bouncing the user
-    // back to the orchestrator.
-    expect(disposals).toBe(10);
+    // branch, metrics, ticket-intent (HIVE-78), foreground, terminal-ended
+    // (terminals) and plans (HIVE-179) — a leaked listener on any of them would
+    // keep writing to a store the unmounted shell no longer renders, the
+    // cleared one would go on minting sessions, and the finished one would go
+    // on bouncing the user back to the orchestrator.
+    expect(disposals).toBe(11);
   });
 
   it('applies a rename pushed from main', () => {
@@ -930,7 +1004,7 @@ describe('terminals', () => {
     const before = disposals;
     unmount();
     // Every subscription the hook opened, including the two new ones — the
-    // existing unmount test's count (8) plus the two added here.
-    expect(disposals - before).toBe(10);
+    // existing unmount test's count (8), the two added here, and plans (HIVE-179).
+    expect(disposals - before).toBe(11);
   });
 });

@@ -6622,6 +6622,38 @@ export const useSetSessionMetrics = () =>
 export const useSessionMetrics = (id: string | undefined) =>
   useHiveStore((state) => (id === undefined ? undefined : state.metrics[id]));
 
+/**
+ * The session's plan, or undefined (HIVE-179). Stable identity: main
+ * publishes a new object only on a change, so this re-renders only then.
+ */
+export const usePlan = (id: string | undefined) =>
+  useHiveStore((state) => (id === undefined ? undefined : state.plans[id]));
+
+/**
+ * `{ done, total }` for the session's plan, or undefined without one
+ * (HIVE-179). Derived, never stored; shallow-compared, so a change to another
+ * session's plan — or a new object with the same counts — re-renders nothing
+ * here.
+ */
+export const usePlanProgress = (id: string | undefined) =>
+  useHiveStore(
+    useShallow((state) => {
+      const plan = id === undefined ? undefined : state.plans[id];
+      return plan === undefined
+        ? undefined
+        : {
+            done: plan.tasks.filter((task) => task.status === 'completed').length,
+            total: plan.tasks.length,
+          };
+    }),
+  );
+
+/** One session's plan changed, or went (HIVE-179). */
+export const useSetPlan = () => useHiveStore((state) => state.setPlan);
+
+/** Merge the `plans:list` snapshot (HIVE-179). */
+export const useHydratePlans = () => useHiveStore((state) => state.hydratePlans);
+
 /** A confirmed ticket key the user named mid-session (HIVE-78). */
 export const useSetSessionTicket = () =>
   useHiveStore((state) => state.setSessionTicket);
