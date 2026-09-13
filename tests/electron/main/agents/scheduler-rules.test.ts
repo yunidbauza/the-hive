@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 
-import { decide, decideForEvent } from '../../../../electron/main/agents/scheduler-rules';
+import { decide, decideForEvent, laneFor, laneOfRun } from '../../../../electron/main/agents/scheduler-rules';
 import type { AgentStatus } from '../../../../electron/shared/agent-contract';
 import type { LedgerEntry } from '../../../../electron/shared/ledger-contract';
 
@@ -85,5 +85,92 @@ describe('decideForEvent (HIVE-124)', () => {
 
   it('wakes an asking agent, which is not running', () => {
     expect(decideForEvent('asking')).toBe('wake');
+  });
+});
+
+describe('laneFor (HIVE-186)', () => {
+  const at = (over: Partial<LedgerEntry>): LedgerEntry => ({
+    id: 'x', ts: 0, from: 'overmind', to: 'builder', kind: 'ask', body: 'b', ...over,
+  });
+  const started = (run: string, lane?: string): LedgerEntry =>
+    at({ id: `s-${run}`, from: 'builder', to: undefined, kind: 'event', body: 'run.started — ledger',
+         meta: { run, trigger: 'ledger', kind: 'standing', ...(lane === undefined ? {} : { lane }) } });
+
+  // thread lanes
+  it('opens a thread lane for a new ask', () => {
+    expect(laneFor('thread', at({ id: 'A' }), [at({ id: 'A' })])).toEqual({ lane: 'thread:A' });
+  });
+
+  it('routes the answer to a lane\'s own question back into that lane', () => {
+    const answer = at({ id: 'ans', from: 'overmind', to: 'builder', kind: 'answer', thread: 'Q' });
+    const log = [
+      at({ id: 'A' }),
+      started('r1', 'thread:A'),
+      at({ id: 'Q', from: 'builder', to: 'overmind', meta: { run: 'r1' } }),
+      answer,
+    ];
+    expect(laneFor('thread', answer, log)).toEqual({ lane: 'thread:A' });
+  });
+
+  it('routes the answer to a sibling lane\'s question into the sibling', () => {
+    const answer = at({ id: 'ans', from: 'overmind', to: 'builder', kind: 'answer', thread: 'QB' });
+    const log = [
+      at({ id: 'A' }), at({ id: 'B' }),
+      started('r1', 'thread:A'), started('r2', 'thread:B'),
+      at({ id: 'QB', from: 'builder', to: 'overmind', meta: { run: 'r2' } }),
+      answer,
+    ];
+    expect(laneFor('thread', answer, log)).toEqual({ lane: 'thread:B' });
+  });
+
+  it('routes a follow-up in the thread of the ask that opened a lane into that lane', () => {
+    const post = at({ id: 'p', kind: 'post', thread: 'A' });
+    const log = [at({ id: 'A' }), post];
+    expect(laneFor('thread', post, log)).toEqual({ lane: 'thread:A' });
+  });
+
+  it('routes into standing once the lane\'s opening ask has closed, but not for the closing entry itself', () => {
+    const closing = at({ id: 'done', kind: 'done', thread: 'A' });
+    const after = at({ id: 'late', kind: 'post', thread: 'A' });
+    const log = [at({ id: 'A' }), closing, after];
+    expect(laneFor('thread', closing, log)).toEqual({ lane: 'thread:A' });
+    expect(laneFor('thread', after, log)).toEqual({ lane: 'standing' });
+  });
+
+  // repo lanes
+  it('shares one lane between two asks for the same repo, and not across repos', () => {
+    const a = at({ id: 'A', meta: { repo: 'a/x' } });
+    const b = at({ id: 'B', meta: { repo: 'a/x' } });
+    const c = at({ id: 'C', meta: { repo: 'b/y' } });
+    const log = [a, b, c];
+    expect(laneFor('repo', a, log)).toEqual({ lane: 'repo:a/x' });
+    expect(laneFor('repo', b, log)).toEqual({ lane: 'repo:a/x' });
+    expect(laneFor('repo', c, log)).toEqual({ lane: 'repo:b/y' });
+  });
+
+  it.each([undefined, '', '/abs/path', 'no-slash', 7])('refuses an ask with meta.repo %j, with a reason', (repo) => {
+    const ask = at({ id: 'A', meta: repo === undefined ? {} : { repo } });
+    expect(laneFor('repo', ask, [ask])).toEqual({
+      refuse: 'builder lanes by repository; send meta.repo as owner/name.',
+    });
+  });
+
+  // everything else
+  it('sends broadcasts, laneless entries and every entry of a pre-lane agent to standing', () => {
+    const ask = at({ id: 'A' });
+    expect(laneFor('thread', at({ id: 'bc', to: undefined, kind: 'post' }), [])).toEqual({ lane: 'standing' });
+    expect(laneFor('thread', at({ id: 'p', kind: 'post' }), [])).toEqual({ lane: 'standing' });
+    expect(laneFor(undefined, ask, [ask])).toEqual({ lane: 'standing' });
+  });
+
+  it('reads a run with no run.started, or no meta.lane, as standing', () => {
+    expect(laneOfRun('builder', 'r9', [])).toBe('standing');
+    expect(laneOfRun('builder', 'r1', [started('r1')])).toBe('standing');
+    expect(laneOfRun('builder', undefined, [])).toBe('standing');
+  });
+
+  it('only trusts the agent\'s own run.started — first one wins', () => {
+    const forged = { ...started('r1', 'thread:Z'), id: 'f', from: 'other' };
+    expect(laneOfRun('builder', 'r1', [forged, started('r1', 'thread:A')])).toBe('thread:A');
   });
 });
