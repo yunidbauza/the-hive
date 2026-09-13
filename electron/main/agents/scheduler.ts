@@ -447,6 +447,17 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         deps.state.forgetLane(name, key);
       }
     }
+
+    /*
+      A queue held by the budget has no run close coming to flush it. The first
+      sweep of a new day does (HIVE-187): the stale `capped` is cleared with
+      the day it belonged to, and the flush meets a fresh ceiling.
+    */
+    for (const [name, agent] of Object.entries(deps.state.all())) {
+      if (agent.today?.capped !== true || agent.today.day === dayKey(now)) continue;
+      deps.state.patch(name, { today: { day: dayKey(now), runs: 0, usd: 0 } });
+      if (agent.status !== 'paused') flush(name);
+    }
   };
 
   /**

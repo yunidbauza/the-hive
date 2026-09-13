@@ -5,6 +5,7 @@ import { createScheduler, triggerFor } from '../../../../electron/main/agents/sc
 import { createAgentState } from '../../../../electron/main/agents/state';
 import {
   AGENT_PENDING_WAKE_MAX,
+  dayKey,
   type WakeSpec,
 } from '../../../../electron/shared/agent-contract';
 import {
@@ -2294,5 +2295,51 @@ describe('createScheduler', () => {
 
     expect(removed).toEqual([`${AGENT}:thread:A`]);
     expect(Object.keys(state.read(AGENT).lanes ?? {})).toEqual(['thread:B']);
+  });
+
+  describe('a budget-held queue (HIVE-187)', () => {
+    const cappedDay = dayKey(new Date(1970, 0, 1, 12).getTime());
+
+    it('flushes on the first sweep of a new day', () => {
+      scheduler.start();
+      state.patch(AGENT, {
+        today: { day: cappedDay, runs: 3, usd: 5, capped: true },
+        pendingWake: [{ kind: 'ask', id: 'a9', from: 'overmind' }],
+      });
+      clock = new Date(1970, 0, 2, 9).getTime(); // a local day later
+
+      tick();
+
+      expect(woke).toContainEqual({ name: AGENT, trigger: 'ledger', extra: 'ask a9 from overmind' });
+      expect(state.read(AGENT).today).toEqual({ day: dayKey(clock), runs: 0, usd: 0 });
+    });
+
+    it('leaves it queued while the day is still the capped one', () => {
+      scheduler.start();
+      clock = new Date(1970, 0, 1, 12).getTime();
+      state.patch(AGENT, {
+        today: { day: cappedDay, runs: 3, usd: 5, capped: true },
+        pendingWake: [{ kind: 'ask', id: 'a9', from: 'overmind' }],
+      });
+
+      tick();
+
+      expect(woke.some((w) => w.extra === 'ask a9 from overmind')).toBe(false);
+    });
+
+    it('clears a paused agent\'s stale cap without waking it', () => {
+      scheduler.start();
+      state.patch(AGENT, {
+        status: 'paused',
+        today: { day: cappedDay, runs: 3, usd: 5, capped: true },
+        pendingWake: [{ kind: 'ask', id: 'a9', from: 'overmind' }],
+      });
+      clock = new Date(1970, 0, 2, 9).getTime();
+
+      tick();
+
+      expect(woke).toEqual([]);
+      expect(state.read(AGENT).today?.capped).toBeUndefined();
+    });
   });
 });
