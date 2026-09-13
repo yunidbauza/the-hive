@@ -547,3 +547,48 @@ describe('asInbound', () => {
     ).toEqual({ author: 'Marcos', text: 'hola' });
   });
 });
+
+import { afterTarget, isHeld, releasesAfter } from '../../../electron/shared/ledger-derive';
+
+/*
+  Retro C: an ask can wait for a PR to merge. `meta.after: "owner/repo#N"`
+  holds it until the shipper's `closed` entry for that PR is in the log.
+*/
+describe('held asks: meta.after (retro C)', () => {
+  const ask = (after?: unknown, id = 'a1'): LedgerEntry =>
+    entry({ id, kind: 'ask', to: 'builder', ...(after === undefined ? {} : { meta: { after } }) });
+  const closed = (pr: unknown, repo: unknown, stage: unknown = 'closed'): LedgerEntry =>
+    entry({ id: `c-${String(pr)}-${String(repo)}`, from: 'shipper', meta: { stage, pr, repo } });
+
+  it('parses owner/repo#N and nothing else', () => {
+    expect(afterTarget(ask('a/b#3'))).toEqual({ repo: 'a/b', pr: 3 });
+    expect(afterTarget(ask('yunidbauza/the-hive#256'))).toEqual({ repo: 'yunidbauza/the-hive', pr: 256 });
+    for (const bad of ['a/b', '#3', 3, 'a/b#0', 'a/b#x', 'ab#3', 'a/b/c#3', '', null]) {
+      expect(afterTarget(ask(bad))).toBeUndefined();
+    }
+    expect(afterTarget(ask())).toBeUndefined();
+  });
+
+  it('holds an ask while its PR has no closed entry', () => {
+    const held = ask('a/b#3');
+    expect(isHeld(held, [held])).toBe(true);
+  });
+
+  it('releases it on the closed entry for that PR, by whole slug, case-insensitively', () => {
+    const held = ask('a/b#3');
+    expect(releasesAfter(closed(3, 'a/b'), { repo: 'a/b', pr: 3 })).toBe(true);
+    expect(isHeld(held, [held, closed(3, 'a/b')])).toBe(false);
+    expect(isHeld(held, [held, closed(3, 'A/B')])).toBe(false);
+  });
+
+  it('is not released by another PR, another repo, or another stage', () => {
+    const held = ask('a/b#3');
+    expect(isHeld(held, [held, closed(4, 'a/b'), closed(3, 'a/c'), closed(3, 'a/b', 'merge'), closed('3', 'a/b')])).toBe(true);
+  });
+
+  it('never holds an ask without after, or an entry that is not an ask', () => {
+    expect(isHeld(ask(), [ask()])).toBe(false);
+    const post = entry({ id: 'p1', meta: { after: 'a/b#3' } });
+    expect(isHeld(post, [post])).toBe(false);
+  });
+});

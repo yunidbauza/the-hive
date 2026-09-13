@@ -471,3 +471,50 @@ export function nextRef(entries: readonly LedgerEntry[]): string {
   }
   return `${LEDGER_REF_PREFIX}${highest + 1}`;
 }
+
+/**
+ * A held ask (retro C): `meta.after: "owner/repo#N"` on an ask means "deliver
+ * me once that PR has merged", so a session can post a whole chain of jobs at
+ * once and a blocked agent can queue its own follow-up.
+ *
+ * The release is the shipper's `closed` entry for that PR, whatever its kind:
+ * a directed post to a session, or a `done` for the overmind. Held and
+ * released are read off the log, never remembered, so a restart loses
+ * neither. An ask without a parseable `after` is never held.
+ */
+export interface AfterTarget {
+  repo: string;
+  pr: number;
+}
+
+const AFTER = /^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([1-9]\d*)$/;
+
+/** The PR an ask waits for, or `undefined` when it waits for nothing. */
+export function afterTarget(entry: Pick<LedgerEntry, 'meta'>): AfterTarget | undefined {
+  const value = entry.meta?.['after'];
+  if (typeof value !== 'string') return undefined;
+  const [, repo, pr] = AFTER.exec(value) ?? [];
+  if (repo === undefined || pr === undefined) return undefined;
+  return { repo, pr: Number(pr) };
+}
+
+/** Whether `entry` is the `closed` entry for `target`: same PR, same whole slug, any case. */
+export function releasesAfter(entry: Pick<LedgerEntry, 'meta'>, target: AfterTarget): boolean {
+  const stage = entry.meta?.['stage'];
+  const pr = entry.meta?.['pr'];
+  const repo = entry.meta?.['repo'];
+  return (
+    stage === 'closed' &&
+    pr === target.pr &&
+    typeof repo === 'string' &&
+    repo.toLowerCase() === target.repo.toLowerCase()
+  );
+}
+
+/** Whether an ask is still waiting for its PR, given the whole log. */
+export function isHeld(ask: LedgerEntry, log: readonly LedgerEntry[]): boolean {
+  if (ask.kind !== 'ask') return false;
+  const target = afterTarget(ask);
+  if (target === undefined) return false;
+  return !log.some((entry) => releasesAfter(entry, target));
+}
