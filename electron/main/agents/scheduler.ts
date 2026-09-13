@@ -12,7 +12,13 @@ import {
   type LedgerEntry,
   type LedgerPostRequest,
 } from '@shared/ledger-contract';
-import { expiredAsks } from '@shared/ledger-derive';
+import {
+  afterTarget,
+  expiredAsks,
+  isHeld,
+  openAsks,
+  releasesAfter,
+} from '@shared/ledger-derive';
 import { SLACK_COMMAND_KIND, SLACK_SERVER_KEY, SLACK_TRIGGER } from '@shared/slack-contract';
 
 import type { RunStart } from './runs';
@@ -809,9 +815,59 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     enqueue(name, item);
   };
 
+  /**
+   * Route every held ask (`meta.after`, retro C) that its PR's `closed` entry
+   * has released and nothing has routed yet: when that entry arrives, and at
+   * start, for one released while the app was down.
+   *
+   * Once each. Routing writes a `released` event naming the ask, from the
+   * overmind, and an ask with one is never routed again, which keeps this
+   * idempotent across restarts with no state of its own, as the expiry sweep
+   * is. An ask whose PR had closed before it was asked was never held:
+   * `onEntry` routed it on arrival, so it is skipped here.
+   */
+  const releaseHeld = (entries: readonly LedgerEntry[]): void => {
+    const released = new Set<string>();
+    for (const item of entries) {
+      const id = item.meta?.['released'];
+      // Only main's own marker counts, for `expiredAsks`' reason.
+      if (typeof id === 'string' && item.from === OVERMIND) released.add(id);
+    }
+
+    for (const ask of openAsks(entries, deps.now())) {
+      const to = ask.to;
+      const target = afterTarget(ask);
+      if (to === undefined || target === undefined || released.has(ask.id)) continue;
+      if (!deps.isAgent(to) || !deps.wakesOnLedger(to)) continue;
+
+      const at = entries.findIndex((item) => item.id === ask.id);
+      const release = entries.findIndex((item) => releasesAfter(item, target));
+      // Still held, or never held because its PR closed before it was asked.
+      if (release === -1 || release < at) continue;
+
+      const written = deps.ledger.append({
+        from: OVERMIND,
+        to,
+        kind: 'event',
+        thread: ask.id,
+        body: `ask ${ask.ref ?? ask.id} released`,
+        meta: { released: ask.id },
+      });
+      // The write is the dedup, as the expiry sweep's is: no write, no wake.
+      if (!written.ok) continue;
+
+      const decision = decide(deps.state.read(to).status, ask);
+      if (decision === 'ignore') continue;
+      route(to, decision, { kind: ask.kind, id: ask.id, from: ask.from });
+    }
+  };
+
   return {
     onEntry(entry) {
       if (stopped) return;
+
+      // A `closed` entry may release held asks, whoever it is addressed to.
+      if (entry.meta?.['stage'] === 'closed') releaseHeld(deps.ledger.read().entries);
 
       const to = entry.to;
 
@@ -825,6 +881,11 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         day its author ticks the box.
       */
       if (!deps.wakesOnLedger(to)) return;
+
+      // A held ask waits for its PR's `closed` entry, which routes it (retro C).
+      if (afterTarget(entry) !== undefined && isHeld(entry, deps.ledger.read().entries)) {
+        return;
+      }
 
       const decision = decide(deps.state.read(to).status, entry);
 
@@ -986,6 +1047,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
 
         flush(name);
       }
+
+      // A held ask whose PR closed while the app was down (retro C).
+      releaseHeld(deps.ledger.read().entries);
 
       /*
         One tick now, so a restart does not wait a full period to notice an

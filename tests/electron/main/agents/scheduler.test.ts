@@ -141,6 +141,89 @@ describe('createScheduler', () => {
     ]);
   });
 
+  /*
+    Retro C: an ask with `meta.after: "owner/repo#N"` waits for that PR's
+    `closed` entry. Released once, with a `released` event as the dedup, so a
+    restart routes one released while the app was down and nothing twice.
+  */
+  describe('a held ask (meta.after)', () => {
+    const held = entry({ id: 'h1', meta: { after: 'a/b#3' } });
+    const closed = (pr = 3, repo = 'a/b'): LedgerEntry =>
+      entry({
+        id: `c${String(pr)}`,
+        from: 'shipper',
+        to: 'sess-4l',
+        kind: 'post',
+        body: 'merged',
+        meta: { pr, repo, stage: 'closed' },
+      });
+    /** What the real ledger does with an append: it lands in the log. */
+    const settle = (): void => {
+      for (const request of appended.splice(0)) {
+        entries.push(
+          entry({ ...request, id: `ev${String(entries.length)}`, ts: clock }) as LedgerEntry,
+        );
+      }
+    };
+    const releasedEvents = (): number =>
+      entries.filter((item) => item.meta?.['released'] === 'h1').length;
+
+    it('is not routed on arrival while its PR is open', () => {
+      entries.push(held);
+      scheduler.onEntry(held);
+
+      expect(woke).toEqual([]);
+    });
+
+    it("is routed once, as the ask, when its PR's closed entry lands", () => {
+      entries.push(held);
+      scheduler.onEntry(held);
+      entries.push(closed());
+      scheduler.onEntry(closed());
+      settle();
+
+      expect(woke).toEqual([{ name: AGENT, trigger: 'ledger', extra: 'ask h1 from overmind' }]);
+      expect(releasedEvents()).toBe(1);
+    });
+
+    it('stays held on a closed entry for another PR', () => {
+      entries.push(held);
+      scheduler.onEntry(held);
+      entries.push(closed(4));
+      scheduler.onEntry(closed(4));
+
+      expect(woke).toEqual([]);
+    });
+
+    it('is routed at start when its PR closed while the app was down, and only once', () => {
+      entries.push(held, closed());
+      scheduler.start();
+      settle();
+      scheduler.stop();
+      scheduler = build();
+      scheduler.start();
+
+      expect(woke).toEqual([{ name: AGENT, trigger: 'ledger', extra: 'ask h1 from overmind' }]);
+      expect(releasedEvents()).toBe(1);
+    });
+
+    it('stays held across a restart while its PR is open', () => {
+      entries.push(held);
+      scheduler.start();
+
+      expect(woke).toEqual([]);
+    });
+
+    it('is routed on arrival when its PR had already closed, and never again at start', () => {
+      entries.push(closed(), held);
+      scheduler.onEntry(held);
+      settle();
+      scheduler.start();
+
+      expect(woke).toEqual([{ name: AGENT, trigger: 'ledger', extra: 'ask h1 from overmind' }]);
+    });
+  });
+
   it('writes nothing for a party that is not an agent', () => {
     scheduler.onEntry(entry({ to: 'sess-3' }));
 
