@@ -558,15 +558,14 @@ because three processes write into one buffer. `Turns` reads `—` on a live row
 rather than `0`: the fold marks a turn only at the CLI's `result` event, so the
 count is not knowable until the receipt. The rail and the fleet say `working ·3`.
 
-**Two limits worth knowing.** A permission ask a task run posts is answered into
-the **standing** conversation: the answer wakes the standing run carrying the
-one-shot grant, and the task's job is not resumed. The standing run can find the
-thread and the task's `run.started` — with its `extra`, the prompt — in the
-ledger, and may redo the job itself or hand it back out. And
-`scheduler.onEntry` queues a ledger ask whenever the agent's status is
-`working`, which it is while *any* run is live — so an ask arriving while only
-task runs are in flight waits for the next close, which flushes it. Both are
-follow-ups, not the shape the design settled on.
+**Two limits, gone.** Since HIVE-187 a permission answer resumes the lane whose
+run asked, carrying the one-time grant, and a sibling lane never receives it.
+Since HIVE-186 an ask no longer waits behind a task run: the standing lane is
+working only while a conversation run holds it. What stays true is that a task
+run is not a lane. A permission ask a task run posts is still answered into the
+**standing** conversation, and the task's job is not resumed. The standing run
+can find the thread and the task's `run.started`, with its `extra`, in the
+ledger, and may redo the job itself or hand it back out.
 
 ### Time passed
 
@@ -677,8 +676,21 @@ rides along only as long as the day does. A capped agent's `nextRunAt` is the
 next local midnight, and the card is posted once rather than every minute for
 the rest of the day.
 
-**Scheduled wakes only.** A ledger entry and a manual run still reach a capped
-agent, because this is a budget for unattended work rather than a lock. The card
+**Every wake, since HIVE-187.** `RunTracker.run` checks the ceiling for every
+trigger: ledger, manual, job and lane. Each live run holds a reservation against
+`today.usd` until its real cost replaces it at close. The reservation is
+`budget_usd` when the definition sets it, since that is the most one run may
+spend, or else `daily_usd ÷ parallel`, so the cap's worth of parallel runs fits
+in the day. An agent that runs one at a time with no `budget_usd` reserves
+nothing: one run cannot overshoot together with anything, so its ceiling is
+today's spend alone. A refusal is `budget`, which queues like `saturated`. A
+spent day sets `capped` and posts the card once a day. A run held back only by
+live reservations posts a "held back" card once a day and leaves `capped`
+clear, so the spent card can still fire later. The first sweep of a new day
+flushes a queue the budget held. The scheduled tick keeps its own check, because
+it also defers the agent's clock to midnight.
+
+The card
 is an `agent.failed` titled "Hit its daily cap" — its own branch in `notify.ts`,
 above the run-receipt path, because that path consumes `spokenFor` on any
 outcome and this event is not a run receipt.
