@@ -458,15 +458,31 @@ export function nextAgentName(
   }
 }
 
+/** `YYYYMMDD-HHMMSS-NNNN`, in local time, as `ledger/store.ts` mints an ask id. */
+const ASK_ID = /^\d{8}-(\d{2})(\d{2})(\d{2})-(\d+)$/;
+
 /**
  * A lane key as a live row shows it (HIVE-185): nothing for the standing lane,
- * `owner/name` for a repo lane, and the ask id's sequence for a thread lane,
- * since its date prefix is the same for every ask of the day.
+ * `owner/name` for a repo lane, and for a thread lane the local time its ask
+ * was posted.
+ *
+ * Not the id's tail: its counter starts again every second, so the tail is
+ * `0001` for nearly every ask and two live thread lanes would read the same.
+ * The counter is shown only past the first ask of its second, and the row's
+ * tooltip carries the whole key.
  */
 export function laneLabel(lane: string | undefined): string | null {
   if (lane === undefined || lane === 'standing') return null;
   if (lane.startsWith('repo:')) return lane.slice('repo:'.length);
-  if (lane.startsWith('thread:')) return `thread …${lane.slice(-4)}`;
+  if (lane.startsWith('thread:')) {
+    const id = lane.slice('thread:'.length);
+    const [, hh, mm, ss, seq] = ASK_ID.exec(id) ?? [];
+    if (hh === undefined || mm === undefined || ss === undefined || seq === undefined) {
+      return `thread ${id}`;
+    }
+    const n = Number(seq);
+    return `thread ${hh}:${mm}:${ss}${n > 1 ? ` (${String(n)})` : ''}`;
+  }
   return lane;
 }
 

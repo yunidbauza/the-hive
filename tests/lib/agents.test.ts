@@ -374,11 +374,28 @@ describe('runsToday', () => {
 });
 
 describe('laneLabel (HIVE-185)', () => {
-  it('says nothing for the standing lane, the repo for a repo lane, and the ask\'s tail for a thread', () => {
+  it('says nothing for the standing lane, and the repo for a repo lane', () => {
     expect(laneLabel(undefined)).toBeNull();
     expect(laneLabel('standing')).toBeNull();
     expect(laneLabel('repo:yunidbauza/the-hive')).toBe('yunidbauza/the-hive');
-    expect(laneLabel('thread:20260913-004948-0001')).toBe('thread …0001');
     expect(laneLabel('other')).toBe('other');
+  });
+
+  /*
+    An ask id is `YYYYMMDD-HHMMSS-NNNN` in local time, and its counter starts
+    again every second (`ledger/store.ts`). The tail alone is `0001` for nearly
+    every ask, so two live thread lanes read the same; the time is what tells
+    them apart, and the counter only within one second.
+  */
+  it('names a thread lane by the time its ask was posted', () => {
+    expect(laneLabel('thread:20260913-004948-0001')).toBe('thread 00:49:48');
+    expect(laneLabel('thread:20260913-004948-0002')).toBe('thread 00:49:48 (2)');
+    expect(laneLabel('thread:20260913-004949-0001')).not.toBe(
+      laneLabel('thread:20260913-004948-0001'),
+    );
+  });
+
+  it('shows a thread id it cannot read as written', () => {
+    expect(laneLabel('thread:a86')).toBe('thread a86');
   });
 });

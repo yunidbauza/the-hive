@@ -846,7 +846,8 @@ describe('AgentRunLog', () => {
       const row = container.querySelector('[data-live-run="standing"]') as HTMLElement;
 
       expect(row.textContent).toContain('a/x');
-      expect(within(row).getByTitle('a/x lane')).toBeInTheDocument();
+      // The whole key, so a hover tells two lanes apart even across days.
+      expect(within(row).getByTitle('repo:a/x lane')).toBeInTheDocument();
     });
 
     it('groups the output by run, standing first, and labels each group', () => {

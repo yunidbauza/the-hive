@@ -807,7 +807,7 @@ function LiveRow({
         <span
           className="truncate"
           style={{ color: brand }}
-          title={lane === null ? (standing ? 'standing run' : 'task run') : `${lane} lane`}
+          title={lane === null ? (standing ? 'standing run' : 'task run') : `${run.lane ?? lane} lane`}
         >
           <span aria-hidden="true" style={{ color: green }}>
             {standing ? '●' : '○'}
