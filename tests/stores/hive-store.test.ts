@@ -2206,6 +2206,24 @@ describe('hive-store', () => {
           expect(lastLine()?.text).toContain('one of its runs ends');
         });
 
+        it('says a budget refusal names the day (HIVE-187)', async () => {
+          bridge.run.mockResolvedValue({ started: false, refused: 'budget' });
+
+          run('run slack-watcher review PR 1');
+          await Promise.resolve();
+
+          expect(lastLine()?.text).toContain("slack-watcher is out of today's budget — it runs when a run ends or tomorrow");
+        });
+
+        it('says a budget-held run is queued until the day has room (HIVE-187)', async () => {
+          bridge.run.mockResolvedValue({ started: false, queued: true, behind: 'budget' });
+
+          run('run slack-watcher review PR 1');
+          await Promise.resolve();
+
+          expect(lastLine()?.text).toContain("queued for slack-watcher — it runs when today's budget has room, or tomorrow");
+        });
+
         it('still refuses a rotate rather than promising it a queue', async () => {
           // `rotate` answers `AgentRotateResult`, which has no queued arm:
           // `forceRotate` stays armed through a refusal, so a rotation survives

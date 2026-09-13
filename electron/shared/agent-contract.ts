@@ -449,6 +449,11 @@ export interface AgentSummary {
    * definition that would not parse.
    */
   dailyUsd?: number;
+  /**
+   * `limits.budget_usd`, the per-run cap; the reservation a run holds against
+   * the day (HIVE-187). Absent when the definition sets none.
+   */
+  budgetUsd?: number;
   /** The most recent run's cost, pre-formatted for display. */
   cost?: string;
   /** Why this definition could not be parsed. Listed, never hidden. */
@@ -1215,17 +1220,36 @@ export type RunKind = 'standing' | 'task';
  *
  * One set, read by the tracker's refusal union, the scheduler's manual-wake
  * whitelist, and both console sentence functions — so they cannot drift.
+ *
+ * A day's budget frees up when a run closes and resets at midnight, so
+ * `budget` queues too (HIVE-187).
  */
-export type QueueableRefusal = 'working' | 'paused' | 'saturated';
+export type QueueableRefusal = 'working' | 'paused' | 'saturated' | 'budget';
 
 export const QUEUEABLE_REFUSALS: ReadonlySet<string> = new Set<QueueableRefusal>([
   'working',
   'paused',
   'saturated',
+  'budget',
 ]);
 
 export const isQueueableRefusal = (refused: string): refused is QueueableRefusal =>
   QUEUEABLE_REFUSALS.has(refused);
+
+/**
+ * What one run holds against the day's ceiling while it is live (HIVE-187).
+ * `budget_usd` when the definition sets it, since that is the most the run may
+ * spend. Otherwise an even share of `daily_usd` across the cap, so the cap's
+ * worth of parallel runs always fits in the day. No ceiling, nothing reserved.
+ */
+export function runReservation(
+  limits: { budgetUsd?: number; dailyUsd?: number },
+  parallel: number,
+): number {
+  if (limits.budgetUsd !== undefined) return limits.budgetUsd;
+  if (limits.dailyUsd === undefined) return 0;
+  return limits.dailyUsd / Math.max(1, parallel);
+}
 
 /** A run in flight (HIVE-128). In memory only — an app restart has none. */
 export interface LiveRunSummary {

@@ -1291,6 +1291,8 @@ export function agentRunRefusal(
       return `${name} is paused — resume it first`;
     case 'saturated':
       return `${name} is saturated — every run it may have live is live; try again when one ends`;
+    case 'budget':
+      return `${name} is out of today's budget — it runs when a run ends or tomorrow`;
     case 'invalid':
       return `${name}'s definition could not be read — edit it to fix that`;
     case 'unknown':
@@ -1321,6 +1323,8 @@ export function agentRunQueued(
       return `queued for ${name} — resume it to run`;
     case 'saturated':
       return `queued for ${name} — it starts when one of its runs ends`;
+    case 'budget':
+      return `queued for ${name} — it runs when today's budget has room, or tomorrow`;
   }
 }
 

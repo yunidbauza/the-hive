@@ -134,6 +134,17 @@ describe('list', () => {
     expect(agents[0]?.dailyUsd).toBeUndefined();
   });
 
+  it('carries a per-run budget the definition names, and none when it names none (HIVE-187)', async () => {
+    seed('capped', GOOD.replace('slack-watcher', 'capped').replace('icon: ChatCircleDots', 'icon: ChatCircleDots\nlimits:\n  budget_usd: 2'));
+    seed('plain', GOOD.replace('slack-watcher', 'plain'));
+
+    const { agents } = await registry().list();
+    const byName = new Map(agents.map((agent) => [agent.name, agent]));
+
+    expect(byName.get('capped')?.budgetUsd).toBe(2);
+    expect(byName.get('plain')).not.toHaveProperty('budgetUsd');
+  });
+
   /*
     The tracker's gate and the scheduler's flush reach it through the listing,
     cached by `ipc/index.ts` beside the schedule (HIVE-128) — so it has to
