@@ -1,4 +1,5 @@
-import type { ProjectConfig } from '@shared/config-contract';
+import type { ConfigSnapshot, ProjectConfig } from '@shared/config-contract';
+import { OVERMIND, type LedgerPostRequest } from '@shared/ledger-contract';
 
 import type { RepoRef } from '../integrations/github/query';
 
@@ -136,4 +137,47 @@ export function createAutoMergeGrants(deps: AutoMergeDeps): AutoMergeGrants {
       return rules;
     },
   };
+}
+
+/**
+ * The posts that tell the shipper a project's merge consent changed (retro C).
+ *
+ * A config change reaches no agent through the ledger. On 2026-09-12 the
+ * person turned auto-merge on while a PR sat at `approval`, and the shipper's
+ * next interval wake read an inbox with nothing addressed to it and ended. One
+ * directed `post` per project whose `autoMerge` flipped, either way, wakes the
+ * shipper at once (a directed post is a waking kind) with the reason in its
+ * inbox, so a row about to merge also learns that consent was withdrawn.
+ *
+ * Nothing for the first load (`before` is `null`, and a boot is not a
+ * change), for a project that was not there before, or when no agent named
+ * {@link AUTO_MERGE_AGENT} exists to read it.
+ */
+export function autoMergeNotices(
+  before: ConfigSnapshot | null,
+  after: ConfigSnapshot,
+  hasShipper: boolean,
+): LedgerPostRequest[] {
+  if (before === null || !hasShipper) return [];
+
+  const was = new Map(before.projects.map((project) => [project.id, project.autoMerge === true]));
+  const posts: LedgerPostRequest[] = [];
+
+  for (const project of after.projects) {
+    const on = project.autoMerge === true;
+    const prior = was.get(project.id);
+    if (prior === undefined || prior === on) continue;
+
+    posts.push({
+      from: OVERMIND,
+      to: AUTO_MERGE_AGENT,
+      kind: 'post',
+      body:
+        `Auto-merge turned ${on ? 'on' : 'off'} for ${project.name} (${project.path ?? 'no path'})\n` +
+        `Re-run approval for every row whose path is ${project.path ?? 'this project'} in this wake.`,
+      meta: { kind: 'auto-merge', project: project.id, path: project.path, autoMerge: on },
+    });
+  }
+
+  return posts;
 }

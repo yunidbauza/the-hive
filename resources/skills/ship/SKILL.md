@@ -73,6 +73,12 @@ here. So a row whose stage posts an ask is the last row this wake touches;
 write `prs.json` before the ask, and the rows after it advance on the next
 tick, ten minutes on. One ask per wake is the throughput, and it is enough.
 
+**A post from the overmind with `meta.kind: auto-merge` means a project's
+consent changed.** The app writes one whenever a project's `autoMerge` flips,
+through Settings or a hand edit and reload. Re-run `approval` in this wake for
+every row whose `path` is that post's `meta.path`. With `autoMerge: false`, a
+row about to merge no longer has consent: it goes back to `approval` and waits.
+
 | Stage | This wake | Advance when |
 | --- | --- | --- |
 | `intake` | `gh pr view <N> --repo <owner>/<repo> --json state,isDraft,headRefName`; force draft (`gh pr ready <N> --repo <owner>/<repo> --undo`) so nothing runs CI before the review; `ledger_claim <owner>/<repo>#<N>` | done → `self-review` |

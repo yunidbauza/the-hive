@@ -163,3 +163,62 @@ describe('createAutoMergeGrants', () => {
     expect(resolve).toHaveBeenCalledTimes(1);
   });
 });
+
+import { autoMergeNotices } from '../../../../electron/main/agents/auto-merge';
+import { emptySnapshot } from '../../../../electron/shared/config-contract';
+import { OVERMIND } from '../../../../electron/shared/ledger-contract';
+
+/*
+  Retro C, Task 5: turning auto-merge on or off wakes the shipper. A config
+  change reaches no agent through the ledger, so the composition turns each
+  flip into one directed post, which wakes the shipper at once.
+*/
+describe('autoMergeNotices (retro C)', () => {
+  const snapshot = (projects: { id: string; path: string; autoMerge: boolean; name?: string }[]) => ({
+    ...emptySnapshot('/home/dev/.hive/config.json', '/bin/zsh'),
+    projects: projects.map((project) => ({ ...project, name: project.name ?? project.id }) as unknown as ProjectConfig),
+  });
+  const before = snapshot([
+    { id: 'the-hive', path: '/repos/the-hive', autoMerge: false },
+    { id: 'other', path: '/repos/other', autoMerge: false },
+  ]);
+
+  it('posts to the shipper when a project turns auto-merge on, naming it and its path', () => {
+    const after = snapshot([
+      { id: 'the-hive', path: '/repos/the-hive', autoMerge: true },
+      { id: 'other', path: '/repos/other', autoMerge: false },
+    ]);
+
+    const posts = autoMergeNotices(before, after, true);
+
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toMatchObject({
+      from: OVERMIND,
+      to: 'shipper',
+      kind: 'post',
+      meta: { kind: 'auto-merge', project: 'the-hive', path: '/repos/the-hive', autoMerge: true },
+    });
+    expect(posts[0]?.body).toContain('the-hive');
+    expect(posts[0]?.body).toContain('/repos/the-hive');
+  });
+
+  it('posts autoMerge false when consent is withdrawn', () => {
+    const on = snapshot([{ id: 'the-hive', path: '/repos/the-hive', autoMerge: true }]);
+    const off = snapshot([{ id: 'the-hive', path: '/repos/the-hive', autoMerge: false }]);
+
+    expect(autoMergeNotices(on, off, true)[0]?.meta).toMatchObject({ autoMerge: false });
+  });
+
+  it('posts nothing for no change, a change to another field, the first load, or no shipper', () => {
+    const renamed = snapshot([
+      { id: 'the-hive', path: '/repos/the-hive', autoMerge: false, name: 'The Hive' },
+      { id: 'other', path: '/repos/other', autoMerge: false },
+    ]);
+    const flipped = snapshot([{ id: 'the-hive', path: '/repos/the-hive', autoMerge: true }]);
+
+    expect(autoMergeNotices(before, before, true)).toEqual([]);
+    expect(autoMergeNotices(before, renamed, true)).toEqual([]);
+    expect(autoMergeNotices(null, flipped, true)).toEqual([]);
+    expect(autoMergeNotices(before, flipped, false)).toEqual([]);
+  });
+});

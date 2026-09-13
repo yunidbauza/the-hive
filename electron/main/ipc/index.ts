@@ -160,7 +160,12 @@ import {
   type TokenStore,
 } from '../../remote-client/token-store';
 import { createAgentsRuntime, type AgentRegistry } from '../agents';
-import { createAutoMergeGrants, type AutoMergeGrants } from '../agents/auto-merge';
+import {
+  AUTO_MERGE_AGENT,
+  autoMergeNotices,
+  createAutoMergeGrants,
+  type AutoMergeGrants,
+} from '../agents/auto-merge';
 import { resolveClaude } from '../agents/claude-path';
 import {
   agentsDirectoryFor,
@@ -189,6 +194,7 @@ import {
   addProject,
   configPath,
   getConfig,
+  onConfigChange,
   reloadConfig,
   removeProject,
   renameProject,
@@ -2108,6 +2114,21 @@ export function registerIpcHandlers(
    * today, but registration order is an accident and this states it in code
    * instead — the broadcast lands first, then delivery, then the notifier.
    */
+  /*
+    A project's merge consent changed (retro C): tell the shipper, which only
+    wakes for the ledger. Settings, the `project_auto_merge` tool and a hand
+    edit then reload all install a snapshot through `onConfigChange`. One
+    directed post per flipped project; nothing when no shipper exists.
+  */
+  onConfigChange((before, after) => {
+    for (const post of autoMergeNotices(before, after, knownAgents.has(AUTO_MERGE_AGENT))) {
+      const written = ledger.append(post);
+      if (!written.ok) {
+        console.warn(`[hive] could not tell the shipper auto-merge changed (${written.reason})`);
+      }
+    }
+  });
+
   ledger.onChange((entry) => {
     // Not `send`: the notifier reads the ledger through its own subscription
     // below, and tapping here would show it every entry twice. HIVE-141 routes

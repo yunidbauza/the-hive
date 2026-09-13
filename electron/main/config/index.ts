@@ -314,8 +314,45 @@ export function getConfig(): ConfigSnapshot {
 
 /** Re-read the file. This is what `window.hive.config.reload()` reaches. */
 export function reloadConfig(): ConfigSnapshot {
-  cached = loadConfig();
-  return cached;
+  return install(loadConfig());
+}
+
+/** Told the snapshot a change replaced (`null` before the first load) and the one installed. */
+export type ConfigListener = (before: ConfigSnapshot | null, after: ConfigSnapshot) => void;
+
+const configListeners = new Set<ConfigListener>();
+
+/**
+ * Hear every snapshot this module installs, with the one it replaced
+ * (retro C).
+ *
+ * A config change is invisible to an agent that only wakes for the ledger: the
+ * person turned auto-merge on while a PR sat at `approval`, and the shipper's
+ * next wake saw nothing addressed to it. The composition listens here and turns
+ * a flip into a post. Every write reaches this through {@link commit}, and a
+ * hand edit through {@link reloadConfig}; the first lazy load in
+ * {@link getConfig} is not a change and says nothing. Returns its own
+ * unsubscribe.
+ */
+export function onConfigChange(listener: ConfigListener): () => void {
+  configListeners.add(listener);
+  return () => {
+    configListeners.delete(listener);
+  };
+}
+
+/** Install a snapshot as the cache and tell every listener. A listener that throws never costs the write. */
+function install(next: ConfigSnapshot): ConfigSnapshot {
+  const before = cached;
+  cached = next;
+  for (const listener of [...configListeners]) {
+    try {
+      listener(before, next);
+    } catch (cause) {
+      console.warn('[hive] a config change listener failed:', cause);
+    }
+  }
+  return next;
 }
 
 /**
@@ -390,8 +427,7 @@ function pathOf(entry: unknown): string | null {
  */
 function commit(result: WriteResult): ConfigSnapshot {
   if (!result.ok) return refused(result.reason);
-  cached = result.snapshot;
-  return cached;
+  return install(result.snapshot);
 }
 
 /**
