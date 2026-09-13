@@ -576,6 +576,7 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       // conversation did run 14 belong to" is the audit trail HIVE-122 needs.
       ...(sessionUuid === undefined ? {} : { sessionUuid }),
       ...(slack === undefined ? {} : { slack }),
+      ...(info.kind === 'standing' && info.lane !== STANDING_LANE ? { lane: info.lane } : {}),
     },
     /*
       The run counts against the day it *ended*, not the one it started.
@@ -588,6 +589,8 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
     endedAt);
 
     const current = deps.state.read(name);
+    // The closing run's lane: its counters are the ones this close reads (HIVE-185).
+    const laneNow = deps.state.lane(name, info.lane);
 
     /*
       A task run is a job, not the conversation (HIVE-128). Only a standing
@@ -634,8 +637,49 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       rotation. `null` is what makes both readers below safe by construction
       rather than by remembering to re-check `strike`.
     */
-    const failures = strike ? (current.rotateFailures ?? 0) + 1 : null;
+    const failures = strike ? (laneNow.rotateFailures ?? 0) + 1 : null;
 
+    /*
+      The closing run's own lane, and only it (HIVE-185). A conversation run
+      writes its lane's session fields, and a task run writes none.
+    */
+    if (standing) {
+      deps.state.patchLane(name, info.lane, {
+        /*
+          `lastRunAt` is the **standing** conversation's last run — the `onchange`
+          watermark the scheduler compares a ledger entry's timestamp against, and
+          the reference the Next tile reads. A task run reads no inbox, so moving
+          it on a task close would hide an ask that arrived before that close:
+          the entry would sit behind a watermark no wake ever looked past.
+
+          Per lane since HIVE-185: the standing lane's is the top-level field it
+          always was.
+        */
+        lastRunAt: endedAt,
+        /*
+          A rotation zeroes the counter instead of advancing it — the run that
+          just closed belongs to the session being left behind. A run that never
+          reached the model cost nothing and should not pull rotation forward.
+
+          Keyed off `handoff !== undefined` rather than a `rotated` boolean:
+          TypeScript narrows the former and not the latter, and
+          `pendingSession.handoff` is a `string`.
+        */
+        ...(handoff !== undefined
+          ? {
+              runsSinceRotate: 0,
+              rotateFailures: 0,
+              pendingSession: { uuid: deps.newUuid(), handoff },
+            }
+          : reachedModel
+            ? { runsSinceRotate: laneNow.runsSinceRotate + 1 }
+            : {}),
+        ...(failures === null ? {} : { rotateFailures: failures }),
+        ...(sessionUuid === undefined ? {} : { sessionUuid }),
+      });
+    }
+
+    // The agent-wide rollup, written at the top level exactly as before lanes.
     deps.state.patch(name, {
       /*
         An unanswered ask outranks the outcome for the *status*.
@@ -666,36 +710,6 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
             : outcome === 'asking' || asking || deps.hasOpenAsk(name)
               ? 'asking'
               : 'sleeping',
-      /*
-        `lastRunAt` is the **standing** conversation's last run — the `onchange`
-        watermark the scheduler compares a ledger entry's timestamp against, and
-        the reference the Next tile reads. A task run reads no inbox, so moving
-        it on a task close would hide an ask that arrived before that close:
-        the entry would sit behind a watermark no wake ever looked past.
-      */
-      ...(standing ? { lastRunAt: endedAt } : {}),
-      /*
-        A rotation zeroes the counter instead of advancing it — the run that
-        just closed belongs to the session being left behind. A run that never
-        reached the model cost nothing and should not pull rotation forward.
-
-        Keyed off `handoff !== undefined` rather than a `rotated` boolean:
-        TypeScript narrows the former and not the latter, and
-        `pendingSession.handoff` is a `string`.
-      */
-      ...(standing
-        ? handoff !== undefined
-          ? {
-              runsSinceRotate: 0,
-              rotateFailures: 0,
-              pendingSession: { uuid: deps.newUuid(), handoff },
-            }
-          : reachedModel
-            ? { runsSinceRotate: current.runsSinceRotate + 1 }
-            : {}
-        : {}),
-      ...(failures === null ? {} : { rotateFailures: failures }),
-      ...(sessionUuid === undefined || !standing ? {} : { sessionUuid }),
     });
 
     deps.appendLedger({
@@ -719,8 +733,15 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       deps.appendLedger({
         from: OVERMIND,
         kind: 'event',
-        body: `${name} could not rotate — three handoff wakes ended without a handoff.`,
-        meta: { rotateFailed: 3, agent: name },
+        body:
+          info.lane === STANDING_LANE
+            ? `${name} could not rotate — three handoff wakes ended without a handoff.`
+            : `${name} could not rotate its ${info.lane} lane: three handoff wakes ended without a handoff.`,
+        meta: {
+          rotateFailed: 3,
+          agent: name,
+          ...(info.lane === STANDING_LANE ? {} : { lane: info.lane }),
+        },
       });
     }
 
