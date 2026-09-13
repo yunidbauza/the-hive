@@ -57,6 +57,8 @@ describe('createRunTracker', () => {
   }[];
   /** What `limits.parallel` says for the agent under test (HIVE-128). */
   let parallel: number;
+  /** `daily_usd` and `budget_usd` for the agent under test (HIVE-187). */
+  let limits: { dailyUsd?: number; budgetUsd?: number };
   let runIds: number;
   let closed: string[];
   let statusWhenClosed: string | undefined;
@@ -76,6 +78,7 @@ describe('createRunTracker', () => {
     commandCalls = 0;
     commandArgs = [];
     parallel = 1;
+    limits = {};
     runIds = 0;
     closed = [];
     statusWhenClosed = undefined;
@@ -105,6 +108,7 @@ describe('createRunTracker', () => {
         };
       },
       parallelFor: () => parallel,
+      limitsFor: () => limits,
       state,
       appendLedger: (entry) => ledger.push(entry),
       openAsksFor: () => openAsks,
@@ -1709,5 +1713,72 @@ describe('createRunTracker', () => {
     expect(tracker.kill('a', 'run-9')).toBe(false);
     expect(childInstances[0]?.killSignals).toEqual([]);
     expect(childInstances[1]?.killSignals).toEqual(['SIGTERM']);
+  });
+
+  describe('the daily budget on every wake (HIVE-187)', () => {
+    /** Ends run `index` with a done result that cost `cost`. */
+    const endRun = (index: number, cost: number): void => {
+      childInstances[index]?.emitStdout(resultLine({ total_cost_usd: cost }));
+      childInstances[index]?.emitClose(0);
+    };
+    const spent = (costUsd: number): void => {
+      state.recordRun(
+        'a',
+        { run: 'old', kind: 'standing', trigger: 'ledger', startedAt: 0, endedAt: 1, outcome: 'done', costUsd },
+        1_000,
+      );
+    };
+
+    it('refuses the second of two parallel runs that would overshoot the day, with one card', () => {
+      parallel = 3;
+      limits = { budgetUsd: 3, dailyUsd: 5 };
+
+      expect(tracker.run('a', 'ledger', undefined, { lane: 'thread:A' })).toMatchObject({ started: true });
+      expect(tracker.run('a', 'ledger', undefined, { lane: 'thread:B' })).toMatchObject({ started: false, refused: 'budget' });
+      expect(tracker.run('a', 'ledger', undefined, { lane: 'thread:C' })).toMatchObject({ started: false, refused: 'budget' });
+
+      const cards = ledger.filter((entry) => entry.meta?.['dailyCap'] !== undefined);
+      expect(cards).toHaveLength(1);
+      expect(cards[0]).toMatchObject({ from: 'overmind', kind: 'event', meta: { dailyCap: 5, agent: 'a' } });
+      expect(cards[0]?.body).toContain('(reserving budget_usd $3.00 per run)');
+    });
+
+    it('lets a third run in once the first closes under its reservation', () => {
+      parallel = 3;
+      limits = { budgetUsd: 3, dailyUsd: 5 };
+      tracker.run('a', 'ledger', undefined, { lane: 'thread:A' });
+      tracker.run('a', 'ledger', undefined, { lane: 'thread:B' }); // refused
+
+      endRun(0, 1); // the first run cost $1 of its $3
+
+      expect(tracker.run('a', 'ledger', undefined, { lane: 'thread:C' })).toMatchObject({ started: true });
+    });
+
+    it('refuses a ledger wake once the day is spent — it used to run', () => {
+      limits = { dailyUsd: 5 };
+      spent(5);
+
+      expect(tracker.run('a', 'ledger')).toMatchObject({ started: false, refused: 'budget' });
+      expect(commandCalls).toBe(0);
+    });
+
+    it('reserves daily_usd ÷ parallel when no budget_usd is set, and says so on the card', () => {
+      parallel = 3;
+      limits = { dailyUsd: 6 };
+      spent(3);
+
+      // $3 spent + $2 reserved = $5 fits in $6; another $2 would make $7.
+      expect(tracker.run('a', 'ledger', undefined, { lane: 'repo:a/x' })).toMatchObject({ started: true });
+      expect(tracker.run('a', 'ledger', undefined, { lane: 'repo:b/y' })).toMatchObject({ started: false, refused: 'budget' });
+
+      const card = ledger.find((entry) => entry.meta?.['dailyCap'] !== undefined);
+      expect(card?.body).toContain('reserving $2.00 per run: daily_usd ÷ parallel, since no budget_usd is set');
+    });
+
+    it('does nothing at all for an agent with no daily_usd', () => {
+      parallel = 2;
+      limits = { budgetUsd: 100 };
+      expect(tracker.run('a', 'ledger')).toMatchObject({ started: true });
+    });
   });
 });
