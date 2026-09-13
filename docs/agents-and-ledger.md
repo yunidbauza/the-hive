@@ -487,7 +487,10 @@ gate is byte-for-byte what it was.
 
 **Lanes (HIVE-183).** `lane: thread | repo` in a definition. The standing lane
 is the top-level `agents.json` fields, and other lanes live under `lanes`.
-Routing arrives in HIVE-185 and HIVE-186.
+Since HIVE-185 a conversation run holds a lane, and absent means standing. One
+run is live per lane, and `limits.parallel` counts every lane and task run
+together. A close writes only its own lane, and `forceRotate` is the standing
+lane's. Routing arrives in HIVE-186.
 
 Each process carries `HIVE_RUN_ID`, `HIVE_RUN_KIND` and `HIVE_RUN_TOKEN`. Since
 HIVE-184 the run id is an authenticated claim: the receiver refuses a ledger
