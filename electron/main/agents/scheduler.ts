@@ -19,6 +19,7 @@ import {
 import {
   CLOSING_KINDS,
   afterTarget,
+  laneOfRun,
   expiredAsks,
   isHeld,
   openAsks,
@@ -34,7 +35,6 @@ import {
   isClosedLane,
   laneClaims,
   laneFor,
-  laneOfRun,
   type WakeDecision,
 } from './scheduler-rules';
 import type { AgentState } from './state';

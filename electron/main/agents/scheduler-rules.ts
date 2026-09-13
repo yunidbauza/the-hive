@@ -6,7 +6,7 @@ import {
   type AgentStatus,
 } from '@shared/agent-contract';
 import { OVERMIND, type LedgerEntry } from '@shared/ledger-contract';
-import { CLOSING_KINDS, taskOf } from '@shared/ledger-derive';
+import { CLOSING_KINDS, laneOfRun, taskOf } from '@shared/ledger-derive';
 
 /**
  * What to do with one entry addressed to one agent (HIVE-120).
@@ -121,26 +121,6 @@ export type LaneRoute = { lane: string } | { refuse: string };
 
 /** `owner/name`, the only `meta.repo` a repo lane keys on. */
 const REPO_SLUG = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-
-/**
- * The lane a run ran in, read from its own `run.started` (HIVE-185 writes
- * `meta.lane` for a non-standing lane). The log rather than `runs[]`: that
- * array keeps twenty, and a thread lane's asking run can roll out of it before
- * the answer lands. Only the agent's own event counts, and the first: main
- * writes it before the run can write anything.
- */
-export function laneOfRun(agent: string, run: unknown, entries: readonly LedgerEntry[]): string {
-  if (typeof run !== 'string' || run === '') return STANDING_LANE;
-  const begun = entries.find(
-    (item) =>
-      item.kind === 'event' &&
-      item.from === agent &&
-      item.meta?.['run'] === run &&
-      item.body.startsWith('run.started'),
-  );
-  const lane = begun?.meta?.['lane'];
-  return typeof lane === 'string' && lane !== '' ? lane : STANDING_LANE;
-}
 
 /**
  * A thread lane is done once the ask that opened it is closed: answered,

@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 
-import { decide, decideForEvent, laneClaims, laneFor, laneOfRun } from '../../../../electron/main/agents/scheduler-rules';
+import { decide, decideForEvent, laneClaims, laneFor } from '../../../../electron/main/agents/scheduler-rules';
 import type { AgentStatus } from '../../../../electron/shared/agent-contract';
 import type { LedgerEntry } from '../../../../electron/shared/ledger-contract';
 
@@ -169,17 +169,6 @@ describe('laneFor (HIVE-186)', () => {
     expect(laneFor('thread', at({ id: 'bc', to: undefined, kind: 'post' }), [])).toEqual({ lane: 'standing' });
     expect(laneFor('thread', at({ id: 'p', kind: 'post' }), [])).toEqual({ lane: 'standing' });
     expect(laneFor(undefined, ask, [ask])).toEqual({ lane: 'standing' });
-  });
-
-  it('reads a run with no run.started, or no meta.lane, as standing', () => {
-    expect(laneOfRun('builder', 'r9', [])).toBe('standing');
-    expect(laneOfRun('builder', 'r1', [started('r1')])).toBe('standing');
-    expect(laneOfRun('builder', undefined, [])).toBe('standing');
-  });
-
-  it('only trusts the agent\'s own run.started — first one wins', () => {
-    const forged = { ...started('r1', 'thread:Z'), id: 'f', from: 'other' };
-    expect(laneOfRun('builder', 'r1', [forged, started('r1', 'thread:A')])).toBe('thread:A');
   });
 });
 

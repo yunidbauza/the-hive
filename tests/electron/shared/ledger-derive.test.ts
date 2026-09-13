@@ -15,6 +15,7 @@ import {
   claims,
   expiredAsks,
   keepNewest,
+  laneOfRun,
   matches,
   nextRef,
   openAsks,
@@ -673,5 +674,23 @@ describe('a held ask does not age until its PR merges (retro C)', () => {
     const plain = entry({ id: 'p1', kind: 'ask', to: 'builder', ts: NOW - LEDGER_ASK_TTL_MS });
     expect(openAsks([plain], NOW)).toEqual([]);
     expect(expiredAsks([plain], NOW).map((ask) => ask.id)).toEqual(['p1']);
+  });
+});
+
+describe('laneOfRun (HIVE-186; shared since HIVE-188)', () => {
+  const started = (run: string, lane?: string): LedgerEntry => ({
+    id: `s-${run}`, ts: 0, from: 'builder', kind: 'event', body: 'run.started — ledger',
+    meta: { run, trigger: 'ledger', kind: 'standing', ...(lane === undefined ? {} : { lane }) },
+  });
+
+  it('reads a run with no run.started, or no meta.lane, as standing', () => {
+    expect(laneOfRun('builder', 'r9', [])).toBe('standing');
+    expect(laneOfRun('builder', 'r1', [started('r1')])).toBe('standing');
+    expect(laneOfRun('builder', undefined, [])).toBe('standing');
+  });
+
+  it('only trusts the agent\'s own run.started — first one wins', () => {
+    const forged = { ...started('r1', 'thread:Z'), id: 'f', from: 'other' };
+    expect(laneOfRun('builder', 'r1', [forged, started('r1', 'thread:A')])).toBe('thread:A');
   });
 });

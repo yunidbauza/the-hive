@@ -7,6 +7,7 @@
  * one definition of "open" instead of two that drift.
  */
 
+import { STANDING_LANE } from './agent-contract';
 import {
   LEDGER_ASK_TTL_MS,
   LEDGER_REF_PREFIX,
@@ -568,4 +569,24 @@ function releaseTimes(entries: readonly LedgerEntry[]): Map<string, number> {
     if (!at.has(key)) at.set(key, entry.ts);
   }
   return at;
+}
+
+/**
+ * The lane a run ran in, read from its own `run.started` (HIVE-185 writes
+ * `meta.lane` for a non-standing lane). The log rather than `runs[]`: that
+ * array keeps twenty, and a thread lane's asking run can roll out of it before
+ * the answer lands. Only the agent's own event counts, and the first: main
+ * writes it before the run can write anything.
+ */
+export function laneOfRun(agent: string, run: unknown, entries: readonly LedgerEntry[]): string {
+  if (typeof run !== 'string' || run === '') return STANDING_LANE;
+  const begun = entries.find(
+    (item) =>
+      item.kind === 'event' &&
+      item.from === agent &&
+      item.meta?.['run'] === run &&
+      item.body.startsWith('run.started'),
+  );
+  const lane = begun?.meta?.['lane'];
+  return typeof lane === 'string' && lane !== '' ? lane : STANDING_LANE;
 }
