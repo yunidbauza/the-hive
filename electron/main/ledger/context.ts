@@ -52,6 +52,9 @@ export function entryContext(entry: LedgerEntry, options: EntryContextOptions = 
 
   if (entry.kind === 'ask') {
     lines.push(`Kind: ask, ref ${name}, addressed to you`, '', entry.body, '');
+  } else if (entry.kind === 'post') {
+    // A one-way notice (the shipper's "PR merged"), not the answer to an ask.
+    lines.push('Kind: notice, addressed to you', '', entry.body, '');
   } else {
     /*
       The handle a person would know the thread by: the ask's ref when the log
@@ -71,7 +74,9 @@ export function entryContext(entry: LedgerEntry, options: EntryContextOptions = 
     lines.push(`Meta: ${JSON.stringify(entry.meta)}`, '');
   }
 
-  if (entry.kind !== 'ask') {
+  if (entry.kind === 'post') {
+    lines.push('Nothing is owed back. This notice needs no reply.');
+  } else if (entry.kind !== 'ask') {
     lines.push('Nothing is owed back. If the answer is not enough, ask again with the ledger_ask tool.');
   } else if (!open) {
     lines.push(

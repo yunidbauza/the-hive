@@ -1,13 +1,25 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   AgentRunState,
   AgentsSnapshot,
   AgentSummary,
 } from '../../../../electron/shared/agent-contract';
-import type { ConfigSnapshot } from '../../../../electron/shared/config-contract';
-import { agentsDirectoryFor, projectsDirectoryFor } from '../../../../electron/main/agents/directory';
+import {
+  CONFIG_PATH_ENV,
+  ProjectAutoMergeRefused,
+  type ConfigSnapshot,
+} from '../../../../electron/shared/config-contract';
+import {
+  agentsDirectoryFor,
+  projectAutoMergeFor,
+  projectsDirectoryFor,
+} from '../../../../electron/main/agents/directory';
 
 /**
  * The directory a peer sees (HIVE-127).
@@ -225,5 +237,127 @@ describe('projectsDirectoryFor (HIVE-173)', () => {
 
   it('answers an empty list for an empty config', () => {
     expect(projectsDirectoryFor(snapshot([]))).toEqual({ projects: [] });
+  });
+});
+
+/*
+  Retro B, Task 3: the handler `project_auto_merge` reaches, composed the way
+  `ipc/index.ts` composes it, against a real config file in a temp directory.
+  `projectsDirectoryFor(getConfig())` is the `projects` handler verbatim.
+*/
+describe('projectAutoMergeFor (retro B)', () => {
+  let sandbox: string;
+  let path: string;
+  const originalConfigPath = process.env[CONFIG_PATH_ENV];
+  const originalHome = process.env.HOME;
+
+  const load = async () => {
+    vi.resetModules();
+    const config = await import('../../../../electron/main/config/index');
+    return {
+      config,
+      deps: { config: config.getConfig, setAutoMerge: config.setProjectAutoMerge },
+    };
+  };
+
+  beforeEach(() => {
+    sandbox = mkdtempSync(join(tmpdir(), 'hive-auto-merge-'));
+    const home = join(sandbox, 'home');
+    mkdirSync(home);
+    mkdirSync(join(sandbox, 'the-hive'));
+    mkdirSync(join(sandbox, 'other'));
+    path = join(sandbox, 'config.json');
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 2,
+        projects: [
+          { id: 'the-hive', name: 'The Hive', path: join(sandbox, 'the-hive'), key: 'hive' },
+          { id: 'other', name: 'Other', path: join(sandbox, 'other'), key: 'ot' },
+        ],
+      }),
+    );
+    process.env.HOME = home;
+    process.env[CONFIG_PATH_ENV] = path;
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    rmSync(sandbox, { recursive: true, force: true });
+    process.env.HOME = originalHome;
+    if (originalConfigPath === undefined) delete process.env[CONFIG_PATH_ENV];
+    else process.env[CONFIG_PATH_ENV] = originalConfigPath;
+  });
+
+  const onDisk = (id: string): unknown =>
+    (JSON.parse(readFileSync(path, 'utf8')) as { projects: { id: string; autoMerge?: unknown }[] }).projects.find(
+      (entry) => entry.id === id,
+    )?.autoMerge;
+
+  it('flips the project named by its key, and the projects handler then reads it on', async () => {
+    const { config, deps } = await load();
+
+    const answered = projectAutoMergeFor({ project: 'hive', on: true }, deps);
+
+    expect(answered.projects.find((entry) => entry.id === 'the-hive')?.autoMerge).toBe(true);
+    expect(answered.projects.find((entry) => entry.id === 'other')?.autoMerge).toBe(false);
+    const listed = projectsDirectoryFor(config.getConfig());
+    expect(listed.projects.find((entry) => entry.id === 'the-hive')?.autoMerge).toBe(true);
+    expect(listed).toEqual(answered);
+    expect(onDisk('the-hive')).toBe(true);
+  });
+
+  it('announces the snapshot the write produced, and nothing on a refusal', async () => {
+    const { deps } = await load();
+    const announce = vi.fn();
+
+    projectAutoMergeFor({ project: 'hive', on: true }, { ...deps, announce });
+
+    expect(announce).toHaveBeenCalledTimes(1);
+    const announced = announce.mock.calls[0]?.[0] as { projects: { id: string; autoMerge?: boolean }[] };
+    expect(announced.projects.find((entry) => entry.id === 'the-hive')?.autoMerge).toBe(true);
+
+    expect(() => projectAutoMergeFor({ project: 'nope', on: true }, { ...deps, announce })).toThrow();
+    expect(announce).toHaveBeenCalledTimes(1);
+  });
+
+  it('finds a project by its id as well, and turns it off again', async () => {
+    const { deps } = await load();
+
+    projectAutoMergeFor({ project: 'the-hive', on: true }, deps);
+    const answered = projectAutoMergeFor({ project: 'the-hive', on: false }, deps);
+
+    expect(answered.projects.find((entry) => entry.id === 'the-hive')?.autoMerge).toBe(false);
+    expect(onDisk('the-hive')).toBe(false);
+  });
+
+  it('refuses an unknown project with a reason naming it, writing nothing', async () => {
+    const { deps } = await load();
+    const before = readFileSync(path, 'utf8');
+
+    expect(() => projectAutoMergeFor({ project: 'nope', on: true }, deps)).toThrow(ProjectAutoMergeRefused);
+    expect(() => projectAutoMergeFor({ project: 'nope', on: true }, deps)).toThrow(/"nope"/);
+    expect(readFileSync(path, 'utf8')).toBe(before);
+  });
+
+  it('refuses when the write does not land, without quoting the config\'s reason', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const snapshot = { projects: [{ id: 'the-hive', key: 'hive', autoMerge: false }], errors: [] } as unknown as ConfigSnapshot;
+    const deps = {
+      config: () => snapshot,
+      setAutoMerge: () => ({ ...snapshot, errors: ['config: cannot write /Users/someone/.hive/config.json'] }) as ConfigSnapshot,
+    };
+
+    let thrown: unknown;
+    try {
+      projectAutoMergeFor({ project: 'hive', on: true }, deps);
+    } catch (cause) {
+      thrown = cause;
+    }
+
+    expect(thrown).toBeInstanceOf(ProjectAutoMergeRefused);
+    expect((thrown as Error).message).toBe('the config could not be written, so auto-merge for "the-hive" is unchanged');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('/Users/someone/.hive/config.json'));
   });
 });

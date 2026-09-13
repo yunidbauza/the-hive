@@ -1,5 +1,9 @@
 import { AGENTS_PATH, type AgentsDirectory } from '@shared/agent-contract';
-import { PROJECTS_PATH, type ProjectsDirectory } from '@shared/config-contract';
+import {
+  PROJECT_AUTO_MERGE_PATH,
+  PROJECTS_PATH,
+  type ProjectsDirectory,
+} from '@shared/config-contract';
 import { PR_PATH, type PrLookupReply } from '@shared/github-contract';
 import { HOOK_HEADER_SESSION, HOOK_HEADER_TOKEN } from '@shared/hook-contract';
 import {
@@ -154,5 +158,7 @@ export function createReceiverClient({
     jiraGet: (request) => call<JiraResult<JiraToolIssue>>(JIRA_GET_PATH, request),
     jiraTransition: (request) => call<JiraResult<JiraToolTransitionReply>>(JIRA_TRANSITION_PATH, request),
     jiraComment: (request) => call<JiraResult<JiraComment>>(JIRA_COMMENT_PATH, request),
+    // Retro B: a small body; a refusal arrives as a 409 and its reason.
+    projectAutoMerge: (request) => call<ProjectsDirectory>(PROJECT_AUTO_MERGE_PATH, request),
   };
 }

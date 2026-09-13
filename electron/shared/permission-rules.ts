@@ -94,11 +94,51 @@ const hostOf = (url: string): string | undefined => {
   return host === undefined || !HOSTNAME.test(host) ? undefined : host;
 };
 
+/**
+ * Tools whose every call needs its own yes (retro B). `project_auto_merge`
+ * grants unattended merging, so:
+ * - its ladder is `once` and nothing else (`rungsFor`), because an
+ *   `allow-tool` rung would write a standing grant into the agent's `tools:`;
+ * - its one-shot names the exact project and switch (`specifierTextFor`);
+ * - no rule but that literal matches it (`matches`), so a bare name, a glob or
+ *   `*` in `HIVE_GRANTS` allows nothing.
+ *
+ * `waker.ts` also narrows `def.tools` with {@link namesTool}, because the CLI
+ * grants what `--allowedTools` names without asking the fence.
+ */
+export const ONCE_ONLY_TOOLS: ReadonlySet<string> = new Set(['mcp__hive__project_auto_merge']);
+
+/**
+ * Whether a `tools:` rule names `toolName` outright: the name itself, its MCP
+ * server (`mcp__hive`), or any bare glob that covers it, `*` included. A
+ * specifier or a literal never does.
+ *
+ * Wider than {@link matches} reads a glob, on purpose. `matches` decides what
+ * the fence grants; this decides what `waker.ts` keeps out of
+ * `--allowedTools`, which the CLI grants without asking the fence, and the CLI
+ * reads the blanket as everything. Naming too much only costs a trip through
+ * the fence; naming too little let `tools: ["*"]` merge unattended.
+ */
+export function namesTool(rule: string, toolName: string): boolean {
+  if (rule === toolName) return true;
+  if (!toolName.startsWith('mcp__') || rule.includes('(')) return false;
+  if (rule === toolName.slice(0, toolName.indexOf('__', 'mcp__'.length))) return true;
+  return rule.includes('*') && globToRegExp(rule).test(toolName);
+}
+
 /** The text a specifier is matched against, per tool. */
 const specifierTextFor = (
   toolName: string,
   input: Record<string, unknown>,
 ): string | undefined => {
+  if (ONCE_ONLY_TOOLS.has(toolName)) {
+    // Fixed order, so one project and switch always read as the same text.
+    const project = str(input, 'project');
+    const on = input['on'];
+    return project === undefined || typeof on !== 'boolean'
+      ? undefined
+      : `project=${project};on=${String(on)}`;
+  }
   if (toolName === 'Bash') return str(input, 'command');
   if (toolName === 'WebFetch') {
     const url = str(input, 'url');
@@ -238,6 +278,9 @@ export function matches(
     if (rest.slice(0, sep) !== toolName) return false;
     return specifierTextFor(toolName, input) === rest.slice(sep + 1);
   }
+
+  // Only the literal above may allow a once-only tool: see ONCE_ONLY_TOOLS.
+  if (ONCE_ONLY_TOOLS.has(toolName)) return false;
 
   if (rule === '*') return true;
 
@@ -421,6 +464,8 @@ export function rungsFor(
     },
   ];
 
+  if (ONCE_ONLY_TOOLS.has(toolName)) return rungs;
+
   /*
     Both rules below embed `toolName`, so both are gated on `isToolName`
     rather than the weaker `isSafeToCompose` this used to use.
@@ -452,7 +497,10 @@ export function rungsFor(
 
 /** Tools the grammar can name a *part* of. Everything else is all-or-nothing. */
 const hasSpecifier = (toolName: string): boolean =>
-  toolName === 'Bash' || toolName === 'WebFetch' || PATH_TOOLS[toolName] !== undefined;
+  toolName === 'Bash' ||
+  toolName === 'WebFetch' ||
+  PATH_TOOLS[toolName] !== undefined ||
+  ONCE_ONLY_TOOLS.has(toolName);
 
 /**
  * The rule that grants **this one call and nothing else** (HIVE-119).

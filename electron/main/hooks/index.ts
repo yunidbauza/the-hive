@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 
 import type { AgentContainer, AgentsDirectory } from '@shared/agent-contract';
-import type { ProjectsDirectory } from '@shared/config-contract';
+import type { ProjectAutoMergeRequest, ProjectsDirectory } from '@shared/config-contract';
 import {
   DEFAULT_BIND,
   DEFAULT_RECEIVER,
@@ -186,6 +186,8 @@ export interface HookHandlers {
   /** HIVE-173: the two workflow lookups; the receiver has honest defaults for both. */
   onProjectsList?: (caller: string) => ProjectsDirectory;
   onPrLookup?: (caller: string, lookup: PrLookup) => Promise<PrLookupReply>;
+  /** Retro B: the auto-merge switch; the receiver's default refuses with a reason. */
+  onProjectAutoMerge?: (caller: string, request: ProjectAutoMergeRequest) => ProjectsDirectory;
   /** HIVE-174: the Jira tools; the receiver's default refuses with a reason. */
   onJira?: JiraToolHandlers;
   onEvent: (event: HookStatusEvent) => void;
@@ -436,6 +438,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
       knowsAgent,
       onAgentsList,
       onProjectsList,
+      onProjectAutoMerge,
       onPrLookup,
       onJira,
       onEvent,
@@ -480,6 +483,7 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
         onLedgerPost: (caller, request) => ledger.append({ ...request, from: caller }),
         onAgentsList,
         onProjectsList,
+        onProjectAutoMerge,
         onPrLookup,
         onJira,
         knowsSession,

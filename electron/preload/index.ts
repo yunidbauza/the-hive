@@ -348,6 +348,8 @@ const bridge: HiveBridge = {
     cancelClone: (): Promise<void> => ipcRenderer.invoke(CH.configCloneCancel),
     onCloneDone: (callback: (event: CloneDoneEvent) => void) =>
       subscribe<CloneDoneEvent>(CH.configCloneDone, callback),
+    onConfigChanged: (callback: (snapshot: ConfigSnapshot) => void) =>
+      subscribe<ConfigSnapshot>(CH.configChanged, callback),
   },
   // HIVE-142. Pairing and revoking a device for server mode — its own
   // namespace because neither verb is an ordinary settings write; see the

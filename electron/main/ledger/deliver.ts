@@ -13,8 +13,8 @@ import type { Ledger } from './index';
  * Delivery: what happens to a ledger entry after it is written (HIVE-113).
  *
  * The ledger itself has no opinion about who should be told what — it records.
- * This module is the first rule on top of it: an `ask` or an `answer` addressed
- * to a live session is announced in that session's terminal as one marker
+ * This module is the first rule on top of it: an `ask`, an `answer` or a `post`
+ * addressed to a live session is announced in that session's terminal as one marker
  * line, at a moment when the terminal is actually at an empty prompt.
  *
  * The line is a marker, not the entry (HIVE-138). `ledgerMarker` names the
@@ -43,8 +43,14 @@ import type { Ledger } from './index';
  * `ledger.onChange` *and* appends a receipt to the same log for every nudge it
  * writes. Without a hard gate on the kind, each receipt would re-enter
  * {@link Deliver.onEntry} and the module would feed itself.
+ *
+ * A `post` addressed to a session is a one-way notice (the shipper's "PR
+ * merged"): it reaches the terminal as an answer does, and owes nothing back.
+ * Broadcast posts stay silent, because `onEntry` returns on a missing `to` and
+ * `undelivered` re-checks `entry.to === entityId`. Receipts are `event`, so
+ * adding `post` leaves the guard whole.
  */
-const DELIVERABLE: readonly LedgerKind[] = ['ask', 'answer'];
+const DELIVERABLE: readonly LedgerKind[] = ['ask', 'answer', 'post'];
 
 export interface DeliverOptions {
   ledger: Pick<Ledger, 'read' | 'append'>;

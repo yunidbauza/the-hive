@@ -286,10 +286,15 @@ constructed after the ledger — and a receipt for a nudge that never reached a
 terminal would suppress the retry forever, leaving a question nobody was asked
 and a log claiming they were.
 
-`onEntry` ignores every kind but `ask` and `answer`. **That is a loop guard, not
-a filter**: deliver subscribes to `ledger.onChange` and also appends to the same
-log, so without the gate each receipt would re-enter it and it would feed
-itself.
+`onEntry` ignores every kind but `ask`, `answer` and `post`. **That is a loop
+guard, not a filter**: deliver subscribes to `ledger.onChange` and also appends
+to the same log, so without the gate each receipt would re-enter it and it
+would feed itself. Receipts are `event`s, so they never pass it.
+
+A `post` addressed to a session is delivered like an answer, as a one-way
+notice: the shipper's "PR #N merged" reaches the terminal without opening a
+thread, and its context says nothing is owed back. A broadcast post is not
+delivered.
 
 An entry addressed to the overmind is an inbox card, not a terminal
 line; one addressed to an agent is a wake (see below); a broadcast wakes nobody,
@@ -801,7 +806,7 @@ ledger paths, and the hook path itself carries one ledger answer:
 
 | Route | Purpose | Success | Refusals |
 | --- | --- | --- | --- |
-| `POST /hook` | Claude Code's hooks. A `UserPromptSubmit` whose prompt is exactly one ledger marker | `200 HookContextReply` for a marker resolved among the caller's own `ask`/`answer` entries · `204` for every other prompt and event | None to a live session: a bad token, a missing header, an unknown identity and a body that is not JSON are refused and answered `204`, logged once per status and identity, because a non-2xx from a hook is drawn on the user's screen · `500` on a thrown handler, accepted as the honest signal of a bug |
+| `POST /hook` | Claude Code's hooks. A `UserPromptSubmit` whose prompt is exactly one ledger marker | `200 HookContextReply` for a marker resolved among the caller's own `ask`/`answer` entries and the posts addressed to it · `204` for every other prompt and event | None to a live session: a bad token, a missing header, an unknown identity and a body that is not JSON are refused and answered `204`, logged once per status and identity, because a non-2xx from a hook is drawn on the user's screen · `500` on a thrown handler, accepted as the honest signal of a bug |
 | `POST /ledger` | Append an entry | `200 { id, ref? }` | `403` bad token, an `answer` from a non-party, or a `release` from a non-holder · `400` missing session header, unknown `kind`, unknown `thread`, or an `answer` whose thread is not an open ask · `404` unknown session or unknown party · `413` over `LEDGER_BODY_MAX` or the transport cap · `500` the write itself failed |
 | `POST /ledger/read` | Read a filtered snapshot | `200 LedgerSnapshot` | `403` bad token · `400` missing session header or malformed query · `404` unknown session · `413` over the transport cap |
 
@@ -1136,6 +1141,23 @@ ticket, so neither is in `HIVE_STANDING_GRANTS`: the builder and the shipper
 list `mcp__hive__jira_transition` in `tools:`, nobody shipped lists
 `jira_comment`, and an agent without the entry gets the ordinary permission
 ask and inbox card. `jira_get` is a read and stands.
+
+**`project_auto_merge { project, on }` asks every time (retro B).** It sets a
+project's `autoMerge`, found by id or key, and answers the directory `projects`
+answers. With the flag on, the shipper merges that project's PRs with nobody
+asked, so the tool is in `HIVE_CONSENT_TOOLS` and in `ONCE_ONLY_TOOLS`
+(`permission-rules.ts`):
+- its card offers only `once`;
+- a one-shot names the exact call (`project=<p>;on=<b>`);
+- `matches` lets no other rule allow it, not a bare name, a glob or `*`;
+- `waker.ts` narrows `def.tools`, so `--allowedTools` never names it, even
+  through `mcp__hive__*`;
+- a session's settings file carries one ask rule for it, which outranks the
+  allow rule Claude Code's "don't ask again" writes. It grants nothing, so
+  HIVE-93's no-grant line holds.
+
+The route is `/projects/auto-merge`. A landed write is pushed to the renderer
+on `config:changed`, so Settings › Projects shows it without a reload.
 
 The comments read is the oldest `JIRA_MAX_COMMENTS`; a full page is named in
 `partial`, because "every comment" and "the first fifty" are different

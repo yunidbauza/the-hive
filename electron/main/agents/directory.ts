@@ -19,10 +19,13 @@ import {
   type AgentsDirectoryEntry,
   type AgentsSnapshot,
 } from '@shared/agent-contract';
-import type {
-  ConfigSnapshot,
-  ProjectsDirectory,
-  ProjectsDirectoryEntry,
+import {
+  ProjectAutoMergeRefused,
+  type ConfigSnapshot,
+  type ProjectAutoMergeRequest,
+  type ProjectsDirectory,
+  type ProjectsDirectoryEntry,
+  type SetProjectAutoMergeRequest,
 } from '@shared/config-contract';
 
 import { mergeRunState } from './summary';
@@ -95,4 +98,50 @@ export function projectsDirectoryFor(snapshot: ConfigSnapshot): ProjectsDirector
   });
 
   return { projects };
+}
+
+/** What {@link projectAutoMergeFor} needs from the config module; injected so a test can fail the write. */
+export interface ProjectAutoMergeDeps {
+  config: () => ConfigSnapshot;
+  setAutoMerge: (request: SetProjectAutoMergeRequest) => ConfigSnapshot;
+  /** Told the snapshot a landed write produced, so the renderer can show it. */
+  announce?: (snapshot: ConfigSnapshot) => void;
+}
+
+/**
+ * The `project_auto_merge` tool's work (retro B): find the project by id,
+ * then by key, write the switch, and answer the directory `projects` answers
+ * from the snapshot the write produced.
+ *
+ * Every refusal is a {@link ProjectAutoMergeRefused} with a sentence for the
+ * model. A write the config refused is reported without the config's own
+ * reason, which can quote a path; that reason goes to the log.
+ */
+export function projectAutoMergeFor(
+  request: ProjectAutoMergeRequest,
+  deps: ProjectAutoMergeDeps,
+): ProjectsDirectory {
+  const projects = deps.config().projects;
+  const target =
+    projects.find((project) => project.id === request.project) ??
+    projects.find((project) => project.key === request.project);
+
+  if (target === undefined) {
+    const keys = projects.map((project) => project.key).join(', ');
+    throw new ProjectAutoMergeRefused(
+      `no project "${request.project}" is configured${keys === '' ? '' : ` (keys: ${keys})`}; nothing was changed`,
+    );
+  }
+
+  const written = deps.setAutoMerge({ id: target.id, autoMerge: request.on });
+  const landed = written.projects.find((project) => project.id === target.id);
+  if ((landed?.autoMerge === true) !== request.on) {
+    console.warn(`[agents] auto-merge for ${target.id} was not written: ${written.errors.join('; ')}`);
+    throw new ProjectAutoMergeRefused(
+      `the config could not be written, so auto-merge for "${target.id}" is unchanged`,
+    );
+  }
+
+  deps.announce?.(written);
+  return projectsDirectoryFor(written);
 }

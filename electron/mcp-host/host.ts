@@ -13,6 +13,7 @@ import {
   JIRA_TRANSITION_TOOL,
   LEDGER_TOOLS,
   PR_TOOL,
+  PROJECT_AUTO_MERGE_TOOL,
   PROJECTS_TOOL,
 } from '@shared/ledger-tools';
 import type { CallToolResult } from '@shared/mcp-contract';
@@ -131,6 +132,7 @@ export function createHandlers(
         JIRA_GET_TOOL,
         JIRA_TRANSITION_TOOL,
         JIRA_COMMENT_TOOL,
+        PROJECT_AUTO_MERGE_TOOL,
         APPROVE_TOOL,
       ],
       callTool: async () =>
