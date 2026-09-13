@@ -229,6 +229,9 @@ const FENCE = 'probe-fence';
 /** A party that stands in for a live session, which this suite has none of. */
 const SESSION = 'sess-live-probe';
 
+/** A second asker, so two sessions can ask one thread-laned agent at once (HIVE-191). */
+const SESSION_B = 'sess-live-probe-b';
+
 /** Every party the ledger and the receiver accept in this suite. */
 /**
  * The agent the **clock** wakes, twice (HIVE-121).
@@ -333,6 +336,14 @@ const SPECIALIST = 'probe-specialist';
  */
 const FANOUT = 'probe-fanout';
 
+/**
+ * Lane probes (HIVE-191): one that lanes by thread, one that lanes by
+ * repository, and one whose day's budget is the observable.
+ */
+const THREAD = 'probe-thread';
+const REPO = 'probe-repo';
+const PURSE = 'probe-purse';
+
 /** The agent that must remember, with no memory, why it asked (HIVE-135). */
 const INTENT = 'probe-intent';
 
@@ -365,6 +376,9 @@ const AGENTS = [
   FANOUT,
   INTENT,
   SOCKET,
+  THREAD,
+  REPO,
+  PURSE,
 ];
 
 const AGENT_MD = `---
@@ -788,6 +802,75 @@ Read your ledger inbox. If it contains an ask addressed to you, call
  * but read the prompt and call `ledger_done` — and two of these run at once, so
  * a runaway costs double.
  */
+/**
+ * Lanes by thread (HIVE-191). Every ask is its own conversation, and two run at
+ * once. The body is a small protocol the scenarios drive by what they ask.
+ */
+const THREAD_MD = (markers: string) => `---
+name: ${THREAD}
+description: Proves thread lanes run apart and come home.
+icon: Ghost
+model: haiku
+wake:
+  on: [ledger]
+lane: thread
+tools: [Read, TodoWrite]
+limits:
+  turns: 10
+  parallel: 2
+---
+This is a conformance probe. Read your ledger inbox. Act on the ask that opened
+your lane, and ignore every other ask:
+
+- "echo <word>": answer that ask with exactly <word>, then end your turn.
+- "remember <word>": ask the party who asked you, with ledger_ask, the single
+  question "which colour?", then end your turn. When you are woken by the
+  answer, answer the original ask with "<word> <colour>" and end your turn.
+- "touch <name>": call Bash with exactly \`touch ${markers}/<name>\`, then answer
+  the ask with "touched" and end your turn.
+
+Say nothing else.
+`;
+
+/** Lanes by repository (HIVE-191): overlaps across repositories, queues within one. */
+const REPO_MD = `---
+name: ${REPO}
+description: Proves repo lanes overlap across repositories and queue within one.
+icon: Ghost
+model: haiku
+wake:
+  on: [ledger]
+lane: repo
+tools: [Read, TodoWrite]
+limits:
+  turns: 6
+  parallel: 2
+---
+This is a conformance probe. Read your ledger inbox, answer the ask that opened
+this wake with exactly the word "shipped", and end your turn. Do nothing else.
+`;
+
+/**
+ * A day's budget as the observable (HIVE-191). `budget_usd` makes each run's
+ * reservation exact: two live runs hold $2 of the $2.50, and a third does not fit.
+ */
+const PURSE_MD = `---
+name: ${PURSE}
+description: Proves the daily budget holds a start back.
+icon: Ghost
+model: haiku
+lane: thread
+tools: [Read]
+limits:
+  turns: 4
+  parallel: 3
+  budget_usd: 1
+  daily_usd: 2.5
+---
+This is a conformance probe. Report the word after "manual —" with ledger_done
+and end your turn.
+`;
+
 const FANOUT_MD = `---
 name: ${FANOUT}
 description: Proves two task runs land two receipts.
@@ -877,6 +960,8 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
   let marker: string;
   /** The standing-work probe's own marker, for the same reason `marker` exists. */
   let standingMarker: string;
+  /** Where {@link THREAD}'s "touch" writes (HIVE-191), outside every lane's own directory. */
+  let threadMarkers: string;
 
   let receiver: Receiver | null = null;
   let ledger: Ledger;
@@ -971,6 +1056,8 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
     // `afterAll` cleans it up as one directory rather than two.
     marker = join(dir, 'bash-ran.txt');
     standingMarker = join(dir, 'standing-ran.txt');
+    threadMarkers = join(dir, 'thread-markers');
+    await mkdir(threadMarkers, { recursive: true });
 
     for (const [name, body] of [
       [NAME, AGENT_MD],
@@ -988,6 +1075,9 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       [FANOUT, FANOUT_MD],
       [INTENT, INTENT_MD],
       [SOCKET, SOCKET_MD],
+      [THREAD, THREAD_MD(threadMarkers)],
+      [REPO, REPO_MD],
+      [PURSE, PURSE_MD],
     ] as const) {
       await mkdir(join(agentsRoot(), name), { recursive: true });
       await writeFile(join(agentsRoot(), name, 'AGENT.md'), body, 'utf8');
@@ -1037,7 +1127,7 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       // assertion 3 has nothing to find. `SESSION` stands in for the live
       // session this suite has no pty for (HIVE-120).
       knowsParty: (party) =>
-        AGENTS.includes(party) || party === OVERMIND || party === SESSION,
+        AGENTS.includes(party) || party === OVERMIND || party === SESSION || party === SESSION_B,
     });
 
     /*
