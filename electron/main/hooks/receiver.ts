@@ -31,6 +31,7 @@ import {
   CLEAR_REASON,
   hookContextReply,
   HOOK_HEADER_RUN,
+  HOOK_HEADER_RUN_TOKEN,
   HOOK_HEADER_SESSION,
   HOOK_HEADER_TOKEN,
   HOOK_MAX_BODY_BYTES,
@@ -360,6 +361,13 @@ export interface Receiver {
    * sessions come and go.
    */
   tokenFor(entityId: string): string;
+  /**
+   * The token a run named `run` must present beside its id (HIVE-184).
+   * `HMAC-SHA256(launchSecret, "run:" + run)`, hex: the same secret as
+   * {@link Receiver.tokenFor}, over disjoint inputs, so a run id can never be
+   * presented as a session id and inherit that session's token.
+   */
+  runToken(run: string): string;
   /**
    * The grants a live agent run may exercise over `POST /mcp` (HIVE-137).
    *
@@ -699,6 +707,13 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   /** HMAC-SHA256(launchSecret, entityId), hex — see {@link Receiver.tokenFor}. */
   const tokenFor = (entityId: string): string =>
     createHmac('sha256', launchSecret).update(entityId).digest('hex');
+
+  /**
+   * A run's token (HIVE-184). Prefixed so a run id can never be presented as a
+   * session id and inherit that session's token: same secret, disjoint inputs.
+   */
+  const runToken = (run: string): string =>
+    createHmac('sha256', launchSecret).update(`run:${run}`).digest('hex');
 
   let server: Server | null = null;
   let url: string | null = null;
@@ -1289,6 +1304,24 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       request = parseLedgerPostBody(JSON.parse(body));
     } catch (cause) {
       return { status: 400, json: { reason: describeCause(cause) } };
+    }
+
+    /*
+      A run id is a claim, and it routes (HIVE-184): lanes send an answer to the
+      conversation of the run that asked. So a write that names a run must carry
+      that run's token, from the spawn env or the header the MCP route forwards.
+      Refused whole: nothing is stamped, nothing is written.
+    */
+    const run = request.meta?.['run'];
+    if (run !== undefined) {
+      const presented = headers[HOOK_HEADER_RUN_TOKEN];
+      if (
+        typeof run !== 'string' ||
+        typeof presented !== 'string' ||
+        !secretEquals(presented, runToken(run))
+      ) {
+        return { status: 403, json: { reason: 'the run id does not match its token' } };
+      }
     }
 
     const result = onLedgerPost(caller, request);
@@ -1958,6 +1991,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
 
   return {
     tokenFor,
+    runToken,
 
     grants: {
       set(run, owner, grants) {

@@ -330,6 +330,8 @@ export interface HookRuntime {
   agentContainerSettingsPathFor(config: AgentContainer): string | null;
   /** The receiver's per-run grants registry (HIVE-137), or `null` before the bind. */
   receiverGrants(): Receiver['grants'] | null;
+  /** The receiver's run token for `run`, or null before it exists (HIVE-184). */
+  runToken(run: string): string | null;
   /**
    * Write one session's resolved container set, for a `rewrite` project — or,
    * since HIVE-133's post-review fix, one shared alias set for an `exec-env`
@@ -764,6 +766,10 @@ export function createHookRuntime(options: HookRuntimeOptions): HookRuntime {
 
     receiverGrants() {
       return receiver?.grants ?? null;
+    },
+
+    runToken(run) {
+      return receiver?.runToken(run) ?? null;
     },
 
     containerOrigin(): string | null {
