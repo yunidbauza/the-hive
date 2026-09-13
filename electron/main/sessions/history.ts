@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 
 import { SESSION_ID_PREFIX_PATTERN } from '@shared/agent-contract';
 import {
@@ -11,6 +12,7 @@ import {
 } from '@shared/session-history-contract';
 
 import { nameFromTitle } from './title';
+import { transcriptPath } from './title-origin';
 
 /**
  * What the fleet looked like last time (HIVE-87).
@@ -328,6 +330,12 @@ export function createSessionHistory(
   path: string,
   /** Injected for the same reason `newSessionUuid` is: a real clock makes the file unassertable. */
   now: () => number = Date.now,
+  /**
+   * Whether Claude wrote a transcript for this conversation. Injected so tests
+   * do not depend on the developer's real `~/.claude`.
+   */
+  hasTranscript: (cwd: string, sessionUuid: string) => boolean = (cwd, sessionUuid) =>
+    transcriptPath(homedir(), cwd, sessionUuid) !== null,
 ): SessionHistory {
   /**
    * Seeded from the file, **not empty**.
@@ -434,7 +442,16 @@ export function createSessionHistory(
      * after a restart.
      */
     if (startedThisRun.has(id) && !hasEnded(record)) return undefined;
-    return record.sessionUuid;
+    /*
+      A uuid is not a conversation. Claude writes the transcript on the first
+      message, so a session opened and quit before one has nothing behind its
+      uuid, and `claude --resume` answers "No conversation found" and exits
+      non-zero, which the `&& exit` wrapper leaves as a bare login shell. Asked
+      last: it is the only check that touches the disk.
+    */
+    const uuid = record.sessionUuid;
+    if (uuid === undefined || !hasTranscript(record.cwd ?? '', uuid)) return undefined;
+    return uuid;
   };
 
   return {

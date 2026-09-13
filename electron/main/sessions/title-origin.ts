@@ -116,7 +116,7 @@ export function claudeProjectDir(cwd: string): string {
  * a scan for the uuid second, which survives any future change to the escaping —
  * a uuid is unique across every project, so finding one is unambiguous.
  */
-function transcriptPath(home: string, cwd: string, sessionUuid: string): string | null {
+export function transcriptPath(home: string, cwd: string, sessionUuid: string): string | null {
   const projects = join(home, '.claude', 'projects');
   const file = `${sessionUuid}.jsonl`;
 

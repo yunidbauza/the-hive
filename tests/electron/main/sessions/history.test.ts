@@ -730,7 +730,7 @@ describe('session history', () => {
         'utf8',
       );
 
-      const history = createSessionHistory(file, () => 5000);
+      const history = createSessionHistory(file, () => 5000, () => true);
       expect(history.resumable('sess-01')).toBe('old-uuid');
 
       history.begin(
@@ -760,7 +760,7 @@ describe('session history', () => {
         ]),
         'utf8',
       );
-      const history = createSessionHistory(file, () => 5000);
+      const history = createSessionHistory(file, () => 5000, () => true);
       expect(history.resumable('sess-01')).toBe('old');
 
       history.record('sess-01', { sessionUuid: undefined });
@@ -779,7 +779,7 @@ describe('session history', () => {
         closed, its uuid still names it, and offering to reopen it is the whole
         point of the feature.
       */
-      const history = createSessionHistory(file, () => 5000);
+      const history = createSessionHistory(file, () => 5000, () => true);
       history.begin('mine', { project: 'p', task: '', sessionUuid: 'fresh' });
 
       // While it runs, still refused.
@@ -788,6 +788,32 @@ describe('session history', () => {
       history.record('mine', { status: 'done', endedAt: 6000 });
 
       expect(history.resumable('mine')).toBe('fresh');
+    });
+
+    it('has nothing to resume when Claude never wrote the transcript', () => {
+      /*
+        Claude writes the transcript on the first message, so a session quit
+        before one leaves a uuid naming nothing, and `claude --resume` answers
+        "No conversation found" into a bare shell.
+      */
+      writeFileSync(
+        file,
+        JSON.stringify([
+          { id: 'sess-01', project: 'p', task: '', status: 'terminated', createdAt: 1, cwd: '/repo', sessionUuid: 'ghost' },
+        ]),
+        'utf8',
+      );
+      const hasTranscript = vi.fn(() => false);
+      const history = createSessionHistory(file, () => 5000, hasTranscript);
+
+      expect(history.resumable('sess-01')).toBeUndefined();
+      expect(hasTranscript).toHaveBeenCalledWith('/repo', 'ghost');
+
+      // A resume request against it starts over, as any unresumable id does.
+      history.begin('sess-01', { project: 'p', task: 'new', sessionUuid: 'new' }, { resume: true });
+      history.flush();
+      expect(readHistory(file)[0]).toMatchObject({ task: 'new', sessionUuid: 'new' });
+      expect(readHistory(file)[0]).not.toHaveProperty('cwd');
     });
 
     it('has nothing to resume for a record without a uuid, or one this run began', () => {
