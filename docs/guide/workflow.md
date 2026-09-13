@@ -85,15 +85,15 @@ shipper holds it stage by stage, and each stage is a line in the ledger:
 | `ready` | the PR is marked ready; the ticket moves to In Review |
 | `ci` | checks are watched; a red one goes back to the fixer |
 | `findings` | new reviewer comments and bot findings go to the fixer, round by round |
-| `approval` | waits for an approval, unless the project auto-merges |
+| `approval` | waits for a review only when one is required or requested, and asks your session once; with no review coming it goes to merge |
 | `merge` | `merge-pr` re-checks every block, merges, tears the branch down, moves the ticket to Done |
 | `closed` | your session is asked whether to close |
 
 Auto-merge is a project's `autoMerge` flag in `~/.hive/config.json`
 ([Settings › Projects](settings.md)). With it on, the shipper's merge call is granted for
-that repository and the approval wait is skipped. With it off, every merge stops at the
+that repository and the approval wait is skipped. With it off, the merge stops at the
 [tools fence](agents.md#the-tools-fence) and becomes a card in your inbox: one click merges,
-one click refuses.
+one click refuses. That card now appears for every PR no reviewer is assigned to.
 
 ## What you see
 
