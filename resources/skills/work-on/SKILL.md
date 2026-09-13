@@ -99,7 +99,7 @@ ledger_ask
     ship: yes
     key-confirmed: yes                       (the key came from this invocation)
     reply-to: <this session's id>            (overmind with --detach)
-  meta: { ticket: "<KEY>", repo: "...", plan: "...", stage: "build",
+  meta: { ticket: "<KEY>", repo: "<owner>/<repo>", plan: "...", stage: "build",
           intent: "wait for the builder; answer its questions from the spec" }
 ```
 
@@ -110,10 +110,9 @@ will raise one. To merge unattended, turn on Settings › Projects › ⋯ › M
 PRs unattended." Never change `autoMerge` yourself, in the config or any other
 way; it is the person's consent.
 
-A plan split into PRs is one ask per PR, **in order**. The builder takes one
-ledger ask at a time (its asks resume one standing session; `limits.parallel`
-only fans out scheduled jobs), so asks posted together run one after another.
-Never offer the person "parallel" builds.
+A plan split into PRs is one ask per PR. The builder takes each ask as its own
+conversation, two at a time, so independent PRs go out together and build in
+parallel. A PR that depends on another goes out held (below).
 
 A PR that must wait for another to merge goes out as a held ask: add
 `meta.after: "<owner>/<repo>#<N>"` naming the PR it depends on, and it reaches

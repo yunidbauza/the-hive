@@ -22,8 +22,9 @@ A spec that covers independent subsystems should have been split in
 working software on its own.
 
 **A ticket over thirteen points is more than one PR.** Name each PR and which
-tasks belong to it in the header. PRs are built one after another; name
-their order in the header.
+tasks belong to it in the header. Independent PRs build in parallel, two at a
+time; a dependent one is held on the PR it needs (`meta.after`). Name that
+order in the header.
 
 ## File structure before tasks
 
