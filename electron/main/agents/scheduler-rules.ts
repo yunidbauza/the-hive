@@ -6,7 +6,7 @@ import {
   type AgentStatus,
 } from '@shared/agent-contract';
 import { OVERMIND, type LedgerEntry } from '@shared/ledger-contract';
-import { CLOSING_KINDS, laneOfRun, taskOf } from '@shared/ledger-derive';
+import { CLOSING_KINDS, claims, laneOfRun, taskOf } from '@shared/ledger-derive';
 
 /**
  * What to do with one entry addressed to one agent (HIVE-120).
@@ -141,13 +141,35 @@ export function isClosedLane(lane: string, entries: readonly LedgerEntry[], exce
 }
 
 /** The lane a new ask to `agent` opens, by the definition's `lane:`. */
-export function openedLane(agent: string, mode: AgentLane | undefined, ask: LedgerEntry): LaneRoute {
+export function openedLane(
+  agent: string,
+  mode: AgentLane | undefined,
+  ask: LedgerEntry,
+  entries: readonly LedgerEntry[],
+): LaneRoute {
   if (mode === 'thread') return { lane: threadLane(ask.id) };
   if (mode !== 'repo') return { lane: STANDING_LANE };
   const repo = ask.meta?.['repo'];
-  return typeof repo === 'string' && REPO_SLUG.test(repo)
-    ? { lane: repoLane(repo) }
-    : { refuse: `${agent} lanes by repository; send meta.repo as owner/name.` };
+  if (typeof repo === 'string' && REPO_SLUG.test(repo)) return { lane: repoLane(repo) };
+  /*
+    No repository named (HIVE-189). A PR number the agent already holds a
+    claim on names it: the shipper claims `<owner>/<repo>#<N>` at intake. One
+    match picks the lane. The overmind's ask otherwise lands on the standing
+    lane, which asks back; a malformed `meta.repo` is refused whoever sent it.
+  */
+  if (repo === undefined) {
+    const named = ask.meta?.['pr'];
+    const pr = typeof named === 'number' ? named : Number(/#(\d+)/.exec(ask.body)?.[1]);
+    if (Number.isInteger(pr) && pr > 0) {
+      const held = Object.entries(claims(entries))
+        .filter(([task, holder]) => holder === agent && task.endsWith(`#${String(pr)}`))
+        .map(([task]) => task.slice(0, task.lastIndexOf('#')))
+        .filter((slug) => REPO_SLUG.test(slug));
+      if (held.length === 1) return { lane: repoLane(held[0] as string) };
+    }
+    if (ask.from === OVERMIND) return { lane: STANDING_LANE };
+  }
+  return { refuse: `${agent} lanes by repository; send meta.repo as owner/name.` };
 }
 
 /**
@@ -174,13 +196,13 @@ export function laneFor(
     let lane = STANDING_LANE;
     if (ask?.from === to) lane = laneOfRun(to, ask.meta?.['run'], entries);
     else if (ask?.to === to) {
-      const opened = openedLane(to, mode, ask);
+      const opened = openedLane(to, mode, ask, entries);
       if ('lane' in opened) lane = opened.lane;
     }
     return { lane: isClosedLane(lane, entries, entry.id) ? STANDING_LANE : lane };
   }
 
-  if (entry.kind === 'ask') return openedLane(to, mode, entry);
+  if (entry.kind === 'ask') return openedLane(to, mode, entry, entries);
   return { lane: STANDING_LANE };
 }
 

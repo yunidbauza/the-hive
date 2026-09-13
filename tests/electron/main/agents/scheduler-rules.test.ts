@@ -163,7 +163,41 @@ describe('laneFor (HIVE-186)', () => {
     expect(laneFor('repo', b, [a, b])).toEqual({ lane: 'repo:a/x' });
   });
 
-  it.each([undefined, '', '/abs/path', 'no-slash', 7])('refuses an ask with meta.repo %j, with a reason', (repo) => {
+  describe('a repo-less ask, by the claim (HIVE-189)', () => {
+    const claim = (task: string, id = `c-${task}`): LedgerEntry =>
+      at({ id, from: 'shipper', to: undefined, kind: 'claim', body: `claimed ${task}`, meta: { task } });
+
+    it('routes an overmind "merge PR #253" into the lane of the one repo holding #253', () => {
+      const ask = at({ id: 'M', to: 'shipper', body: 'merge PR #253' });
+      const log = [claim('yunidbauza/the-hive#253'), claim('other/repo#12'), ask];
+      expect(laneFor('repo', ask, log)).toEqual({ lane: 'repo:yunidbauza/the-hive' });
+    });
+
+    it('reads meta.pr when the body names no number', () => {
+      const ask = at({ id: 'M', to: 'shipper', body: 'merge it', meta: { pr: 12 } });
+      expect(laneFor('repo', ask, [claim('other/repo#12'), ask])).toEqual({ lane: 'repo:other/repo' });
+    });
+
+    it('lands on standing when no claim or two claims match, so the standing lane can ask which', () => {
+      const ask = at({ id: 'M', to: 'shipper', body: 'merge PR #7' });
+      expect(laneFor('repo', ask, [ask])).toEqual({ lane: 'standing' });
+      expect(laneFor('repo', ask, [claim('a/x#7'), claim('b/y#7'), ask])).toEqual({ lane: 'standing' });
+    });
+
+    it('ignores a claim someone else holds, or one already released', () => {
+      const ask = at({ id: 'M', to: 'shipper', body: 'merge PR #9' });
+      const theirs = { ...claim('a/x#9'), from: 'sess-1' };
+      const released = at({ id: 'r', from: 'shipper', to: undefined, kind: 'release', body: '', meta: { task: 'b/y#9' } });
+      expect(laneFor('repo', ask, [theirs, claim('b/y#9'), released, ask])).toEqual({ lane: 'standing' });
+    });
+
+    it('still refuses a repo-less ask from anyone but the overmind', () => {
+      const ask = at({ id: 'S', from: 'sess-1', to: 'shipper', body: 'ship it' });
+      expect(laneFor('repo', ask, [ask])).toEqual({ refuse: 'shipper lanes by repository; send meta.repo as owner/name.' });
+    });
+  });
+
+  it.each(['', '/abs/path', 'no-slash', 7])('refuses an ask with meta.repo %j, with a reason', (repo) => {
     const ask = at({ id: 'A', meta: repo === undefined ? {} : { repo } });
     expect(laneFor('repo', ask, [ask])).toEqual({
       refuse: 'builder lanes by repository; send meta.repo as owner/name.',
