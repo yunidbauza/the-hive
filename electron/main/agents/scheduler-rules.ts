@@ -164,8 +164,11 @@ export function openedLane(
       const held = Object.entries(claims(entries))
         .filter(([task, holder]) => holder === agent && task.endsWith(`#${String(pr)}`))
         .map(([task]) => task.slice(0, task.lastIndexOf('#')))
-        .filter((slug) => REPO_SLUG.test(slug));
-      if (held.length === 1) return { lane: repoLane(held[0] as string) };
+        .filter((slug) => REPO_SLUG.test(slug))
+        .map((slug) => slug.toLowerCase());
+      // One repository however its claims spell it, as `repoLane` keys it.
+      const repos = [...new Set(held)];
+      if (repos.length === 1) return { lane: repoLane(repos[0] as string) };
     }
     if (ask.from === OVERMIND) return { lane: STANDING_LANE };
   }

@@ -191,6 +191,11 @@ describe('laneFor (HIVE-186)', () => {
       expect(laneFor('repo', ask, [theirs, claim('b/y#9'), released, ask])).toEqual({ lane: 'standing' });
     });
 
+    it('counts one repository once, however its claims spell it', () => {
+      const ask = at({ id: 'M', to: 'shipper', body: 'merge PR #5' });
+      expect(laneFor('repo', ask, [claim('Owner/Repo#5'), claim('owner/repo#5'), ask])).toEqual({ lane: 'repo:owner/repo' });
+    });
+
     it('still refuses a repo-less ask from anyone but the overmind', () => {
       const ask = at({ id: 'S', from: 'sess-1', to: 'shipper', body: 'ship it' });
       expect(laneFor('repo', ask, [ask])).toEqual({ refuse: 'shipper lanes by repository; send meta.repo as owner/name.' });
