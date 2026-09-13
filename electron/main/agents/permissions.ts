@@ -6,6 +6,7 @@ import { laneOfRun } from '@shared/ledger-derive';
 import { isToolName, oneShotRuleFor, rungsFor } from '@shared/permission-rules';
 
 import { patchFrontmatter } from './patch';
+import { isClosedLane } from './scheduler-rules';
 
 /**
  * Answers become grants (HIVE-119).
@@ -169,9 +170,12 @@ export function createPermissions(deps: PermissionDeps): Permissions {
           A one-time grant belongs to the conversation whose run asked
           (HIVE-187). Another lane's ask is skipped, not consumed: it waits for
           its own lane's wake. A task run has no lane, so its asks resolve to
-          standing, where they always went.
+          standing, where they always went. A thread lane that has closed
+          hands over to standing, which is where `laneFor` routes its answer,
+          so the grant is not stranded on a lane that never wakes again.
         */
-        if (laneOfRun(name, ask.meta?.['run'], log) !== lane) continue;
+        const asked = laneOfRun(name, ask.meta?.['run'], log);
+        if ((isClosedLane(asked, log) ? STANDING_LANE : asked) !== lane) continue;
         if (consumed(ask.id)) continue;
 
         const answer = answerTo(ask.id);

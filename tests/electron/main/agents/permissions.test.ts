@@ -586,6 +586,14 @@ describe('grantsFor, per lane (HIVE-187)', () => {
     expect(permissions.grantsFor('drone', 'thread:A')).toEqual(['literal:Bash:git push']);
   });
 
+  it('gives a closed thread lane\'s grant to standing, where its answer is routed', () => {
+    const closed = { id: 'd', ts: 0, from: 'drone', to: 'overmind', kind: 'done' as const, thread: 'A', body: 'done' };
+    const d = deps([begun('rA', 'thread:A'), closed, laneAsk('a1', 'rA'), answer('n1', 'a1', 'allow-once')]);
+
+    expect(createPermissions(d).grantsFor('drone', 'thread:A')).toEqual([]);
+    expect(createPermissions(d).grantsFor('drone')).toEqual(['literal:Bash:git push']);
+  });
+
   it('gives a grant from a run with no lane (or no run at all) to the standing lane, as before', () => {
     const d = deps([begun('r0'), laneAsk('a1', 'r0'), answer('n1', 'a1', 'allow-once')]);
     expect(createPermissions(d).grantsFor('drone', 'thread:A')).toEqual([]);
