@@ -839,6 +839,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       const target = afterTarget(ask);
       if (to === undefined || target === undefined || released.has(ask.id)) continue;
       if (!deps.isAgent(to) || !deps.wakesOnLedger(to)) continue;
+      // `decide` ignores an ask an agent addressed to itself; mark nothing either.
+      if (ask.from === to) continue;
 
       const at = entries.findIndex((item) => item.id === ask.id);
       const release = entries.findIndex((item) => releasesAfter(item, target));
@@ -854,7 +856,10 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         meta: { released: ask.id },
       });
       // The write is the dedup, as the expiry sweep's is: no write, no wake.
-      if (!written.ok) continue;
+      if (!written.ok) {
+        console.warn(`[hive] could not mark ${ask.id} released; it stays held until the next start`);
+        continue;
+      }
 
       const decision = decide(deps.state.read(to).status, ask);
       if (decision === 'ignore') continue;

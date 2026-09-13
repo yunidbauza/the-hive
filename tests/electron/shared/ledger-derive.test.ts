@@ -609,9 +609,27 @@ describe('a held ask does not age until its PR merges (retro C)', () => {
   const closedAt = (ts: number): LedgerEntry =>
     entry({ id: 'c1', from: 'shipper', ts, meta: { stage: 'closed', pr: 3, repo: 'a/b' } });
 
-  it('stays open and unexpired while its PR is open, however old', () => {
+  it('stays open and unexpired while its PR is open, for days', () => {
     expect(openAsks([held], NOW).map((ask) => ask.id)).toEqual(['h1']);
     expect(expiredAsks([held], NOW)).toEqual([]);
+  });
+
+  /*
+    From the Task 3 review: a PR abandoned, handed back or mistyped writes no
+    `closed` entry, and a held ask that never aged would stay open forever,
+    its asker never told. Seven days held, and it expires like any other.
+  */
+  it('expires once it has waited seven days for a PR that never closed', () => {
+    const stale = entry({
+      id: 'h2',
+      kind: 'ask',
+      to: 'builder',
+      ts: NOW - 7 * LEDGER_ASK_TTL_MS,
+      meta: { after: 'a/b#9' },
+    });
+
+    expect(openAsks([stale], NOW)).toEqual([]);
+    expect(expiredAsks([stale], NOW).map((ask) => ask.id)).toEqual(['h2']);
   });
 
   it('ages from its release, not from when it was posted', () => {

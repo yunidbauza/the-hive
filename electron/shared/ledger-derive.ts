@@ -187,12 +187,14 @@ export function expiredAsks(
     if (typeof expired === 'string' && entry.from === OVERMIND) told.add(expired);
   }
 
+  const releases = releaseTimes(entries);
+
   return entries.filter(
     (entry) =>
       entry.kind === 'ask' &&
       !closed.has(entry.id) &&
       !told.has(entry.id) &&
-      agedFor(entry, entries, now) >= ttlOf(entry),
+      agedFor(entry, releases, now) >= ttlOf(entry),
   );
 }
 
@@ -214,12 +216,13 @@ export function openAsks(entries: readonly LedgerEntry[], now: number): OpenAsk[
     if (CLOSING_KINDS.has(entry.kind)) closed.add(entry.thread);
   }
 
+  const releases = releaseTimes(entries);
   const open: OpenAsk[] = [];
   for (const entry of entries) {
     if (entry.kind !== 'ask') continue;
     if (closed.has(entry.id)) continue;
     const ageMs = now - entry.ts;
-    if (agedFor(entry, entries, now) >= ttlOf(entry)) continue;
+    if (agedFor(entry, releases, now) >= ttlOf(entry)) continue;
     open.push({ ...entry, kind: 'ask', open: true, ageMs });
   }
   return open;
@@ -525,14 +528,41 @@ export function isHeld(ask: LedgerEntry, log: readonly LedgerEntry[]): boolean {
  *
  * A held ask does not age while it waits for its PR: a chain whose earlier PR
  * sits a day in review would otherwise lose the next job, with nothing said to
- * anyone. Released, it ages from the release. Every other ask ages from when
- * it was posted, as it always has. `OpenAsk.ageMs` still reports the time since
- * the post, because that is what a person reading the card means by age.
+ * anyone. Released, it ages from the release. Held for
+ * {@link LEDGER_HELD_MAX_MS}, it expires at once, so a PR abandoned, handed
+ * back or mistyped cannot keep an ask open forever and its asker is told.
+ * Every other ask ages from when it was posted, as it always has.
+ * `OpenAsk.ageMs` still reports the time since the post, because that is what
+ * a person reading the card means by age.
  */
-function agedFor(ask: LedgerEntry, entries: readonly LedgerEntry[], now: number): number {
+function agedFor(ask: LedgerEntry, releases: ReadonlyMap<string, number>, now: number): number {
   const target = afterTarget(ask);
   if (target === undefined) return now - ask.ts;
-  const release = entries.find((entry) => releasesAfter(entry, target));
-  if (release === undefined) return 0;
-  return now - Math.max(ask.ts, release.ts);
+  const released = releases.get(targetKey(target.repo, target.pr));
+  if (released === undefined) {
+    return now - ask.ts >= LEDGER_HELD_MAX_MS ? Number.POSITIVE_INFINITY : 0;
+  }
+  return now - Math.max(ask.ts, released);
+}
+
+/** How long a held ask waits for its PR before it expires like any other (retro C). */
+export const LEDGER_HELD_MAX_MS = 7 * LEDGER_ASK_TTL_MS;
+
+const targetKey = (repo: string, pr: number): string => `${repo.toLowerCase()}#${String(pr)}`;
+
+/**
+ * When each PR's first `closed` entry landed, keyed as {@link releasesAfter}
+ * matches: one pass over the log per read, rather than one per held ask.
+ */
+function releaseTimes(entries: readonly LedgerEntry[]): Map<string, number> {
+  const at = new Map<string, number>();
+  for (const entry of entries) {
+    const stage = entry.meta?.['stage'];
+    const pr = entry.meta?.['pr'];
+    const repo = entry.meta?.['repo'];
+    if (stage !== 'closed' || typeof pr !== 'number' || typeof repo !== 'string') continue;
+    const key = targetKey(repo, pr);
+    if (!at.has(key)) at.set(key, entry.ts);
+  }
+  return at;
 }

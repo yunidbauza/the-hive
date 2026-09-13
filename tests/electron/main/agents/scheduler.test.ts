@@ -222,6 +222,31 @@ describe('createScheduler', () => {
 
       expect(woke).toEqual([{ name: AGENT, trigger: 'ledger', extra: 'ask h1 from overmind' }]);
     });
+
+    it('queues a released ask for a working agent', () => {
+      state.patch(AGENT, { status: 'working' });
+      entries.push(held, closed());
+      scheduler.onEntry(closed());
+
+      expect(woke).toEqual([]);
+      expect(state.read(AGENT).pendingWake).toHaveLength(1);
+    });
+
+    it('does not wake when the released event cannot be written', () => {
+      appendOk = false;
+      entries.push(held, closed());
+      scheduler.onEntry(closed());
+
+      expect(woke).toEqual([]);
+    });
+
+    it('writes no released marker for an ask the agent addressed to itself', () => {
+      const self = entry({ id: 'h1', from: AGENT, meta: { after: 'a/b#3' } });
+      entries.push(self, closed());
+      scheduler.onEntry(closed());
+
+      expect(appended).toEqual([]);
+    });
   });
 
   it('writes nothing for a party that is not an agent', () => {
@@ -232,6 +257,29 @@ describe('createScheduler', () => {
 
   it('writes nothing for a broadcast', () => {
     scheduler.onEntry(entry({ to: undefined }));
+
+    expect(woke).toEqual([]);
+  });
+
+  /*
+    Retro C, Task 4: what the fixer's own follow-up can rely on. An ask an
+    agent addresses to itself never wakes it, held or not, so a blocked fixer
+    cannot queue its own next round with `meta.after`; it answers `blocked-on`
+    and the asker re-posts the job with `after`.
+  */
+  it('never wakes an agent for an ask it addressed to itself, held or released', () => {
+    scheduler.onEntry(entry({ id: 's1', from: AGENT }));
+    const selfHeld = entry({ id: 's2', from: AGENT, meta: { after: 'a/b#3' } });
+    const closed = entry({
+      id: 'c3',
+      from: 'shipper',
+      to: 'sess-4l',
+      kind: 'post',
+      meta: { pr: 3, repo: 'a/b', stage: 'closed' },
+    });
+    entries.push(selfHeld, closed);
+    scheduler.onEntry(selfHeld);
+    scheduler.onEntry(closed);
 
     expect(woke).toEqual([]);
   });
