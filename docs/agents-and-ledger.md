@@ -524,6 +524,40 @@ the party rule. A lane run's prompt names its lane, and the standing run of
 an agent with `lane:` is told to hand lane work over with a self-addressed
 `ledger_ask` (carrying `meta.repo` when the agent lanes by repository).
 
+**Heavy gates on one repository (HIVE-190).** Two builder-shaped runs, in two
+worktrees of this repository at one SHA (13c7c17), ran
+`pnpm desktop:build && pnpm test:e2e:electron` one after the other, then both
+at once, twice. On a 10-core, 64 GiB Mac:
+
+| Arm | Build s | E2E s | Passed | Failed | Flaky |
+| --- | --- | --- | --- | --- | --- |
+| Serial A | 13.48 | 154.90 | 201 | 0 | 0 |
+| Serial B | 13.19 | 155.40 | 201 | 0 | 0 |
+| Parallel 1, A | 13.07 | 196.04 | 201 | 0 | 0 |
+| Parallel 1, B | 12.65 | 198.23 | 201 | 0 | 0 |
+| Parallel 2, A | 12.80 | 193.50 | 201 | 0 | 0 |
+| Parallel 2, B | 12.80 | 198.21 | 201 | 0 | 0 |
+
+Every arm skipped the same 4 specs. The shared state checked, and what each
+turned out to be:
+
+- **Ports.** Each app under test binds its own ephemeral port on 127.0.0.1. No
+  port was held by two processes in any of 16 samples.
+- **`userData`.** Every test passes its own `--user-data-dir`, under the arm's
+  `test-results/`, and `index.ts` honours the switch. The shared dev profile was
+  not written during either run.
+- **`out/`.** `global-setup.ts` builds it per checkout.
+- **Playwright.** Two workers per arm, no retries, no web server under
+  `--project=electron`.
+- **The single-instance lock.** Keyed on the `userData` directory, so it is per
+  test and never spans two arms.
+
+Nothing collides. The cost that remains is contention: an arm's e2e runs about
+27% longer beside another (196.5 s against 155.2 s on average), and two arms
+finish together in 211 s against 337 s one after the other. That is a
+scheduling cost, not a correctness one, and a gate would trade it for a longer
+queue. The lease half of HIVE-190 closes as not needed.
+
 Each process carries `HIVE_RUN_ID`, `HIVE_RUN_KIND` and `HIVE_RUN_TOKEN`. Since
 HIVE-184 the run id is an authenticated claim: the receiver refuses a ledger
 write naming a run without `HMAC(launchSecret, "run:" + run)`, because lanes
