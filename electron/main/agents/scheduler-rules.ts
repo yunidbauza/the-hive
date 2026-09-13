@@ -92,7 +92,11 @@ export function decideForStatus(status: AgentStatus): WakeDecision {
 export const decideForEvent = (status: AgentStatus): WakeDecision =>
   decideForStatus(status);
 
-export function decide(status: AgentStatus, entry: LedgerEntry): WakeDecision {
+export function decide(
+  status: AgentStatus,
+  entry: LedgerEntry,
+  options?: { sameLane?: boolean },
+): WakeDecision {
   // A broadcast wakes nobody — parties read those on their own schedule.
   if (entry.to === undefined) return 'ignore';
   /*
@@ -101,8 +105,12 @@ export function decide(status: AgentStatus, entry: LedgerEntry): WakeDecision {
     Without this a `post` an agent addresses to itself — a note-to-self across
     wakes, which the ledger allows — would wake the agent that just wrote it,
     which would write another, forever.
+
+    Since HIVE-186 an agent's own entry wakes a different lane, which is how
+    a standing lane hands work into a repo lane. The loop guard holds,
+    because an entry never wakes the lane that wrote it.
   */
-  if (entry.from === entry.to) return 'ignore';
+  if (entry.from === entry.to && (options?.sameLane ?? true)) return 'ignore';
   if (!WAKING_KINDS.has(entry.kind)) return 'ignore';
 
   return decideForStatus(status);

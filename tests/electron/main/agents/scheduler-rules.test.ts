@@ -174,3 +174,17 @@ describe('laneFor (HIVE-186)', () => {
     expect(laneOfRun('builder', 'r1', [forged, started('r1', 'thread:A')])).toBe('thread:A');
   });
 });
+
+describe('decide on a self-addressed entry (HIVE-186)', () => {
+  const self: LedgerEntry = { id: 's', ts: 0, from: 'shipper', to: 'shipper', kind: 'ask', body: 'hand over' };
+
+  it('ignores it on the lane that wrote it, as before', () => {
+    expect(decide('sleeping', self)).toBe('ignore');
+    expect(decide('sleeping', self, { sameLane: true })).toBe('ignore');
+  });
+
+  it('wakes a different lane with it', () => {
+    expect(decide('sleeping', self, { sameLane: false })).toBe('wake');
+    expect(decide('working', self, { sameLane: false })).toBe('queue');
+  });
+});
