@@ -57,6 +57,7 @@ import {
 } from '../../electron/shared/hook-contract';
 import { CONFIG_PATH_ENV } from '../../electron/shared/config-contract';
 import { LEDGER_DIR, OVERMIND } from '../../electron/shared/ledger-contract';
+import { laneOfRun } from '../../electron/shared/ledger-derive';
 import {
   SLACK_TOOL_GLOB,
   SLACK_TOOL_PREFIX,
@@ -829,7 +830,8 @@ your lane, and ignore every other ask:
 - "touch <name>": call Bash with exactly \`touch ${markers}/<name>\`, then answer
   the ask with "touched" and end your turn.
 
-Say nothing else.
+Use the ledger tools (mcp__hive__ledger_*) for every ledger step, never Bash.
+Call Bash only for "touch", and only with that exact command. Say nothing else.
 `;
 
 /** Lanes by repository (HIVE-191): overlaps across repositories, queues within one. */
@@ -2168,6 +2170,81 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       expect(toB).toMatchObject({ to: SESSION_B });
       expect(String(toB?.['body']).toLowerCase()).toContain('cobalt');
     }, 300_000);
+
+    it('resumes the asking lane\'s own session with the answer, and it remembers its first wake', async () => {
+      const first = settled(THREAD);
+      const ask = ledger.append({ from: SESSION, to: THREAD, kind: 'ask', body: 'remember walnut' });
+      if (!ask.ok) throw new Error('ask refused');
+      await first;
+
+      const lane = `thread:${ask.id}`;
+      const question = ledger.read({}).openAsks.find((open) => open.from === THREAD && open.to === SESSION);
+      expect(question).toBeDefined();
+      const uuid = agentState.lane(THREAD, lane).sessionUuid;
+      expect(uuid).toBeDefined();
+
+      // A sibling lane runs meanwhile and is untouched by what follows.
+      const sibling = ledger.append({ from: SESSION_B, to: THREAD, kind: 'ask', body: 'echo slate' });
+      if (!sibling.ok) throw new Error('sibling refused');
+
+      const second = settled(THREAD);
+      expect(ledger.answer({ thread: question!.id, body: 'green' }, SESSION).ok).toBe(true);
+      await second;
+      await until(() => runs.liveRuns(THREAD).length === 0, 240_000);
+
+      const resumed = spawns.filter((spawn) => spawn.args.includes('--resume') && spawn.args.includes(uuid!));
+      expect(resumed).toHaveLength(1);
+
+      const reply = (await onDisk()).find(
+        (entry) => entry['from'] === THREAD && entry['kind'] === 'answer' && entry['thread'] === ask.id,
+      );
+      expect(String(reply?.['body']).toLowerCase()).toContain('walnut');
+      expect(String(reply?.['body']).toLowerCase()).toContain('green');
+      expect(agentState.lane(THREAD, `thread:${sibling.id}`).sessionUuid).not.toBe(uuid);
+    }, 420_000);
+
+    it("brings a lane's allow-once grant home to that lane, and never to its sibling (flaky: haiku sometimes runs another Bash command first, or skips the touch)", { retry: 2, timeout: 420_000 }, async () => {
+      const first = settled(THREAD);
+      const ask = ledger.append({ from: SESSION, to: THREAD, kind: 'ask', body: 'touch home' });
+      if (!ask.ok) throw new Error('ask refused');
+      await first;
+
+      /*
+        The card this attempt's own lane raised for the touch itself. A model
+        that pokes at anything else first raises a card for that instead, and a
+        retried attempt must not answer an earlier attempt's card.
+      */
+      const log = ledger.read({});
+      const card = log.openAsks.find(
+        (open) =>
+          open.from === THREAD &&
+          open.meta?.['kind'] === 'permission' &&
+          laneOfRun(THREAD, open.meta?.['run'], log.entries) === `thread:${ask.id}` &&
+          JSON.stringify(open.meta?.['input'] ?? {}).includes('touch'),
+      );
+      expect(card).toBeDefined();
+      expect(existsSync(join(threadMarkers, 'home'))).toBe(false);
+
+      // The sibling wakes between the card and its answer, and must carry no grant.
+      const siblingDone = settled(THREAD);
+      const sibling = ledger.append({ from: SESSION_B, to: THREAD, kind: 'ask', body: 'echo ash' });
+      if (!sibling.ok) throw new Error('sibling refused');
+      await siblingDone;
+      const siblingUuid = agentState.lane(THREAD, `thread:${sibling.id}`).sessionUuid;
+      const siblingSpawn = spawns.find((spawn) => siblingUuid !== undefined && spawn.args.includes(siblingUuid));
+      expect(siblingSpawn).toBeDefined();
+      expect(siblingSpawn?.grants ?? '[]').not.toContain('touch');
+
+      const second = settled(THREAD);
+      expect(ledger.answer({ thread: card!.id, body: 'allow-once' }, OVERMIND).ok).toBe(true);
+      await second;
+
+      const laneUuid = agentState.lane(THREAD, `thread:${ask.id}`).sessionUuid;
+      const home = spawns.at(-1);
+      expect(home?.args).toContain(laneUuid);
+      expect(home?.grants).toContain('touch');
+      expect(existsSync(join(threadMarkers, 'home'))).toBe(true);
+    });
   });
 
   /**
