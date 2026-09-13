@@ -144,6 +144,7 @@ describe('agent-contract', () => {
       'mcp',
       'tools',
       'autonomy',
+      'lane',
       'limits.turns',
       'limits.budget_usd',
       'limits.daily_usd',
@@ -329,5 +330,16 @@ describe('slack.app_mention (HIVE-124)', () => {
     expect(isWakeOn('slack.mention')).toBe(true);
     expect(isWakeOn('slack.channel:#eng-code-review')).toBe(true);
     expect(isWakeOn('slack.app_mentions')).toBe(false);
+  });
+});
+
+describe('lane (HIVE-184)', () => {
+  it('declares lane as an optional enum of thread and repo', () => {
+    expect(AGENT_FIELDS).toContainEqual({
+      path: 'lane',
+      kind: 'enum',
+      required: false,
+      values: ['thread', 'repo'],
+    });
   });
 });

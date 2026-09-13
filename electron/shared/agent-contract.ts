@@ -169,6 +169,14 @@ export const AUTONOMIES = ['ask', 'act'] as const;
 export type Autonomy = (typeof AUTONOMIES)[number];
 
 /**
+ * How an agent's work divides into conversations (HIVE-183). Absent is one
+ * lane, the standing one. `thread`: every ask opens its own lane. `repo`: one
+ * lane per `meta.repo`. See `.hive/specs/2026-09-13-parallel-agent-lanes.md`.
+ */
+export const AGENT_LANES = ['thread', 'repo'] as const;
+export type AgentLane = (typeof AGENT_LANES)[number];
+
+/**
  * `working` deliberately collides with `SessionStatus`: an agent mid-run and a
  * session mid-turn mean the same thing to a reader, and `DotStatus` unions the
  * two, so the overlap costs nothing and saves a synonym.
@@ -286,6 +294,8 @@ export interface AgentDefinition {
   mcp: string[];
   tools: string[];
   autonomy: Autonomy;
+  /** How the agent's work divides into conversations (HIVE-184). Absent is one lane. */
+  lane?: AgentLane;
   /**
    * `budgetUsd` absent means unlimited — no `--max-budget-usd` on the wake.
    *
@@ -607,6 +617,7 @@ export const AGENT_FIELDS: readonly FieldSpec[] = [
   { path: 'mcp', kind: 'list', required: false },
   { path: 'tools', kind: 'list', required: false },
   { path: 'autonomy', kind: 'enum', required: false, values: AUTONOMIES },
+  { path: 'lane', kind: 'enum', required: false, values: AGENT_LANES },
   { path: 'limits.turns', kind: 'number', required: false },
   { path: 'limits.budget_usd', kind: 'number', required: false },
   { path: 'limits.daily_usd', kind: 'number', required: false },

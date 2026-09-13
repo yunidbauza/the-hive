@@ -31,6 +31,7 @@ import {
   WAKE_DAYS,
   type AgentContainer,
   type AgentDefinition,
+  type AgentLane,
   type AgentProblem,
   type Autonomy,
   type FieldSpec,
@@ -482,6 +483,7 @@ export function parseAgent(source: string, ctx: ParseContext): ParseResult {
       mcp,
       tools,
       autonomy: (shaped('autonomy') ?? 'ask') as Autonomy,
+      ...(shaped('lane') === undefined ? {} : { lane: shaped('lane') as AgentLane }),
       limits: {
         turns: limit('limits.turns', AGENT_LIMIT_DEFAULTS.turns),
         /*
