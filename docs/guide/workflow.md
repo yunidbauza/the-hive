@@ -93,7 +93,8 @@ Auto-merge is a project's `autoMerge` flag in `~/.hive/config.json`
 ([Settings › Projects](settings.md)). With it on, the shipper's merge call is granted for
 that repository and the approval wait is skipped. With it off, the merge stops at the
 [tools fence](agents.md#the-tools-fence) and becomes a card in your inbox: one click merges,
-one click refuses. That card now appears for every PR no reviewer is assigned to.
+one click refuses. With no required or requested review, a clean PR goes straight to that
+card.
 
 ## What you see
 
