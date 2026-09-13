@@ -8,6 +8,9 @@ import { describe, expect, it } from 'vitest';
 import { parseAgent } from '../../../electron/main/agents/definition';
 import { AGENT_ICON_NAMES } from '@features/settings/components/agent-form';
 import { matches } from '../../../electron/shared/permission-rules';
+import { createScheduler } from '../../../electron/main/agents/scheduler';
+import { createAgentState } from '../../../electron/main/agents/state';
+import type { LedgerEntry } from '../../../electron/shared/ledger-contract';
 
 /**
  * Every agent the app ships parses against the skills the app ships
@@ -119,5 +122,71 @@ describe('the Jira writes are consented, not standing', () => {
     const result = parseAgent(source, { folder: 'shipper', skillNames: shippedSkills, hiveSkillNames: shippedSkills, integrations: ['slack'] });
     if (!('def' in result)) throw new Error('shipper does not parse');
     expect(result.def.limits).toMatchObject({ dailyUsd: 40, budgetUsd: 2, parallel: 3 });
+  });
+});
+
+describe('the shipped agents in lanes, through the scheduler (HIVE-189)', () => {
+  const parsed = (name: string) => {
+    const source = readFileSync(join(resources, 'agents', name, 'AGENT.md'), 'utf8');
+    const result = parseAgent(source, { folder: name, skillNames: shippedSkills, hiveSkillNames: shippedSkills, integrations: ['slack'] });
+    if (!('def' in result)) throw new Error(`${name} does not parse`);
+    return result.def;
+  };
+
+  const harness = (name: string) => {
+    const def = parsed(name);
+    const entries: LedgerEntry[] = [];
+    const live = new Set<string>();
+    const started: string[] = [];
+    const state = createAgentState({ path: '/dev/null/agents.json', debounceMs: 1 });
+    state.patch(name, { status: 'sleeping' });
+    const scheduler = createScheduler({
+      run: (_n, _t, _e, options) => {
+        const lane = options?.lane ?? 'standing';
+        if (live.has(lane)) return { started: false, refused: 'working' };
+        if (live.size >= def.limits.parallel) return { started: false, refused: 'saturated' };
+        live.add(lane);
+        started.push(lane);
+        return { started: true, run: `run-${String(started.length)}`, kind: 'standing' };
+      },
+      state,
+      isAgent: (id) => id === name,
+      wakesOnLedger: () => true,
+      parallelFor: () => def.limits.parallel,
+      schedules: () => new Map(),
+      pushStatus: () => undefined,
+      ledger: { read: () => ({ entries }), append: () => ({ ok: true }) },
+      now: () => 0,
+      laneOf: () => def.lane,
+      laneLive: (_n, lane) => live.has(lane),
+    });
+    const ask = (id: string, meta: Record<string, unknown> = {}) => {
+      const entry: LedgerEntry = { id, ts: 0, from: 'sess-1', to: name, kind: 'ask', body: 'job', meta };
+      entries.push(entry);
+      scheduler.onEntry(entry);
+    };
+    return { ask, started, state };
+  };
+
+  it('ships two repositories at once and queues a second PR on the same one', () => {
+    const { ask, started, state } = harness('shipper');
+    ask('s1', { pr: 1, repo: 'a/x' });
+    ask('s2', { pr: 2, repo: 'b/y' });
+    ask('s3', { pr: 3, repo: 'a/x' });
+
+    expect(started).toEqual(['repo:a/x', 'repo:b/y']);
+    expect(state.lane('shipper', 'repo:a/x').pendingWake).toEqual([
+      expect.objectContaining({ kind: 'ask', id: 's3' }),
+    ]);
+    state.dispose();
+  });
+
+  it('builds two plans at once', () => {
+    const { ask, started, state } = harness('builder');
+    ask('b1', { repo: 'a/x' });
+    ask('b2', { repo: 'a/x' });
+
+    expect(started).toEqual(['thread:b1', 'thread:b2']);
+    state.dispose();
   });
 });
