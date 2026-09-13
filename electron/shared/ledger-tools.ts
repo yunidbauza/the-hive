@@ -364,10 +364,16 @@ export const HIVE_STANDING_GRANTS: readonly string[] = [
   'mcp__hive__approve',
 ];
 
-/** The tools that write outside the Hive; consent is a `tools:` entry or a card. */
+/**
+ * The tools that write outside the Hive, or change what it may do unasked;
+ * consent is a `tools:` entry or a card. `project_auto_merge` is a card only:
+ * it grants unattended merging, so its ladder has no standing rung
+ * (`rungsFor`) and no shipped agent names it in `tools:`.
+ */
 export const HIVE_CONSENT_TOOLS: readonly string[] = [
   'mcp__hive__jira_transition',
   'mcp__hive__jira_comment',
+  'mcp__hive__project_auto_merge',
 ];
 
 /**
@@ -418,6 +424,26 @@ export const JIRA_COMMENT_TOOL: McpToolDefinition = {
       markdown: { type: 'string', description: 'The comment, as markdown.' },
     },
     required: ['key', 'markdown'],
+  },
+};
+
+/**
+ * The auto-merge switch (retro B). Turning it on is a merge grant: the
+ * shipper then merges that project's PRs with nobody approving. So it is in
+ * {@link HIVE_CONSENT_TOOLS} and never {@link HIVE_STANDING_GRANTS}, and its
+ * card offers `once` only.
+ */
+export const PROJECT_AUTO_MERGE_TOOL: McpToolDefinition = {
+  name: 'project_auto_merge',
+  description:
+    'Turn auto-merge on or off for one project configured in The Hive, named by its id or its key. On grants unattended merging: the shipper merges that project\'s pull requests without a person\'s approval. Off puts the person\'s approval back in front of every merge. Answers with the projects directory, as `projects` does. This tool needs the person\'s consent on a card every time it is called, and no `tools:` entry grants it: ask the person before you call it.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      project: { type: 'string', description: 'The project id or key, as `projects` lists it.' },
+      on: { type: 'boolean', description: 'true to merge without approval, false to require it again.' },
+    },
+    required: ['project', 'on'],
   },
 };
 

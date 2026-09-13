@@ -11,7 +11,10 @@ import {
   type AgentsDirectory,
 } from '../../../../electron/shared/agent-contract';
 import {
+  PROJECT_AUTO_MERGE_MAX_BYTES,
+  PROJECT_AUTO_MERGE_PATH,
   PROJECTS_PATH,
+  ProjectAutoMergeRefused,
   type ProjectsDirectory,
 } from '../../../../electron/shared/config-contract';
 import { PR_PATH, type PrLookupReply } from '../../../../electron/shared/github-contract';
@@ -2742,6 +2745,154 @@ describe('the agent id space (HIVE-115)', () => {
   });
 });
 
+/*
+  Retro B, Task 3. The switch behind `project_auto_merge`: a small body, the
+  caller from the header, and a refusal that carries its reason to the model.
+*/
+describe('the project auto-merge route (retro B)', () => {
+  const CALLER = 'shipper';
+  const DIRECTORY: ProjectsDirectory = {
+    projects: [
+      { id: 'the-hive', key: 'hive', name: 'The Hive', path: '/repos/the-hive', status: 'ok', origin: 'local', autoMerge: true },
+    ],
+  };
+
+  let receiver: Receiver | undefined;
+  let url: string;
+  let seen: { caller: string; request: unknown }[];
+
+  const make = async (extra: Partial<Parameters<typeof createReceiver>[0]> = {}) => {
+    receiver = createReceiver({
+      knowsSession: (entityId) => entityId === CALLER,
+      onEvent: () => {},
+      onPlanTool: () => {},
+      onTicketIntent: () => {},
+      onPromptName: () => {},
+      onCleared: () => {},
+      onDone: () => {},
+      onReady: () => {},
+      onMetrics: () => {},
+      ...noLedger,
+      ...noAgents,
+      ...extra,
+    });
+    const started = await receiver.start();
+    expect(started).not.toBeNull();
+    url = started as string;
+  };
+
+  const recording = {
+    onProjectAutoMerge: (caller: string, request: unknown): ProjectsDirectory => {
+      seen.push({ caller, request });
+      return DIRECTORY;
+    },
+  };
+
+  beforeEach(() => {
+    seen = [];
+  });
+
+  afterEach(async () => {
+    await receiver?.stop();
+    receiver = undefined;
+  });
+
+  const post = (body: string, session = CALLER) =>
+    fetch(`${new URL(url).origin}${PROJECT_AUTO_MERGE_PATH}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [HOOK_HEADER_TOKEN]: receiver?.tokenFor(session) ?? '',
+        [HOOK_HEADER_SESSION]: session,
+      },
+      body,
+    });
+
+  it('calls the handler with the caller from the header and answers the directory', async () => {
+    await make(recording);
+
+    const response = await post(JSON.stringify({ project: 'hive', on: true }));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(DIRECTORY);
+    expect(seen).toEqual([{ caller: CALLER, request: { project: 'hive', on: true } }]);
+  });
+
+  it('refuses a bad body with 400 and a reason, calling nothing', async () => {
+    await make(recording);
+    const cases: [string, RegExp][] = [
+      [JSON.stringify({ project: 'hive' }), /missing key "on"/],
+      [JSON.stringify({ on: true }), /missing key "project"/],
+      [JSON.stringify({ project: 'hive', on: 'yes' }), /projectAutoMerge\.on must be a boolean/],
+      [JSON.stringify({ project: '../etc', on: true }), /projectAutoMerge\.project/],
+      [JSON.stringify({ project: 'hive', on: true, from: 'overmind' }), /unexpected key "from"/],
+      ['not json', /./],
+    ];
+    for (const [body, reason] of cases) {
+      const response = await post(body);
+      expect(response.status, body).toBe(400);
+      expect(((await response.json()) as { reason: string }).reason, body).toMatch(reason);
+    }
+    expect(seen).toEqual([]);
+  });
+
+  it('refuses a body over the cap with 413', async () => {
+    await make(recording);
+    const response = await post(
+      JSON.stringify({ project: 'hive', on: true, padding: 'x'.repeat(PROJECT_AUTO_MERGE_MAX_BYTES) }),
+    );
+
+    expect(response.status).toBe(413);
+    expect(seen).toEqual([]);
+  });
+
+  it('answers a refusal with 409 and the reason it carries', async () => {
+    await make({
+      onProjectAutoMerge: () => {
+        throw new ProjectAutoMergeRefused('no project "nope" is configured; nothing was changed');
+      },
+    });
+
+    const response = await post(JSON.stringify({ project: 'nope', on: true }));
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ reason: 'no project "nope" is configured; nothing was changed' });
+  });
+
+  it('answers 500 with a fixed sentence when the handler throws anything else', async () => {
+    await make({
+      onProjectAutoMerge: () => {
+        throw new Error('EACCES /Users/someone/.hive/config.json');
+      },
+    });
+
+    const response = await post(JSON.stringify({ project: 'hive', on: true }));
+    const body = (await response.json()) as { reason: string };
+
+    expect(response.status).toBe(500);
+    expect(body.reason).toMatch(/auto-merge could not be changed/);
+    expect(body.reason).not.toContain('/Users');
+  });
+
+  it('refuses with a reason when nothing composed the handler', async () => {
+    await make();
+
+    const response = await post(JSON.stringify({ project: 'hive', on: true }));
+
+    expect(response.status).toBe(409);
+    expect(((await response.json()) as { reason: string }).reason).toMatch(/not wired to this receiver; nothing was changed/);
+  });
+
+  it('refuses a caller the app does not know', async () => {
+    await make(recording);
+
+    const response = await post(JSON.stringify({ project: 'hive', on: true }), 'nobody-at-all');
+
+    expect(response.status).toBe(404);
+    expect(seen).toEqual([]);
+  });
+});
+
 describe('the projects and pr routes (HIVE-173)', () => {
   const CALLER = 'shipper';
   const PROJECT = {
@@ -3513,6 +3664,21 @@ describe('the MCP route', () => {
     const refused = (await bad.json()) as { result: { content: { text: string }[]; isError: boolean } };
     expect(refused.result.isError).toBe(true);
     expect(refused.result.content[0]?.text).toMatch(/owner\/name/);
+  });
+
+  it('serves project_auto_merge through the in-process client, the default refusal as a sentence (retro B)', async () => {
+    const response = await rpc({
+      jsonrpc: '2.0',
+      id: 24,
+      method: 'tools/call',
+      params: { name: 'project_auto_merge', arguments: { project: 'p', on: true } },
+    });
+    const body = (await response.json()) as { result: { content: { text: string }[]; isError: boolean } };
+
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0]?.text).toBe(
+      'project_auto_merge: auto-merge switching is not wired to this receiver; nothing was changed',
+    );
   });
 
   it('serves the Jira tools through the in-process client, refusals as sentences (HIVE-174)', async () => {

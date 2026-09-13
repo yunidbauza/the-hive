@@ -1,3 +1,4 @@
+import type { ProjectsDirectory } from './config-contract';
 import type { AdfBlock, JiraError, JiraToolIssue } from './jira-contract';
 import type { LedgerKind, LedgerReadQuery } from './ledger-contract';
 import { asInbound } from './ledger-derive';
@@ -9,6 +10,7 @@ import {
   JIRA_TRANSITION_TOOL,
   LEDGER_TOOLS,
   PR_TOOL,
+  PROJECT_AUTO_MERGE_TOOL,
   PROJECTS_TOOL,
 } from './ledger-tools';
 import {
@@ -335,17 +337,8 @@ export function createToolHandlers(
     });
   };
 
-  /** The projects directory (HIVE-173), prose and structured, like `agents`. */
-  const projects = async (): Promise<CallToolResult> => {
-    const directory = await client.projects();
-
-    if (directory.projects.length === 0) {
-      return ok(
-        'No projects are configured in The Hive. Ask for an absolute checkout path instead of a project name.',
-        { projects: [] },
-      );
-    }
-
+  /** The directory as prose, one line a project: `projects` and `project_auto_merge` both answer it. */
+  const projectsText = (directory: ProjectsDirectory): string => {
     const lines = directory.projects.map((project) => {
       const where = project.path === null ? `not on this machine (${project.status})` : project.path;
       const notes = [
@@ -357,10 +350,52 @@ export function createToolHandlers(
       ];
       return `- ${project.id} (key ${project.key}, "${project.name}") — ${where} [${notes.join('; ')}]`;
     });
+    return `${directory.projects.length} project(s) configured:\n${lines.join('\n')}`;
+  };
 
-    return ok(`${directory.projects.length} project(s) configured:\n${lines.join('\n')}`, {
-      projects: directory.projects,
-    });
+  /** The projects directory (HIVE-173), prose and structured, like `agents`. */
+  const projects = async (): Promise<CallToolResult> => {
+    const directory = await client.projects();
+
+    if (directory.projects.length === 0) {
+      return ok(
+        'No projects are configured in The Hive. Ask for an absolute checkout path instead of a project name.',
+        { projects: [] },
+      );
+    }
+
+    return ok(projectsText(directory), { projects: directory.projects });
+  };
+
+  /**
+   * The auto-merge switch (retro B): one project by id or key, one boolean.
+   * The answer leads with what changed, then the directory as `projects`
+   * reads it after the write. A refusal is the receiver's reason, named.
+   */
+  const projectAutoMerge = async (args: Record<string, unknown>): Promise<CallToolResult> => {
+    const project = stringArg(args, 'project');
+    const on = args['on'];
+    if (project === undefined || typeof on !== 'boolean') {
+      return failed('project_auto_merge needs project (a project id or key) and on (true or false)');
+    }
+
+    let directory: ProjectsDirectory;
+    try {
+      directory = await client.projectAutoMerge({ project, on });
+    } catch (cause) {
+      if (cause instanceof ReceiverError) return failed(`project_auto_merge: ${cause.message}`);
+      throw cause;
+    }
+
+    const flipped =
+      directory.projects.find((entry) => entry.id === project) ??
+      directory.projects.find((entry) => entry.key === project);
+    const name = flipped?.id ?? project;
+    const lead = on
+      ? `Auto-merge is on for ${name}: the shipper merges its pull requests without a person's approval.`
+      : `Auto-merge is off for ${name}: its pull requests wait for a person's approval again.`;
+
+    return ok(`${lead}\n${projectsText(directory)}`, { projects: directory.projects });
   };
 
   /** One PR record (HIVE-173). A missing record is an answer, not an error. */
@@ -589,6 +624,7 @@ export function createToolHandlers(
       JIRA_GET_TOOL,
       JIRA_TRANSITION_TOOL,
       JIRA_COMMENT_TOOL,
+      PROJECT_AUTO_MERGE_TOOL,
       APPROVE_TOOL,
     ],
 
@@ -621,6 +657,8 @@ export function createToolHandlers(
             return await jiraTransition(args);
           case 'jira_comment':
             return await jiraComment(args);
+          case 'project_auto_merge':
+            return await projectAutoMerge(args);
           case 'ledger_read':
             return await read(args);
           case 'ledger_post':

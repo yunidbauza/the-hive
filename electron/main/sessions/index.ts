@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
 import type { AgentsDirectory } from '@shared/agent-contract';
-import type { ProjectsDirectory } from '@shared/config-contract';
+import type { ProjectAutoMergeRequest, ProjectsDirectory } from '@shared/config-contract';
 import {
   AUTH_ENV_KEYS,
   ENV_PLACEHOLDER,
@@ -225,6 +225,8 @@ export interface SessionsOptions {
   /** HIVE-173: forwarded to the receiver untouched; its defaults stand when absent. */
   onProjectsList?: (caller: string) => ProjectsDirectory;
   onPrLookup?: (caller: string, lookup: PrLookup) => Promise<PrLookupReply>;
+  /** Retro B: the auto-merge switch, forwarded to the receiver untouched. */
+  onProjectAutoMerge?: (caller: string, request: ProjectAutoMergeRequest) => ProjectsDirectory;
   /** HIVE-174: forwarded to the receiver untouched. */
   onJira?: JiraToolHandlers;
   /**
@@ -541,6 +543,7 @@ export function createSessions(options: SessionsOptions): Sessions {
     // genuinely has no peers, and that is an answer, not a failure.
     onAgentsList = () => Promise.resolve({ agents: [] }),
     onProjectsList,
+    onProjectAutoMerge,
     onPrLookup,
     onJira,
     onAgentTurnEnded,
@@ -982,6 +985,7 @@ export function createSessions(options: SessionsOptions): Sessions {
     */
     onAgentsList,
     onProjectsList,
+    onProjectAutoMerge,
     onPrLookup,
     onJira,
     /**

@@ -409,6 +409,15 @@ const familyRuleFor = (
   };
 };
 
+/**
+ * Tools whose every call needs its own yes (retro B). Their ladder is `once`
+ * and nothing else: `project_auto_merge` grants unattended merging, and an
+ * `allow-tool` rung would turn one click into a standing grant written into
+ * the agent's `tools:`. `permissions.ts` recomputes the ladder with this
+ * function, so an answer naming a wider rung finds nothing to write.
+ */
+const ONCE_ONLY_TOOLS: ReadonlySet<string> = new Set(['mcp__hive__project_auto_merge']);
+
 export function rungsFor(
   toolName: string,
   input: Record<string, unknown>,
@@ -420,6 +429,8 @@ export function rungsFor(
       caption: 'runs this once. asks again next time.',
     },
   ];
+
+  if (ONCE_ONLY_TOOLS.has(toolName)) return rungs;
 
   /*
     Both rules below embed `toolName`, so both are gated on `isToolName`

@@ -2486,6 +2486,35 @@ export interface ProjectsDirectory {
 }
 
 /**
+ * The receiver route behind the `project_auto_merge` tool (retro B). It
+ * answers the {@link ProjectsDirectory} `projects` answers, read after the
+ * write, so the model sees the switch land.
+ */
+export const PROJECT_AUTO_MERGE_PATH = '/projects/auto-merge';
+
+/** Two short fields; a kilobyte is generous and keeps the route small. */
+export const PROJECT_AUTO_MERGE_MAX_BYTES = 1024;
+
+/** What `project_auto_merge` sends: a project by id or key, and the switch. */
+export interface ProjectAutoMergeRequest {
+  project: string;
+  on: boolean;
+}
+
+/**
+ * A refusal whose message is written for the model (retro B): an unknown
+ * project, a write that did not land, or nothing composed to do it. The
+ * receiver answers it as a 409 carrying the message; any other throw is a
+ * fixed sentence, since it could quote a path.
+ */
+export class ProjectAutoMergeRefused extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProjectAutoMergeRefused';
+  }
+}
+
+/**
  * `config:set-session-plugin` (HIVE-176): one switch, one plugin. Main
  * computes the list from the file as it stands, so two quick clicks cannot
  * each send a list built from the same stale snapshot.

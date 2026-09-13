@@ -1,5 +1,5 @@
 import type { AgentsDirectory } from './agent-contract';
-import type { ProjectsDirectory } from './config-contract';
+import type { ProjectAutoMergeRequest, ProjectsDirectory } from './config-contract';
 import type { PrLookup, PrLookupReply } from './github-contract';
 import type {
   JiraComment,
@@ -183,6 +183,11 @@ export interface ReceiverClient {
   jiraGet(request: JiraToolKeyRequest): Promise<JiraResult<JiraToolIssue>>;
   jiraTransition(request: JiraTransitionByName): Promise<JiraResult<JiraToolTransitionReply>>;
   jiraComment(request: JiraToolCommentRequest): Promise<JiraResult<JiraComment>>;
+  /**
+   * Flip one project's auto-merge (retro B), answered with the directory
+   * `projects` returns. A refusal is a `ReceiverError` carrying its reason.
+   */
+  projectAutoMerge(request: ProjectAutoMergeRequest): Promise<ProjectsDirectory>;
 }
 
 /** The path `POST /mcp` is served on (HIVE-130). */

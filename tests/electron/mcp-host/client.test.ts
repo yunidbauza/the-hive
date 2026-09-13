@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { AGENTS_PATH } from '@shared/agent-contract';
-import { PROJECTS_PATH } from '@shared/config-contract';
+import { PROJECT_AUTO_MERGE_PATH, PROJECTS_PATH } from '@shared/config-contract';
 import { PR_PATH } from '@shared/github-contract';
 import { JIRA_COMMENT_PATH, JIRA_GET_PATH, JIRA_TRANSITION_PATH } from '@shared/jira-contract';
 import { HOOK_HEADER_SESSION, HOOK_HEADER_TOKEN } from '@shared/hook-contract';
@@ -263,5 +263,29 @@ describe('the Jira calls (HIVE-174)', () => {
       expect(JSON.parse(init.body as string)).toEqual(request);
       expect(init.headers).toMatchObject({ [HOOK_HEADER_SESSION]: 'sess-a', [HOOK_HEADER_TOKEN]: 'tok-1' });
     }
+  });
+});
+
+describe('projectAutoMerge (retro B)', () => {
+  it('posts the request to its own route and returns the projects directory', async () => {
+    const directory = { projects: [] };
+    const fetchImpl = vi.fn(async () => jsonResponse(200, directory));
+
+    expect(await client(fetchImpl as never).projectAutoMerge({ project: 'hive', on: true })).toEqual(directory);
+
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(`http://127.0.0.1:4100${PROJECT_AUTO_MERGE_PATH}`);
+    expect(JSON.parse(init.body as string)).toEqual({ project: 'hive', on: true });
+    expect(init.headers).toMatchObject({ [HOOK_HEADER_SESSION]: 'sess-a', [HOOK_HEADER_TOKEN]: 'tok-1' });
+  });
+
+  it('carries a refusal\'s reason as a ReceiverError', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(409, { reason: 'no project "nope" is configured; nothing was changed' }),
+    );
+
+    await expect(client(fetchImpl as never).projectAutoMerge({ project: 'nope', on: true })).rejects.toThrow(
+      new ReceiverError(409, 'no project "nope" is configured; nothing was changed'),
+    );
   });
 });

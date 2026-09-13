@@ -162,7 +162,11 @@ import {
 import { createAgentsRuntime, type AgentRegistry } from '../agents';
 import { createAutoMergeGrants, type AutoMergeGrants } from '../agents/auto-merge';
 import { resolveClaude } from '../agents/claude-path';
-import { agentsDirectoryFor, projectsDirectoryFor } from '../agents/directory';
+import {
+  agentsDirectoryFor,
+  projectAutoMergeFor,
+  projectsDirectoryFor,
+} from '../agents/directory';
 import {
   agentPromptFile,
   agentStateFile,
@@ -3083,6 +3087,14 @@ export function registerIpcHandlers(
     },
     // HIVE-173: the config's projects, read per call so an edit in Settings shows.
     onProjectsList: () => projectsDirectoryFor(getConfig()),
+    /*
+      Retro B. `project_auto_merge` is a consent tool: the fence, or a
+      session's own permission prompt, asked the person before a call gets
+      here. The same write Settings makes; `autoMergeGrants` reads the config
+      live at the next shipper wake, so nothing else needs telling.
+    */
+    onProjectAutoMerge: (_caller, request) =>
+      projectAutoMergeFor(request, { config: getConfig, setAutoMerge: setProjectAutoMerge }),
     /*
       HIVE-173. `github` is declared further down this function. The callback
       runs only when a request arrives, after this whole body has executed, so

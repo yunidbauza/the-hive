@@ -62,9 +62,10 @@ describe('createHandlers without an environment', () => {
     differed depending on how the process was started would make `/mcp` report
     a different server than the one an agent actually gets.
   */
-  it('still lists the sixteen tools, so /mcp shows the server connected', () => {
+  it('still lists the seventeen tools, so /mcp shows the server connected', () => {
     const handlers = createHandlers({}, vi.fn() as never);
-    expect(handlers.listTools()).toHaveLength(16);
+    expect(handlers.listTools()).toHaveLength(17);
+    expect(handlers.listTools().map((tool) => tool.name)).toContain('project_auto_merge');
   });
 
   it('answers every call with a legible reason instead of hanging', async () => {

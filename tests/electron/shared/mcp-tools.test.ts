@@ -20,6 +20,10 @@ const stub = (overrides: Partial<ReceiverClient> = {}): ReceiverClient => ({
   jiraGet: vi.fn(async () => NOT_WIRED),
   jiraTransition: vi.fn(async () => NOT_WIRED),
   jiraComment: vi.fn(async () => NOT_WIRED),
+  // Retro B: a receiver with nothing composed refuses, and says so.
+  projectAutoMerge: vi.fn(async () => {
+    throw new ReceiverError(409, 'auto-merge switching is not wired to this receiver; nothing was changed');
+  }),
   ...overrides,
 });
 
@@ -37,7 +41,7 @@ describe('createToolHandlers — listing', () => {
     `agents` (HIVE-127), then `approve` last — the tools a model is meant to
     call ahead of the one only the CLI ever reaches, on its behalf.
   */
-  it('lists the sixteen shared definitions unchanged', () => {
+  it('lists the seventeen shared definitions unchanged', () => {
     const handlers = createToolHandlers(stub());
     expect(handlers.listTools().map((tool) => tool.name)).toEqual([
       'ledger_read',
@@ -55,8 +59,47 @@ describe('createToolHandlers — listing', () => {
       'jira_get',
       'jira_transition',
       'jira_comment',
+      'project_auto_merge',
       'approve',
     ]);
+  });
+
+  it('forwards project_auto_merge and answers with the directory, the flipped project named first', async () => {
+    const directory = {
+      projects: [
+        { id: 'the-hive', key: 'hive', name: 'The Hive', path: '/repos/the-hive', status: 'ok' as const, origin: 'local' as const, autoMerge: true },
+      ],
+    };
+    const projectAutoMerge = vi.fn(async () => directory);
+    const result = await createToolHandlers(stub({ projectAutoMerge })).callTool('project_auto_merge', { project: 'hive', on: true });
+
+    expect(projectAutoMerge).toHaveBeenCalledWith({ project: 'hive', on: true });
+    expect(result.isError).toBe(false);
+    expect(textOf(result)).toMatch(/^Auto-merge is on for the-hive/);
+    expect(textOf(result)).toContain('the-hive (key hive, "The Hive") — /repos/the-hive [ok, local; auto-merge on]');
+    expect(result.structuredContent).toEqual(directory);
+  });
+
+  it('refuses project_auto_merge without a project or a boolean on, calling nothing', async () => {
+    const untouched = stub();
+    const handlers = createToolHandlers(untouched);
+    for (const args of [{ on: true }, { project: 'hive' }, { project: 'hive', on: 'yes' }, { project: '', on: false }]) {
+      const result = await handlers.callTool('project_auto_merge', args);
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toMatch(/project_auto_merge needs project .* and on/);
+    }
+    expect(untouched.projectAutoMerge).not.toHaveBeenCalled();
+  });
+
+  it('turns a project_auto_merge refusal into a tool error carrying the reason', async () => {
+    const result = await createToolHandlers(stub({
+      projectAutoMerge: async () => {
+        throw new ReceiverError(409, 'no project "nope" is configured; nothing was changed');
+      },
+    })).callTool('project_auto_merge', { project: 'nope', on: true });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toBe('project_auto_merge: no project "nope" is configured; nothing was changed');
   });
 
   it('reports an unknown tool as an error result, not a throw', async () => {

@@ -1,3 +1,6 @@
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import { LEDGER_KINDS } from '@shared/ledger-contract';
@@ -13,9 +16,10 @@ import {
   JIRA_GET_TOOL,
   JIRA_TRANSITION_TOOL,
   PR_TOOL,
+  PROJECT_AUTO_MERGE_TOOL,
   PROJECTS_TOOL,
 } from '@shared/ledger-tools';
-import { matches } from '@shared/permission-rules';
+import { matches, rungsFor } from '@shared/permission-rules';
 
 /** What the fence answers for a name under the grants every agent holds. */
 const standing = (name: string): boolean =>
@@ -318,5 +322,57 @@ describe('the Jira tools (HIVE-174)', () => {
   it('tell the model the CLI is the fallback, and that a ticket never moves backwards', () => {
     expect(JIRA_GET_TOOL.description).toMatch(/jira-writer/);
     expect(JIRA_TRANSITION_TOOL.description).toMatch(/would move backwards/i);
+  });
+});
+
+/*
+  Retro B, Task 3. Turning auto-merge on is a merge grant: the shipper then
+  merges that project's PRs with nobody approving. The person's rule is that
+  this tool never runs without their yes, so nothing may grant it ahead of the
+  call: not the standing grants, not a shipped agent's `tools:`, and not the
+  "always" rung of the card that asks.
+*/
+describe('PROJECT_AUTO_MERGE_TOOL', () => {
+  const qualified = `mcp__hive__${PROJECT_AUTO_MERGE_TOOL.name}`;
+
+  it('is named project_auto_merge and requires both the project and the switch', () => {
+    expect(PROJECT_AUTO_MERGE_TOOL.name).toBe('project_auto_merge');
+    expect(LEDGER_TOOL_NAMES).not.toContain(PROJECT_AUTO_MERGE_TOOL.name);
+    expect(PROJECT_AUTO_MERGE_TOOL.inputSchema.required).toEqual(['project', 'on']);
+    expect(PROJECT_AUTO_MERGE_TOOL.inputSchema.properties?.['project']).toMatchObject({ type: 'string' });
+    expect(PROJECT_AUTO_MERGE_TOOL.inputSchema.properties?.['on']).toMatchObject({ type: 'boolean' });
+  });
+
+  it('says it grants unattended merging and needs the person\'s consent', () => {
+    expect(PROJECT_AUTO_MERGE_TOOL.description).toMatch(/without a person's approval/);
+    expect(PROJECT_AUTO_MERGE_TOOL.description).toMatch(/shipper merges/);
+    expect(PROJECT_AUTO_MERGE_TOOL.description).toMatch(/person's consent/);
+  });
+
+  it('is a consent tool and no standing grant covers it, the ledger glob included', () => {
+    expect(HIVE_CONSENT_TOOLS).toContain(qualified);
+    expect(HIVE_STANDING_GRANTS).not.toContain(qualified);
+    expect(standing(qualified)).toBe(false);
+    expect(matches('mcp__hive__ledger_*', qualified, {})).toBe(false);
+  });
+
+  it('is in no shipped agent\'s tools: list', () => {
+    const agents = join(__dirname, '../../../resources/agents');
+    const names = readdirSync(agents, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && existsSync(join(agents, entry.name, 'AGENT.md')))
+      .map((entry) => entry.name);
+    expect(names).toContain('shipper');
+    for (const name of names) {
+      const text = readFileSync(join(agents, name, 'AGENT.md'), 'utf8');
+      const list = /^tools:\s*\[(.*)\]\s*$/m.exec(text)?.[1] ?? '';
+      const rules = list.split(',').map((rule) => rule.trim()).filter((rule) => rule !== '');
+      expect(rules.filter((rule) => matches(rule, qualified, {})), name).toEqual([]);
+    }
+  });
+
+  it('offers only a once rung on its card, so a yes can never become a standing grant', () => {
+    const rungs = rungsFor(qualified, { project: 'hive', on: true });
+    expect(rungs.map((rung) => rung.id)).toEqual(['allow-once']);
+    expect(rungs.every((rung) => rung.rule === undefined)).toBe(true);
   });
 });
