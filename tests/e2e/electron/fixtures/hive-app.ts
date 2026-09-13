@@ -1,5 +1,5 @@
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 import {
   _electron as electron,
@@ -27,6 +27,54 @@ import {
 const APP_ROOT = join(import.meta.dirname, '../../../..');
 const MAIN_ENTRY = join(APP_ROOT, 'out/main/index.js');
 
+/** What the app ships and seeds beside the config on every launch (HIVE-162). */
+const SHIPPED_ROOT = join(APP_ROOT, 'resources');
+
+const shippedFolders = (kind: 'agents' | 'skills'): string[] =>
+  readdirSync(join(SHIPPED_ROOT, kind), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+
+/** The agents every launch seeds, by name. A spec that counts rows adds these. */
+export const SHIPPED_AGENTS: readonly string[] = shippedFolders('agents');
+
+/** The skills every launch seeds, by folder name. */
+export const SHIPPED_SKILLS: readonly string[] = shippedFolders('skills');
+
+const filesUnder = (dir: string, rel: string): string[] =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = `${rel}/${entry.name}`;
+    if (entry.isDirectory()) return filesUnder(join(dir, entry.name), path);
+    return entry.isFile() ? [path] : [];
+  });
+
+/**
+ * Make the next launch against `configPath` start with no shipped agents or
+ * skills (retro D).
+ *
+ * Every launch seeds them beside the config (HIVE-162), so an empty Agents or
+ * Skills pane is no longer what a fresh profile shows. It is what a person
+ * sees after deleting them, and this writes exactly that state: the seed
+ * manifest lists every shipped file, and `seed.ts` leaves a file absent when
+ * the manifest says it was seeded once. Nothing in the product changes; the
+ * spec starts where a person who deleted them would be.
+ */
+export function startUnseeded(configPath: string): void {
+  const files: Record<string, string> = {};
+  for (const name of SHIPPED_AGENTS) files[`agents/${name}/AGENT.md`] = 'deleted';
+  for (const name of SHIPPED_SKILLS) {
+    for (const file of filesUnder(join(SHIPPED_ROOT, 'skills', name), `skills/${name}`)) {
+      files[file] = 'deleted';
+    }
+  }
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(
+    join(dirname(configPath), '.seed.json'),
+    `${JSON.stringify({ files }, null, 2)}\n`,
+  );
+}
+
 /**
  * Launch the built app against a specific profile.
  *
@@ -39,9 +87,12 @@ export async function launchHive({
   userDataDir,
   configPath,
   env: extraEnv,
+  unseeded = false,
 }: {
   userDataDir: string;
   configPath: string;
+  /** Start with no shipped agents or skills: see {@link startUnseeded}. */
+  unseeded?: boolean;
   /**
    * Extra environment for the launched app (HIVE-67).
    *
@@ -53,6 +104,7 @@ export async function launchHive({
    */
   env?: Record<string, string>;
 }): Promise<ElectronApplication> {
+  if (unseeded) startUnseeded(configPath);
   return electron.launch({
     args: [
       MAIN_ENTRY,
@@ -68,7 +120,25 @@ export async function launchHive({
       `--user-data-dir=${userDataDir}`,
     ],
     env: {
-      ...process.env,
+      /**
+       * The runner's environment **minus the identity of whoever launched it**
+       * (retro D). A suite run from inside a Hive agent or a Claude Code
+       * session carries that party's own `HIVE_SESSION_ID`, receiver URL and
+       * token, and `CLAUDECODE`; none of them is the app under test's. The
+       * fixture's own `HIVE_*` keys below, and `extraEnv`, are set on purpose
+       * after it.
+       */
+      ...Object.fromEntries(
+        Object.entries(process.env).filter(([key]) => !INHERITED_IDENTITY.test(key)),
+      ),
+      /**
+       * A UTF-8 locale when the runner has none (retro D). A person's terminal
+       * always sets `LANG`; a headless agent's environment has no `LANG` and no
+       * `LC_*` at all. Without one the session's shell never ran the
+       * bootstrap stub, and both `interactive-terminal` Claude-prompt specs
+       * failed in an agent's run while passing in a person's.
+       */
+      ...(process.env['LANG'] === undefined ? { LANG: 'en_US.UTF-8' } : {}),
       /**
        * Disables the simulation clock and animation-driven timing — the same
        * determinism concern `?sim=0` handles for the web project (story 061).
@@ -86,11 +156,25 @@ export async function launchHive({
   });
 }
 
-export const test = base.extend<{ hive: ElectronApplication; page: Page }>({
-  hive: async ({}, use, testInfo) => {
+/**
+ * The keys a Hive agent or a Claude Code session puts in its own environment:
+ * who it is (`HIVE_*`) and that it is inside Claude Code (`CLAUDECODE`,
+ * `CLAUDE_CODE_*`). None of them is the app under test's (retro D).
+ */
+const INHERITED_IDENTITY = /^(HIVE_|CLAUDECODE$|CLAUDE_CODE_)/;
+
+export const test = base.extend<{
+  hive: ElectronApplication;
+  page: Page;
+  unseeded: boolean;
+}>({
+  // `test.use({ unseeded: true })` for a spec about an empty pane (retro D).
+  unseeded: [false, { option: true }],
+  hive: async ({ unseeded }, use, testInfo) => {
     const app = await launchHive({
       userDataDir: testInfo.outputPath('user-data'),
       configPath: testInfo.outputPath('hive-config.json'),
+      unseeded,
     });
 
     await use(app);

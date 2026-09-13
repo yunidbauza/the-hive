@@ -31,7 +31,10 @@ import { launchHive } from './fixtures/hive-app';
 
 const EMPTY_CONFIG = JSON.stringify({ version: 2, projects: [] }, null, 2);
 
-async function launchWithConfig(outputPath: (name: string) => string): Promise<{
+async function launchWithConfig(
+  outputPath: (name: string) => string,
+  { unseeded = false }: { unseeded?: boolean } = {},
+): Promise<{
   app: ElectronApplication;
   page: Page;
   configPath: string;
@@ -43,6 +46,7 @@ async function launchWithConfig(outputPath: (name: string) => string): Promise<{
   const app = await launchHive({
     userDataDir: outputPath('user-data'),
     configPath,
+    unseeded,
     /*
       Point the *skill* roots at scratch too, not only the config.
 
@@ -85,8 +89,11 @@ Read your ledger inbox first.
 `;
 
 test('authors an agent through the pane and writes it to disk', async ({}, testInfo) => {
-  const { app, page, configPath } = await launchWithConfig((name) =>
-    testInfo.outputPath(name),
+  // From the empty pane: the shipped agents deleted, since HIVE-162 seeds
+  // them on every launch (retro D).
+  const { app, page, configPath } = await launchWithConfig(
+    (name) => testInfo.outputPath(name),
+    { unseeded: true },
   );
 
   try {
