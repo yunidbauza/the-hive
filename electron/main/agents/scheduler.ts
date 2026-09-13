@@ -32,6 +32,7 @@ import {
   decideForEvent,
   decideForStatus,
   isClosedLane,
+  laneClaims,
   laneFor,
   laneOfRun,
   type WakeDecision,
@@ -701,6 +702,48 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       */
       arm(name, due, next);
       deps.run(name, wake.everyMs === undefined ? CALENDAR_TRIGGER : INTERVAL_TRIGGER);
+    }
+
+    /*
+      Repo lanes keep their own clock while they hold work (HIVE-186, spec §4).
+      The standing lane's loop above is unchanged; a thread lane never ticks.
+      A lane with no open claim has no clock, and a stale one is cleared.
+    */
+    for (const [name, schedule] of listed) {
+      if (deps.laneOf?.(name) !== 'repo' || schedule.wake.everyMs === undefined) continue;
+
+      const agent = deps.state.read(name);
+      const today = agent.today?.day === dayKey(now) ? agent.today : undefined;
+
+      if (agent.status === 'paused' || today?.capped === true) continue;
+      if (schedule.wake.quiet !== undefined && inQuiet(minuteOfDay(now), schedule.wake.quiet)) continue;
+
+      const holding = laneClaims(name, entries);
+
+      for (const [key, lane] of Object.entries(agent.lanes ?? {})) {
+        if (!key.startsWith('repo:')) continue;
+
+        if (!holding.has(key)) {
+          if (lane.nextRunAt !== undefined) deps.state.patchLane(name, key, { nextRunAt: undefined });
+          continue;
+        }
+
+        if (deps.laneLive?.(name, key) === true) continue;
+
+        const next = nextRunFrom(schedule.wake, now);
+
+        if (next === undefined) continue;
+
+        if (lane.nextRunAt === undefined) {
+          deps.state.patchLane(name, key, { nextRunAt: next });
+          continue;
+        }
+
+        if (now < lane.nextRunAt) continue;
+
+        deps.state.patchLane(name, key, { nextRunAt: next });
+        deps.run(name, INTERVAL_TRIGGER, undefined, { lane: key });
+      }
     }
   };
 

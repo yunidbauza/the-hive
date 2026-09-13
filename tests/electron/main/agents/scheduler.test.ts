@@ -2224,4 +2224,57 @@ describe('createScheduler', () => {
       expect(state.lane(AGENT, 'thread:a1').closedAt).toBe(LEDGER_ASK_TTL_MS);
     });
   });
+
+  describe('repo lane clocks (HIVE-186)', () => {
+    const holding = (): void => {
+      state.patchLane(AGENT, 'repo:a/x', { runsSinceRotate: 0 });
+      state.patchLane(AGENT, 'repo:b/y', { runsSinceRotate: 0, nextRunAt: 1 });
+      entries.push(
+        entry({ id: 's1', from: AGENT, to: undefined, kind: 'event', body: 'run.started — ledger', meta: { run: 'r1', lane: 'repo:a/x' } }),
+        entry({ id: 'c1', from: AGENT, to: undefined, kind: 'claim', body: 'claimed a/x#1', meta: { task: 'a/x#1', run: 'r1' } }),
+      );
+    };
+
+    beforeEach(() => {
+      laneMode = 'repo';
+      liveLanes = new Set();
+      scheduler = build();
+      schedules.set(AGENT, { wake: { everyMs: 600_000, on: ['ledger'], check: 'onchange' } as WakeSpec });
+      scheduler.start();
+    });
+
+    it('ticks a repo lane that holds a claim, and leaves an idle one without a clock', () => {
+      holding();
+
+      tick(); // arms repo:a/x
+      clock = 600_000;
+      tick(); // fires it
+
+      expect(woke).toContainEqual({ name: AGENT, trigger: 'interval', lane: 'repo:a/x' });
+      expect(woke.some((w) => w.lane === 'repo:b/y')).toBe(false);
+      expect(state.lane(AGENT, 'repo:b/y').nextRunAt).toBeUndefined();
+    });
+
+    it('does not tick a lane that is running', () => {
+      holding();
+
+      tick();
+      clock = 600_000;
+      liveLanes?.add('repo:a/x');
+      tick();
+
+      expect(woke.some((w) => w.lane === 'repo:a/x')).toBe(false);
+    });
+
+    it('does not tick a paused agent\'s repo lanes', () => {
+      holding();
+
+      tick();
+      state.patch(AGENT, { status: 'paused' });
+      clock = 600_000;
+      tick();
+
+      expect(woke).toEqual([]);
+    });
+  });
 });

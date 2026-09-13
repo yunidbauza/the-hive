@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 
-import { decide, decideForEvent, laneFor, laneOfRun } from '../../../../electron/main/agents/scheduler-rules';
+import { decide, decideForEvent, laneClaims, laneFor, laneOfRun } from '../../../../electron/main/agents/scheduler-rules';
 import type { AgentStatus } from '../../../../electron/shared/agent-contract';
 import type { LedgerEntry } from '../../../../electron/shared/ledger-contract';
 
@@ -194,5 +194,22 @@ describe('decide on a self-addressed entry (HIVE-186)', () => {
   it('wakes a different lane with it', () => {
     expect(decide('sleeping', self, { sameLane: false })).toBe('wake');
     expect(decide('working', self, { sameLane: false })).toBe('queue');
+  });
+});
+
+describe('laneClaims (HIVE-186)', () => {
+  const e = (over: Partial<LedgerEntry>): LedgerEntry => ({ id: 'x', ts: 0, from: 'shipper', kind: 'claim', body: 'b', ...over });
+  const begun = (run: string, lane: string) =>
+    e({ id: `s-${run}`, kind: 'event', body: 'run.started — ledger', meta: { run, lane } });
+
+  it('is the lanes of the agent\'s open claims, by the run that claimed', () => {
+    const log = [
+      begun('r1', 'repo:a/x'), begun('r2', 'repo:b/y'),
+      e({ id: 'c1', meta: { task: 'a/x#1', run: 'r1' } }),
+      e({ id: 'c2', meta: { task: 'b/y#2', run: 'r2' } }),
+      e({ id: 'r', kind: 'release', meta: { task: 'b/y#2', run: 'r2' } }),
+      e({ id: 'c3', from: 'builder', meta: { task: 'z#9', run: 'r1' } }),
+    ];
+    expect(laneClaims('shipper', log)).toEqual(new Set(['repo:a/x']));
   });
 });

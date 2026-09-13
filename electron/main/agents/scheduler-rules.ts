@@ -6,7 +6,7 @@ import {
   type AgentStatus,
 } from '@shared/agent-contract';
 import { OVERMIND, type LedgerEntry } from '@shared/ledger-contract';
-import { CLOSING_KINDS } from '@shared/ledger-derive';
+import { CLOSING_KINDS, taskOf } from '@shared/ledger-derive';
 
 /**
  * What to do with one entry addressed to one agent (HIVE-120).
@@ -202,4 +202,25 @@ export function laneFor(
 
   if (entry.kind === 'ask') return openedLane(to, mode, entry);
   return { lane: STANDING_LANE };
+}
+
+/**
+ * Which of an agent's lanes hold work (HIVE-186): an open claim whose claim
+ * entry was written by a run of that lane. The shipper claims
+ * `<owner>/<repo>#<N>` at intake and releases it at `closed`, so its repo
+ * lanes hold work exactly while they hold PRs.
+ */
+export function laneClaims(agent: string, entries: readonly LedgerEntry[]): Set<string> {
+  const held = new Map<string, LedgerEntry>();
+  for (const item of entries) {
+    const task = taskOf(item);
+    if (task === undefined) continue;
+    if (item.kind === 'claim') held.set(task, item);
+    else if (item.kind === 'release') held.delete(task);
+  }
+  const lanes = new Set<string>();
+  for (const claim of held.values()) {
+    if (claim.from === agent) lanes.add(laneOfRun(agent, claim.meta?.['run'], entries));
+  }
+  return lanes;
 }
