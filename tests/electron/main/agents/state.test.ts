@@ -1,11 +1,11 @@
-import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
+import { copyFile, mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAgentState } from '../../../../electron/main/agents/state';
-import { AGENT_RUN_HISTORY } from '../../../../electron/shared/agent-contract';
+import { AGENT_RUN_HISTORY, STANDING_LANE } from '../../../../electron/shared/agent-contract';
 
 const summary = (run: string) => ({
   run,
@@ -356,5 +356,95 @@ describe('createAgentState', () => {
     }, 2);
 
     expect(state.read('drone').runs[0]?.sessionUuid).toBe('9f3c1e2a');
+  });
+});
+
+/*
+  HIVE-184: lanes. The standing lane is the top-level fields, so a pre-lane
+  agents.json is already a one-lane file, and every other lane lives in the
+  optional `lanes` map, reached through lane() and patchLane() only.
+*/
+describe('lanes (HIVE-184)', () => {
+  let dir: string;
+  let path: string;
+  /** Two entries from a real agents.json, runs trimmed to two, `working` recorded as `sleeping`. */
+  const fixture = join(process.cwd(), 'tests/fixtures/agents-pre-lane.json');
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    dir = await mkdtemp(join(tmpdir(), 'hive-agent-lanes-'));
+    path = join(dir, 'agents.json');
+  });
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('reads a recorded pre-lane agents.json as one standing lane, every value intact', async () => {
+    await copyFile(fixture, path);
+    const recorded = JSON.parse(await readFile(fixture, 'utf8')) as Record<string, Record<string, unknown>>;
+    const state = createAgentState({ path, debounceMs: 1 });
+
+    for (const name of ['shipper', 'builder']) {
+      const {
+        status: _status,
+        runs: _runs,
+        today: _today,
+        skipsSinceRun: _skips,
+        ...laneFields
+      } = recorded[name] ?? {};
+      expect(state.lane(name, STANDING_LANE)).toEqual(laneFields);
+      expect(state.read(name).lanes).toBeUndefined();
+    }
+  });
+
+  it('writes a recorded pre-lane file back unchanged after a standing patch of no change', async () => {
+    await copyFile(fixture, path);
+    const before: unknown = JSON.parse(await readFile(fixture, 'utf8'));
+    const state = createAgentState({ path, debounceMs: 1 });
+
+    state.patchLane('shipper', STANDING_LANE, {});
+    vi.advanceTimersByTime(1);
+
+    // `working` is the one value the seed rewrites (wakeFromWorking); the fixture has none.
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual(before);
+  });
+
+  it('keeps a thread lane apart from the standing one', () => {
+    const state = createAgentState({ path });
+    state.patch('builder', { sessionUuid: 'standing-uuid', runsSinceRotate: 4 });
+
+    state.patchLane('builder', 'thread:a1', { sessionUuid: 'lane-uuid', runsSinceRotate: 1 });
+
+    expect(state.lane('builder', 'thread:a1')).toEqual({ sessionUuid: 'lane-uuid', runsSinceRotate: 1 });
+    expect(state.lane('builder', STANDING_LANE)).toMatchObject({
+      sessionUuid: 'standing-uuid',
+      runsSinceRotate: 4,
+    });
+    expect(state.read('builder').sessionUuid).toBe('standing-uuid');
+    expect(state.read('builder').lanes).toEqual({
+      'thread:a1': { sessionUuid: 'lane-uuid', runsSinceRotate: 1 },
+    });
+  });
+
+  it('reads a lane that was never written as a fresh one', () => {
+    const state = createAgentState({ path });
+    expect(state.lane('builder', 'repo:a/b')).toEqual({ runsSinceRotate: 0 });
+  });
+
+  it('writes the standing lane through the top-level fields, never into lanes', () => {
+    const state = createAgentState({ path });
+    state.patchLane('shipper', STANDING_LANE, { lastRunAt: 7 });
+
+    expect(state.read('shipper').lastRunAt).toBe(7);
+    expect(state.read('shipper').lanes).toBeUndefined();
+  });
+
+  it('refuses to close the standing lane', () => {
+    const state = createAgentState({ path });
+    expect(() => state.patchLane('shipper', STANDING_LANE, { closedAt: 1 })).toThrow(
+      'the standing lane never closes',
+    );
   });
 });
