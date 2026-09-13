@@ -66,6 +66,8 @@ describe('createScheduler', () => {
   let laneMode: 'thread' | 'repo' | undefined;
   /** Lanes the fake tracker reports live. Null: omit `laneLive`, the pre-lane harness. */
   let liveLanes: Set<string> | null;
+  /** Re-enter `onRunClosed` from inside `run`, as a synchronous spawn failure does (HIVE-186). */
+  let reenter: boolean;
 
   /** Fire every armed interval once — the sweep and the schedule tick. */
   const tick = (): void => {
@@ -79,6 +81,7 @@ describe('createScheduler', () => {
 
         runCalls += 1;
 
+        if (reenter) scheduler.onRunClosed(name);
         if (refuseAfter === call) return { started: false, refused: 'saturated' };
         if (refuse !== false) return { started: false, refused: refuse };
         if (liveLanes?.has(options?.lane ?? 'standing') === true) return { started: false, refused: 'working' };
@@ -137,6 +140,7 @@ describe('createScheduler', () => {
     pushed = [];
     laneMode = undefined;
     liveLanes = null;
+    reenter = false;
     state = createAgentState({ path: '/dev/null/agents.json', debounceMs: 1 });
     state.patch(AGENT, { status: 'sleeping' });
 
@@ -2034,6 +2038,36 @@ describe('createScheduler', () => {
 
       expect(woke).toEqual([{ name: AGENT, trigger: 'ledger', extra: 'post p from overmind' }]);
       expect(state.lane(AGENT, 'thread:A').pendingWake).toEqual([]);
+    });
+  });
+
+  describe('draining lanes safely (HIVE-186)', () => {
+    it('does not re-drain the lanes when a failed spawn re-enters the flush', () => {
+      state.patch(AGENT, { pendingWake: [{ kind: 'ask', id: 's', from: 'overmind' }] });
+      state.patchLane(AGENT, 'thread:A', { pendingWake: [{ kind: 'ask', id: 'A', from: 'overmind' }] });
+      refuse = 'invalid';
+      reenter = true;
+
+      scheduler.onRunClosed(AGENT);
+
+      expect(runCalls).toBe(2);
+      expect(state.read(AGENT).pendingWake).toHaveLength(1);
+      expect(state.lane(AGENT, 'thread:A').pendingWake).toHaveLength(1);
+    });
+
+    it('moves only what fits from a closed lane, and keeps the rest on it', () => {
+      const full = Array.from({ length: AGENT_PENDING_WAKE_MAX - 1 }, (_, i) => ({ kind: 'ask', id: `s${String(i)}`, from: 'overmind' }));
+      state.patch(AGENT, { pendingWake: full });
+      state.patchLane(AGENT, 'thread:A', {
+        closedAt: 5,
+        pendingWake: [{ kind: 'manual', id: 'run', from: 'overmind', text: 'one' }, { kind: 'manual', id: 'run', from: 'overmind', text: 'two' }],
+      });
+      refuse = 'working';
+
+      scheduler.onRunClosed(AGENT);
+
+      expect(state.read(AGENT).pendingWake).toHaveLength(AGENT_PENDING_WAKE_MAX);
+      expect(state.lane(AGENT, 'thread:A').pendingWake).toEqual([{ kind: 'manual', id: 'run', from: 'overmind', text: 'two' }]);
     });
   });
 });

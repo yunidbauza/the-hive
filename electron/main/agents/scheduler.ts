@@ -787,29 +787,56 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   };
 
   /**
+   * The agents whose queues are being drained right now (HIVE-186).
+   *
+   * A synchronous spawn failure re-enters `onRunClosed`, and so `flush`,
+   * from inside a wake. With one queue that found nothing to do, since the
+   * queue is cleared before the wake. With several lanes it would drain the
+   * lanes the outer pass has not reached yet, and the outer pass would then
+   * try them again. The outer pass reaches every lane anyway, so a nested
+   * flush of the same agent has nothing to add.
+   */
+  const draining = new Set<string>();
+
+  /**
    * Drain every queue the agent has (HIVE-186): standing first, then each
    * other lane, and stop at the first `saturated` refusal. A closed thread
-   * lane has nobody to wake, so its entries move to standing first.
+   * lane has nobody to wake, so its entries move to standing first, as many
+   * as the cap leaves room for. The rest wait on the closed lane for a later
+   * flush, so nothing is dropped.
    */
   const flush = (name: string): void => {
-    if (stopped) return;
+    if (stopped || draining.has(name)) return;
 
-    const lanes = Object.entries(deps.state.read(name).lanes ?? {});
+    draining.add(name);
 
-    for (const [key, lane] of lanes) {
-      if (lane.closedAt === undefined || (lane.pendingWake ?? []).length === 0) continue;
-      setQueue(
-        name,
-        STANDING_LANE,
-        [...queueOf(name, STANDING_LANE), ...(lane.pendingWake ?? [])].slice(0, AGENT_PENDING_WAKE_MAX),
+    try {
+      const keys = Object.keys(deps.state.read(name).lanes ?? {}).filter(
+        (key) => key !== STANDING_LANE,
       );
-      setQueue(name, key, []);
-    }
 
-    if (!flushLane(name, STANDING_LANE)) return;
-    for (const [key, lane] of lanes) {
-      if (lane.closedAt !== undefined || (lane.pendingWake ?? []).length === 0) continue;
-      if (!flushLane(name, key)) return;
+      for (const key of keys) {
+        const lane = deps.state.lane(name, key);
+        const moving = lane.pendingWake ?? [];
+
+        if (lane.closedAt === undefined || moving.length === 0) continue;
+
+        const standing = queueOf(name, STANDING_LANE);
+        const room = Math.max(0, AGENT_PENDING_WAKE_MAX - standing.length);
+
+        setQueue(name, STANDING_LANE, [...standing, ...moving.slice(0, room)]);
+        setQueue(name, key, moving.slice(room));
+      }
+
+      if (!flushLane(name, STANDING_LANE)) return;
+
+      for (const key of keys) {
+        // Read now, not from a snapshot: the wakes above may have moved things.
+        if (deps.state.lane(name, key).closedAt !== undefined) continue;
+        if (!flushLane(name, key)) return;
+      }
+    } finally {
+      draining.delete(name);
     }
   };
 
