@@ -247,6 +247,22 @@ vi.mock('../../../../electron/main/agents/state', () => ({
 
       return next;
     },
+    lane: (name: string, key: string) =>
+      key === 'standing'
+        ? (runStates[name] ?? { status: 'sleeping', runsSinceRotate: 0, runs: [] })
+        : { runsSinceRotate: 0 },
+    patchLane: (name: string, key: string, change: Record<string, unknown>) => {
+      // The standing lane is the top-level fields (HIVE-184); nothing here opens another.
+      if (key !== 'standing') return { runsSinceRotate: 0 };
+
+      const next = {
+        ...(runStates[name] ?? { status: 'sleeping', runsSinceRotate: 0, runs: [] }),
+        ...change,
+      };
+      runStates[name] = next as (typeof runStates)[string];
+
+      return next;
+    },
     recordRun: vi.fn(),
     forget: vi.fn(),
     carry: vi.fn(),

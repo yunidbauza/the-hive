@@ -752,6 +752,11 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
    * paused with the agent, working while a conversation run holds it, else
    * sleeping. With no `laneLive` (a spec from before lanes) the standing lane
    * reads the agent's own status, which is what it always was.
+   *
+   * With it, the standing lane is working only while a conversation run holds
+   * it. A task run is no lane's (HIVE-128), so an entry for an agent busy only
+   * with a task run wakes the conversation when the cap has room, and queues
+   * on a `saturated` refusal, where it used to queue behind the task run.
    */
   const laneStatus = (name: string, lane: string): AgentStatus => {
     const status = deps.state.read(name).status;

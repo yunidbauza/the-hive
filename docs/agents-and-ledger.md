@@ -490,7 +490,26 @@ is the top-level `agents.json` fields, and other lanes live under `lanes`.
 Since HIVE-185 a conversation run holds a lane, and absent means standing. One
 run is live per lane, and `limits.parallel` counts every lane and task run
 together. A close writes only its own lane, and `forceRotate` is the standing
-lane's. Routing arrives in HIVE-186.
+lane's.
+
+**Routing by lane (HIVE-186).** `laneFor` in `scheduler-rules.ts` picks the
+lane of every addressed entry. A broadcast goes to standing. An entry in a
+thread follows the thread's ask: the agent's own ask follows the lane of the
+run that wrote it, and an ask made of the agent follows the lane it opened. A
+new ask opens `thread:<id>` or `repo:<meta.repo>` by the definition's `lane:`.
+Everything else goes to standing. A lane's status is computed, never stored:
+paused with the agent, working while a conversation run holds it, else
+sleeping. An agent's own entry wakes only a different lane. A repo-laned ask
+without an `owner/name` `meta.repo` is answered at once by the overmind with
+the reason. A thread lane closes when its opening ask is answered, done,
+failed or expired, and later entries in that thread go to standing. Each lane
+has its own queue: a run close drains standing first, then the other lanes, and
+stops at the first `saturated`. A repo lane ticks on `wake.every` while it
+holds an open claim, and has no clock otherwise. Two limits remain. The
+`onchange` watermark and the Next tile read the standing lane's `lastRunAt`,
+and the standing tick still skips while the agent's rollup is not `sleeping`
+or `failed`. Both err toward a late or an extra standing wake, never a lost
+entry.
 
 Each process carries `HIVE_RUN_ID`, `HIVE_RUN_KIND` and `HIVE_RUN_TOKEN`. Since
 HIVE-184 the run id is an authenticated claim: the receiver refuses a ledger
