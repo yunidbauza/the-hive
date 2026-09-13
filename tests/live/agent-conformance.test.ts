@@ -1479,6 +1479,16 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       settlers.set(name, resolve);
     });
 
+  /** Poll until `predicate` holds, in 100 ms steps, or fail naming it (HIVE-191). */
+  const until = async (predicate: () => boolean, ms: number): Promise<void> => {
+    const deadline = Date.now() + ms;
+
+    while (!predicate()) {
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${predicate.toString()}`);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  };
+
   /**
    * Wake the agent and resolve when the tracker has finalized the run.
    *
@@ -2125,6 +2135,40 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       ]),
     );
   }, 300_000);
+
+  describe('lanes (HIVE-191)', () => {
+    it('runs two askers\' asks as two overlapping lanes, each answering its own asker', async () => {
+      const done = settled(THREAD);
+      const a = ledger.append({ from: SESSION, to: THREAD, kind: 'ask', body: 'echo amber' });
+      const b = ledger.append({ from: SESSION_B, to: THREAD, kind: 'ask', body: 'echo cobalt' });
+      if (!a.ok || !b.ok) throw new Error('asks refused');
+
+      await done;
+      await until(() => runs.liveRuns(THREAD).length === 0, 240_000);
+
+      const entries = (await onDisk()).filter((entry) => entry['from'] === THREAD);
+      const started = entries.filter((entry) => String(entry['body']).startsWith('run.started'));
+      const ended = entries.filter((entry) => String(entry['body']).startsWith('run.ended'));
+      const lanes = started.map((entry) => (entry['meta'] as Record<string, unknown>)['lane']);
+
+      expect(new Set(lanes)).toEqual(new Set([`thread:${a.id}`, `thread:${b.id}`]));
+
+      // Both started before either ended: the lanes really overlapped.
+      const lastStart = started.map((entry) => String(entry['id'])).sort().at(-1);
+      const firstEnd = ended.map((entry) => String(entry['id'])).sort().at(0);
+
+      expect(lastStart !== undefined && firstEnd !== undefined && lastStart < firstEnd).toBe(true);
+
+      const answers = entries.filter((entry) => entry['kind'] === 'answer');
+      const toA = answers.find((entry) => entry['thread'] === a.id);
+      const toB = answers.find((entry) => entry['thread'] === b.id);
+
+      expect(toA).toMatchObject({ to: SESSION });
+      expect(String(toA?.['body']).toLowerCase()).toContain('amber');
+      expect(toB).toMatchObject({ to: SESSION_B });
+      expect(String(toB?.['body']).toLowerCase()).toContain('cobalt');
+    }, 300_000);
+  });
 
   /**
    * The permission fence, end to end (HIVE-119).
