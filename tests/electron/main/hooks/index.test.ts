@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentContainer } from '../../../../electron/shared/agent-contract';
 import {
+  PROJECT_AUTO_MERGE_PATH,
   PROJECTS_PATH,
   type ResolvedContainer,
 } from '../../../../electron/shared/config-contract';
@@ -967,6 +968,34 @@ describe('start forwards the projects and PR lookups (HIVE-173)', () => {
     const pr = await post(PR_PATH, { repo: 'acme/p', number: 3 });
     expect(pr.status).toBe(200);
     expect(await pr.json()).toEqual({ pr: null, reason: 'composed: acme/p#3' });
+  });
+
+  // Retro B: the receiver's default refuses, so a dropped forward would fail every flip quietly.
+  it('forwards the project auto-merge handler to its route, with the caller', async () => {
+    const seen: { caller: string; request: unknown }[] = [];
+    runtime = createHookRuntime({ userDataPath: dir, sessionMetrics: () => false, ledger });
+    await runtime.start({
+      ...noopHandlers,
+      onProjectAutoMerge: (caller, request) => {
+        seen.push({ caller, request });
+        return { projects: [] };
+      },
+    });
+    const env = runtime.envFor('sess-a');
+
+    const response = await fetch(`${env['HIVE_RECEIVER_URL']}${PROJECT_AUTO_MERGE_PATH}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [HOOK_HEADER_SESSION]: 'sess-a',
+        [HOOK_HEADER_TOKEN]: env['HIVE_HOOK_TOKEN'] ?? '',
+      },
+      body: JSON.stringify({ project: 'hive', on: false }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ projects: [] });
+    expect(seen).toEqual([{ caller: 'sess-a', request: { project: 'hive', on: false } }]);
   });
 });
 

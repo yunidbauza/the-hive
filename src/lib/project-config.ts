@@ -882,6 +882,19 @@ export function installProjectConfig(next: ConfigSnapshot): void {
   emit();
 }
 
+/**
+ * Install every snapshot main pushes for a write the renderer did not make
+ * (retro B): a session or agent turning auto-merge on through
+ * `project_auto_merge`. The same rule as {@link installProjectConfig}: the
+ * renderer never follows a write with a reload. Returns its own unsubscribe,
+ * and is a no-op with no bridge.
+ */
+export function watchProjectConfig(): () => void {
+  const bridge = window.hive;
+  if (!bridge) return () => {};
+  return bridge.config.onConfigChanged(installProjectConfig);
+}
+
 /** Test-only: drop the snapshot, the attachment and every subscriber. */
 export function resetProjectConfig(): void {
   snapshot = null;

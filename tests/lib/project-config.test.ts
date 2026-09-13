@@ -1058,3 +1058,46 @@ describe('projectIdForPath (HIVE-172)', () => {
     expect(projectIdForPath('/repos/the-hive')).toBeNull();
   });
 });
+
+import { watchProjectConfig } from '@lib/project-config';
+
+/*
+  Retro B, Task 4: a write the renderer did not make. `project_auto_merge`
+  writes the config from an MCP call, and main pushes the fresh snapshot on
+  `config:changed`; Settings › Projects must show it without a reload.
+*/
+describe('watchProjectConfig (retro B)', () => {
+  afterEach(() => {
+    resetProjectConfig();
+    delete (window as { hive?: unknown }).hive;
+  });
+
+  it('installs the snapshot main pushes, and stops on unsubscribe', () => {
+    let push: ((next: ConfigSnapshot) => void) | undefined;
+    const off = vi.fn();
+    (window as { hive?: unknown }).hive = {
+      config: {
+        onConfigChanged: (callback: (next: ConfigSnapshot) => void) => {
+          push = callback;
+          return off;
+        },
+      },
+    };
+    const heard = vi.fn();
+    subscribeProjectConfig(heard);
+
+    const stop = watchProjectConfig();
+    const next = snapshot([{ id: 'the-hive', status: 'ok' }]);
+    push?.(next);
+
+    expect(projectConfigSnapshot()).toEqual(next);
+    expect(heard).toHaveBeenCalled();
+    stop();
+    expect(off).toHaveBeenCalledTimes(1);
+  });
+
+  it('is a no-op with no bridge', () => {
+    expect(() => watchProjectConfig()()).not.toThrow();
+    expect(projectConfigSnapshot()).toBeNull();
+  });
+});

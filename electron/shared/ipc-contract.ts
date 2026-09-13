@@ -750,6 +750,11 @@ export const CH = {
   configCloneStart: 'config:clone-start',
   configCloneCancel: 'config:clone-cancel',
   configCloneDone: 'config:clone-done', // main → renderer
+  /**
+   * The config changed by a write the renderer did not make (retro B): the
+   * `project_auto_merge` tool. Carries the fresh snapshot. main → renderer.
+   */
+  configChanged: 'config:changed',
   ptySpawn: 'pty:spawn',
   ptyWrite: 'pty:write',
   ptyResize: 'pty:resize',
@@ -1152,6 +1157,7 @@ export const EVENT_CHANNELS = [
   CH.sessionForeground,
   CH.sessionTerminalEnded,
   CH.configCloneDone,
+  CH.configChanged,
   CH.notificationsActivate,
   CH.fsChanged,
   CH.ledgerChanged,
@@ -2029,6 +2035,11 @@ export interface HiveBridge {
     cancelClone(): Promise<void>;
     /** Returns its own unsubscribe. Callers MUST invoke it on unmount. */
     onCloneDone(callback: (event: CloneDoneEvent) => void): () => void;
+    /**
+     * A config write the renderer did not make, with the fresh snapshot
+     * (retro B). Returns its own unsubscribe.
+     */
+    onConfigChanged(callback: (snapshot: ConfigSnapshot) => void): () => void;
   };
   /**
    * Pairing and revoking a device for server mode (HIVE-142).
@@ -3420,6 +3431,8 @@ export const BRIDGE_CONFIG_KEYS = [
   'startClone',
   'cancelClone',
   'onCloneDone',
+  // Retro B.
+  'onConfigChanged',
   // Story 104.
   'setRuntime',
   'setProjectRuntime',

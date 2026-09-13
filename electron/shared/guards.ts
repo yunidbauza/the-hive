@@ -48,6 +48,7 @@ import type {
   SetJiraTokenRequest,
   SetNotificationsRequest,
   SetSessionPluginRequest,
+  ProjectAutoMergeRequest,
   SetProjectAutoMergeRequest,
   SetProjectKeyRequest,
   SetProjectRuntimeRequest,
@@ -756,6 +757,22 @@ export function parseSetProjectAutoMergeRequest(input: unknown): SetProjectAutoM
   return {
     id: assertId(raw.id, 'setProjectAutoMerge.id'),
     autoMerge: raw.autoMerge,
+  };
+}
+
+/**
+ * `{ project, on }` for the `project_auto_merge` tool (retro B). `project` is
+ * an id or a key; both fit the id alphabet, so one check covers them and
+ * nothing else reaches the lookup.
+ */
+export function parseProjectAutoMergeRequest(input: unknown): ProjectAutoMergeRequest {
+  const raw = assertShape(input, ['project', 'on'], 'projectAutoMerge');
+  if (typeof raw.on !== 'boolean') {
+    throw new TypeError('projectAutoMerge.on must be a boolean');
+  }
+  return {
+    project: assertId(raw.project, 'projectAutoMerge.project'),
+    on: raw.on,
   };
 }
 

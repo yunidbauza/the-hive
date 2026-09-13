@@ -28,7 +28,7 @@ token, so no one can post as someone else.
 
 | Kind | Does |
 | --- | --- |
-| `post` | leaves a note; wakes nobody |
+| `post` | leaves a note; one addressed to a session shows in its terminal as a notice, a broadcast wakes nobody |
 | `ask` | opens a thread and asks someone |
 | `answer` | closes an ask and replies to the asker |
 | `claim` / `release` | marks who is on a task (advisory, not a lock) |

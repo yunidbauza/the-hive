@@ -3542,6 +3542,8 @@ describe('createSessions forwards the projects and PR lookups (HIVE-173)', () =>
   it('hands hooks.start the very functions it was given', () => {
     const onProjectsList = () => ({ projects: [] });
     const onPrLookup = () => Promise.resolve({ pr: null, reason: 'from the test' });
+    // Retro B: the auto-merge switch rides the same road.
+    const onProjectAutoMerge = () => ({ projects: [] });
     let started: Record<string, unknown> | undefined;
 
     createSessions({
@@ -3552,6 +3554,7 @@ describe('createSessions forwards the projects and PR lookups (HIVE-173)', () =>
       newSessionUuid: () => TEST_UUID,
       onProjectsList,
       onPrLookup,
+      onProjectAutoMerge,
       hooks: {
         settingsPathFor: () => undefined,
         envFor: () => ({}),
@@ -3565,6 +3568,7 @@ describe('createSessions forwards the projects and PR lookups (HIVE-173)', () =>
 
     expect(started?.['onProjectsList']).toBe(onProjectsList);
     expect(started?.['onPrLookup']).toBe(onPrLookup);
+    expect(started?.['onProjectAutoMerge']).toBe(onProjectAutoMerge);
   });
 });
 

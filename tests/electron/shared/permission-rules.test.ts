@@ -5,6 +5,7 @@ import {
   honestPermissionAsk,
   isToolName,
   matches,
+  namesTool,
   oneShotRuleFor,
   rungsFor,
   summarise,
@@ -701,5 +702,56 @@ describe('isToolName and MCP names', () => {
 
     expect(rungs.map((rung) => rung.id)).toContain('allow-tool');
     expect(rungs.every((rung) => rung.rule !== '*')).toBe(true);
+  });
+});
+
+/*
+  Retro B: `project_auto_merge` grants unattended merging, so nothing but a
+  one-shot for the exact call may allow it. A once-grant for one project and
+  switch must not carry the rest of the wake.
+*/
+describe('a once-only tool (retro B)', () => {
+  const tool = 'mcp__hive__project_auto_merge';
+
+  it('grants once for the exact project and switch, and nothing else', () => {
+    const rule = oneShotRuleFor(tool, { project: 'hive', on: false });
+
+    expect(rule).toBe(`literal:${tool}:project=hive;on=false`);
+    expect(matches(rule!, tool, { project: 'hive', on: false })).toBe(true);
+    expect(matches(rule!, tool, { project: 'other', on: true })).toBe(false);
+    expect(matches(rule!, tool, { project: 'hive', on: true })).toBe(false);
+  });
+
+  it('refuses a one-shot when the call carries no project or no boolean switch', () => {
+    expect(oneShotRuleFor(tool, {})).toBeUndefined();
+    expect(oneShotRuleFor(tool, { project: 'hive', on: 'yes' })).toBeUndefined();
+  });
+
+  it('is matched by no standing rule: its name, a glob, or the blanket', () => {
+    for (const rule of [tool, 'mcp__hive__*', 'mcp__hive__project_*', '*']) {
+      expect(matches(rule, tool, { project: 'hive', on: true })).toBe(false);
+    }
+  });
+
+  it('names the exact call on the card', () => {
+    expect(summarise(tool, { project: 'hive', on: true })).toBe('project=hive;on=true');
+  });
+
+  /*
+    `waker.ts` keeps out of `--allowedTools` every rule this says names a
+    once-only tool, because the CLI grants those without asking the fence. The
+    blanket is the widest such rule, and a glob outside `mcp__` is still a glob
+    to the CLI.
+  */
+  it('is named by the blanket and by any bare glob that covers it', () => {
+    for (const rule of ['*', 'mcp*', '*__project_auto_merge', 'mcp__hive__*', 'mcp__hive']) {
+      expect(namesTool(rule, tool)).toBe(true);
+    }
+  });
+
+  it('is not named by another tool, a specifier, or a glob that misses it', () => {
+    for (const rule of ['Read', 'Bash(*)', 'mcp__hive__ledger_*', 'mcp__slack__*']) {
+      expect(namesTool(rule, tool)).toBe(false);
+    }
   });
 });

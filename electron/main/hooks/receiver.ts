@@ -3,7 +3,15 @@ import { createServer, type Server } from 'node:http';
 import { StringDecoder } from 'node:string_decoder';
 
 import { AGENTS_PATH, type AgentsDirectory } from '@shared/agent-contract';
-import { DEFAULT_RECEIVER, PROJECTS_PATH, type ProjectsDirectory } from '@shared/config-contract';
+import {
+  DEFAULT_RECEIVER,
+  PROJECT_AUTO_MERGE_MAX_BYTES,
+  PROJECT_AUTO_MERGE_PATH,
+  PROJECTS_PATH,
+  ProjectAutoMergeRefused,
+  type ProjectAutoMergeRequest,
+  type ProjectsDirectory,
+} from '@shared/config-contract';
 import {
   PR_LOOKUP_MAX_BYTES,
   PR_PATH,
@@ -17,6 +25,7 @@ import {
   parseLedgerPostBody,
   parseLedgerReadQuery,
   parsePrLookup,
+  parseProjectAutoMergeRequest,
 } from '@shared/guards';
 import {
   CLEAR_REASON,
@@ -245,6 +254,13 @@ export interface ReceiverOptions {
    * and that is an answer.
    */
   onProjectsList?: (caller: string) => ProjectsDirectory;
+  /**
+   * Flip one project's auto-merge (retro B), answering the directory
+   * `onProjectsList` answers, read after the write. Throw
+   * `ProjectAutoMergeRefused` to refuse with a reason the model reads.
+   * Optional; the default refuses, since "not wired" must never read as done.
+   */
+  onProjectAutoMerge?: (caller: string, request: ProjectAutoMergeRequest) => ProjectsDirectory;
   /**
    * One PR from the GitHub sweep (HIVE-173). Optional for the same reason;
    * the default says the integration is not wired rather than "no such PR".
@@ -594,6 +610,11 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     onLedgerPost,
     onAgentsList,
     onProjectsList = () => ({ projects: [] }),
+    onProjectAutoMerge = () => {
+      throw new ProjectAutoMergeRefused(
+        'auto-merge switching is not wired to this receiver; nothing was changed',
+      );
+    },
     onPrLookup = () =>
       Promise.resolve({ pr: null, reason: 'the GitHub integration is not wired to this receiver' }),
     onJira = JIRA_NOT_WIRED,
@@ -912,8 +933,9 @@ export function createReceiver(options: ReceiverOptions): Receiver {
    *
    * Resolved only among entries addressed to the caller and of a kind a nudge
    * carries. A session typing another party's ref reads nothing, exactly as
-   * {@link visibleTo} keeps the read route honest; a marker for a `post` reads
-   * nothing because no nudge ever named one.
+   * {@link visibleTo} keeps the read route honest. A `post` resolves only when
+   * it is addressed to the caller, the same check `deliver.ts` makes before it
+   * writes one; a broadcast post was never nudged and reads nothing.
    *
    * The answer's ask is looked up the way `deliver.ts` does, for its ref and
    * the asker's own `meta.intent`, and then held to {@link visibleTo} like
@@ -927,11 +949,14 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   function markerContext(caller: string, token: string): string | undefined {
     const snapshot = onLedgerRead(caller, { to: caller });
     const mine = snapshot.entries.filter(
-      (entry) => entry.to === caller && (entry.kind === 'ask' || entry.kind === 'answer'),
+      (entry) =>
+        entry.to === caller &&
+        (entry.kind === 'ask' || entry.kind === 'answer' || entry.kind === 'post'),
     );
     const id = resolveRef(mine, token);
     const entry = mine.find((candidate) => candidate.id === id);
     if (entry === undefined) return undefined;
+    if (entry.kind === 'post') return entryContext(entry);
     if (entry.kind === 'ask') {
       return entryContext(entry, { open: snapshot.openAsks.some((ask) => ask.id === entry.id) });
     }
@@ -1113,6 +1138,44 @@ export function createReceiver(options: ReceiverOptions): Receiver {
     } catch {
       // A sentence, as `/agents` gives one: a bare 500 leaves the model nothing to read.
       return { status: 500, json: { reason: 'the projects could not be read' } };
+    }
+  }
+
+  /**
+   * `/projects/auto-merge` (retro B): a two-field body, the caller from the
+   * header. A `ProjectAutoMergeRefused` is a 409 carrying its sentence; any
+   * other throw is a fixed one, as `/pr` answers, since it could quote a path.
+   */
+  function handleProjectAutoMerge(
+    headers: Record<string, string | string[] | undefined>,
+    body: string,
+    truncated: boolean,
+  ): Reply {
+    const refusal = reject(headers);
+    if (refusal !== null) return refusal;
+
+    if (truncated) {
+      return { status: 413, json: { reason: `body exceeds ${PROJECT_AUTO_MERGE_MAX_BYTES} bytes` } };
+    }
+
+    const caller = headers[HOOK_HEADER_SESSION] as string;
+    let request: ProjectAutoMergeRequest;
+    try {
+      request = parseProjectAutoMergeRequest(body === '' ? {} : JSON.parse(body));
+    } catch (cause) {
+      return { status: 400, json: { reason: describeCause(cause) } };
+    }
+
+    try {
+      return { status: 200, json: onProjectAutoMerge(caller, request) };
+    } catch (cause) {
+      if (cause instanceof ProjectAutoMergeRefused) {
+        return { status: 409, json: { reason: cause.message } };
+      }
+      return {
+        status: 500,
+        json: { reason: 'auto-merge could not be changed; call projects to see where it stands' },
+      };
     }
   }
 
@@ -1439,6 +1502,8 @@ export function createReceiver(options: ReceiverOptions): Receiver {
 
       agents: async () => unwrap<AgentsDirectory>(await handleAgents(headers)),
       projects: async () => unwrap<ProjectsDirectory>(handleProjects(headers)),
+      projectAutoMerge: async (request) =>
+        unwrap<ProjectsDirectory>(handleProjectAutoMerge(headers, JSON.stringify(request), false)),
       pr: async (lookup) =>
         unwrap<PrLookupReply>(await handlePr(headers, JSON.stringify(lookup), false)),
       jiraGet: async (request) =>
@@ -1969,6 +2034,12 @@ export function createReceiver(options: ReceiverOptions): Receiver {
           { path: AGENTS_PATH, cap: 0, handle: (headers) => handleAgents(headers) },
           // HIVE-173: the two workflow lookups, one bodiless and one bounded.
           { path: PROJECTS_PATH, cap: 0, handle: (headers) => handleProjects(headers) },
+          // Retro B: the auto-merge switch, two fields under a kilobyte.
+          {
+            path: PROJECT_AUTO_MERGE_PATH,
+            cap: PROJECT_AUTO_MERGE_MAX_BYTES,
+            handle: handleProjectAutoMerge,
+          },
           { path: PR_PATH, cap: PR_LOOKUP_MAX_BYTES, handle: handlePr },
           // HIVE-174: the Jira tools, one route each, one cap.
           { path: JIRA_GET_PATH, cap: JIRA_TOOL_MAX_BYTES, handle: handleJiraGet },

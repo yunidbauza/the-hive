@@ -209,6 +209,8 @@ export const FRAME_KIND = {
   [CH.configCloneStart]: 'call',
   [CH.configCloneCancel]: 'call',
   [CH.configCloneDone]: 'event',
+  // Retro B. A normal broadcast, like the clone's: it carries a snapshot.
+  [CH.configChanged]: 'event',
   [CH.ptySpawn]: 'call',
   [CH.ptyWrite]: 'notify',
   [CH.ptyResize]: 'notify',
@@ -477,6 +479,7 @@ export const CHANNEL_AUTHORIZATION = {
   [CH.configCloneStart]: 'execute',
   [CH.configCloneCancel]: 'mutate',
   [CH.configCloneDone]: 'read',
+  [CH.configChanged]: 'read',
   [CH.ptySpawn]: 'execute',
   [CH.ptyWrite]: 'execute',
   [CH.ptyResize]: 'mutate',

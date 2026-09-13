@@ -84,3 +84,22 @@ describe('entryContext (HIVE-138)', () => {
     expect(text).not.toContain('ledger_answer');
   });
 });
+
+/**
+ * A directed post is a one-way notice (retro PR B): the shipper's "PR #N
+ * merged". It must not read as the answer to an ask the session never made,
+ * and nothing is owed back.
+ */
+describe('entryContext: a notice', () => {
+  const notice = { ...answer, kind: 'post' as const, thread: undefined, body: 'PR #9 merged' };
+
+  it('names a post a notice, carries its body, and asks for nothing back', () => {
+    const text = entryContext(notice);
+
+    expect(text).toContain('Kind: notice, addressed to you');
+    expect(text).toContain('PR #9 merged');
+    expect(text).not.toContain('closing your ask');
+    expect(text).toContain('Nothing is owed back');
+    expect(text).not.toContain('If the answer is not enough');
+  });
+});

@@ -81,7 +81,7 @@ const MAIN_ONLY: ReadonlyMap<string, FrameKind> = new Map([
 
 describe('remote contract: coverage', () => {
   it('classifies every channel exactly once for frame kind', () => {
-    expect(entries).toHaveLength(138);
+    expect(entries).toHaveLength(139);
     expect(Object.keys(FRAME_KIND).sort()).toEqual([...Object.values(CH)].sort());
   });
 
@@ -120,17 +120,17 @@ describe('remote contract: frame kinds match the preload bridge', () => {
     expect(frameKindOf(channel)).toBe(expected);
   });
 
-  it('splits 105 call, 6 notify and 27 event', () => {
+  it('splits 105 call, 6 notify and 28 event', () => {
     const tally = { call: 0, notify: 0, event: 0 };
     for (const kind of Object.values(FRAME_KIND)) tally[kind] += 1;
 
-    expect(tally).toEqual({ call: 105, notify: 6, event: 27 });
+    expect(tally).toEqual({ call: 105, notify: 6, event: 28 });
   });
 
   /**
    * The correction that reading the bridge forced.
    *
-   * `EVENT_CHANNELS` is not the set of pushed channels — it is 21 of the 27.
+   * `EVENT_CHANNELS` is not the set of pushed channels — it is 22 of the 28.
    * `slack:socket-status` and the three `notifications:*` pushes are subscribed
    * without being listed there, `notifications:toast` is pushed to a main
    * process rather than a renderer at all, and `remote:link-status` (HIVE-150)
@@ -197,11 +197,11 @@ describe('remote contract: authorization', () => {
     expect(authorizationOf(channel)).toBe('execute');
   });
 
-  it('grades the 138 as 59 read, 44 mutate and 35 execute', () => {
+  it('grades the 139 as 60 read, 44 mutate and 35 execute', () => {
     const tally = { read: 0, mutate: 0, execute: 0 };
     for (const authz of Object.values(CHANNEL_AUTHORIZATION)) tally[authz] += 1;
 
-    expect(tally).toEqual({ read: 59, mutate: 44, execute: 35 });
+    expect(tally).toEqual({ read: 60, mutate: 44, execute: 35 });
   });
 
   /**
