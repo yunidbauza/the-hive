@@ -12,9 +12,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   agentPromptFile,
   agentStateFile,
-  agentWorkdir,
   agentsRoot,
+  laneWorkdir,
 } from '../../electron/main/agents/paths';
+import { parseAgent } from '../../electron/main/agents/definition';
 import { createPermissions, type Permissions } from '../../electron/main/agents/permissions';
 import { agentsDirectoryFor } from '../../electron/main/agents/directory';
 import { createAgentRegistry, type AgentRegistry } from '../../electron/main/agents/registry';
@@ -39,10 +40,13 @@ import { createLedger, type Ledger } from '../../electron/main/ledger';
 import { agentMcpConfigFile } from '../../electron/main/mcp';
 import { hiveServerSpec, mcpConfig } from '../../electron/main/mcp/config';
 import { createSkillsRuntime } from '../../electron/main/skills';
-import type {
-  AgentRunState,
-  RunLine,
-  WakeSpec,
+import {
+  parseList,
+  readFrontmatter,
+  type AgentLane,
+  type AgentRunState,
+  type RunLine,
+  type WakeSpec,
 } from '../../electron/shared/agent-contract';
 import {
   HOOK_ENV_RECEIVER_URL,
@@ -889,7 +893,7 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
   let slackConnected = false;
 
   /** Every argv this suite spawned, in order. */
-  const spawns: { file: string; args: string[] }[] = [];
+  const spawns: { file: string; args: string[]; grants?: string }[] = [];
   /** Every hook event that came back on the **agent** register. */
   const agentEvents: HookAgentEvent[] = [];
   /** Every hook event that came back on the **session** register. Must stay empty. */
@@ -922,6 +926,14 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
    * being broken: the ask was written, the gate refused it, and nothing woke.
    */
   const ledgerWakers = new Set<string>();
+  /**
+   * Each probe's `lane:`, `limits.parallel` and day's limits, read off its
+   * parsed definition the way `ipc/index.ts` reads them into its caches
+   * (HIVE-191). The frontmatter stays the one place that decides.
+   */
+  const probeLanes = new Map<string, AgentLane>();
+  const probeParallel = new Map<string, number>();
+  const probeLimits = new Map<string, { dailyUsd?: number; budgetUsd?: number }>();
 
   beforeAll(async () => {
     /*
@@ -987,6 +999,23 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
         scheduler is handed the answer rather than the file.
       */
       if (/^\s*on:\s*\[[^\]]*\bledger\b/m.test(body)) ledgerWakers.add(name);
+
+      // The same parse a wake makes: the skills the file declares count as present.
+      const declared = parseList(readFrontmatter(body)?.fields.get('skills')?.value ?? '[]') ?? [];
+      const parsed = parseAgent(body, {
+        folder: name,
+        skillNames: declared,
+        hiveSkillNames: [],
+        integrations: ['slack'],
+      });
+
+      if (!('def' in parsed)) throw new Error(`${name} does not parse: ${JSON.stringify(parsed.problems)}`);
+      if (parsed.def.lane !== undefined) probeLanes.set(name, parsed.def.lane);
+      probeParallel.set(name, parsed.def.limits.parallel);
+      probeLimits.set(name, {
+        ...(parsed.def.limits.dailyUsd === undefined ? {} : { dailyUsd: parsed.def.limits.dailyUsd }),
+        ...(parsed.def.limits.budgetUsd === undefined ? {} : { budgetUsd: parsed.def.limits.budgetUsd }),
+      });
     }
 
     /*
@@ -1105,7 +1134,8 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
 
     const buildWakeCommand = createWakeCommand({
       agentsRoot,
-      workdir: agentWorkdir,
+      // Each lane in its own directory, as `ipc/index.ts` wires it (HIVE-188).
+      workdir: laneWorkdir,
       promptFile: (name) => agentPromptFile(userDataPath, name),
       pluginDir: () => pluginDir ?? '',
       agentSettingsPath: () => settingsPath,
@@ -1138,12 +1168,14 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       // `allow-once` this suite never exercises would otherwise have nowhere
       // to come from, and `grantsFor` is a no-op for every other agent here,
       // none of which ever answers a permission ask that way.
-      pendingGrants: (name) => permissions.grantsFor(name),
+      pendingGrants: (name, lane) => permissions.grantsFor(name, lane),
     });
 
     runs = createRunTracker({
       spawn: (file, args, options) => {
-        spawns.push({ file, args: [...args] });
+        const grants = (options as SpawnOptions).env?.['HIVE_GRANTS'];
+
+        spawns.push({ file, args: [...args], ...(grants === undefined ? {} : { grants }) });
 
         return spawnProcess(
           file,
@@ -1154,12 +1186,19 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       command: (name, trigger, extra, options) =>
         buildWakeCommand(name, trigger, extra, options),
       /*
-        The cap `ipc/index.ts` reads off each parsed definition (HIVE-128).
-        One above 1, for {@link FANOUT} alone: every other probe here is woken
-        serially and a cap above one would let a stray second wake start a
-        second process under a name whose assertions count spawns.
+        The cap `ipc/index.ts` reads off each parsed definition (HIVE-128),
+        read here off the probes' own frontmatter (HIVE-191). Only the probes
+        that fan out or lane declare one above 1.
       */
-      parallelFor: (name) => (name === FANOUT ? 2 : 1),
+      parallelFor: (name) => probeParallel.get(name) ?? 1,
+      /*
+        The run token beside the run id (HIVE-184). Without it the receiver
+        refuses, 403, every ledger write a run makes, and every probe's
+        `ledger_*` call fails.
+      */
+      runToken: (run) => receiver?.runToken(run) ?? null,
+      // The day's ceiling on every wake (HIVE-187).
+      limitsFor: (name) => probeLimits.get(name) ?? {},
       state: agentState,
       appendLedger: (entry) => {
         const result = ledger.append(entry);
@@ -1221,7 +1260,7 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       isAgent: (id) => AGENTS.includes(id),
       // The same cache the tracker above reads, for the same reason: the flush
       // fans a queue out only as wide as the cap it is told (HIVE-128).
-      parallelFor: (name) => (name === FANOUT ? 2 : 1),
+      parallelFor: (name) => probeParallel.get(name) ?? 1,
       /*
         The gate `ipc/index.ts` reads off each parsed definition into
         `ledgerAgents` — derived here from the definitions this suite actually
@@ -1234,6 +1273,12 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
         place that decides.
       */
       wakesOnLedger: (id) => ledgerWakers.has(id),
+      // Lanes, as `ipc/index.ts` wires them (HIVE-186, HIVE-188).
+      laneOf: (name) => probeLanes.get(name),
+      laneLive: (name, lane) =>
+        runs.liveRuns(name).some((run) => run.kind === 'standing' && (run.lane ?? 'standing') === lane),
+      // The temp root is removed whole in `afterAll`.
+      removeLaneDir: () => undefined,
       /*
         Empty until the interval scenario fills it (HIVE-121). Every other
         scenario drives its wake from a ledger entry or by hand, and a schedule
