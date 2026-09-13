@@ -583,7 +583,18 @@ describe('held asks: meta.after (retro C)', () => {
 
   it('is not released by another PR, another repo, or another stage', () => {
     const held = ask('a/b#3');
-    expect(isHeld(held, [held, closed(4, 'a/b'), closed(3, 'a/c'), closed(3, 'a/b', 'merge'), closed('3', 'a/b')])).toBe(true);
+    expect(isHeld(held, [held, closed(4, 'a/b'), closed(3, 'a/c'), closed(3, 'a/b', 'merge'), closed('4', 'a/b'), closed('3.0', 'a/b'), closed('#3', 'a/b')])).toBe(true);
+  });
+
+  /*
+    `meta` is model-written, and `"pr": "3"` is one token away from `"pr": 3`.
+    Read the way `shipStageFor` reads it, through `wholeNumberOf`, so the merge
+    that happened releases the ask instead of leaving it held for seven days.
+  */
+  it('is released by a closed entry that wrote the PR as its digits', () => {
+    const held = ask('a/b#3');
+    expect(releasesAfter(closed('3', 'a/b'), { repo: 'a/b', pr: 3 })).toBe(true);
+    expect(isHeld(held, [held, closed('3', 'a/b')])).toBe(false);
   });
 
   it('never holds an ask without after, or an entry that is not an ask', () => {
@@ -642,6 +653,20 @@ describe('a held ask does not age until its PR merges (retro C)', () => {
     const later = released + LEDGER_ASK_TTL_MS;
     expect(openAsks(log, later)).toEqual([]);
     expect(expiredAsks(log, later).map((ask) => ask.id)).toEqual(['h1']);
+  });
+
+  it('ages from a release that wrote the PR as its digits', () => {
+    const released = NOW - 1000;
+    const digits = entry({
+      id: 'c2',
+      from: 'shipper',
+      ts: released,
+      meta: { stage: 'closed', pr: '3', repo: 'a/b' },
+    });
+    const later = released + LEDGER_ASK_TTL_MS;
+
+    expect(openAsks([held, digits], later)).toEqual([]);
+    expect(expiredAsks([held, digits], later).map((ask) => ask.id)).toEqual(['h1']);
   });
 
   it('leaves an ask without after aging from its post', () => {

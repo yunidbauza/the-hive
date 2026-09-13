@@ -501,14 +501,17 @@ export function afterTarget(entry: Pick<LedgerEntry, 'meta'>): AfterTarget | und
   return { repo, pr: Number(pr) };
 }
 
-/** Whether `entry` is the `closed` entry for `target`: same PR, same whole slug, any case. */
+/**
+ * Whether `entry` is the `closed` entry for `target`: same PR, same whole slug,
+ * any case. The PR is read with {@link wholeNumberOf}, as the stage reader
+ * reads it, so a `closed` entry that wrote `"pr": "3"` still releases the ask.
+ */
 export function releasesAfter(entry: Pick<LedgerEntry, 'meta'>, target: AfterTarget): boolean {
   const stage = entry.meta?.['stage'];
-  const pr = entry.meta?.['pr'];
   const repo = entry.meta?.['repo'];
   return (
     stage === 'closed' &&
-    pr === target.pr &&
+    wholeNumberOf(entry.meta?.['pr']) === target.pr &&
     typeof repo === 'string' &&
     repo.toLowerCase() === target.repo.toLowerCase()
   );
@@ -558,9 +561,9 @@ function releaseTimes(entries: readonly LedgerEntry[]): Map<string, number> {
   const at = new Map<string, number>();
   for (const entry of entries) {
     const stage = entry.meta?.['stage'];
-    const pr = entry.meta?.['pr'];
+    const pr = wholeNumberOf(entry.meta?.['pr']);
     const repo = entry.meta?.['repo'];
-    if (stage !== 'closed' || typeof pr !== 'number' || typeof repo !== 'string') continue;
+    if (stage !== 'closed' || pr === undefined || typeof repo !== 'string') continue;
     const key = targetKey(repo, pr);
     if (!at.has(key)) at.set(key, entry.ts);
   }
