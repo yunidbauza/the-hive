@@ -11,6 +11,7 @@ import {
   KNOWN_AGENT_MCP,
   QUEUEABLE_REFUSALS,
   RESERVED_AGENT_NAMES,
+  STANDING_LANE,
   WAKE_CHECKS,
   WAKE_EVERY_FLOOR_MS,
   WAKE_ON_EVENTS,
@@ -23,6 +24,8 @@ import {
   isContainerRuntime,
   isReservedAgentName,
   isWakeOn,
+  repoLane,
+  threadLane,
 } from '../../../electron/shared/agent-contract';
 import {
   LEDGER_POST_PATH,
@@ -341,5 +344,18 @@ describe('lane (HIVE-184)', () => {
       required: false,
       values: ['thread', 'repo'],
     });
+  });
+});
+
+describe('lane keys (HIVE-184)', () => {
+  it('spells the three lane keys', () => {
+    expect(STANDING_LANE).toBe('standing');
+    expect(threadLane('01J9ASK')).toBe('thread:01J9ASK');
+    expect(repoLane('yunidbauza/the-hive')).toBe('repo:yunidbauza/the-hive');
+  });
+
+  it('lets a pre-lane run state omit lanes entirely', () => {
+    const state: AgentRunState = { status: 'sleeping', runsSinceRotate: 0, runs: [] };
+    expect(state.lanes).toBeUndefined();
   });
 });

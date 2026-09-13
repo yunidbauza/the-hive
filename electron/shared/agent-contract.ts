@@ -1039,6 +1039,33 @@ export interface RunSummary {
    * (`src/lib/agents.ts`'s `slackSignedOut`) reads the exact same value.
    */
   slack?: 'connected' | 'needs-auth';
+  /** The lane this run belonged to (HIVE-184). Absent is standing, and on every record before HIVE-184. */
+  lane?: string;
+}
+
+/** The lane every agent has: today's one conversation (HIVE-184). */
+export const STANDING_LANE = 'standing';
+/** The lane a `lane: thread` agent opens for one ask. */
+export const threadLane = (askId: string): string => `thread:${askId}`;
+/** The lane a `lane: repo` agent keeps for one `owner/name`. */
+export const repoLane = (slug: string): string => `repo:${slug}`;
+
+/**
+ * One non-standing lane's conversation (HIVE-184). The standing lane is the
+ * top-level fields of {@link AgentRunState} themselves, so a pre-lane
+ * `agents.json` is already a valid one-lane file. No `status`: a lane's status
+ * is computed (spec §2), and the top-level `status` stays the agent's rollup.
+ */
+export interface LaneState {
+  sessionUuid?: string;
+  pendingWake?: PendingWakeEntry[];
+  runsSinceRotate: number;
+  pendingSession?: { uuid: string; handoff: string };
+  rotateFailures?: number;
+  lastRunAt?: number;
+  nextRunAt?: number;
+  /** When a thread lane's ask closed. Pruned a day later (HIVE-188). */
+  closedAt?: number;
 }
 
 /** What `~/.hive/ledger/agents.json` holds per agent. */
@@ -1108,6 +1135,12 @@ export interface AgentRunState {
   rotateFailures?: number;
   /** A `rotate <agent>` asked for a handoff wake on the next run (HIVE-122). */
   forceRotate?: boolean;
+  /**
+   * Every lane but the standing one, by key (HIVE-184). Never holds
+   * `'standing'`: those fields are this object's own. Absent on a pre-lane
+   * file, which is the migration: there isn't one.
+   */
+  lanes?: Record<string, LaneState>;
 }
 
 /** How many run summaries an agent keeps. */
@@ -1137,6 +1170,12 @@ export interface PendingWakeEntry {
   from: string;
   /** A manual run's own words. Absent on every ledger-routed entry. */
   text?: string;
+  /** The ask this answers (HIVE-184). */
+  thread?: string;
+  /** The run that wrote it (HIVE-184). */
+  run?: string;
+  /** The lane it queued on; absent is standing (HIVE-184). */
+  lane?: string;
 }
 
 /**
@@ -1191,6 +1230,8 @@ export interface LiveRunSummary {
   /** The console prompt a task run carries, verbatim. */
   extra?: string;
   startedAt: number;
+  /** The lane this run is on (HIVE-184). Absent is standing. */
+  lane?: string;
 }
 
 /**
