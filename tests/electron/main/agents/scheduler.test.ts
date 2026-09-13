@@ -68,6 +68,8 @@ describe('createScheduler', () => {
   let liveLanes: Set<string> | null;
   /** Re-enter `onRunClosed` from inside `run`, as a synchronous spawn failure does (HIVE-186). */
   let reenter: boolean;
+  /** Lane directories the scheduler asked to remove, as `<agent>:<lane>` (HIVE-188). */
+  let removed: string[];
 
   /** Fire every armed interval once — the sweep and the schedule tick. */
   const tick = (): void => {
@@ -100,6 +102,9 @@ describe('createScheduler', () => {
       wakesOnLedger: () => wakesOnLedger,
       parallelFor: () => parallel,
       laneOf: () => laneMode,
+      removeLaneDir: (name, lane) => {
+        removed.push(`${name}:${lane}`);
+      },
       ...(liveLanes === null ? {} : { laneLive: (_name: string, lane: string) => liveLanes?.has(lane) === true }),
       schedules: () => (listed ? schedules : undefined),
       pushStatus: (name) => pushed.push(name),
@@ -141,6 +146,7 @@ describe('createScheduler', () => {
     laneMode = undefined;
     liveLanes = null;
     reenter = false;
+    removed = [];
     state = createAgentState({ path: '/dev/null/agents.json', debounceMs: 1 });
     state.patch(AGENT, { status: 'sleeping' });
 
@@ -2276,5 +2282,17 @@ describe('createScheduler', () => {
 
       expect(woke).toEqual([]);
     });
+  });
+
+  it('clears a closed thread lane and its directory a day after it closed (HIVE-188)', () => {
+    scheduler.start();
+    state.patchLane(AGENT, 'thread:A', { runsSinceRotate: 1, closedAt: 0 });
+    state.patchLane(AGENT, 'thread:B', { runsSinceRotate: 1, closedAt: 1_000 });
+
+    clock = 24 * 60 * 60 * 1000;
+    tick();
+
+    expect(removed).toEqual([`${AGENT}:thread:A`]);
+    expect(Object.keys(state.read(AGENT).lanes ?? {})).toEqual(['thread:B']);
   });
 });

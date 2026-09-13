@@ -1,5 +1,6 @@
 import { spawn, type SpawnOptions } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { rmSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -2879,6 +2880,14 @@ export function registerIpcHandlers(
     // The watcher's cache, filled in the same pass as `agentSchedules` (HIVE-128).
     parallelFor: (name) => agentParallel.get(name) ?? AGENT_LIMIT_DEFAULTS.parallel,
     laneOf: (name) => agentLanes.get(name),
+    // A pruned lane's directory goes with its record (HIVE-188).
+    removeLaneDir: (name, lane) => {
+      try {
+        rmSync(laneWorkdir(name, lane), { recursive: true, force: true });
+      } catch (cause) {
+        console.warn(`[hive] could not remove ${name}'s ${lane} directory: ${String(cause)}`);
+      }
+    },
     /*
       A lane is working while a conversation run holds it (HIVE-186). From the
       tracker, not agents.json: a lane stores no status (spec §2), and the

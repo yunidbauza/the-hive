@@ -55,6 +55,11 @@ export interface AgentState {
    */
   patchLane(name: string, key: string, change: Partial<LaneState>): LaneState;
   /**
+   * Drop a closed lane's record (HIVE-188). Its runs stay in `runs[]` for the
+   * log. The standing lane is the agent itself, so forgetting it throws.
+   */
+  forgetLane(name: string, key: string): void;
+  /**
    * File a finished run, and count it against `now`'s calendar day.
    *
    * `now` is an argument rather than a `Date.now()` inside, for this module's
@@ -239,6 +244,20 @@ export function createAgentState(options: AgentStateOptions): AgentState {
       agents[name] = { ...agent, lanes: { ...agent.lanes, [key]: next } };
       schedule();
       return next;
+    },
+
+    forgetLane(name, key) {
+      if (key === STANDING_LANE) throw new Error('the standing lane is the agent itself');
+
+      const agent = agents[name];
+
+      if (agent?.lanes?.[key] === undefined) return;
+
+      const { [key]: _gone, ...rest } = agent.lanes;
+      const { lanes: _all, ...without } = agent;
+
+      agents[name] = Object.keys(rest).length === 0 ? without : { ...agent, lanes: rest };
+      schedule();
     },
 
     recordRun(name, summary, now) {

@@ -86,6 +86,7 @@ const state = (): AgentState => ({
     stored[name] = { ...agent, lanes: { ...agent.lanes, [key]: next } };
     return next;
   },
+  forgetLane: vi.fn(),
   forget: (name) => {
     delete stored[name];
   },
@@ -664,6 +665,7 @@ Read the channel and report.
         clearSlackNeedsAuth: vi.fn(() => []),
         lane: vi.fn(() => ({ runsSinceRotate: 0 })),
         patchLane: vi.fn(() => ({ runsSinceRotate: 0 })),
+        forgetLane: vi.fn(),
         forget: (name) => {
           delete localState[name];
         },

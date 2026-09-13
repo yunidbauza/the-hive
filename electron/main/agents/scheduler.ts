@@ -104,6 +104,9 @@ const nextMidnightAfter = (at: number): number => {
  */
 export const LEDGER_SWEEP_MS = 60_000;
 
+/** How long a closed thread lane's record and directory are kept (HIVE-188). */
+export const LANE_RETENTION_MS = 24 * 60 * 60 * 1000;
+
 export interface SchedulerDeps {
   /**
    * `RunTracker.run`, in full.
@@ -125,7 +128,7 @@ export interface SchedulerDeps {
     extra?: string,
     options?: { job?: true; lane?: string },
   ) => RunStart;
-  state: Pick<AgentState, 'read' | 'patch' | 'all' | 'lane' | 'patchLane'>;
+  state: Pick<AgentState, 'read' | 'patch' | 'all' | 'lane' | 'patchLane' | 'forgetLane'>;
   /** Whether a party id names a registered agent rather than a session. */
   isAgent: (id: string) => boolean;
   /**
@@ -157,6 +160,11 @@ export interface SchedulerDeps {
    * a spec that predates lanes, which is every agent at one lane.
    */
   laneLive?: (name: string, lane: string) => boolean;
+  /**
+   * Remove a lane's working directory (HIVE-188), when its closed record is
+   * pruned. Absent in a spec that makes no directories.
+   */
+  removeLaneDir?: (name: string, lane: string) => void;
   /**
    * Every agent with a usable schedule — or `undefined` before the registry
    * has answered its first listing.
@@ -425,6 +433,18 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           LEDGER_TRIGGER,
           lane,
         );
+      }
+    }
+
+    /*
+      A closed thread lane is kept a day, so a late question about it can still
+      find its record, then cleared with its directory (HIVE-188).
+    */
+    for (const [name, agent] of Object.entries(deps.state.all())) {
+      for (const [key, lane] of Object.entries(agent.lanes ?? {})) {
+        if (lane.closedAt === undefined || now - lane.closedAt < LANE_RETENTION_MS) continue;
+        deps.removeLaneDir?.(name, key);
+        deps.state.forgetLane(name, key);
       }
     }
   };

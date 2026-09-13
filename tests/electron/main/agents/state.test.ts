@@ -447,4 +447,19 @@ describe('lanes (HIVE-184)', () => {
       'the standing lane never closes',
     );
   });
+
+  it('forgets one lane and leaves the rest (HIVE-188)', () => {
+    const lanes = createAgentState({ path: '/dev/null/agents.json', debounceMs: 1 });
+    lanes.patchLane('b', 'thread:A', { runsSinceRotate: 1 });
+    lanes.patchLane('b', 'thread:B', { runsSinceRotate: 2 });
+
+    lanes.forgetLane('b', 'thread:A');
+    expect(lanes.read('b').lanes).toEqual({ 'thread:B': { runsSinceRotate: 2 } });
+
+    lanes.forgetLane('b', 'thread:B');
+    expect(lanes.read('b').lanes).toBeUndefined();
+    expect(() => lanes.forgetLane('b', 'standing')).toThrow();
+    lanes.forgetLane('nobody', 'thread:A');
+    lanes.dispose();
+  });
 });
