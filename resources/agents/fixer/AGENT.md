@@ -6,7 +6,7 @@ model: opus
 wake:
   on: [ledger]
 skills: [review-pr-findings, tdd, debug, verify, worktree]
-tools: [Read, Edit, Write, Grep, Glob, Bash, Agent, Skill, TodoWrite, ToolSearch]
+tools: [Read, Edit, Write, Grep, Glob, Bash, Agent, Skill, TodoWrite, ToolSearch, ReportFindings]
 autonomy: act
 limits:
   turns: 150
@@ -76,3 +76,9 @@ prior resolution, never re-fixed. The full test suite is not the scoped
 check; run the paths the change touches, and the whole thing only when the
 repository's rules say so. Everything you write outside a checkout lives
 under `<hive>/work/fixer/`.
+
+A PR the shipper receives must be a draft. If you open one
+(`gh pr create --draft`), read
+`gh pr view <N> --repo <owner>/<repo> --json isDraft` right after; `false` →
+`gh pr ready <N> --repo <owner>/<repo> --undo`, the one form of `gh pr ready`
+you may run.
