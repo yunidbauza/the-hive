@@ -1739,8 +1739,11 @@ describe('createRunTracker', () => {
 
       const cards = ledger.filter((entry) => entry.meta?.['dailyCap'] !== undefined);
       expect(cards).toHaveLength(1);
-      expect(cards[0]).toMatchObject({ from: 'overmind', kind: 'event', meta: { dailyCap: 5, agent: 'a' } });
+      expect(cards[0]).toMatchObject({ from: 'overmind', kind: 'event', meta: { dailyCap: 5, agent: 'a', held: true } });
+      expect(cards[0]?.body).toContain('a held back a run');
       expect(cards[0]?.body).toContain('(reserving budget_usd $3.00 per run)');
+      // Held back, not spent: the scheduler's own card must still be able to fire.
+      expect(state.read('a').today?.capped).toBeUndefined();
     });
 
     it('lets a third run in once the first closes under its reservation', () => {
@@ -1760,6 +1763,26 @@ describe('createRunTracker', () => {
 
       expect(tracker.run('a', 'ledger')).toMatchObject({ started: false, refused: 'budget' });
       expect(commandCalls).toBe(0);
+
+      const card = ledger.find((entry) => entry.meta?.['dailyCap'] !== undefined);
+      expect(card).toMatchObject({ body: 'a reached its daily budget — $5.00', meta: { dailyCap: 5, agent: 'a' } });
+      expect(card?.meta).not.toHaveProperty('held');
+      expect(state.read('a').today?.capped).toBe(true);
+    });
+
+    it('still posts the spent card later in a day that already had a held one', () => {
+      parallel = 3;
+      limits = { budgetUsd: 3, dailyUsd: 5 };
+      tracker.run('a', 'ledger', undefined, { lane: 'thread:A' });
+      tracker.run('a', 'ledger', undefined, { lane: 'thread:B' }); // held back
+
+      endRun(0, 5); // the first run spent the whole day
+
+      expect(tracker.run('a', 'ledger', undefined, { lane: 'thread:C' })).toMatchObject({ started: false, refused: 'budget' });
+
+      const cards = ledger.filter((entry) => entry.meta?.['dailyCap'] !== undefined);
+      expect(cards.map((card) => card.meta?.['held'] === true)).toEqual([true, false]);
+      expect(state.read('a').today?.capped).toBe(true);
     });
 
     it('reserves daily_usd ÷ parallel when no budget_usd is set, and says so on the card', () => {

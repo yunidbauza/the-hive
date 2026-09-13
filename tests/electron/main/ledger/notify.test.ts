@@ -571,6 +571,16 @@ describe('createLedgerNotifier', () => {
       agent could mint for itself — with a body it also writes — simply by
       posting an event.
     */
+    it('titles a run held back by live reservations as held, not capped (HIVE-187)', () => {
+      const { raise, onEntry } = harness();
+
+      onEntry(cap({ body: 'drone held back a run', meta: { dailyCap: 5, agent: 'drone', held: true } }));
+
+      expect(raise).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Held back by its daily budget', subject: 'drone', body: 'drone held back a run' }),
+      );
+    });
+
     it('ignores the same meta posted by an agent about itself', () => {
       const { raise, onEntry } = harness();
 

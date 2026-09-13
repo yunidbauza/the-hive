@@ -411,6 +411,12 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
    * keys and an empty entry would report an agent as working.
    */
   const running = new Map<string, LiveRun[]>();
+  /**
+   * The day each agent's "held back" budget card last went out (HIVE-187).
+   * In memory: a held refusal is not a spent day, so it must not set the
+   * persisted `today.capped` the scheduler reads.
+   */
+  const heldCardDay = new Map<string, string>();
 
   const liveOf = (name: string): LiveRun[] => running.get(name) ?? [];
 
@@ -906,11 +912,43 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
         const spentOut = (today?.usd ?? 0) >= limits.dailyUsd;
 
         if (spentOut || (today?.usd ?? 0) + reserved + reservation > limits.dailyUsd + 1e-9) {
-          // Once a day, like the scheduler's own card, which reads the same flag.
-          if (today?.capped !== true) {
-            deps.state.patch(name, {
-              today: { ...(today ?? { day: dayKey(now), runs: 0, usd: 0 }), capped: true },
-            });
+          const day = dayKey(now);
+          const spentText = `$${(today?.usd ?? 0).toFixed(2)}`;
+          const dailyText = `$${limits.dailyUsd.toFixed(2)}`;
+
+          if (spentOut) {
+            /*
+              The day is spent. Flagged and carded once a day through
+              `today.capped`, the flag the scheduler's tick reads, so the two
+              never post the card twice.
+            */
+            if (today?.capped !== true) {
+              deps.state.patch(name, {
+                today: { ...(today ?? { day, runs: 0, usd: 0 }), capped: true },
+              });
+              deps.appendLedger({
+                from: OVERMIND,
+                kind: 'event',
+                body: `${name} reached its daily budget — ${dailyText}`,
+                meta: { dailyCap: limits.dailyUsd, agent: name },
+              });
+            }
+
+            return {
+              started: false,
+              refused: 'budget',
+              reason: `${name} has spent today's budget: ${spentText} of ${dailyText}.`,
+            };
+          }
+
+          /*
+            The day has room, but not for this run beside what the live runs
+            hold. Not a spent day, so `today.capped` stays clear and the
+            scheduler's card still fires if the money runs out later. Carded
+            once a day from memory, and named as held rather than reached.
+          */
+          if (heldCardDay.get(name) !== day) {
+            heldCardDay.set(name, day);
 
             const why =
               limits.budgetUsd === undefined
@@ -920,15 +958,15 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
             deps.appendLedger({
               from: OVERMIND,
               kind: 'event',
-              body: `${name} reached its daily budget — $${limits.dailyUsd.toFixed(2)}${why}`,
-              meta: { dailyCap: limits.dailyUsd, agent: name },
+              body: `${name} held back a run: ${spentText} spent and $${reserved.toFixed(2)} held by live runs leave too little of today's ${dailyText}${why}`,
+              meta: { dailyCap: limits.dailyUsd, agent: name, held: true },
             });
           }
 
           return {
             started: false,
             refused: 'budget',
-            reason: `${name} is out of today's budget: $${(today?.usd ?? 0).toFixed(2)} spent and $${reserved.toFixed(2)} held by live runs, of $${limits.dailyUsd.toFixed(2)}.`,
+            reason: `${name} is out of today's budget for now: ${spentText} spent and $${reserved.toFixed(2)} held by live runs, of ${dailyText}.`,
           };
         }
       }

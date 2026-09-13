@@ -330,7 +330,8 @@ export function createLedgerNotifier(
         deps.raise({
           kind: 'agent.failed',
           id: entry.id,
-          title: 'Hit its daily cap',
+          // A run held back by live reservations is not a spent day (HIVE-187).
+          title: meta.held === true ? 'Held back by its daily budget' : 'Hit its daily cap',
           subject: subjectAgent,
           body: entry.body,
           action: { type: 'agent', name: subjectAgent },
