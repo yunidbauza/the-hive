@@ -458,6 +458,18 @@ export function nextAgentName(
   }
 }
 
+/**
+ * A lane key as a live row shows it (HIVE-185): nothing for the standing lane,
+ * `owner/name` for a repo lane, and the ask id's sequence for a thread lane,
+ * since its date prefix is the same for every ask of the day.
+ */
+export function laneLabel(lane: string | undefined): string | null {
+  if (lane === undefined || lane === 'standing') return null;
+  if (lane.startsWith('repo:')) return lane.slice('repo:'.length);
+  if (lane.startsWith('thread:')) return `thread …${lane.slice(-4)}`;
+  return lane;
+}
+
 /** Test-only: drop the snapshot and every subscriber. */
 export function resetAgents(): void {
   snapshot = null;

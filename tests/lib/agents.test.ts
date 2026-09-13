@@ -6,6 +6,7 @@ import {
   deleteAgent,
   describeSkips,
   frontmatterName,
+  laneLabel,
   loadAgents,
   nextAgentName,
   readAgent,
@@ -369,5 +370,15 @@ describe('runsToday', () => {
     expect(runsToday({ day: '2026-08-31', runs: 1, usd: 0.004 }, noon).cost).toBe(
       '$0.0040',
     );
+  });
+});
+
+describe('laneLabel (HIVE-185)', () => {
+  it('says nothing for the standing lane, the repo for a repo lane, and the ask\'s tail for a thread', () => {
+    expect(laneLabel(undefined)).toBeNull();
+    expect(laneLabel('standing')).toBeNull();
+    expect(laneLabel('repo:yunidbauza/the-hive')).toBe('yunidbauza/the-hive');
+    expect(laneLabel('thread:20260913-004948-0001')).toBe('thread …0001');
+    expect(laneLabel('other')).toBe('other');
   });
 });

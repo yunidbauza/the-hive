@@ -833,6 +833,22 @@ describe('AgentRunLog', () => {
       }
     });
 
+    it('names a live run\'s lane on its row and its group (HIVE-185)', () => {
+      seed({ status: 'working', live: [standing({ lane: 'repo:a/x' })] });
+      lines(['lane line'], 'live-standing');
+
+      const { container } = render(<AgentRunLog name="watcher" />);
+
+      const output = screen.getByTestId('run-output');
+
+      expect(within(output).getByText(/a\/x · #live-sta/)).toBeInTheDocument();
+
+      const row = container.querySelector('[data-live-run="standing"]') as HTMLElement;
+
+      expect(row.textContent).toContain('a/x');
+      expect(within(row).getByTitle('a/x lane')).toBeInTheDocument();
+    });
+
     it('groups the output by run, standing first, and labels each group', () => {
       seed({ status: 'working', live: [task(1, 'review PR 166'), standing()] });
       lines(['task line'], 'live-task-1');

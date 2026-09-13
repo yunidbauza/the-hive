@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { laneLabel } from '@/lib/agents';
 import { cn } from '@/lib/utils';
 import type { TermLine } from '@/types/terminal';
 
@@ -714,7 +715,7 @@ function groupsOf(
     const id = `#${run.slice(0, 8)}`;
 
     if (live === undefined) return id;
-    if (live.kind === 'standing') return `● standing · ${id}`;
+    if (live.kind === 'standing') return `● ${laneLabel(live.lane) ?? 'standing'} · ${id}`;
 
     return `○ task · ${id}${live.extra === undefined ? '' : ` · ${live.extra}`}`;
   };
@@ -793,6 +794,8 @@ function LiveRow({
   });
   const seconds = Math.max(0, Math.round((now - run.startedAt) / 1000));
   const standing = run.kind === 'standing';
+  // The lane a conversation run holds, or null for the standing lane (HIVE-185).
+  const lane = laneLabel(run.lane);
 
   return (
     <div
@@ -804,12 +807,13 @@ function LiveRow({
         <span
           className="truncate"
           style={{ color: brand }}
-          title={standing ? 'standing run' : 'task run'}
+          title={lane === null ? (standing ? 'standing run' : 'task run') : `${lane} lane`}
         >
           <span aria-hidden="true" style={{ color: green }}>
             {standing ? '●' : '○'}
           </span>
           {`#${run.run.slice(0, 8)}`}
+          {lane === null ? null : ` · ${lane}`}
         </span>
         <span className="truncate" title={run.trigger}>
           {run.trigger}
