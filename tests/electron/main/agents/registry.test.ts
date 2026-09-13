@@ -153,6 +153,17 @@ describe('list', () => {
     expect(agents[0]?.parallel).toBe(2);
   });
 
+  it('carries the lane mode a definition names, and none when it names none (HIVE-186)', async () => {
+    seed('laned', GOOD.replace('slack-watcher', 'laned').replace('icon: ChatCircleDots', 'icon: ChatCircleDots\nlane: repo'));
+    seed('plain', GOOD.replace('slack-watcher', 'plain'));
+
+    const { agents } = await registry().list();
+    const byName = new Map(agents.map((agent) => [agent.name, agent]));
+
+    expect(byName.get('laned')?.lane).toBe('repo');
+    expect(byName.get('plain')).not.toHaveProperty('lane');
+  });
+
   it('names the offending field in the invalid reason', async () => {
     seed('broken', GOOD.replace('slack-watcher', 'broken').replace('icon: ChatCircleDots', 'icon: ChatCircleDots\nnope: 1'));
 

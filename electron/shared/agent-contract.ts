@@ -458,6 +458,11 @@ export interface AgentSummary {
    * that never set it read as the default of 1; the registry always sets it.
    */
   parallel?: number;
+  /**
+   * `lane:` from the definition (HIVE-186), read by the scheduler out of the
+   * same cached listing as `parallel`. Absent for an agent that does not lane.
+   */
+  lane?: AgentLane;
   /** What is in flight right now (HIVE-128). Set by `agents:list`; absent is none. */
   live?: LiveRunSummary[];
   /**

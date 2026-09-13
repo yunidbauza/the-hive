@@ -2,6 +2,7 @@ import {
   AGENT_PENDING_WAKE_MAX,
   dayKey,
   isQueueableRefusal,
+  type AgentLane,
   type AgentRunResult,
   type AgentRunState,
   type PendingWakeEntry,
@@ -109,9 +110,9 @@ export interface SchedulerDeps {
     name: string,
     trigger: string,
     extra?: string,
-    options?: { job?: true },
+    options?: { job?: true; lane?: string },
   ) => RunStart;
-  state: Pick<AgentState, 'read' | 'patch' | 'all'>;
+  state: Pick<AgentState, 'read' | 'patch' | 'all' | 'lane' | 'patchLane'>;
   /** Whether a party id names a registered agent rather than a session. */
   isAgent: (id: string) => boolean;
   /**
@@ -132,6 +133,17 @@ export interface SchedulerDeps {
    * second `working` wake.
    */
   parallelFor: (name: string) => number;
+  /**
+   * `lane:` from the definition (HIVE-186), from the same cache as
+   * `parallelFor`. Absent in a spec that predates lanes, which is every agent
+   * at one lane.
+   */
+  laneOf?: (name: string) => AgentLane | undefined;
+  /**
+   * Whether a conversation run holds this lane right now (HIVE-186). Absent in
+   * a spec that predates lanes, which is every agent at one lane.
+   */
+  laneLive?: (name: string, lane: string) => boolean;
   /**
    * Every agent with a usable schedule — or `undefined` before the registry
    * has answered its first listing.

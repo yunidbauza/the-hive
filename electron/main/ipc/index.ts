@@ -19,6 +19,8 @@ import { SNAPSHOT_READ_BUDGET_MS, createRemoteListener } from '@remote-host/list
 import {
   AGENT_LIMIT_DEFAULTS,
   formatRunCost,
+  STANDING_LANE,
+  type AgentLane,
   type AgentLinesPush,
   type AgentRotateResult,
   type AgentRunResult,
@@ -898,6 +900,8 @@ const agentSchedules = new Map<
  * schedule rather than read off disk. Absent reads as 1, the default.
  */
 const agentParallel = new Map<string, number>();
+/** `lane:` per agent, from the same listing (HIVE-186). Absent: a pre-lane agent. */
+const agentLanes = new Map<string, AgentLane>();
 /**
  * Every valid agent's own `container.host_alias`, for the receiver's `Host`
  * guard (HIVE-134 follow-up).
@@ -973,6 +977,7 @@ function refreshKnownAgents(): void {
       ledgerAgents.clear();
       agentSchedules.clear();
       agentParallel.clear();
+      agentLanes.clear();
       agentHostAliases.clear();
 
       for (const agent of snapshot.agents) {
@@ -996,6 +1001,8 @@ function refreshKnownAgents(): void {
           agent.name,
           agent.parallel ?? AGENT_LIMIT_DEFAULTS.parallel,
         );
+        // The lane mode, for the scheduler's routing (HIVE-186).
+        if (agent.lane !== undefined) agentLanes.set(agent.name, agent.lane);
         // The receiver's `Host` guard (HIVE-134 follow-up), asked just as
         // synchronously as the two above. Absent means this agent inherits
         // the global alias, which `hostAliases` always admits on its own —
@@ -2870,6 +2877,16 @@ export function registerIpcHandlers(
     wakesOnLedger: (id) => ledgerAgents.has(id),
     // The watcher's cache, filled in the same pass as `agentSchedules` (HIVE-128).
     parallelFor: (name) => agentParallel.get(name) ?? AGENT_LIMIT_DEFAULTS.parallel,
+    laneOf: (name) => agentLanes.get(name),
+    /*
+      A lane is working while a conversation run holds it (HIVE-186). From the
+      tracker, not agents.json: a lane stores no status (spec §2), and the
+      tracker's map starts empty after a restart, as `wakeFromWorking` wants.
+    */
+    laneLive: (name, lane) =>
+      (runs?.liveRuns(name) ?? []).some(
+        (run) => run.kind === 'standing' && (run.lane ?? STANDING_LANE) === lane,
+      ),
     /*
       The schedule, from the cache the folder watcher rebuilds (HIVE-121).
 
@@ -5396,6 +5413,7 @@ export function resetIpcHandlers(options: { flush?: boolean } = {}): void {
   ledgerAgents.clear();
   agentSchedules.clear();
   agentParallel.clear();
+  agentLanes.clear();
   // Back to "nothing has been listed", not "nothing is scheduled": the next
   // registration must earn the right to clear a `nextRunAt` all over again.
   agentsListed = false;
