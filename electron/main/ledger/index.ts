@@ -13,6 +13,7 @@ import {
   CLOSING_KINDS,
   claims,
   keepNewest,
+  laneOfRun,
   matches,
   openAsks,
   resolveRef,
@@ -246,9 +247,33 @@ export function createLedger(options: LedgerOptions): Ledger {
       */
       if (request.kind === 'release' && request.from !== OVERMIND) {
         const task = taskOf(request);
-        const holder = task === undefined ? undefined : claims(store.all())[task];
+        const log = store.all();
+        const holder = task === undefined ? undefined : claims(log)[task];
         if (holder !== undefined && holder !== request.from) {
           return refuse(403, `${task} is held by ${holder}, not by ${request.from}`);
+        }
+
+        /*
+          A holder's release must come from the lane that claimed (HIVE-188).
+          Lanes are separate conversations of one agent, and two builder lanes
+          must not release each other's ticket claims. Both entries' `meta.run`
+          is host-stamped and token-checked (HIVE-184); a claim or release that
+          names no run (a session, an older log) keeps the party rule above.
+        */
+        if (task !== undefined && holder === request.from) {
+          const claimed = [...log]
+            .reverse()
+            .find((item) => item.kind === 'claim' && taskOf(item) === task);
+          const claimRun = claimed?.meta?.['run'];
+          const releaseRun = request.meta?.['run'];
+
+          if (claimed?.from === request.from && typeof claimRun === 'string' && typeof releaseRun === 'string') {
+            const held = laneOfRun(request.from, claimRun, log);
+
+            if (held !== laneOfRun(request.from, releaseRun, log)) {
+              return refuse(403, `${task} is held by ${request.from}'s ${held} lane`);
+            }
+          }
         }
       }
 

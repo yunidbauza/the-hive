@@ -386,6 +386,49 @@ describe('createLedger', () => {
       ).toMatchObject({ ok: true });
     });
 
+    describe('across lanes (HIVE-188)', () => {
+      const begun = (run: string, lane?: string): void => {
+        ledger.append({
+          from: 'builder', kind: 'event', body: 'run.started — ledger',
+          meta: { run, ...(lane === undefined ? {} : { lane }) },
+        });
+      };
+
+      beforeEach(() => {
+        begun('r1', 'thread:A');
+        begun('r2', 'thread:B');
+        begun('r3', 'thread:A');
+        ledger.append({ from: 'builder', kind: 'claim', body: '', meta: { task: 'HIVE-9', run: 'r1' } });
+      });
+
+      it('refuses a release from a run of another lane, with a reason', () => {
+        const result = ledger.append({ from: 'builder', kind: 'release', body: '', meta: { task: 'HIVE-9', run: 'r2' } });
+
+        expect(result).toMatchObject({ ok: false, status: 403 });
+        if (result.ok) throw new Error('expected a refusal');
+        expect(result.reason).toBe("HIVE-9 is held by builder's thread:A lane");
+        expect(ledger.read({}).claims).toEqual({ 'HIVE-9': 'builder' });
+      });
+
+      it('lets a later run of the same lane release it', () => {
+        expect(
+          ledger.append({ from: 'builder', kind: 'release', body: '', meta: { task: 'HIVE-9', run: 'r3' } }),
+        ).toMatchObject({ ok: true });
+      });
+
+      it('still lets the overmind release it', () => {
+        expect(
+          ledger.append({ from: OVERMIND, kind: 'release', body: '', meta: { task: 'HIVE-9' } }),
+        ).toMatchObject({ ok: true });
+      });
+
+      it('keeps the party rule for a release that names no run', () => {
+        expect(
+          ledger.append({ from: 'builder', kind: 'release', body: '', meta: { task: 'HIVE-9' } }),
+        ).toMatchObject({ ok: true });
+      });
+    });
+
     it('does not refuse a second claim on a held task', () => {
       claim();
 
