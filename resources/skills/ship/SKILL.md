@@ -60,6 +60,14 @@ post one `ledger_post` with `meta: { pr, repo, stage }` when the stage
 changes, and move on to the next row. A stage that waits on someone else is
 left for the next wake.
 
+**Before any row's stage work**, except at `merge` and `closed`,
+`gh pr view <N> --repo <owner>/<repo> --json state`. Those two stages handle a
+merged PR themselves: `merge-pr` recovers one (teardown, Jira Done) and
+`closed` sends the notice. At any earlier stage, `MERGED` → stage `merge`, so
+`merge-pr` does that recovery. `CLOSED` without a merge →
+`ledger_release <owner>/<repo>#<N>`, remove the row, write `prs.json`, one
+`ledger_post to: <reply-to>` saying so, and no further work for that row.
+
 **A `ledger_ask` ends the wake.** That is the tool's contract, not a choice
 here. So a row whose stage posts an ask is the last row this wake touches;
 write `prs.json` before the ask, and the rows after it advance on the next
@@ -74,21 +82,30 @@ tick, ten minutes on. One ask per wake is the throughput, and it is enough.
 | `ci` | `gh pr checks <N> --repo <owner>/<repo>`: exit 8 is pending, zero checks is not green until `gh workflow list --repo <owner>/<repo> --json name,path,state` and `gh workflow view <path> --repo <owner>/<repo> --yaml` show no workflow triggering on `pull_request` | green → `findings`; red → `ledger_ask to: fixer` with the triple, `reply-to` and the failing checks (ends the wake), stay |
 | `findings` | `mcp__hive__pr { repo: "<owner>/<repo>", number: <N> }` for the Hive's own count of unresolved threads (`findings`) and its checks, then gather review threads, bot findings and red checks newer than `since`; any → `ledger_ask to: fixer` with the triple, `reply-to` and the findings (ends the wake); none → advance | fixer answers `clean` (`since = now`, `rounds += 1`) and nothing newer → `approval` |
 | `sync` (inside `approval` and `merge`) | `<path>` may be the person's own checkout, so first `git -C <path> branch --show-current` must print the head ref and `git -C <path> status --porcelain` must print nothing; otherwise a `ledger_post` naming which, and a stop until a later wake (a merge there lands in their work). The fixer pushed from a worktree of its own, so then `git -C <path> fetch origin`, then `git -C <path> merge --ff-only origin/<headRef>` (the head ref read from `gh pr view <N> --repo <owner>/<repo> --json headRefName --jq .headRefName` and written as a literal; one command per call, never `&&`); a refused fast-forward is a `ledger_post` and a stop. Then behind base → `git -C <path> merge origin/<base>` and one push | |
-| `approval` | `sync`; then `gh pr view <N> --repo <owner>/<repo> --json reviewDecision`. `mcp__hive__projects`: the project whose `path` is this PR's checkout and whose `autoMerge` is `true` skips the wait (the same consent that grants the merge call). Never the stages before it | `reviewDecision == APPROVED`, or the project auto-merges → `merge` |
+| `approval` | `sync`; then `gh pr view <N> --repo <owner>/<repo> --json reviewDecision,reviewRequests,latestReviews`. Three readings; check (c) first, since it holds even where (a) or (b) would pass. **(a)** `reviewDecision` is `APPROVED`, or `mcp__hive__projects` shows the project whose `path` is this PR's checkout has `autoMerge: true` (the same consent that grants the merge call) → `merge`. **(b)** `reviewDecision` is empty (no branch rule requires a review) and `reviewRequests` is empty: no review is coming → `merge`. With `autoMerge` off, `merge-pr`'s `gh pr merge` stops at the permission fence and becomes the person's inbox card, which is the ask. **(c)** `REVIEW_REQUIRED` or `CHANGES_REQUESTED`, any `latestReviews` entry with `state: CHANGES_REQUESTED`, or a review is requested: on the first wake at this stage only (`waitingOn` is not yet `reply-to`), write `waitingOn: "reply-to"` and `prs.json`, then `ledger_ask to: <reply-to>` "PR #N waits on a review" (ends the wake). Options `[merge now, wait for review, hand back]` when the review is only requested; `[wait for review, hand back]` when `reviewDecision` is `REVIEW_REQUIRED` or `CHANGES_REQUESTED`, because `merge-pr`'s gate holds on those and a `merge now` would loop. `merge now` → `merge`; `wait for review` → stay, no further asks; `hand back` → `ledger_release`, remove the row, write `prs.json`, and stop without merging. Never the stages before it | `APPROVED`, auto-merge, no review coming, or `merge now` → `merge` |
 | `merge` | `sync`; then `hive:merge-pr <owner>/<repo>#<N> <worktree-or-path> [KEY only if keyConfirmed]` | merge-pr reports `merged` on the same target → `closed` |
 | `closed` | `ledger_release <owner>/<repo>#<N>`; remove the row and write `prs.json`; then `reply-to` a session: `ledger_ask` "PR #N merged" with options `[close session, keep open]` (a `done` reaches no terminal; an ask does, and it ends the wake). `reply-to` the overmind: `ledger_done` | done |
 
 The merge call itself is the checkpoint. `gh pr merge` is granted to the
 shipper only for a project with `autoMerge: true`; for every other project
 the same call stops at the app's permission fence and becomes an inbox card,
-the run ends `asking`, and the answer resumes it. So the shipper runs
-`merge-pr` either way and never asks first: **the card is the ask.**
+the run ends `asking`, and the answer resumes it. Reading (b) of `approval` is
+the path that reaches the fence: no review is coming, so the shipper runs
+`merge-pr` and the fence asks the person. It never asks first: **the card is
+the ask.**
 
-## Three wakes without progress
+## A row that waits
 
-A row whose stage has not changed in three wakes gets a `ledger_post` saying
-what it waits on. After a day it gets a `ledger_ask to: overmind` with options
-`[keep waiting, hand back, abandon]`.
+A row at a stage that waits on a person has exactly one open ask to its
+`reply-to`, sent on the first wake at this stage. Later wakes do not post
+"still waiting". `approval` reading (c) is gated that way; `self-review` with
+no `acr` and `fix-self` with no fixer are not yet, and still ask every wake.
+
+A row stuck on anything else (CI red with no fixer, a refused sync) sends one
+`ledger_post to: <reply-to>`, and on the next wake asks its `reply-to` with
+options `[keep waiting, hand back, abandon]`.
+
+Never broadcast a wait: a `ledger_post` to `*` reaches no terminal.
 
 ## In a terminal
 
@@ -104,7 +121,9 @@ goal-on do this themselves) and gets on with something else.
   wakes you.
 - Transitioning a ticket, or handing `merge-pr` a key, on a branch name. Only
   `keyConfirmed`.
-- Asking the overmind "merge?" before running `merge-pr`. The fence asks.
+- Asking "merge?" when no review is possible. Reading (b) goes to
+  `merge-pr`; the fence asks.
+- A wait posted to `*`: it reaches nobody.
 - Reaching the merge through `gh api` when `gh pr merge` is not granted.
 - Treating an old reading as the merge gate. `merge-pr` takes the one that
   counts, in the call before it merges.

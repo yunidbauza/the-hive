@@ -6,7 +6,7 @@ model: opus
 wake:
   on: [ledger]
 skills: [worktree, execute, tdd, debug, verify]
-tools: [Read, Edit, Write, Grep, Glob, Bash, Agent, Skill, TodoWrite, ToolSearch, mcp__hive__jira_transition]
+tools: [Read, Edit, Write, Grep, Glob, Bash, Agent, Skill, TodoWrite, ToolSearch, ReportFindings, mcp__hive__jira_transition]
 autonomy: act
 limits:
   turns: 300

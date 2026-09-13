@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Use when a spec or an approved design exists and the work is more than one step, before touching code. Writes the plan a builder run or an inline execute run follows task by task. Tasks are twenty implementer-minutes, each marked risk-bearing or not, and a ticket over thirteen points becomes more than one PR.
+description: Use when a spec or an approved design exists and the work is more than one step, before touching code. Writes the plan a builder run or an inline execute run follows task by task. Tasks are sized in builder minutes (about five per TDD task), each marked risk-bearing or not, and a ticket over thirteen points becomes more than one PR.
 ---
 
 # Plan
@@ -22,8 +22,8 @@ A spec that covers independent subsystems should have been split in
 working software on its own.
 
 **A ticket over thirteen points is more than one PR.** Name each PR and which
-tasks belong to it in the header. Independent PRs may be built in parallel,
-each by its own builder run in its own worktree; dependent ones are ordered.
+tasks belong to it in the header. PRs are built one after another; name
+their order in the header.
 
 ## File structure before tasks
 
@@ -52,7 +52,7 @@ Every task's requirements include the global constraints.
 ## Task block (required shape)
 
 ````markdown
-## Task N: <name>                     risk: yes | no       est: 20m
+## Task N: <name>                     risk: yes | no       est: 5m
 
 Files:
 - Create: exact/path
@@ -79,9 +79,10 @@ concurrency, money or a security predicate, or when the spec calls it the
 riskiest thing in the plan. Only those tasks get a reviewer subagent in
 `execute`; the rest are read by the controller.
 
-`est: 20m` is a promise. A task an implementer cannot finish in that span is
-two tasks. Split here, not mid-run; `execute` re-splits only when the first
-two runs prove the estimates wrong.
+`est:` is builder minutes. A TDD task (test, fail, implement, pass, commit)
+is about 5; a task over 15 is two tasks. Measured on HIVE-178: 27 tasks, 129
+builder minutes. Split here, not mid-run; `execute` re-splits only when the
+first two runs prove the estimates wrong.
 
 ## No placeholders
 

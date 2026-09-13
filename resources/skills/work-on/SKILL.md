@@ -103,8 +103,18 @@ ledger_ask
           intent: "wait for the builder; answer its questions from the spec" }
 ```
 
-A plan split into independent PRs is one ask per PR; each builder run takes
-its own worktree and branch. That is the only parallel writing there is.
+**Preflight, before the first ask.** `mcp__hive__projects`: find the project
+whose `path` is this repo. `autoMerge: false` → tell the person in the
+dispatch message: "this project merges only on your inbox card: each clean PR
+will raise one. To merge unattended, turn on Settings › Projects › ⋯ › Merge
+PRs unattended." Never change `autoMerge` yourself, in the config or any other
+way; it is the person's consent.
+
+A plan split into PRs is one ask per PR, **in order**. The builder takes one
+ledger ask at a time (its asks resume one standing session; `limits.parallel`
+only fans out scheduled jobs), so asks posted together run one after another.
+Never offer the person "parallel" builds. Post the next PR's ask when the one
+it depends on has merged.
 
 *Attached (default).* Stay open. A `📒` marker from the builder is a question.
 Answer it with `ledger_answer` when the spec, the plan or this conversation

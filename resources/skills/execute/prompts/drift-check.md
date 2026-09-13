@@ -1,8 +1,12 @@
 # Drift check (cheap, non-blocking)
 
 Task block and spec excerpt below; the diff is
-`git -C "[WT]" diff [BASE]..[HEAD]`. Read-only. No subagents. Answer two
-questions and nothing else.
+`git -C "[WT]" diff [BASE]..[HEAD]`. Read-only. The only git commands you run
+are `git -C <wt> diff|log|show|status|rev-parse|ls-files`. Never `stash`,
+`checkout`, `switch`, `reset`, `restore`, `clean`, `commit`, `push`,
+`worktree`, or any `--force`; never edit a file. If you need the tree in
+another state to answer, say so in your answer instead. No subagents. Answer
+two questions and nothing else.
 
 ## Task block
 

@@ -36,7 +36,9 @@ You are the implementer. For each task, in order:
 3. Scoped lint and type-check on the touched paths.
 4. Commit with the task's name.
 5. `risk: yes` → one reviewer subagent on that task's diff
-   (`prompts/task-reviewer.md`), read-only, most capable model. Fix Critical
+   (`prompts/task-reviewer.md`), most capable model, dispatched as
+   `subagent_type: "Explore"` (no Edit or Write; the prompt's git allowlist is
+   the fence for its Bash). Fix Critical
    and Important yourself, prove each fix with the test that fails without
    it, and stop after two rounds: park what is left with a ruling. Minor goes
    to `progress.md`.
@@ -77,7 +79,8 @@ reset it and re-dispatch.
 ## Drift check (builder mode only)
 
 After every task, one cheap, non-blocking call with `prompts/drift-check.md`
-(sonnet): does the diff do what the task block says, and does anything in it
+(sonnet, `subagent_type: "Explore"`, the same fence as the reviewer's): does
+the diff do what the task block says, and does anything in it
 contradict the spec? A spec ❌ stops the run for one fix round; a task-2 misread
 is what tasks 3 to 8 build on, and one short call is what it costs to know.
 Notes go to `progress.md`; `ship` hands those lines to the whole-branch
@@ -87,8 +90,8 @@ the drift check: a person is reading the diffs.
 ## Re-split rule
 
 Estimates are made before any task has run; the first two runs are the
-measurement. **Two consecutive tasks over twenty minutes means every remaining
-estimate is wrong.** Stop, re-split what is left, then continue. The one time
+measurement. **Two consecutive tasks at twice their estimate means every
+remaining estimate is wrong.** Stop, re-split what is left, then continue. The one time
 mid-run re-sizing is right.
 
 ## What stops you

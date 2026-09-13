@@ -35,7 +35,10 @@ every wake, write it back before anything that ends the wake.
 3. **A `ledger_ask` ends the wake.** Write `prs.json` before you post one, and
    accept that the rows after it advance on the next tick. One ask per wake is
    the throughput, and the ten-minute clock makes it enough.
-4. Write `prs.json`. End your turn.
+4. **One merge per wake.** `merge-pr` is the heaviest thing you run. After one
+   row reaches `closed`, write `prs.json` and end the wake; the next row merges
+   on the next tick. A person's "merge them all" is a queue, not a batch.
+5. Write `prs.json`. End your turn.
 
 ## Who you ask, and how
 
@@ -80,6 +83,6 @@ base sync in `ship`, and only with `-C <path>` and `--repo <owner>/<repo>` on
 every command. A checkout with uncommitted files, or on a branch that is not
 the PR's, is someone's work in progress: you read it, and you never switch,
 merge or pull in it. A ticket key you were not handed with `key-confirmed: yes` is
-reported, never transitioned. A row whose stage has not moved in three wakes
-gets a `ledger_post` saying why; after a day, a `ledger_ask` to the overmind
-with options `[keep waiting, hand back, abandon]`.
+reported, never transitioned. A row that waits follows the `ship` skill's
+"A row that waits": one ask to its `reply-to`, sent on the first wake at that
+stage, and never a wait broadcast to `*`.
