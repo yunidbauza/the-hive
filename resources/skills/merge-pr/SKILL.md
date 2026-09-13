@@ -191,10 +191,19 @@ does not use it for that either.
    the main working tree. A later block whose `branch` is `refs/heads/<headRefName>`
    names the linked worktree on the branch, if any.
 3. A linked worktree: `git -C <main working tree> worktree remove <that path>`.
-   No `--force`: a refusal means uncommitted files in it, and those are
-   somebody's; stop and report. Then `git -C <main working tree> worktree prune`.
-   An agent worktree under `~/.hive/work/<agent>/` is a linked worktree of the
-   project and goes the same way.
+   On a refusal, `git -C <that path> status --porcelain --untracked-files=all`.
+   The worktree is disposable only when **all** of these hold:
+   - the path is under `~/.hive/work/`, an agent's worktree and never the
+     person's checkout;
+   - no line is a tracked change: every line starts with `??`;
+   - every `??` path starts with `.hive/`, the agent's own notes folder.
+
+   Disposable: `git -C <main working tree> worktree remove --force <that path>`,
+   and the report says "removed the agent's `.hive/` notes with it". Anything
+   else: no `--force`. Those files are somebody's work; stop and report the
+   paths. Then `git -C <main working tree> worktree prune`. An agent worktree
+   under `~/.hive/work/<agent>/` is a linked worktree of the project and goes
+   the same way.
 4. `git -C <main working tree> status --porcelain` and
    `git -C <main working tree> branch --show-current`. The main working tree
    is the person's own checkout, often with a live session working in it.
@@ -275,5 +284,6 @@ Name the target in full; "merged PR 58" is unfalsifiable.
 - Resolving a thread to clear the gate.
 - `--delete-branch`.
 - A checkout, merge or pull in a tree with uncommitted files or on another branch.
+- `--force` on a worktree whose leftovers are not all under `.hive/`, or on the person's checkout.
 - Transitioning on a branch-name key.
 - Reporting "no key supplied" without quoting the arguments line.
