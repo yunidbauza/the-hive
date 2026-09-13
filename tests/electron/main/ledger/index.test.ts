@@ -427,6 +427,13 @@ describe('createLedger', () => {
           ledger.append({ from: 'builder', kind: 'release', body: '', meta: { task: 'HIVE-9' } }),
         ).toMatchObject({ ok: true });
       });
+
+      it('lets the agent\'s standing lane release a claim held by one of its lanes (HIVE-189)', () => {
+        begun('r0'); // no meta.lane: the standing lane
+        expect(
+          ledger.append({ from: 'builder', kind: 'release', body: '', meta: { task: 'HIVE-9', run: 'r0' } }),
+        ).toMatchObject({ ok: true });
+      });
     });
 
     it('does not refuse a second claim on a held task', () => {
