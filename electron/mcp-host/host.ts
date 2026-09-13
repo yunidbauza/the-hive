@@ -2,6 +2,7 @@ import {
   HOOK_ENV_GRANTS,
   HOOK_ENV_RECEIVER_URL,
   HOOK_ENV_RUN,
+  HOOK_ENV_RUN_TOKEN,
   HOOK_ENV_SESSION,
   HOOK_ENV_TOKEN,
 } from '@shared/hook-contract';
@@ -53,6 +54,8 @@ export interface HostEnvironment {
   url: string;
   /** The run this process belongs to, from `HIVE_RUN_ID` (HIVE-128). */
   run?: string;
+  /** The run's token, from `HIVE_RUN_TOKEN` (HIVE-184). */
+  runToken?: string;
 }
 
 /** The three variables, or `null` if any is missing. */
@@ -73,6 +76,7 @@ export function readEnvironment(env: NodeJS.ProcessEnv): HostEnvironment | null 
   }
 
   const run = env[HOOK_ENV_RUN];
+  const runToken = env[HOOK_ENV_RUN_TOKEN];
 
   return {
     session,
@@ -80,6 +84,7 @@ export function readEnvironment(env: NodeJS.ProcessEnv): HostEnvironment | null 
     url,
     // Optional: a pty session has no run. Empty is the same as absent.
     ...(run === undefined || run === '' ? {} : { run }),
+    ...(runToken === undefined || runToken === '' ? {} : { runToken }),
   };
 }
 
@@ -148,6 +153,7 @@ export function createHandlers(
       session: environment.session,
       token: environment.token,
       ...(environment.run === undefined ? {} : { run: environment.run }),
+      ...(environment.runToken === undefined ? {} : { runToken: environment.runToken }),
       fetch: fetchImpl,
     }),
     readGrants(env),

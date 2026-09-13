@@ -7,7 +7,12 @@ import {
   type RunLine,
   type RunOutcome,
 } from '@shared/agent-contract';
-import { HOOK_ENV_GRANTS, HOOK_ENV_RUN, HOOK_ENV_RUN_KIND } from '@shared/hook-contract';
+import {
+  HOOK_ENV_GRANTS,
+  HOOK_ENV_RUN,
+  HOOK_ENV_RUN_KIND,
+  HOOK_ENV_RUN_TOKEN,
+} from '@shared/hook-contract';
 import { OVERMIND } from '@shared/ledger-contract';
 import { SLACK_SERVER_KEY } from '@shared/slack-contract';
 
@@ -208,6 +213,11 @@ export interface RunTrackerDeps {
     set(run: string, owner: string, grants: readonly string[]): void;
     delete(run: string): void;
   };
+  /**
+   * The receiver's token for a run (HIVE-184), or null before the receiver
+   * exists. Optional so a host-only spec needs none.
+   */
+  runToken?: (run: string) => string | null;
 }
 
 export interface ChildLike {
@@ -847,10 +857,13 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
         the run writes, which is the only way main can later tell one
         run's asks and handoff from a concurrent neighbour's.
       */
+      const token = deps.runToken?.(run) ?? null;
       const env: Record<string, string> = {
         ...command.env,
         [HOOK_ENV_RUN]: run,
         [HOOK_ENV_RUN_KIND]: kind,
+        // HIVE-184: the run id is a claim the receiver checks against this token.
+        ...(token === null ? {} : { [HOOK_ENV_RUN_TOKEN]: token }),
       };
 
       /*

@@ -83,6 +83,7 @@ describe('createReceiverClient', () => {
       session: 'pr-reviewer',
       token: 'tok-1',
       run: 'run-9',
+      runToken: 'rt-9',
       fetch: fetchImpl as never,
     });
 
@@ -94,6 +95,11 @@ describe('createReceiverClient', () => {
     );
     expect(bodies[0]).toEqual({ kind: 'done', body: 'reviewed', meta: { pr: 166, run: 'run-9' } });
     expect(bodies[1]).toEqual({ kind: 'post', body: 'note', meta: { run: 'run-9' } });
+    // HIVE-184: the run's token travels beside it on every call.
+    for (const call of fetchImpl.mock.calls) {
+      const init = (call as unknown as [string, RequestInit])[1];
+      expect((init.headers as Record<string, string>)['x-hive-run-token']).toBe('rt-9');
+    }
   });
 
   it('leaves meta alone when the process has no run', async () => {
@@ -103,6 +109,7 @@ describe('createReceiverClient', () => {
 
     const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
     expect(JSON.parse(init.body as string)).toEqual({ kind: 'post', body: 'note' });
+    expect((init.headers as Record<string, string>)['x-hive-run-token']).toBeUndefined();
   });
 
   it('raises the receiver reason on a refusal', async () => {

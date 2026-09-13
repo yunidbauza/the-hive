@@ -25,12 +25,14 @@ describe('readEnvironment', () => {
         HIVE_HOOK_TOKEN: 'tok',
         HIVE_RECEIVER_URL: 'http://127.0.0.1:4100',
         HIVE_RUN_ID: 'run-9',
+        HIVE_RUN_TOKEN: 'rt',
       }),
     ).toEqual({
       session: 'pr-reviewer',
       token: 'tok',
       url: 'http://127.0.0.1:4100',
       run: 'run-9',
+      runToken: 'rt',
     });
   });
 
@@ -41,6 +43,7 @@ describe('readEnvironment', () => {
         HIVE_HOOK_TOKEN: 'tok',
         HIVE_RECEIVER_URL: 'http://127.0.0.1:4100',
         HIVE_RUN_ID: '',
+        HIVE_RUN_TOKEN: '',
       }),
     ).toEqual({ session: 'sess-a', token: 'tok', url: 'http://127.0.0.1:4100' });
   });

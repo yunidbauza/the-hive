@@ -81,6 +81,7 @@ describe('createRunTracker', () => {
     state = createAgentState({ path: '/dev/null/agents.json', debounceMs: 1 });
 
     tracker = createRunTracker({
+      runToken: (run: string) => `tok-${run}`,
       spawn,
       command: (name, trigger, extra, options) => {
         commandCalls += 1;
@@ -135,6 +136,13 @@ describe('createRunTracker', () => {
     expect(spawnCalls).toHaveLength(1);
     expect(spawnCalls[0]?.file).toBe('/opt/bin/claude');
     expect(spawnCalls[0]?.options).toMatchObject({ cwd: '/tmp/work' });
+  });
+
+  it('hands each run its own token beside its id (HIVE-184)', () => {
+    tracker.run('a', 'ledger');
+    expect(spawnCalls[0]?.options).toMatchObject({
+      env: { HIVE_RUN_ID: 'run-1', HIVE_RUN_TOKEN: 'tok-run-1' },
+    });
   });
 
   /**
