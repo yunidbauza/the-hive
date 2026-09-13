@@ -2185,4 +2185,43 @@ describe('createScheduler', () => {
       expect(woke).toEqual([{ name: AGENT, trigger: 'ledger', extra: 'expired a1 from overmind' }]);
     });
   });
+
+  describe('a thread lane closes with its ask (HIVE-186)', () => {
+    beforeEach(() => {
+      laneMode = 'thread';
+      liveLanes = new Set();
+      scheduler = build();
+    });
+
+    it('closes the thread lane when its opening ask is answered, and keeps its record', () => {
+      state.patchLane(AGENT, 'thread:A', { sessionUuid: 'u-A', runsSinceRotate: 2 });
+      const reply = entry({ id: 'r', from: AGENT, to: 'overmind', kind: 'answer', thread: 'A' });
+      entries.push(entry({ id: 'A' }), reply);
+      clock = 42;
+
+      scheduler.onEntry(reply);
+
+      expect(state.lane(AGENT, 'thread:A')).toEqual({ sessionUuid: 'u-A', runsSinceRotate: 2, closedAt: 42 });
+    });
+
+    it('does not open a record for a lane that never ran', () => {
+      const reply = entry({ id: 'r', from: AGENT, to: 'overmind', kind: 'answer', thread: 'A' });
+      entries.push(entry({ id: 'A' }), reply);
+
+      scheduler.onEntry(reply);
+
+      expect(state.read(AGENT).lanes).toBeUndefined();
+    });
+
+    it('closes the thread lane when its opening ask expires', () => {
+      state.patchLane(AGENT, 'thread:a1', { sessionUuid: 'u-1', runsSinceRotate: 0 });
+      entries.push(entry({ id: 'a1', ts: 0 }));
+      clock = LEDGER_ASK_TTL_MS;
+
+      scheduler.start();
+      tick();
+
+      expect(state.lane(AGENT, 'thread:a1').closedAt).toBe(LEDGER_ASK_TTL_MS);
+    });
+  });
 });

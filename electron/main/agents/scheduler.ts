@@ -3,6 +3,7 @@ import {
   dayKey,
   isQueueableRefusal,
   STANDING_LANE,
+  threadLane,
   type AgentLane,
   type AgentRunResult,
   type AgentRunState,
@@ -16,6 +17,7 @@ import {
   type LedgerPostRequest,
 } from '@shared/ledger-contract';
 import {
+  CLOSING_KINDS,
   afterTarget,
   expiredAsks,
   isHeld,
@@ -393,6 +395,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         console.warn(`[hive] could not retire ${ask.id}; leaving it open`);
         continue;
       }
+
+      // An expired ask ends the thread lane it opened (HIVE-186).
+      closeLaneOf(ask.id, entries);
 
       /*
         Woken here rather than by routing the event above back through
@@ -1043,9 +1048,38 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     }
   };
 
+  /**
+   * The ask that opened a thread lane has closed: the lane is done (HIVE-186).
+   * Its record stays, with `closedAt`, so a later entry in the thread goes to
+   * standing and the lane is pruned a day later (HIVE-188). A lane that never
+   * ran has no record, and none is made.
+   */
+  const closeLaneOf = (askId: string, entries: readonly LedgerEntry[]): void => {
+    const ask = entries.find((item) => item.id === askId && item.kind === 'ask');
+    const agent = ask?.to;
+
+    if (agent === undefined || !deps.isAgent(agent)) return;
+
+    const key = threadLane(askId);
+    const lane = deps.state.read(agent).lanes?.[key];
+
+    if (lane === undefined || lane.closedAt !== undefined) return;
+
+    deps.state.patchLane(agent, key, { closedAt: deps.now() });
+  };
+
   return {
     onEntry(entry) {
       if (stopped) return;
+
+      /*
+        An entry that closes an ask ends the thread lane that ask opened
+        (HIVE-186). Before the `to` check below, because the closing entry is
+        usually addressed to the asker, not to the agent whose lane it ends.
+      */
+      if (entry.thread !== undefined && CLOSING_KINDS.has(entry.kind)) {
+        closeLaneOf(entry.thread, deps.ledger.read().entries);
+      }
 
       // A `closed` entry may release held asks, whoever it is addressed to.
       if (entry.meta?.['stage'] === 'closed') releaseHeld(deps.ledger.read().entries);
