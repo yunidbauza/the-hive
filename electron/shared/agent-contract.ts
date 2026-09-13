@@ -1057,8 +1057,12 @@ export interface RunSummary {
 export const STANDING_LANE = 'standing';
 /** The lane a `lane: thread` agent opens for one ask. */
 export const threadLane = (askId: string): string => `thread:${askId}`;
-/** The lane a `lane: repo` agent keeps for one `owner/name`. */
-export const repoLane = (slug: string): string => `repo:${slug}`;
+/**
+ * The lane a `lane: repo` agent keeps for one `owner/name`. GitHub names are
+ * case-insensitive, so the key is too (HIVE-189). Two spellings of one
+ * repository are one lane, and one directory on a case-insensitive disk.
+ */
+export const repoLane = (slug: string): string => `repo:${slug.toLowerCase()}`;
 
 /**
  * One non-standing lane's conversation (HIVE-184). The standing lane is the

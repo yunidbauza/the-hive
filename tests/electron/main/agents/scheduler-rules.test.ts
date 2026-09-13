@@ -156,6 +156,13 @@ describe('laneFor (HIVE-186)', () => {
     expect(laneFor('repo', c, log)).toEqual({ lane: 'repo:b/y' });
   });
 
+  it('keys one repository as one lane, whatever its case (HIVE-189)', () => {
+    const a = at({ id: 'A', meta: { repo: 'A/x' } });
+    const b = at({ id: 'B', meta: { repo: 'a/X' } });
+    expect(laneFor('repo', a, [a, b])).toEqual({ lane: 'repo:a/x' });
+    expect(laneFor('repo', b, [a, b])).toEqual({ lane: 'repo:a/x' });
+  });
+
   it.each([undefined, '', '/abs/path', 'no-slash', 7])('refuses an ask with meta.repo %j, with a reason', (repo) => {
     const ask = at({ id: 'A', meta: repo === undefined ? {} : { repo } });
     expect(laneFor('repo', ask, [ask])).toEqual({

@@ -353,6 +353,8 @@ describe('lane keys (HIVE-184)', () => {
     expect(STANDING_LANE).toBe('standing');
     expect(threadLane('01J9ASK')).toBe('thread:01J9ASK');
     expect(repoLane('yunidbauza/the-hive')).toBe('repo:yunidbauza/the-hive');
+    // GitHub names are case-insensitive, so the key is too (HIVE-189).
+    expect(repoLane('Yunid/The-Hive')).toBe('repo:yunid/the-hive');
   });
 
   it('lets a pre-lane run state omit lanes entirely', () => {
