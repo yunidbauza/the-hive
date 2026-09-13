@@ -1643,7 +1643,31 @@ describe('hook receiver', () => {
     });
 
     it('answers 204 for a kind a nudge never carries', async () => {
-      const posted = ledger.append({ from: 'overmind', to: 'sess-01', kind: 'post', body: 'fyi' });
+      const done = ledger.append({ from: 'overmind', to: 'sess-01', kind: 'done', body: 'finished' });
+      expect((await prompt(`📒 ${done.ok ? done.id : ''}`)).status).toBe(204);
+    });
+
+    it('answers 200 with a post addressed to the session, as a notice', async () => {
+      const posted = ledger.append({
+        from: 'overmind',
+        to: 'sess-01',
+        kind: 'post',
+        body: 'PR #9 merged',
+        meta: { pr: 9, stage: 'closed' },
+      });
+
+      const response = await prompt(`📒 ${posted.ok ? posted.id : ''}`);
+
+      expect(response.status).toBe(200);
+      const text = await context(response);
+      expect(text).toContain('Kind: notice, addressed to you');
+      expect(text).toContain('PR #9 merged');
+      expect(text).toContain('"stage":"closed"');
+      expect(text).not.toContain('closing your ask');
+    });
+
+    it('answers 204 for a broadcast post, which a nudge never carries', async () => {
+      const posted = ledger.append({ from: 'overmind', kind: 'post', body: 'fyi' });
       expect((await prompt(`📒 ${posted.ok ? posted.id : ''}`)).status).toBe(204);
     });
 

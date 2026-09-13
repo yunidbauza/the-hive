@@ -151,8 +151,40 @@ describe('createDeliver', () => {
     expect(write).not.toHaveBeenCalled();
   });
 
-  it('ignores kinds that are not ask or answer', () => {
-    ledger.append({ from: OVERMIND, to: 'sess-a', kind: 'post', body: 'fyi' });
+  it('ignores kinds that are not ask, answer or post', () => {
+    ledger.append({ from: OVERMIND, to: 'sess-a', kind: 'done', body: 'finished' });
+
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A post addressed to a session is a one-way notice (the shipper's "PR
+   * merged"): it reaches the terminal the way an ask does, and is receipted
+   * once. A broadcast post still wakes nobody.
+   */
+  it('writes a marker for a post addressed to the session, and receipts it once', () => {
+    const result = ledger.append({ from: 'shipper', to: 'sess-a', kind: 'post', body: 'PR #9 merged' });
+
+    expect(result.ok).toBe(true);
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(write.mock.calls[0]?.[0]).toBe('sess-a');
+    expect(receipts()).toHaveLength(1);
+    expect(receipts()[0]?.meta?.delivered).toBe(result.ok ? result.id : undefined);
+
+    deliver.onIdle('sess-a');
+
+    expect(write).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes nothing for a broadcast post', () => {
+    ledger.append({ from: 'shipper', kind: 'post', body: 'PR #9 merged' });
+
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it('never writes a post addressed to another session into this one', () => {
+    ledger.append({ from: 'shipper', to: 'sess-b', kind: 'post', body: 'PR #9 merged' });
+    deliver.onIdle('sess-a');
 
     expect(write).not.toHaveBeenCalled();
   });

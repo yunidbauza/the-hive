@@ -912,8 +912,9 @@ export function createReceiver(options: ReceiverOptions): Receiver {
    *
    * Resolved only among entries addressed to the caller and of a kind a nudge
    * carries. A session typing another party's ref reads nothing, exactly as
-   * {@link visibleTo} keeps the read route honest; a marker for a `post` reads
-   * nothing because no nudge ever named one.
+   * {@link visibleTo} keeps the read route honest. A `post` resolves only when
+   * it is addressed to the caller, the same check `deliver.ts` makes before it
+   * writes one; a broadcast post was never nudged and reads nothing.
    *
    * The answer's ask is looked up the way `deliver.ts` does, for its ref and
    * the asker's own `meta.intent`, and then held to {@link visibleTo} like
@@ -927,11 +928,14 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   function markerContext(caller: string, token: string): string | undefined {
     const snapshot = onLedgerRead(caller, { to: caller });
     const mine = snapshot.entries.filter(
-      (entry) => entry.to === caller && (entry.kind === 'ask' || entry.kind === 'answer'),
+      (entry) =>
+        entry.to === caller &&
+        (entry.kind === 'ask' || entry.kind === 'answer' || entry.kind === 'post'),
     );
     const id = resolveRef(mine, token);
     const entry = mine.find((candidate) => candidate.id === id);
     if (entry === undefined) return undefined;
+    if (entry.kind === 'post') return entryContext(entry);
     if (entry.kind === 'ask') {
       return entryContext(entry, { open: snapshot.openAsks.some((ask) => ask.id === entry.id) });
     }
