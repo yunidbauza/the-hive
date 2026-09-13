@@ -120,7 +120,7 @@ export const LEDGER_TOOLS: readonly McpToolDefinition[] = [
   {
     name: 'ledger_post',
     description:
-      'Leave a note on the ledger. Use it to tell other parties what you did or what you found. It wakes nobody — if you need an answer, use ledger_ask instead. Omit "to" to broadcast to everyone.',
+      'Leave a note on the ledger. Use it to tell other parties what you did or what you found. Nothing is owed back — if you need an answer, use ledger_ask instead. A post addressed to a session appears in its terminal as a notice, and one addressed to an agent wakes it; omit "to" to broadcast to everyone, which wakes nobody.',
     inputSchema: {
       type: 'object',
       properties: {
