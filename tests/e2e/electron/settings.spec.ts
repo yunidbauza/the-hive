@@ -4,7 +4,13 @@ import { dirname, join } from 'node:path';
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { strToU8, zipSync } from 'fflate';
 
-import { launchHive } from './fixtures/hive-app';
+import { launchHive, SHIPPED_SKILLS } from './fixtures/hive-app';
+
+/** The skill folders a spec wrote: the shipped ones are seeded beside them (HIVE-162). */
+const authoredSkills = (skillsDir: string): string[] =>
+  readdirSync(skillsDir)
+    .filter((name) => !SHIPPED_SKILLS.includes(name))
+    .sort();
 
 /**
  * Settings: adding a local project folder, driven through the real app
@@ -27,6 +33,7 @@ import { launchHive } from './fixtures/hive-app';
 async function launchWithConfig(
   outputPath: (name: string) => string,
   contents: string,
+  { unseeded = false }: { unseeded?: boolean } = {},
 ): Promise<{
   app: ElectronApplication;
   page: Page;
@@ -43,6 +50,7 @@ async function launchWithConfig(
   const app = await launchHive({
     userDataDir: outputPath('user-data'),
     configPath,
+    unseeded,
   });
   const page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');
@@ -214,16 +222,19 @@ test('creates a skill from Settings, beside the config', async ({}, testInfo) =>
    * real `~/.hive`. That is the whole reason the root is derived from the
    * config path instead of `homedir()`.
    */
+  // The shipped skills deleted: since HIVE-162 a fresh install seeds them,
+  // so the empty pane is what a person sees after removing them (retro D).
   const { app, page, configPath } = await launchWithConfig(
     (name) => testInfo.outputPath(name),
     EMPTY_CONFIG,
+    { unseeded: true },
   );
 
   try {
     await openSettings(page);
     await page.getByRole('button', { name: 'Skills' }).click();
 
-    // The screen a fresh install actually sees. Anchored on the invitation
+    // The empty screen. Anchored on the invitation
     // rather than a bare "No skills yet." — the creature, the phrase and this
     // line already report the emptiness, so the label was the one of the four
     // that said nothing the others did not.
@@ -299,7 +310,7 @@ test('renames a skill by its frontmatter, leaving one folder', async ({}, testIn
     await expect(
       page.getByRole('alertdialog', { name: 'Rename /standup to /stand-up?' }),
     ).toBeVisible();
-    expect(readdirSync(skillsDir).sort()).toEqual(['standup']);
+    expect(authoredSkills(skillsDir)).toEqual(['standup']);
 
     await page.getByRole('button', { name: 'Rename' }).click();
 
@@ -307,7 +318,7 @@ test('renames a skill by its frontmatter, leaving one folder', async ({}, testIn
     await expect(page.getByRole('button', { name: '/standup' })).toHaveCount(0);
 
     // The line this test exists for: one folder, and it is the new one.
-    expect(readdirSync(skillsDir).sort()).toEqual(['stand-up']);
+    expect(authoredSkills(skillsDir)).toEqual(['stand-up']);
 
     // And the edit that caused the rename is in it — the move carried the
     // folder, the write that followed carried the body.
@@ -449,9 +460,12 @@ test('adds a new file inside the folder selected in a skill', async ({}, testInf
 });
 
 test('imports a zip as a new skill, and a delete confirm is the only set of buttons', async ({}, testInfo) => {
+  // From the empty pane, with the shipped skills deleted: the app ships a
+  // `pr-review` of its own since HIVE-162 (retro D).
   const { app, page, configPath } = await launchWithConfig(
     (name) => testInfo.outputPath(name),
     EMPTY_CONFIG,
+    { unseeded: true },
   );
   const skillsDir = join(dirname(configPath), 'skills');
   const zipPath = testInfo.outputPath('pr-review.zip');

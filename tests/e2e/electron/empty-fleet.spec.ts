@@ -177,17 +177,26 @@ test('the work tab opens on a skeleton, not on data', async ({ page }) => {
   }
 });
 
-test('the agents tab is empty and says why', async ({ page }) => {
-  await page.waitForSelector('header');
+test.describe('with the shipped agents deleted', () => {
+  /*
+    Since HIVE-162 every launch seeds the shipped agents, so a fresh profile
+    lists four. The empty tab is what a person sees after deleting them, and
+    the fixture starts there (retro D).
+  */
+  test.use({ unseeded: true });
 
-  const rail = page.getByRole('navigation', {
-    name: 'Projects, work, and agents',
+  test('the agents tab is empty and says why', async ({ page }) => {
+    await page.waitForSelector('header');
+
+    const rail = page.getByRole('navigation', {
+      name: 'Projects, work, and agents',
+    });
+    await selectRailTab(rail.getByRole('tab', { name: /^Agents/ }));
+
+    // Since HIVE-114 there is somewhere to point: the copy names the pane that
+    // creates one, rather than reporting that the feature does not exist.
+    await expect(
+      page.getByText(/No agents yet — create one in Settings › Agents/i),
+    ).toBeVisible();
   });
-  await selectRailTab(rail.getByRole('tab', { name: /^Agents/ }));
-
-  // Since HIVE-114 there is somewhere to point: the copy names the pane that
-  // creates one, rather than reporting that the feature does not exist.
-  await expect(
-    page.getByText(/No agents yet — create one in Settings › Agents/i),
-  ).toBeVisible();
 });

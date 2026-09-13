@@ -52,9 +52,26 @@ const REAL_DIRECTORY = join(import.meta.dirname, '../../..');
  * `#123`, and nothing about those three strings says they belong to one column.
  */
 async function prColumnXs(page: Page): Promise<number[]> {
-  return page.locator('[data-col="pr"]').evaluateAll((cells) =>
-    cells.map((cell) => cell.getBoundingClientRect().x),
-  );
+  return columnXs(page, 'pr');
+}
+
+/**
+ * The x of every cell in one column: the header's, and one per **session**
+ * row (retro D).
+ *
+ * Agent rows are left out. The fleet table lists the seeded agents under
+ * their own heading (`agent-row`), and these specs make claims about the
+ * session rows they start: "the header plus the one row that exists" stopped
+ * being true the day agents joined the table, and the product was right.
+ */
+async function columnXs(page: Page, column: string): Promise<number[]> {
+  return page
+    .locator(`[data-col="${column}"]`)
+    .evaluateAll((cells) =>
+      cells
+        .filter((cell) => cell.closest('[data-testid="agent-row"]') === null)
+        .map((cell) => cell.getBoundingClientRect().x),
+    );
 }
 
 /**
@@ -348,21 +365,9 @@ test('the columns hold together at the minimum window with a resumable row', asy
     // The claim: every column is a column, at the width where it used to stop
     // being one.
     alignedAt(await prColumnXs(page));
-    alignedAt(
-      await page
-        .locator('[data-col="last-used"]')
-        .evaluateAll((cells) => cells.map((c) => c.getBoundingClientRect().x)),
-    );
-    alignedAt(
-      await page
-        .locator('[data-col="action"]')
-        .evaluateAll((cells) => cells.map((c) => c.getBoundingClientRect().x)),
-    );
-    alignedAt(
-      await page
-        .locator('[data-col="status"]')
-        .evaluateAll((cells) => cells.map((c) => c.getBoundingClientRect().x)),
-    );
+    alignedAt(await columnXs(page, 'last-used'));
+    alignedAt(await columnXs(page, 'action'));
+    alignedAt(await columnXs(page, 'status'));
 
     const table = page.getByTestId('session-table');
     const overflow = await table.evaluate((node) => ({
@@ -400,7 +405,7 @@ test('the columns hold together at the minimum window with a resumable row', asy
  *
  * The **alignment** half of this column's claim is not here — it is in the test
  * above, which drives the case that actually breaks it: the minimum window with
- * a Resume column, where `LAST USED` is one more `shrink-0` term in the 440px
+ * a Resume column, where `LAST USED` is one more `shrink-0` term in the 426px
  * threshold. Asserting alignment on a fresh profile would be asserting the
  * first test again under a different name.
  */
