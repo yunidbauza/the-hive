@@ -5,7 +5,7 @@ import {
   type AgentLane,
   type AgentStatus,
 } from '@shared/agent-contract';
-import type { LedgerEntry } from '@shared/ledger-contract';
+import { OVERMIND, type LedgerEntry } from '@shared/ledger-contract';
 import { CLOSING_KINDS } from '@shared/ledger-derive';
 
 /**
@@ -143,15 +143,20 @@ export function laneOfRun(agent: string, run: unknown, entries: readonly LedgerE
 }
 
 /**
- * A thread lane is done once the ask that opened it is closed. `exceptId`
- * leaves out the entry being routed, so the closing entry itself still
- * reaches the lane it closes.
+ * A thread lane is done once the ask that opened it is closed: answered,
+ * `done`, `failed`, or expired (spec §1). An expiry is the overmind's own
+ * event, as `expiredAsks` reads it. `exceptId` leaves out the entry being
+ * routed, so the closing entry itself still reaches the lane it closes.
  */
 export function isClosedLane(lane: string, entries: readonly LedgerEntry[], exceptId?: string): boolean {
   if (!lane.startsWith('thread:')) return false;
   const ask = lane.slice('thread:'.length);
   return entries.some(
-    (item) => item.thread === ask && CLOSING_KINDS.has(item.kind) && item.id !== exceptId,
+    (item) =>
+      item.thread === ask &&
+      item.id !== exceptId &&
+      (CLOSING_KINDS.has(item.kind) ||
+        (item.kind === 'event' && item.from === OVERMIND && item.meta?.['expired'] === ask)),
   );
 }
 

@@ -137,6 +137,14 @@ describe('laneFor (HIVE-186)', () => {
     expect(laneFor('thread', after, log)).toEqual({ lane: 'standing' });
   });
 
+  it('routes into standing once the lane\'s opening ask has expired (spec §1)', () => {
+    const expired = at({ id: 'e', from: 'overmind', to: 'overmind', kind: 'event', thread: 'A', body: 'ask A expired', meta: { expired: 'A' } });
+    const forged = at({ id: 'f', from: 'sess-1', to: 'builder', kind: 'event', thread: 'A', body: 'x', meta: { expired: 'A' } });
+    const late = at({ id: 'late', kind: 'post', thread: 'A' });
+    expect(laneFor('thread', late, [at({ id: 'A' }), forged, late])).toEqual({ lane: 'thread:A' });
+    expect(laneFor('thread', late, [at({ id: 'A' }), expired, late])).toEqual({ lane: 'standing' });
+  });
+
   // repo lanes
   it('shares one lane between two asks for the same repo, and not across repos', () => {
     const a = at({ id: 'A', meta: { repo: 'a/x' } });
