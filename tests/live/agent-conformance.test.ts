@@ -2245,6 +2245,60 @@ describe.skipIf(!LIVE)('one real headless wake, against a real claude', () => {
       expect(home?.grants).toContain('touch');
       expect(existsSync(join(threadMarkers, 'home'))).toBe(true);
     });
+
+    it('overlaps two repositories, and queues a second ask for the same one until the first run closes', async () => {
+      const done = settled(REPO);
+      const x1 = ledger.append({ from: SESSION, to: REPO, kind: 'ask', body: 'ship x1', meta: { repo: 'a/x' } });
+      const y = ledger.append({ from: SESSION, to: REPO, kind: 'ask', body: 'ship y', meta: { repo: 'b/y' } });
+      const x2 = ledger.append({ from: SESSION, to: REPO, kind: 'ask', body: 'ship x2', meta: { repo: 'a/x' } });
+      if (!x1.ok || !y.ok || !x2.ok) throw new Error('asks refused');
+
+      expect(agentState.lane(REPO, 'repo:a/x').pendingWake).toEqual([expect.objectContaining({ id: x2.id })]);
+      await done;
+      await until(
+        () => runs.liveRuns(REPO).length === 0 && (agentState.lane(REPO, 'repo:a/x').pendingWake ?? []).length === 0,
+        300_000,
+      );
+
+      const entries = (await onDisk()).filter((entry) => entry['from'] === REPO);
+      const lanesOf = (prefix: string) =>
+        entries
+          .filter((entry) => String(entry['body']).startsWith(prefix))
+          .map((entry) => {
+            const meta = entry['meta'] as Record<string, unknown>;
+            return { id: String(entry['id']), lane: meta['lane'], run: meta['run'] };
+          });
+      const starts = lanesOf('run.started');
+      const ends = lanesOf('run.ended');
+      const x = starts.filter((start) => start.lane === 'repo:a/x');
+      const yStart = starts.find((start) => start.lane === 'repo:b/y');
+      const firstXEnd = ends.find((end) => end.run === x[0]?.run);
+
+      expect(x).toHaveLength(2);
+      expect(yStart).toBeDefined();
+      expect(firstXEnd).toBeDefined();
+      // a/x and b/y overlapped:
+      expect(yStart!.id < firstXEnd!.id).toBe(true);
+      // the second a/x run started only after the first a/x run ended:
+      expect(firstXEnd!.id < x[1]!.id).toBe(true);
+    }, 420_000);
+
+    it('refuses a third concurrent start past daily_usd as budget, with the held-back card', async () => {
+      const done = settled(PURSE);
+      expect(runs.run(PURSE, 'manual', 'one', { lane: 'thread:p1' })).toMatchObject({ started: true });
+      expect(runs.run(PURSE, 'manual', 'two', { lane: 'thread:p2' })).toMatchObject({ started: true });
+      // $1 + $1 reserved of $2.50: a third $1 does not fit.
+      expect(runs.run(PURSE, 'manual', 'three', { lane: 'thread:p3' })).toMatchObject({ started: false, refused: 'budget' });
+
+      const card = (await onDisk()).find(
+        (entry) => entry['from'] === OVERMIND && (entry['meta'] as Record<string, unknown> | undefined)?.['agent'] === PURSE,
+      );
+      // Held back by live reservations, not a spent day (HIVE-187).
+      expect(card?.['meta']).toMatchObject({ dailyCap: 2.5, agent: PURSE, held: true });
+      expect(String(card?.['body'])).toContain('held back a run');
+      expect(agentState.read(PURSE).today?.capped).toBeUndefined();
+      await done;
+    }, 300_000);
   });
 
   /**
