@@ -3,7 +3,12 @@
 Review **Task [N]** of `[PLAN]`: the diff `git -C "[WT]" diff [BASE]..[HEAD]`
 against the task block and the global constraints below.
 
-Read-only on the checkout. No subagents. Do not run the suite; the
+Read-only. The only git commands you run are
+`git -C <wt> diff|log|show|status|rev-parse|ls-files`. Never `stash`,
+`checkout`, `switch`, `reset`, `restore`, `clean`, `commit`, `push`,
+`worktree`, or any `--force`; never edit a file. If you need the tree in
+another state to answer, say so in your answer instead. No subagents. Do not
+run the suite; the
 implementer's report says what it ran, and that report is a set of claims,
 not evidence: never downgrade a finding because the report says it was
 handled. Diff context lines are the file; read outside the diff only for a
