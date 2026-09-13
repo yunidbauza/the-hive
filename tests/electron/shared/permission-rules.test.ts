@@ -5,6 +5,7 @@ import {
   honestPermissionAsk,
   isToolName,
   matches,
+  namesTool,
   oneShotRuleFor,
   rungsFor,
   summarise,
@@ -734,5 +735,23 @@ describe('a once-only tool (retro B)', () => {
 
   it('names the exact call on the card', () => {
     expect(summarise(tool, { project: 'hive', on: true })).toBe('project=hive;on=true');
+  });
+
+  /*
+    `waker.ts` keeps out of `--allowedTools` every rule this says names a
+    once-only tool, because the CLI grants those without asking the fence. The
+    blanket is the widest such rule, and a glob outside `mcp__` is still a glob
+    to the CLI.
+  */
+  it('is named by the blanket and by any bare glob that covers it', () => {
+    for (const rule of ['*', 'mcp*', '*__project_auto_merge', 'mcp__hive__*', 'mcp__hive']) {
+      expect(namesTool(rule, tool)).toBe(true);
+    }
+  });
+
+  it('is not named by another tool, a specifier, or a glob that misses it', () => {
+    for (const rule of ['Read', 'Bash(*)', 'mcp__hive__ledger_*', 'mcp__slack__*']) {
+      expect(namesTool(rule, tool)).toBe(false);
+    }
   });
 });

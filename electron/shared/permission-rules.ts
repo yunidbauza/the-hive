@@ -110,13 +110,20 @@ export const ONCE_ONLY_TOOLS: ReadonlySet<string> = new Set(['mcp__hive__project
 
 /**
  * Whether a `tools:` rule names `toolName` outright: the name itself, its MCP
- * server (`mcp__hive`), or an MCP glob. A specifier or a literal never does.
+ * server (`mcp__hive`), or any bare glob that covers it, `*` included. A
+ * specifier or a literal never does.
+ *
+ * Wider than {@link matches} reads a glob, on purpose. `matches` decides what
+ * the fence grants; this decides what `waker.ts` keeps out of
+ * `--allowedTools`, which the CLI grants without asking the fence, and the CLI
+ * reads the blanket as everything. Naming too much only costs a trip through
+ * the fence; naming too little let `tools: ["*"]` merge unattended.
  */
 export function namesTool(rule: string, toolName: string): boolean {
   if (rule === toolName) return true;
   if (!toolName.startsWith('mcp__') || rule.includes('(')) return false;
   if (rule === toolName.slice(0, toolName.indexOf('__', 'mcp__'.length))) return true;
-  return rule.startsWith('mcp__') && rule.includes('*') && globToRegExp(rule).test(toolName);
+  return rule.includes('*') && globToRegExp(rule).test(toolName);
 }
 
 /** The text a specifier is matched against, per tool. */

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { AgentDefinition } from '../../../../electron/shared/agent-contract';
 import { HIVE_STANDING_GRANTS } from '../../../../electron/shared/ledger-tools';
+import { matches } from '../../../../electron/shared/permission-rules';
 import {
   systemPromptFor,
   wakeCommand,
@@ -546,11 +547,14 @@ describe('a container wake (HIVE-137)', () => {
 /*
   Retro B: a definition's `tools:` never reaches `project_auto_merge`, whether
   it names the tool or a wider rule that would. The CLI grants what
-  `--allowedTools` names without asking the fence, so the list is narrowed
-  here; `HIVE_GRANTS` gets the same list.
+  `--allowedTools` names without asking the fence, so that list is narrowed
+  here. `HIVE_GRANTS` is the fence's own list and is not narrowed: `matches`
+  refuses a once-only tool to every rule but a one-shot literal, so what it
+  must never do is match the tool, and that is what these check.
 */
 describe('wakeCommand never grants a once-only tool (retro B)', () => {
   const tool = 'mcp__hive__project_auto_merge';
+  const call = { project: 'hive', on: true };
   const granted = (tools: string[]) => {
     const built = build({ def: def({ tools }) });
     return {
@@ -558,12 +562,14 @@ describe('wakeCommand never grants a once-only tool (retro B)', () => {
       grants: JSON.parse(built.env['HIVE_GRANTS']!) as string[],
     };
   };
+  const fenceAllows = (grants: string[], name: string, input: Record<string, unknown>) =>
+    grants.some((rule) => matches(rule, name, input));
 
   it('drops the tool when a definition names it', () => {
     const { allowed, grants } = granted(['Read', tool]);
 
     expect(allowed).not.toContain(tool);
-    expect(grants).not.toContain(tool);
+    expect(fenceAllows(grants, tool, call)).toBe(false);
     expect(allowed).toContain('Read');
     expect(grants).toContain('Read');
   });
@@ -573,10 +579,9 @@ describe('wakeCommand never grants a once-only tool (retro B)', () => {
     (rule) => {
       const { allowed, grants } = granted([rule]);
 
-      for (const list of [allowed, grants]) {
-        expect(list).not.toContain(rule);
-        expect(list).not.toContain(tool);
-      }
+      expect(allowed).not.toContain(rule);
+      expect(allowed).not.toContain(tool);
+      expect(fenceAllows(grants, tool, call)).toBe(false);
     },
   );
 
@@ -584,7 +589,23 @@ describe('wakeCommand never grants a once-only tool (retro B)', () => {
     const { allowed, grants } = granted(['mcp__hive__*']);
 
     expect(allowed).toContain('mcp__hive__jira_transition');
-    expect(grants).toContain('mcp__hive__jira_comment');
+    expect(fenceAllows(grants, 'mcp__hive__jira_comment', {})).toBe(true);
+  });
+
+  /*
+    `[*]` is the app's documented "grant everything", and the CLI reads it as
+    exactly that. It must leave `--allowedTools`, where it would carry the
+    once-only tool past the fence, and stay in `HIVE_GRANTS`, where the fence
+    still grants every other call through it rather than asking about each.
+  */
+  it('keeps * out of --allowedTools, and the fence still grants the rest', () => {
+    const { allowed, grants } = granted(['*']);
+
+    expect(allowed).not.toContain('*');
+    expect(allowed).not.toContain(tool);
+    expect(allowed).toContain('mcp__hive__jira_transition');
+    expect(fenceAllows(grants, tool, call)).toBe(false);
+    expect(fenceAllows(grants, 'Bash', { command: 'git status' })).toBe(true);
   });
 
   it('leaves jira_transition grantable by name', () => {
