@@ -2070,4 +2070,119 @@ describe('createScheduler', () => {
       expect(state.lane(AGENT, 'thread:A').pendingWake).toEqual([{ kind: 'manual', id: 'run', from: 'overmind', text: 'two' }]);
     });
   });
+
+  describe('routing by lane (HIVE-186)', () => {
+    const begun = (run: string, lane: string): LedgerEntry =>
+      entry({ id: `s-${run}`, from: AGENT, to: undefined, kind: 'event', body: 'run.started — ledger', meta: { run, lane } });
+
+    beforeEach(() => {
+      laneMode = 'thread';
+      liveLanes = new Set();
+      scheduler = build();
+    });
+
+    it('starts lane B at once while lane A is busy', () => {
+      liveLanes?.add('thread:A');
+      const ask = entry({ id: 'B' });
+      entries.push(entry({ id: 'A' }), ask);
+
+      scheduler.onEntry(ask);
+
+      expect(woke).toEqual([{ name: AGENT, trigger: 'ledger', extra: 'ask B from overmind', lane: 'thread:B' }]);
+    });
+
+    it('queues the answer to lane A\'s question behind A, not B, then resumes A', () => {
+      liveLanes?.add('thread:A').add('thread:B');
+      const answer = entry({ id: 'ans', kind: 'answer', thread: 'Q' });
+      entries.push(
+        entry({ id: 'A' }), entry({ id: 'B' }), begun('r1', 'thread:A'),
+        entry({ id: 'Q', from: AGENT, to: 'overmind', meta: { run: 'r1' } }), answer,
+      );
+
+      scheduler.onEntry(answer);
+      expect(woke).toEqual([]);
+      expect(state.lane(AGENT, 'thread:A').pendingWake).toEqual([
+        { kind: 'answer', id: 'ans', from: 'overmind', thread: 'Q' },
+      ]);
+
+      liveLanes?.delete('thread:B');
+      scheduler.onRunClosed(AGENT);
+      expect(woke).toEqual([]); // B closing does not resume A: A is still live
+
+      liveLanes?.delete('thread:A');
+      scheduler.onRunClosed(AGENT);
+      expect(woke).toEqual([{ name: AGENT, trigger: 'ledger', extra: 'answer ans from overmind', lane: 'thread:A' }]);
+    });
+
+    it('wakes a different lane with a self-entry, never its own', () => {
+      laneMode = 'repo';
+      scheduler = build();
+      entries.push(begun('r0', 'standing'));
+      const handover = entry({ id: 'H', from: AGENT, meta: { run: 'r0', repo: 'a/x' } });
+      entries.push(handover);
+
+      scheduler.onEntry(handover);
+      expect(woke).toEqual([{ name: AGENT, trigger: 'ledger', extra: `ask H from ${AGENT}`, lane: 'repo:a/x' }]);
+
+      woke = [];
+      entries.push(begun('r1', 'repo:a/x'));
+      const own = entry({ id: 'H2', from: AGENT, meta: { run: 'r1', repo: 'a/x' } });
+      entries.push(own);
+      scheduler.onEntry(own);
+      expect(woke).toEqual([]);
+    });
+
+    it('answers a repo-laned ask with no meta.repo at once, as the overmind, and wakes nothing', () => {
+      laneMode = 'repo';
+      scheduler = build();
+      const ask = entry({ id: 'N', from: 'sess-1' });
+      entries.push(ask);
+
+      scheduler.onEntry(ask);
+
+      expect(woke).toEqual([]);
+      expect(appended).toEqual([
+        { from: 'overmind', to: 'sess-1', kind: 'answer', thread: 'N',
+          body: `${AGENT} lanes by repository; send meta.repo as owner/name.` },
+      ]);
+    });
+
+    it('routes a released held ask into the lane it opens', () => {
+      const held = entry({ id: 'h1', meta: { after: 'a/b#3' } });
+      const closed = entry({ id: 'c3', from: 'shipper', to: 'sess-4l', kind: 'post', body: 'merged', meta: { pr: 3, repo: 'a/b', stage: 'closed' } });
+      entries.push(held, closed);
+
+      scheduler.onEntry(closed);
+
+      expect(woke).toEqual([{ name: AGENT, trigger: 'ledger', extra: 'ask h1 from overmind', lane: 'thread:h1' }]);
+    });
+
+    it('routes an expired ask\'s news to the lane that asked it', () => {
+      entries.push(
+        begun('r1', 'thread:A'),
+        { id: 'a1', ts: 0, from: AGENT, to: 'overmind', kind: 'ask', ref: 'a7', body: 'which branch?', meta: { run: 'r1' } },
+      );
+      clock = LEDGER_ASK_TTL_MS;
+
+      scheduler.start();
+      tick();
+
+      expect(woke).toEqual([{ name: AGENT, trigger: 'ledger', extra: 'expired a1 from overmind', lane: 'thread:A' }]);
+    });
+
+    it('sends an expiry to standing when the asking lane has closed', () => {
+      entries.push(
+        entry({ id: 'A' }),
+        entry({ id: 'd', kind: 'done', from: AGENT, to: 'overmind', thread: 'A' }),
+        begun('r1', 'thread:A'),
+        { id: 'a1', ts: 0, from: AGENT, to: 'overmind', kind: 'ask', ref: 'a7', body: 'which branch?', meta: { run: 'r1' } },
+      );
+      clock = LEDGER_ASK_TTL_MS;
+
+      scheduler.start();
+      tick();
+
+      expect(woke).toEqual([{ name: AGENT, trigger: 'ledger', extra: 'expired a1 from overmind' }]);
+    });
+  });
 });

@@ -6,6 +6,7 @@ import {
   type AgentLane,
   type AgentRunResult,
   type AgentRunState,
+  type AgentStatus,
   type PendingWakeEntry,
   type WakeSpec,
 } from '@shared/agent-contract';
@@ -24,7 +25,15 @@ import {
 import { SLACK_COMMAND_KIND, SLACK_SERVER_KEY, SLACK_TRIGGER } from '@shared/slack-contract';
 
 import type { RunStart } from './runs';
-import { decide, decideForEvent, decideForStatus, type WakeDecision } from './scheduler-rules';
+import {
+  decide,
+  decideForEvent,
+  decideForStatus,
+  isClosedLane,
+  laneFor,
+  laneOfRun,
+  type WakeDecision,
+} from './scheduler-rules';
 import type { AgentState } from './state';
 import { inQuiet, nextRunFrom, quietEndAfter } from './wake-schedule';
 
@@ -359,7 +368,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
 
     const now = deps.now();
 
-    for (const ask of expiredAsks(deps.ledger.read().entries, now)) {
+    const entries = deps.ledger.read().entries;
+
+    for (const ask of expiredAsks(entries, now)) {
       const written = deps.ledger.append({
         from: OVERMIND,
         to: ask.from,
@@ -397,11 +408,17 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         is on disk by now and this sweep will never look at that ask again.
       */
       if (deps.isAgent(ask.from) && deps.wakesOnLedger(ask.from)) {
-        route(ask.from, decideForStatus(deps.state.read(ask.from).status), {
-          kind: 'expired',
-          id: ask.id,
-          from: OVERMIND,
-        });
+        // The lane that asked hears it (HIVE-186). A closed thread lane hands over to standing.
+        const asked = laneOfRun(ask.from, ask.meta?.['run'], entries);
+        const lane = isClosedLane(asked, entries) ? STANDING_LANE : asked;
+
+        route(
+          ask.from,
+          decideForStatus(laneStatus(ask.from, lane)),
+          { kind: 'expired', id: ask.id, from: OVERMIND },
+          LEDGER_TRIGGER,
+          lane,
+        );
       }
     }
   };
@@ -682,6 +699,19 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     }
   };
 
+  /**
+   * A lane's status, computed rather than stored (HIVE-186, spec §2):
+   * paused with the agent, working while a conversation run holds it, else
+   * sleeping. With no `laneLive` (a spec from before lanes) the standing lane
+   * reads the agent's own status, which is what it always was.
+   */
+  const laneStatus = (name: string, lane: string): AgentStatus => {
+    const status = deps.state.read(name).status;
+    if (status === 'paused') return 'paused';
+    if (deps.laneLive === undefined) return lane === STANDING_LANE ? status : 'sleeping';
+    return deps.laneLive(name, lane) ? 'working' : 'sleeping';
+  };
+
   /** One lane's queue: the top-level `pendingWake` for standing (HIVE-186). */
   const queueOf = (name: string, lane: string): PendingWakeEntry[] =>
     deps.state.lane(name, lane).pendingWake ?? [];
@@ -931,6 +961,39 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   };
 
   /**
+   * Find the lane, decide on that lane's status, and route (HIVE-186). A
+   * repo-laned ask with no usable `meta.repo` is answered at once by the
+   * overmind with the reason, so the asker's thread closes instead of waiting
+   * for a wake that cannot happen.
+   *
+   * `sameLane` only matters for an agent's own entry: it is ignored on the
+   * lane that wrote it and wakes any other.
+   */
+  const deliver = (to: string, item: LedgerEntry, entries: readonly LedgerEntry[]): void => {
+    const routed = laneFor(deps.laneOf?.(to), item, entries);
+
+    if ('refuse' in routed) {
+      const written = deps.ledger.append({
+        from: OVERMIND,
+        to: item.from,
+        kind: 'answer',
+        thread: item.id,
+        body: routed.refuse,
+      });
+
+      if (!written.ok) console.warn(`[hive] could not refuse ${item.id}; it stays open`);
+      return;
+    }
+
+    const sameLane = item.from !== to || laneOfRun(to, item.meta?.['run'], entries) === routed.lane;
+    const decision = decide(laneStatus(to, routed.lane), item, { sameLane });
+
+    if (decision === 'ignore') return;
+
+    route(to, decision, pendingOf(item), LEDGER_TRIGGER, routed.lane);
+  };
+
+  /**
    * Route every held ask (`meta.after`, retro C) that its PR's `closed` entry
    * has released and nothing has routed yet: when that entry arrives, and at
    * start, for one released while the app was down.
@@ -976,9 +1039,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         continue;
       }
 
-      const decision = decide(deps.state.read(to).status, ask);
-      if (decision === 'ignore') continue;
-      route(to, decision, pendingOf(ask));
+      deliver(to, ask, entries);
     }
   };
 
@@ -1007,11 +1068,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         return;
       }
 
-      const decision = decide(deps.state.read(to).status, entry);
-
-      if (decision === 'ignore') return;
-
-      route(to, decision, pendingOf(entry));
+      // Read once per addressed entry. ponytail: index the log if its size
+      // ever shows up in a profile.
+      deliver(to, entry, deps.ledger.read().entries);
     },
 
     onEvent(name, entry, opts) {
