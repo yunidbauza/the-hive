@@ -76,9 +76,9 @@ implementation hours inside the review chain. These rules follow from both:
   hours of HIVE-144 against 7.4 for the implementation itself.
 - **Ship's self review is the one whole-branch review**, and the one place the
   deep multi-dimension pass belongs.
-- **Re-split when the plan is wrong about size.** Tasks are twenty
-  implementer-minutes. Two consecutive tasks over that means every remaining
-  estimate is wrong: re-split what is left before the next dispatch. HIVE-144's
+- **Re-split when the plan is wrong about size.** Tasks are builder minutes,
+  about five per TDD task. Two consecutive tasks at twice their estimate: every
+  remaining estimate is wrong, so re-split before the next dispatch. HIVE-144's
   task 2 came back at forty minutes, its mean was fifty-one, its worst a hundred
   and four, and nothing re-sized.
 - **A thirteen-point ticket is more than one PR.** HIVE-144 shipped 100 files and
