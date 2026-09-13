@@ -150,6 +150,7 @@ const snapshot = {
 
 vi.mock('../../../../electron/main/config/index', () => ({
   getConfig: vi.fn(() => snapshot),
+  onConfigChange: vi.fn(() => () => {}),
   reloadConfig: vi.fn(() => snapshot),
   loadConfig: vi.fn(() => snapshot),
   addProject: vi.fn(() => snapshot),
