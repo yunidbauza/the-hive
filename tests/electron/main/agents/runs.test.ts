@@ -1775,6 +1775,13 @@ describe('createRunTracker', () => {
       expect(card?.body).toContain('reserving $2.00 per run: daily_usd ÷ parallel, since no budget_usd is set');
     });
 
+    it('runs a one-at-a-time agent with no budget_usd until the day is spent', () => {
+      limits = { dailyUsd: 8 };
+      spent(1);
+
+      expect(tracker.run('a', 'ledger')).toMatchObject({ started: true });
+    });
+
     it('does nothing at all for an agent with no daily_usd', () => {
       parallel = 2;
       limits = { budgetUsd: 100 };

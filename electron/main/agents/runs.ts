@@ -902,7 +902,10 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
         const today = agent.today?.day === dayKey(now) ? agent.today : undefined;
         const reserved = live.reduce((sum, other) => sum + other.reserved, 0);
 
-        if ((today?.usd ?? 0) + reserved + reservation > limits.dailyUsd + 1e-9) {
+        // A day already spent refuses even a run that reserves nothing.
+        const spentOut = (today?.usd ?? 0) >= limits.dailyUsd;
+
+        if (spentOut || (today?.usd ?? 0) + reserved + reservation > limits.dailyUsd + 1e-9) {
           // Once a day, like the scheduler's own card, which reads the same flag.
           if (today?.capped !== true) {
             deps.state.patch(name, {

@@ -1241,14 +1241,20 @@ export const isQueueableRefusal = (refused: string): refused is QueueableRefusal
  * `budget_usd` when the definition sets it, since that is the most the run may
  * spend. Otherwise an even share of `daily_usd` across the cap, so the cap's
  * worth of parallel runs always fits in the day. No ceiling, nothing reserved.
+ *
+ * An agent that runs one at a time with no `budget_usd` reserves nothing: a
+ * single run cannot overshoot together with anything, and reserving the
+ * whole day would let it run once a day. Its ceiling is today's spend alone,
+ * as the scheduler's tick has always read it. (A deviation from spec §6,
+ * decision Q1, chosen on HIVE-187.)
  */
 export function runReservation(
   limits: { budgetUsd?: number; dailyUsd?: number },
   parallel: number,
 ): number {
   if (limits.budgetUsd !== undefined) return limits.budgetUsd;
-  if (limits.dailyUsd === undefined) return 0;
-  return limits.dailyUsd / Math.max(1, parallel);
+  if (limits.dailyUsd === undefined || parallel <= 1) return 0;
+  return limits.dailyUsd / parallel;
 }
 
 /** A run in flight (HIVE-128). In memory only — an app restart has none. */

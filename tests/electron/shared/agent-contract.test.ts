@@ -369,8 +369,10 @@ describe('the daily budget per run (HIVE-187)', () => {
   it('reserves budget_usd, or daily_usd ÷ parallel when no budget_usd is set', () => {
     expect(runReservation({ budgetUsd: 3, dailyUsd: 5 }, 2)).toBe(3);
     expect(runReservation({ dailyUsd: 8 }, 3)).toBeCloseTo(8 / 3);
-    expect(runReservation({ dailyUsd: 8 }, 1)).toBe(8);
-    expect(runReservation({ dailyUsd: 8 }, 0)).toBe(8);
+    // One run at a time cannot overshoot together with anything (decision Q1, revised).
+    expect(runReservation({ dailyUsd: 8 }, 1)).toBe(0);
+    expect(runReservation({ dailyUsd: 8 }, 0)).toBe(0);
+    expect(runReservation({ budgetUsd: 2, dailyUsd: 8 }, 1)).toBe(2);
     expect(runReservation({}, 2)).toBe(0);
   });
 });
