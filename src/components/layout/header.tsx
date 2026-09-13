@@ -234,9 +234,17 @@ export function Header() {
           and 276px at compact — a hardcoded number would be right in one of
           them and silently wrong in the other.
 
-          Measured content is ~262px against a 300px column at comfortable
-          density, so nothing here is under width pressure; `shrink-0` keeps it
-          that way and pushes any deficit onto the counts and the chip.
+          A **minimum**, not a width, with `pl-[14px]` inside it. The buttons
+          measure ~281px, which fits the 300px column at comfortable density
+          and not the 260px one at compact. A fixed width let `justify-end`
+          spill that overflow leftward over the counts, so `0 ended` ran under
+          the theme button (and `scrollWidth` cannot see a leftward spill). Now
+          the cluster grows instead, pushing the counts left: they end on the
+          rail's line wherever the buttons fit, and 14px clear of the theme
+          button always, the same 14px they keep from the model chip. The
+          buttons are spaced `gap-2` rather than 14px so that comfortable
+          density still fits. `rail-alignment.spec.ts` measures the gap at
+          both densities.
 
           With the rail hidden there is no column to claim, so the width drops
           away and the cluster is simply flush right.
@@ -261,8 +269,8 @@ export function Header() {
           to align to at all, and that fallback is unchanged.
         */
         className={cn(
-          'flex shrink-0 items-center justify-end gap-[14px]',
-          showActivityRail && 'w-[calc(var(--cc-rail-w-right-open)-1rem)]',
+          'flex shrink-0 items-center justify-end gap-2 pl-[14px]',
+          showActivityRail && 'min-w-[calc(var(--cc-rail-w-right-open)-1rem)]',
         )}
       >
         <button

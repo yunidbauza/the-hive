@@ -143,7 +143,7 @@ describe('Header', () => {
       // A calc over the token, not a literal: the rail is 316px comfortable and
       // 276px compact, and a hardcoded number would be wrong in one of them.
       // The `-open` token specifically — see the collapsed case below.
-      expect(controls).toHaveClass('w-[calc(var(--cc-rail-w-right-open)-1rem)]');
+      expect(controls).toHaveClass('min-w-[calc(var(--cc-rail-w-right-open)-1rem)]');
     });
 
     /**
@@ -157,7 +157,7 @@ describe('Header', () => {
       render(<Header />);
 
       const controls = screen.getByRole('banner').children[2];
-      expect(controls).not.toHaveClass('w-[calc(var(--cc-rail-w-right-open)-1rem)]');
+      expect(controls).not.toHaveClass('min-w-[calc(var(--cc-rail-w-right-open)-1rem)]');
     });
 
     /**
@@ -183,7 +183,7 @@ describe('Header', () => {
       render(<Header />);
 
       const controls = screen.getByRole('banner').children[2];
-      expect(controls).toHaveClass('w-[calc(var(--cc-rail-w-right-open)-1rem)]');
+      expect(controls).toHaveClass('min-w-[calc(var(--cc-rail-w-right-open)-1rem)]');
     });
 
     it('gives the brand exactly the rail’s width, so the chips start on its edge', () => {
