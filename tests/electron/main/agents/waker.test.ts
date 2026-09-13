@@ -542,3 +542,52 @@ describe('a container wake (HIVE-137)', () => {
     expect(command.args.join(' ')).toContain('--settings /u/hive/claude-hooks.settings.json');
   });
 });
+
+/*
+  Retro B: a definition's `tools:` never reaches `project_auto_merge`, whether
+  it names the tool or a wider rule that would. The CLI grants what
+  `--allowedTools` names without asking the fence, so the list is narrowed
+  here; `HIVE_GRANTS` gets the same list.
+*/
+describe('wakeCommand never grants a once-only tool (retro B)', () => {
+  const tool = 'mcp__hive__project_auto_merge';
+  const granted = (tools: string[]) => {
+    const built = build({ def: def({ tools }) });
+    return {
+      allowed: built.args[built.args.indexOf('--allowedTools') + 1]!.split(','),
+      grants: JSON.parse(built.env['HIVE_GRANTS']!) as string[],
+    };
+  };
+
+  it('drops the tool when a definition names it', () => {
+    const { allowed, grants } = granted(['Read', tool]);
+
+    expect(allowed).not.toContain(tool);
+    expect(grants).not.toContain(tool);
+    expect(allowed).toContain('Read');
+    expect(grants).toContain('Read');
+  });
+
+  it.each(['mcp__hive__*', 'mcp__hive', 'mcp__hive__project_*'])(
+    'narrows %s to what it named, less the once-only tool',
+    (rule) => {
+      const { allowed, grants } = granted([rule]);
+
+      for (const list of [allowed, grants]) {
+        expect(list).not.toContain(rule);
+        expect(list).not.toContain(tool);
+      }
+    },
+  );
+
+  it('keeps the consent tools a wide rule named', () => {
+    const { allowed, grants } = granted(['mcp__hive__*']);
+
+    expect(allowed).toContain('mcp__hive__jira_transition');
+    expect(grants).toContain('mcp__hive__jira_comment');
+  });
+
+  it('leaves jira_transition grantable by name', () => {
+    expect(granted(['mcp__hive__jira_transition']).allowed).toContain('mcp__hive__jira_transition');
+  });
+});

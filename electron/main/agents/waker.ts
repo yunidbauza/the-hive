@@ -6,7 +6,8 @@ import type {
 } from '@shared/agent-contract';
 import { AUTH_ENV_KEYS, DEFAULT_ENV_ARG, isSessionEnvDenied } from '@shared/config-contract';
 import { HOOK_ENV_GRANTS, HOOK_ENV_RECEIVER_URL } from '@shared/hook-contract';
-import { HIVE_STANDING_GRANTS } from '@shared/ledger-tools';
+import { HIVE_CONSENT_TOOLS, HIVE_STANDING_GRANTS } from '@shared/ledger-tools';
+import { namesTool, ONCE_ONLY_TOOLS } from '@shared/permission-rules';
 
 import { withHostAlias } from '../hooks/container-origin';
 import { createPathMap } from '../sessions/path-map';
@@ -267,6 +268,24 @@ export function systemPromptFor(
   return `${preamble.trimEnd()}\n\n${AUTONOMY_CLAUSE[def.autonomy]}\n\n---\n\n${def.body.trim()}\n`;
 }
 
+/**
+ * `def.tools` less anything that would grant a once-only tool (retro B).
+ *
+ * The CLI grants what `--allowedTools` names without consulting the fence, so
+ * a definition naming `project_auto_merge`, or `mcp__hive__*` / `mcp__hive`,
+ * would merge unattended with nobody asked. A rule that names one is dropped,
+ * and a wide one is replaced by the consent tools it named: every other hive
+ * tool is already in {@link HIVE_STANDING_GRANTS}.
+ */
+function grantableTools(tools: readonly string[]): string[] {
+  const onceOnly = [...ONCE_ONLY_TOOLS];
+  return tools.flatMap((rule) =>
+    onceOnly.some((tool) => namesTool(rule, tool))
+      ? HIVE_CONSENT_TOOLS.filter((tool) => !ONCE_ONLY_TOOLS.has(tool) && namesTool(rule, tool))
+      : [rule],
+  );
+}
+
 export function wakeCommand(input: WakeInput): WakeCommand {
   const { def, paths, env } = input;
 
@@ -325,7 +344,7 @@ export function wakeCommand(input: WakeInput): WakeCommand {
     inside(paths.mcpConfig),
     '--strict-mcp-config',
     '--allowedTools',
-    [...HIVE_STANDING_GRANTS, ...def.tools].join(','),
+    [...HIVE_STANDING_GRANTS, ...grantableTools(def.tools)].join(','),
     /*
       The fence (HIVE-119). `--allowedTools` above is a grant and cannot deny;
       what actually stops an ungranted call is the `permissions.ask: ["*"]` rule
@@ -411,7 +430,7 @@ export function wakeCommand(input: WakeInput): WakeCommand {
   merged[HOOK_ENV_GRANTS] = JSON.stringify([
     ...HIVE_STANDING_GRANTS,
     'ToolSearch',
-    ...def.tools,
+    ...grantableTools(def.tools),
     ...(input.grants ?? []),
   ]);
 

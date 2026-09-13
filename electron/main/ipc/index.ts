@@ -3093,8 +3093,16 @@ export function registerIpcHandlers(
       here. The same write Settings makes; `autoMergeGrants` reads the config
       live at the next shipper wake, so nothing else needs telling.
     */
-    onProjectAutoMerge: (_caller, request) =>
-      projectAutoMergeFor(request, { config: getConfig, setAutoMerge: setProjectAutoMerge }),
+    onProjectAutoMerge: (caller, request) => {
+      const directory = projectAutoMergeFor(request, {
+        config: getConfig,
+        setAutoMerge: setProjectAutoMerge,
+      });
+      console.info(
+        `[projects] ${caller} set autoMerge ${request.on ? 'on' : 'off'} on ${request.project}`,
+      );
+      return directory;
+    },
     /*
       HIVE-173. `github` is declared further down this function. The callback
       runs only when a request arrives, after this whole body has executed, so
