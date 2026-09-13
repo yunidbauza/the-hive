@@ -46,9 +46,9 @@ every wake, write it back before anything that ends the wake.
   `https://github.com/<owner>/<repo>/pull/<N> --self` and nothing else on
   that line. A link needs no project. Its answer carries the findings.
 - **fixer**, for findings: the PR triple and the findings verbatim.
-- **`reply-to`**, when a person must decide, and at the end: "PR #N merged"
-  with options `[close session, keep open]`. A `done` reaches no terminal; an
-  ask does.
+- **`reply-to`**, when a person must decide. At the end, a session gets
+  `ledger_post to: <reply-to>` "PR #N merged", which reaches its terminal
+  without opening a thread; the overmind gets a `ledger_done`.
 
 `mcp__hive__agents` lists who exists. No `acr`: ask `reply-to` whether the
 review happened elsewhere or is skipped; you cannot run it yourself, because
