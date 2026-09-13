@@ -2,6 +2,7 @@ import {
   AGENT_PENDING_WAKE_MAX,
   dayKey,
   isQueueableRefusal,
+  STANDING_LANE,
   type AgentLane,
   type AgentRunResult,
   type AgentRunState,
@@ -681,43 +682,67 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     }
   };
 
+  /** One lane's queue: the top-level `pendingWake` for standing (HIVE-186). */
+  const queueOf = (name: string, lane: string): PendingWakeEntry[] =>
+    deps.state.lane(name, lane).pendingWake ?? [];
+  const setQueue = (name: string, lane: string, queue: PendingWakeEntry[]): void => {
+    deps.state.patchLane(name, lane, { pendingWake: queue });
+  };
+  /** A standing wake keeps its three-argument shape; another lane names itself. */
+  const runOnLane = (
+    name: string,
+    trigger: string,
+    extra: string | undefined,
+    lane: string,
+  ): RunStart =>
+    lane === STANDING_LANE
+      ? deps.run(name, trigger, extra)
+      : deps.run(name, trigger, extra, { lane });
+
   /**
-   * Take the queue and wake once for all of it.
+   * Take one lane's queue and wake once for all of it.
    *
    * **Cleared before the wake, never after.** The wake re-enters
    * `RunTracker.run`, and a spawn that fails synchronously finalizes the run
    * from inside that very call — arriving back at `onRunClosed` with this
    * function's caller still on the stack. A queue still standing at that moment
    * is an unbounded loop; clearing first makes the second pass find nothing.
+   *
+   * Answers whether the drain may go on to the next lane (HIVE-186): `false`
+   * only when a wake was refused `saturated`, since every lane behind it would
+   * be too. An empty queue answers `true`.
    */
-  const flush = (name: string): void => {
-    if (stopped) return;
+  const flushLane = (name: string, lane: string): boolean => {
+    const queued = queueOf(name, lane);
 
-    const queued = deps.state.read(name).pendingWake ?? [];
+    if (queued.length === 0) return true;
 
-    if (queued.length === 0) return;
-
-    deps.state.patch(name, { pendingWake: [] });
+    setQueue(name, lane, []);
 
     /*
       An agent that fans out gets its queued jobs one run each (HIVE-128); the
       rest — ledger entries and bare runs — flush as the one standing wake
       they always did, and go first, because that wake is the one the queue
       existed for. At the default cap nothing is split and this is the flush
-      it was.
+      it was. Only the standing lane splits jobs out (HIVE-186): a job is a
+      task run, and a task run is no lane's.
     */
-    const fanOut = deps.parallelFor(name) > 1;
+    const fanOut = lane === STANDING_LANE && deps.parallelFor(name) > 1;
     const isJob = (entry: PendingWakeEntry): boolean =>
       (entry.kind === MANUAL_KIND || entry.kind === SLACK_COMMAND_KIND) &&
       entry.text !== undefined;
     const jobs = fanOut ? queued.filter(isJob) : [];
     const rest = queued.filter((entry) => !jobs.includes(entry));
     const back: PendingWakeEntry[] = [];
+    let saturated = false;
 
     if (rest.length > 0) {
-      const started = deps.run(name, triggerFor(rest), describeEntries(rest));
+      const started = runOnLane(name, triggerFor(rest), describeEntries(rest), lane);
 
-      if (!started.started) back.push(...rest);
+      if (!started.started) {
+        back.push(...rest);
+        if (started.refused === 'saturated') saturated = true;
+      }
     }
 
     let refused = false;
@@ -728,12 +753,13 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
 
         if (started.started) continue;
         refused = true;
+        if (started.refused === 'saturated') saturated = true;
       }
 
       back.push(job);
     }
 
-    if (back.length === 0) return;
+    if (back.length === 0) return true;
 
     /*
       Put it back. A refusal is not a delivery.
@@ -753,11 +779,38 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       restored entries go in front of it, oldest first, and the cap is applied
       to the result so a refusal cannot grow the queue past it.
     */
-    const since = deps.state.read(name).pendingWake ?? [];
+    const since = queueOf(name, lane);
 
-    deps.state.patch(name, {
-      pendingWake: [...back, ...since].slice(0, AGENT_PENDING_WAKE_MAX),
-    });
+    setQueue(name, lane, [...back, ...since].slice(0, AGENT_PENDING_WAKE_MAX));
+
+    return !saturated;
+  };
+
+  /**
+   * Drain every queue the agent has (HIVE-186): standing first, then each
+   * other lane, and stop at the first `saturated` refusal. A closed thread
+   * lane has nobody to wake, so its entries move to standing first.
+   */
+  const flush = (name: string): void => {
+    if (stopped) return;
+
+    const lanes = Object.entries(deps.state.read(name).lanes ?? {});
+
+    for (const [key, lane] of lanes) {
+      if (lane.closedAt === undefined || (lane.pendingWake ?? []).length === 0) continue;
+      setQueue(
+        name,
+        STANDING_LANE,
+        [...queueOf(name, STANDING_LANE), ...(lane.pendingWake ?? [])].slice(0, AGENT_PENDING_WAKE_MAX),
+      );
+      setQueue(name, key, []);
+    }
+
+    if (!flushLane(name, STANDING_LANE)) return;
+    for (const [key, lane] of lanes) {
+      if (lane.closedAt !== undefined || (lane.pendingWake ?? []).length === 0) continue;
+      if (!flushLane(name, key)) return;
+    }
   };
 
   /** The queue's fields of a ledger entry, and no others (HIVE-184). */
@@ -773,8 +826,12 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
   };
 
   /** Whether the entry was taken. `false` means the queue was full. */
-  const enqueue = (name: string, entry: PendingWakeEntry): boolean => {
-    const queued = deps.state.read(name).pendingWake ?? [];
+  const enqueue = (
+    name: string,
+    entry: PendingWakeEntry,
+    lane: string = STANDING_LANE,
+  ): boolean => {
+    const queued = queueOf(name, lane);
 
     /*
       A full queue refuses the newcomer rather than evicting the entry that has
@@ -790,7 +847,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     */
     if (queued.length >= AGENT_PENDING_WAKE_MAX) return false;
 
-    deps.state.patch(name, {
+    deps.state.patchLane(name, lane, {
       pendingWake: [
         ...queued,
         {
@@ -828,18 +885,22 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
    * `trigger` defaults to {@link LEDGER_TRIGGER} for `onEntry` and the sweep;
    * `onEvent` (HIVE-124) passes {@link SLACK_TRIGGER} so an immediate wake off
    * a socket event reports the route it actually took.
+   *
+   * `lane` is the lane the entry was routed to (HIVE-186): the wake runs on
+   * it and a refusal queues on it. Standing by default.
    */
   const route = (
     name: string,
     decision: WakeDecision,
     item: PendingWakeEntry,
     trigger: string = LEDGER_TRIGGER,
+    lane: string = STANDING_LANE,
   ): void => {
-    if (decision === 'wake' && deps.run(name, trigger, describeEntry(item)).started) {
+    if (decision === 'wake' && runOnLane(name, trigger, describeEntry(item), lane).started) {
       return;
     }
 
-    enqueue(name, item);
+    enqueue(name, item, lane);
   };
 
   /**

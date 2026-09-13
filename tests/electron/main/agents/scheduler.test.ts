@@ -26,7 +26,7 @@ const entry = (over: Partial<LedgerEntry> = {}): LedgerEntry => ({
 });
 
 describe('createScheduler', () => {
-  let woke: { name: string; trigger: string; extra?: string; job?: true }[];
+  let woke: { name: string; trigger: string; extra?: string; job?: true; lane?: string }[];
   let entries: LedgerEntry[];
   let appended: LedgerPostRequest[];
   let clock: number;
@@ -62,6 +62,10 @@ describe('createScheduler', () => {
   let listed: boolean;
   /** Names pushed to the renderer, in order. */
   let pushed: string[];
+  /** What `laneOf` answers (HIVE-186). Undefined: a pre-lane agent. */
+  let laneMode: 'thread' | 'repo' | undefined;
+  /** Lanes the fake tracker reports live. Null: omit `laneLive`, the pre-lane harness. */
+  let liveLanes: Set<string> | null;
 
   /** Fire every armed interval once — the sweep and the schedule tick. */
   const tick = (): void => {
@@ -77,12 +81,14 @@ describe('createScheduler', () => {
 
         if (refuseAfter === call) return { started: false, refused: 'saturated' };
         if (refuse !== false) return { started: false, refused: refuse };
+        if (liveLanes?.has(options?.lane ?? 'standing') === true) return { started: false, refused: 'working' };
 
         woke.push({
           name,
           trigger,
           ...(extra === undefined ? {} : { extra }),
           ...(options?.job === true ? { job: true } : {}),
+          ...(options?.lane === undefined ? {} : { lane: options.lane }),
         });
         return { started: true, run: 'run-1', kind: 'standing' };
       },
@@ -90,6 +96,8 @@ describe('createScheduler', () => {
       isAgent: (id) => id === AGENT,
       wakesOnLedger: () => wakesOnLedger,
       parallelFor: () => parallel,
+      laneOf: () => laneMode,
+      ...(liveLanes === null ? {} : { laneLive: (_name: string, lane: string) => liveLanes?.has(lane) === true }),
       schedules: () => (listed ? schedules : undefined),
       pushStatus: (name) => pushed.push(name),
       ledger: {
@@ -127,6 +135,8 @@ describe('createScheduler', () => {
     parallel = 1;
     listed = true;
     pushed = [];
+    laneMode = undefined;
+    liveLanes = null;
     state = createAgentState({ path: '/dev/null/agents.json', debounceMs: 1 });
     state.patch(AGENT, { status: 'sleeping' });
 
@@ -1984,6 +1994,46 @@ describe('createScheduler', () => {
 
       expect(started.started).toBe(true);
       expect(woke).toEqual([{ name: AGENT, trigger: 'manual', extra: 'go', job: true }]);
+    });
+  });
+
+  describe('per-lane queues (HIVE-186)', () => {
+    it('queues on the busy lane only, and flushes each lane into its own run', () => {
+      liveLanes = new Set(['thread:A']);
+      scheduler = build();
+      state.patchLane(AGENT, 'thread:A', { pendingWake: [{ kind: 'answer', id: 'x1', from: 'overmind' }] });
+      state.patchLane(AGENT, 'thread:B', { pendingWake: [{ kind: 'ask', id: 'B', from: 'overmind' }] });
+
+      liveLanes.clear();
+      scheduler.onRunClosed(AGENT);
+
+      expect(woke).toEqual([
+        { name: AGENT, trigger: 'ledger', extra: 'answer x1 from overmind', lane: 'thread:A' },
+        { name: AGENT, trigger: 'ledger', extra: 'ask B from overmind', lane: 'thread:B' },
+      ]);
+      expect(state.lane(AGENT, 'thread:A').pendingWake).toEqual([]);
+      expect(state.lane(AGENT, 'thread:B').pendingWake).toEqual([]);
+    });
+
+    it('stops draining at the first saturated refusal and keeps the rest queued', () => {
+      state.patchLane(AGENT, 'thread:A', { pendingWake: [{ kind: 'ask', id: 'A', from: 'overmind' }] });
+      state.patchLane(AGENT, 'thread:B', { pendingWake: [{ kind: 'ask', id: 'B', from: 'overmind' }] });
+      refuseAfter = 0;
+
+      scheduler.onRunClosed(AGENT);
+
+      expect(runCalls).toBe(1);
+      expect(state.lane(AGENT, 'thread:A').pendingWake).toHaveLength(1);
+      expect(state.lane(AGENT, 'thread:B').pendingWake).toHaveLength(1);
+    });
+
+    it('re-homes a closed thread lane\'s queue onto standing', () => {
+      state.patchLane(AGENT, 'thread:A', { closedAt: 5, pendingWake: [{ kind: 'post', id: 'p', from: 'overmind' }] });
+
+      scheduler.onRunClosed(AGENT);
+
+      expect(woke).toEqual([{ name: AGENT, trigger: 'ledger', extra: 'post p from overmind' }]);
+      expect(state.lane(AGENT, 'thread:A').pendingWake).toEqual([]);
     });
   });
 });
