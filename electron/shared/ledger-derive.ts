@@ -187,12 +187,14 @@ export function expiredAsks(
     if (typeof expired === 'string' && entry.from === OVERMIND) told.add(expired);
   }
 
+  const releases = releaseTimes(entries);
+
   return entries.filter(
     (entry) =>
       entry.kind === 'ask' &&
       !closed.has(entry.id) &&
       !told.has(entry.id) &&
-      now - entry.ts >= ttlOf(entry),
+      agedFor(entry, releases, now) >= ttlOf(entry),
   );
 }
 
@@ -214,12 +216,13 @@ export function openAsks(entries: readonly LedgerEntry[], now: number): OpenAsk[
     if (CLOSING_KINDS.has(entry.kind)) closed.add(entry.thread);
   }
 
+  const releases = releaseTimes(entries);
   const open: OpenAsk[] = [];
   for (const entry of entries) {
     if (entry.kind !== 'ask') continue;
     if (closed.has(entry.id)) continue;
     const ageMs = now - entry.ts;
-    if (ageMs >= ttlOf(entry)) continue;
+    if (agedFor(entry, releases, now) >= ttlOf(entry)) continue;
     open.push({ ...entry, kind: 'ask', open: true, ageMs });
   }
   return open;
@@ -470,4 +473,99 @@ export function nextRef(entries: readonly LedgerEntry[]): string {
     if (Number.isInteger(n) && n > highest) highest = n;
   }
   return `${LEDGER_REF_PREFIX}${highest + 1}`;
+}
+
+/**
+ * A held ask (retro C): `meta.after: "owner/repo#N"` on an ask means "deliver
+ * me once that PR has merged", so a session can post a whole chain of jobs at
+ * once and a blocked agent can queue its own follow-up.
+ *
+ * The release is the shipper's `closed` entry for that PR, whatever its kind:
+ * a directed post to a session, or a `done` for the overmind. Held and
+ * released are read off the log, never remembered, so a restart loses
+ * neither. An ask without a parseable `after` is never held.
+ */
+export interface AfterTarget {
+  repo: string;
+  pr: number;
+}
+
+const AFTER = /^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([1-9]\d*)$/;
+
+/** The PR an ask waits for, or `undefined` when it waits for nothing. */
+export function afterTarget(entry: Pick<LedgerEntry, 'meta'>): AfterTarget | undefined {
+  const value = entry.meta?.['after'];
+  if (typeof value !== 'string') return undefined;
+  const [, repo, pr] = AFTER.exec(value) ?? [];
+  if (repo === undefined || pr === undefined) return undefined;
+  return { repo, pr: Number(pr) };
+}
+
+/**
+ * Whether `entry` is the `closed` entry for `target`: same PR, same whole slug,
+ * any case. The PR is read with {@link wholeNumberOf}, as the stage reader
+ * reads it, so a `closed` entry that wrote `"pr": "3"` still releases the ask.
+ */
+export function releasesAfter(entry: Pick<LedgerEntry, 'meta'>, target: AfterTarget): boolean {
+  const stage = entry.meta?.['stage'];
+  const repo = entry.meta?.['repo'];
+  return (
+    stage === 'closed' &&
+    wholeNumberOf(entry.meta?.['pr']) === target.pr &&
+    typeof repo === 'string' &&
+    repo.toLowerCase() === target.repo.toLowerCase()
+  );
+}
+
+/** Whether an ask is still waiting for its PR, given the whole log. */
+export function isHeld(ask: LedgerEntry, log: readonly LedgerEntry[]): boolean {
+  if (ask.kind !== 'ask') return false;
+  const target = afterTarget(ask);
+  if (target === undefined) return false;
+  return !log.some((entry) => releasesAfter(entry, target));
+}
+
+/**
+ * How long an ask has been aging toward its ttl, which {@link openAsks} and
+ * {@link expiredAsks} both read (retro C).
+ *
+ * A held ask does not age while it waits for its PR: a chain whose earlier PR
+ * sits a day in review would otherwise lose the next job, with nothing said to
+ * anyone. Released, it ages from the release. Held for
+ * {@link LEDGER_HELD_MAX_MS}, it expires at once, so a PR abandoned, handed
+ * back or mistyped cannot keep an ask open forever and its asker is told.
+ * Every other ask ages from when it was posted, as it always has.
+ * `OpenAsk.ageMs` still reports the time since the post, because that is what
+ * a person reading the card means by age.
+ */
+function agedFor(ask: LedgerEntry, releases: ReadonlyMap<string, number>, now: number): number {
+  const target = afterTarget(ask);
+  if (target === undefined) return now - ask.ts;
+  const released = releases.get(targetKey(target.repo, target.pr));
+  if (released === undefined) {
+    return now - ask.ts >= LEDGER_HELD_MAX_MS ? Number.POSITIVE_INFINITY : 0;
+  }
+  return now - Math.max(ask.ts, released);
+}
+
+/** How long a held ask waits for its PR before it expires like any other (retro C). */
+export const LEDGER_HELD_MAX_MS = 7 * LEDGER_ASK_TTL_MS;
+
+const targetKey = (repo: string, pr: number): string => `${repo.toLowerCase()}#${String(pr)}`;
+
+/**
+ * When each PR's first `closed` entry landed, keyed as {@link releasesAfter}
+ * matches: one pass over the log per read, rather than one per held ask.
+ */
+function releaseTimes(entries: readonly LedgerEntry[]): Map<string, number> {
+  const at = new Map<string, number>();
+  for (const entry of entries) {
+    const stage = entry.meta?.['stage'];
+    const pr = wholeNumberOf(entry.meta?.['pr']);
+    const repo = entry.meta?.['repo'];
+    if (stage !== 'closed' || pr === undefined || typeof repo !== 'string') continue;
+    const key = targetKey(repo, pr);
+    if (!at.has(key)) at.set(key, entry.ts);
+  }
+  return at;
 }

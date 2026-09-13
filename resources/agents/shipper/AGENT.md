@@ -32,6 +32,17 @@ every wake, write it back before anything that ends the wake.
    `meta: { pr, repo, stage }` when the stage changes, and move on. A stage
    that waits on someone else is left for the next wake; you never sleep in a
    turn.
+
+   **An empty inbox is not an unchanged row.** Every wake, whatever woke you,
+   reads `prs.json` and re-runs each row's stage check against the world, not
+   the ledger. For `approval` that means
+   `gh pr view … --json reviewDecision,reviewRequests,latestReviews` and
+   `mcp__hive__projects`; for `ci`, `gh pr checks`. A wake that ends after
+   `ledger_read` alone, with rows in `prs.json`, is a skipped wake: the person
+   may have approved on GitHub, turned auto-merge on, or merged by hand, and
+   none of those reaches your inbox. **Never state `autoMerge` from memory.**
+   Your conversation carries earlier wakes, so a post that says "autoMerge is
+   false" must cite a `mcp__hive__projects` call made in this same wake.
 3. **A `ledger_ask` ends the wake.** Write `prs.json` before you post one, and
    accept that the rows after it advance on the next tick. One ask per wake is
    the throughput, and the ten-minute clock makes it enough.

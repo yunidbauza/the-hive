@@ -5,6 +5,7 @@ import {
   type LedgerEntry,
   type LedgerKind,
 } from '../../shared/ledger-contract';
+import { afterTarget, isHeld, releasesAfter } from '../../shared/ledger-derive';
 import type { SurfaceId } from '../ipc/surfaces';
 
 import type { Ledger } from './index';
@@ -175,7 +176,7 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
       if (typeof id === 'string') delivered.add(id);
     }
 
-    return entries.filter(
+    const owed = entries.filter(
       (entry) =>
         DELIVERABLE.includes(entry.kind) &&
         /*
@@ -187,6 +188,16 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
         (entry.kind !== 'ask' || open.has(entry.id)) &&
         !delivered.has(entry.id),
     );
+
+    /*
+      A held ask (`meta.after`, retro C) is not owed until its PR's `closed`
+      entry is in the log. That entry is addressed to whoever the shipper
+      reports to, not to this session, so the whole log is read, and only when
+      something owed is waiting on a PR at all.
+    */
+    if (!owed.some((entry) => afterTarget(entry) !== undefined)) return owed;
+    const log = ledger.read({}).entries;
+    return owed.filter((entry) => !isHeld(entry, log));
   }
 
   /** Write one nudge, and record it only if it landed. Reports whether it did. */
@@ -245,8 +256,36 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
     }
   }
 
+  /**
+   * Flush every session holding an ask this `closed` entry releases (retro C),
+   * and say which sessions were flushed. A held ask has no arrival of its own
+   * to be delivered on: the PR merging is its arrival.
+   */
+  function releaseHeld(entry: LedgerEntry): Set<string> {
+    const flushed = new Set<string>();
+    if (entry.meta?.['stage'] !== 'closed') return flushed;
+
+    for (const ask of ledger.read({}).openAsks) {
+      const target = afterTarget(ask);
+      const to = ask.to;
+      if (target === undefined || to === undefined || to === OVERMIND) continue;
+      if (flushed.has(to) || !releasesAfter(entry, target)) continue;
+      flushed.add(to);
+      flush(to);
+    }
+    return flushed;
+  }
+
   return {
     onEntry(entry) {
+      /*
+        A `closed` entry may release held asks (retro C). Their sessions flush
+        first, and a session flushed here has already taken the first thing it
+        was owed, this entry included, so the path below must not write into
+        it a second time in the same tick.
+      */
+      const flushed = releaseHeld(entry);
+
       if (!DELIVERABLE.includes(entry.kind)) return;
 
       const to = entry.to;
@@ -259,7 +298,10 @@ export function createDeliver({ ledger, isLive, isIdle, write }: DeliverOptions)
       // A live session mid-turn is caught here too, and flushed by `onIdle`.
       // A focused session whose box holds a draft is held here too, and
       // flushed by onPrompt when the box clears (HIVE-135).
+      if (flushed.has(to)) return;
       if (!isLive(to) || !isIdle(to) || !clear(to)) return;
+      // A held ask waits for its PR's `closed` entry (retro C).
+      if (afterTarget(entry) !== undefined && isHeld(entry, ledger.read({}).entries)) return;
 
       deliverOne(to, entry);
     },

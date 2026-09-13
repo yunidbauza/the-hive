@@ -547,3 +547,131 @@ describe('asInbound', () => {
     ).toEqual({ author: 'Marcos', text: 'hola' });
   });
 });
+
+import { afterTarget, isHeld, releasesAfter } from '../../../electron/shared/ledger-derive';
+
+/*
+  Retro C: an ask can wait for a PR to merge. `meta.after: "owner/repo#N"`
+  holds it until the shipper's `closed` entry for that PR is in the log.
+*/
+describe('held asks: meta.after (retro C)', () => {
+  const ask = (after?: unknown, id = 'a1'): LedgerEntry =>
+    entry({ id, kind: 'ask', to: 'builder', ...(after === undefined ? {} : { meta: { after } }) });
+  const closed = (pr: unknown, repo: unknown, stage: unknown = 'closed'): LedgerEntry =>
+    entry({ id: `c-${String(pr)}-${String(repo)}`, from: 'shipper', meta: { stage, pr, repo } });
+
+  it('parses owner/repo#N and nothing else', () => {
+    expect(afterTarget(ask('a/b#3'))).toEqual({ repo: 'a/b', pr: 3 });
+    expect(afterTarget(ask('yunidbauza/the-hive#256'))).toEqual({ repo: 'yunidbauza/the-hive', pr: 256 });
+    for (const bad of ['a/b', '#3', 3, 'a/b#0', 'a/b#x', 'ab#3', 'a/b/c#3', '', null]) {
+      expect(afterTarget(ask(bad))).toBeUndefined();
+    }
+    expect(afterTarget(ask())).toBeUndefined();
+  });
+
+  it('holds an ask while its PR has no closed entry', () => {
+    const held = ask('a/b#3');
+    expect(isHeld(held, [held])).toBe(true);
+  });
+
+  it('releases it on the closed entry for that PR, by whole slug, case-insensitively', () => {
+    const held = ask('a/b#3');
+    expect(releasesAfter(closed(3, 'a/b'), { repo: 'a/b', pr: 3 })).toBe(true);
+    expect(isHeld(held, [held, closed(3, 'a/b')])).toBe(false);
+    expect(isHeld(held, [held, closed(3, 'A/B')])).toBe(false);
+  });
+
+  it('is not released by another PR, another repo, or another stage', () => {
+    const held = ask('a/b#3');
+    expect(isHeld(held, [held, closed(4, 'a/b'), closed(3, 'a/c'), closed(3, 'a/b', 'merge'), closed('4', 'a/b'), closed('3.0', 'a/b'), closed('#3', 'a/b')])).toBe(true);
+  });
+
+  /*
+    `meta` is model-written, and `"pr": "3"` is one token away from `"pr": 3`.
+    Read the way `shipStageFor` reads it, through `wholeNumberOf`, so the merge
+    that happened releases the ask instead of leaving it held for seven days.
+  */
+  it('is released by a closed entry that wrote the PR as its digits', () => {
+    const held = ask('a/b#3');
+    expect(releasesAfter(closed('3', 'a/b'), { repo: 'a/b', pr: 3 })).toBe(true);
+    expect(isHeld(held, [held, closed('3', 'a/b')])).toBe(false);
+  });
+
+  it('never holds an ask without after, or an entry that is not an ask', () => {
+    expect(isHeld(ask(), [ask()])).toBe(false);
+    const post = entry({ id: 'p1', meta: { after: 'a/b#3' } });
+    expect(isHeld(post, [post])).toBe(false);
+  });
+});
+
+/*
+  Retro C, from the Task 2 review: a held ask must not expire while it waits.
+  A chain whose earlier PR sits a day in review would otherwise lose the next
+  job without a word. Held, it does not age; released, it ages from then.
+*/
+describe('a held ask does not age until its PR merges (retro C)', () => {
+  const held = entry({
+    id: 'h1',
+    kind: 'ask',
+    to: 'builder',
+    ts: NOW - 2 * LEDGER_ASK_TTL_MS,
+    meta: { after: 'a/b#3' },
+  });
+  const closedAt = (ts: number): LedgerEntry =>
+    entry({ id: 'c1', from: 'shipper', ts, meta: { stage: 'closed', pr: 3, repo: 'a/b' } });
+
+  it('stays open and unexpired while its PR is open, for days', () => {
+    expect(openAsks([held], NOW).map((ask) => ask.id)).toEqual(['h1']);
+    expect(expiredAsks([held], NOW)).toEqual([]);
+  });
+
+  /*
+    From the Task 3 review: a PR abandoned, handed back or mistyped writes no
+    `closed` entry, and a held ask that never aged would stay open forever,
+    its asker never told. Seven days held, and it expires like any other.
+  */
+  it('expires once it has waited seven days for a PR that never closed', () => {
+    const stale = entry({
+      id: 'h2',
+      kind: 'ask',
+      to: 'builder',
+      ts: NOW - 7 * LEDGER_ASK_TTL_MS,
+      meta: { after: 'a/b#9' },
+    });
+
+    expect(openAsks([stale], NOW)).toEqual([]);
+    expect(expiredAsks([stale], NOW).map((ask) => ask.id)).toEqual(['h2']);
+  });
+
+  it('ages from its release, not from when it was posted', () => {
+    const released = NOW - 1000;
+    const log = [held, closedAt(released)];
+
+    expect(openAsks(log, NOW).map((ask) => ask.id)).toEqual(['h1']);
+    expect(expiredAsks(log, NOW)).toEqual([]);
+
+    const later = released + LEDGER_ASK_TTL_MS;
+    expect(openAsks(log, later)).toEqual([]);
+    expect(expiredAsks(log, later).map((ask) => ask.id)).toEqual(['h1']);
+  });
+
+  it('ages from a release that wrote the PR as its digits', () => {
+    const released = NOW - 1000;
+    const digits = entry({
+      id: 'c2',
+      from: 'shipper',
+      ts: released,
+      meta: { stage: 'closed', pr: '3', repo: 'a/b' },
+    });
+    const later = released + LEDGER_ASK_TTL_MS;
+
+    expect(openAsks([held, digits], later)).toEqual([]);
+    expect(expiredAsks([held, digits], later).map((ask) => ask.id)).toEqual(['h1']);
+  });
+
+  it('leaves an ask without after aging from its post', () => {
+    const plain = entry({ id: 'p1', kind: 'ask', to: 'builder', ts: NOW - LEDGER_ASK_TTL_MS });
+    expect(openAsks([plain], NOW)).toEqual([]);
+    expect(expiredAsks([plain], NOW).map((ask) => ask.id)).toEqual(['p1']);
+  });
+});

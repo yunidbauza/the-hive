@@ -75,13 +75,18 @@ const meta = {
 const TTL_GUIDANCE =
   '`ttlMs` (a number of milliseconds) shortens how long this ask stays open; it can never lengthen it.';
 
-/** The ask's `meta`: the shared fragment plus the two keys only an ask carries. */
+/** What `meta.after` is for (retro C): an ask held until a pull request merges. */
+const AFTER_GUIDANCE =
+  '`after` ("owner/repo#N") holds this ask until that pull request\'s shipper `closed` entry lands: nobody is told of it before then, and it waits up to seven days. Use it to queue the next job in a chain behind the PR it depends on.';
+
+/** The ask's `meta`: the shared fragment plus the three keys only an ask carries. */
 const askMeta = {
   type: 'object',
-  description: `${META_DESCRIPTION} ${ASK_INTENT_GUIDANCE} ${TTL_GUIDANCE}`,
+  description: `${META_DESCRIPTION} ${ASK_INTENT_GUIDANCE} ${TTL_GUIDANCE} ${AFTER_GUIDANCE}`,
   properties: {
     intent: { type: 'string', description: ASK_INTENT_GUIDANCE },
     ttlMs: { type: 'number', description: TTL_GUIDANCE },
+    after: { type: 'string', description: AFTER_GUIDANCE },
   },
 } as const;
 
@@ -138,7 +143,7 @@ export const LEDGER_TOOLS: readonly McpToolDefinition[] = [
   {
     name: 'ledger_ask',
     description:
-      'Ask another party a question and open a thread for the answer. Use it before any outward or irreversible action you were not explicitly told to take. Returns the ask id and a short ref. This ENDS YOUR TURN: stop after calling it and wait to be woken with the answer — do not poll for a reply.',
+      'Ask another party a question and open a thread for the answer. Use it before any outward or irreversible action you were not explicitly told to take. Returns the ask id and a short ref. This ENDS YOUR TURN: stop after calling it and wait to be woken with the answer — do not poll for a reply. To hold an ask until a pull request merges, put `"after": "owner/repo#N"` in `meta`: it reaches nobody until that PR\'s shipper `closed` entry lands, and it waits up to seven days.',
     inputSchema: {
       type: 'object',
       properties: {

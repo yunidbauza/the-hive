@@ -113,15 +113,23 @@ way; it is the person's consent.
 A plan split into PRs is one ask per PR, **in order**. The builder takes one
 ledger ask at a time (its asks resume one standing session; `limits.parallel`
 only fans out scheduled jobs), so asks posted together run one after another.
-Never offer the person "parallel" builds. Post the next PR's ask when the one
-it depends on has merged.
+Never offer the person "parallel" builds.
+
+A PR that must wait for another to merge goes out as a held ask: add
+`meta.after: "<owner>/<repo>#<N>"` naming the PR it depends on, and it reaches
+the builder only when that PR's shipper `closed` entry lands. It waits up to
+seven days. The number exists only once the earlier PR is open, so post the
+first ask now and carry the rest of the chain in its `meta.intent` ("when A
+opens as #N, post B with `after: <owner>/<repo>#N`"). When every number is
+already known, post them all at once.
 
 *Attached (default).* Stay open. A `📒` marker from the builder is a question.
 Answer it with `ledger_answer` when the spec, the plan or this conversation
 already holds the answer, and say so in the answer ("per spec §3"). Otherwise
 `AskUserQuestion`; the Hive flags the session input-needed, and you relay the
-answer. Never invent a decision the spec did not make. When the shipper's
-final ask arrives ("PR merged, close?"), answer it and run `/done`.
+answer. Never invent a decision the spec did not make. The shipper's "PR #N
+merged" arrives as a notice with nothing owed back; run `/done` once your own
+work is finished.
 Closing the terminal earlier is fine: an ask to a session that is gone falls
 back to the overmind.
 

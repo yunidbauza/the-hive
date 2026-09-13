@@ -296,6 +296,24 @@ notice: the shipper's "PR #N merged" reaches the terminal without opening a
 thread, and its context says nothing is owed back. A broadcast post is not
 delivered.
 
+**A held ask (retro C).** An ask carrying `meta.after: "owner/repo#N"` reaches
+nobody until that PR's shipper `closed` entry lands: that is the post to a
+session's `reply-to`, or the `done` to the overmind, with
+`meta: { pr, repo, stage: "closed" }`.
+- **Sessions:** `deliver.ts` neither writes nor flushes a held ask, and the
+  `closed` entry flushes every session it releases.
+- **Agents:** the scheduler holds a held ask on arrival. The `closed` entry
+  routes the ask once, and so does `start()` when the entry landed while the
+  app was down. A `released` event from the overmind is the dedup.
+- **Expiry:** a held ask does not age while it waits. Released, it ages from
+  the release. Held seven days, it expires, so a PR that is abandoned or
+  mistyped cannot keep an ask open forever.
+- **Self-addressed asks:** one an agent addresses to itself never wakes it.
+  A blocked fixer answers `blocked-on: owner/repo#N`, and the asker re-posts
+  the job with `after`.
+- **Known limit:** any party can release an ask with a `closed` entry; the
+  release is not checked against `from`.
+
 An entry addressed to the overmind is an inbox card, not a terminal
 line; one addressed to an agent is a wake (see below); a broadcast wakes nobody,
 because parties read those on their own schedule.

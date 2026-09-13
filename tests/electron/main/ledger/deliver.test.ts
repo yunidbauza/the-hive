@@ -88,6 +88,69 @@ describe('createDeliver', () => {
     expect(write).toHaveBeenCalledTimes(1);
   });
 
+  /*
+    Retro C: an ask with `meta.after: "owner/repo#N"` waits for that PR's
+    `closed` entry, which is the shipper's, addressed to whoever it reports to.
+  */
+  describe('a held ask (meta.after)', () => {
+    const held = (to: string, after: string) =>
+      ledger.append({ from: OVERMIND, to, kind: 'ask', body: 'after the merge', meta: { after } });
+    const closed = (pr: number, repo: string, to = 'sess-z') =>
+      ledger.append({
+        from: 'shipper',
+        to,
+        kind: 'post',
+        body: `PR #${String(pr)} merged`,
+        meta: { pr, repo, stage: 'closed' },
+      });
+
+    it('is not written while its PR is open, on arrival or on idle', () => {
+      held('sess-a', 'a/b#3');
+      deliver.onIdle('sess-a');
+
+      expect(write).not.toHaveBeenCalled();
+    });
+
+    it("is written once when its PR's closed entry lands, and receipted once", () => {
+      const result = held('sess-a', 'a/b#3');
+      closed(3, 'a/b');
+
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(lastWrite()).toBe(`📒 ${result.ok ? result.ref : ''}\r`);
+
+      deliver.onIdle('sess-a');
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(receipts()).toHaveLength(1);
+    });
+
+    it('stays held on a closed entry for another PR or another repo', () => {
+      held('sess-a', 'a/b#3');
+      closed(4, 'a/b');
+      closed(3, 'a/c');
+      deliver.onIdle('sess-a');
+
+      expect(write).not.toHaveBeenCalled();
+    });
+
+    it('is written at once when its PR had already closed', () => {
+      closed(3, 'a/b');
+      const result = held('sess-a', 'a/b#3');
+
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(lastWrite()).toBe(`📒 ${result.ok ? result.ref : ''}\r`);
+    });
+
+    it('writes one line when the closed entry and the held ask share a session', () => {
+      held('sess-a', 'a/b#3');
+      closed(3, 'a/b', 'sess-a');
+
+      // The first owed entry goes in; the next waits for the next idle.
+      expect(write).toHaveBeenCalledTimes(1);
+      deliver.onIdle('sess-a');
+      expect(write).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it('holds a nudge while the session is mid-turn, then flushes at idle', () => {
     idle.delete('sess-a');
     ask('sess-a');
