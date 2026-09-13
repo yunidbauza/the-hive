@@ -55,7 +55,7 @@ progress without opening the session.
 
 ## Plan and build
 
-`plan` writes tasks of about twenty minutes each, every one with the test that proves it. The
+`plan` writes tasks sized in builder minutes, about five per TDD task, every one with the test that proves it. The
 plan is a file under the repository's `.hive/plans`, ignored by git, and it is what a builder
 run or an inline run executes.
 

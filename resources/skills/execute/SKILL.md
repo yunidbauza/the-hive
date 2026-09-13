@@ -90,8 +90,8 @@ the drift check: a person is reading the diffs.
 ## Re-split rule
 
 Estimates are made before any task has run; the first two runs are the
-measurement. **Two consecutive tasks over twenty minutes means every remaining
-estimate is wrong.** Stop, re-split what is left, then continue. The one time
+measurement. **Two consecutive tasks at twice their estimate means every
+remaining estimate is wrong.** Stop, re-split what is left, then continue. The one time
 mid-run re-sizing is right.
 
 ## What stops you

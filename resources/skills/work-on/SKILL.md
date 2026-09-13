@@ -106,9 +106,9 @@ ledger_ask
 **Preflight, before the first ask.** `mcp__hive__projects`: find the project
 whose `path` is this repo. `autoMerge: false` → tell the person in the
 dispatch message: "this project merges only on your inbox card: each clean PR
-will raise one." If `mcp__hive__project_auto_merge` is listed, offer to turn
-it on in the same batch as brainstorm's questions; never call it without
-their yes.
+will raise one. To merge unattended, turn on Settings › Projects › ⋯ › Merge
+PRs unattended." Never change `autoMerge` yourself, in the config or any other
+way; it is the person's consent.
 
 A plan split into PRs is one ask per PR, **in order**. The builder takes one
 ledger ask at a time (its asks resume one standing session; `limits.parallel`

@@ -96,9 +96,10 @@ the ask.**
 
 ## A row that waits
 
-A row at a stage that waits on a person (`approval` reading (c), or
-`fix-self` with no fixer) has exactly one open ask to its `reply-to`, sent on
-the first wake at this stage. Later wakes do not post "still waiting".
+A row at a stage that waits on a person has exactly one open ask to its
+`reply-to`, sent on the first wake at this stage. Later wakes do not post
+"still waiting". `approval` reading (c) is gated that way; `self-review` with
+no `acr` and `fix-self` with no fixer are not yet, and still ask every wake.
 
 A row stuck on anything else (CI red with no fixer, a refused sync) sends one
 `ledger_post to: <reply-to>`, and on the next wake asks its `reply-to` with
