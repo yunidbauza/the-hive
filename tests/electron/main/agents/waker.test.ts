@@ -612,3 +612,38 @@ describe('wakeCommand never grants a once-only tool (retro B)', () => {
     expect(granted(['mcp__hive__jira_transition']).allowed).toContain('mcp__hive__jira_transition');
   });
 });
+
+describe('the lane in the wake prompt (HIVE-188)', () => {
+  it('names a thread lane\'s ask, and says the other lanes are not this run\'s', () => {
+    const prompt = wakePrompt('ledger', 'ask A from overmind', { lane: 'thread:A', laneMode: 'thread', agent: 'builder' });
+    expect(prompt).toContain("You are builder's lane for ask A.");
+    expect(prompt).toContain('Entries on this lane wake you; entries for other lanes are not yours.');
+  });
+
+  it('names a repo lane\'s repository', () => {
+    expect(wakePrompt('ledger', undefined, { lane: 'repo:a/x', laneMode: 'repo', agent: 'shipper' })).toContain(
+      "You are shipper's lane for a/x.",
+    );
+  });
+
+  it('tells the standing lane of a laning agent how to hand work over', () => {
+    const repo = wakePrompt('ledger', undefined, { laneMode: 'repo', agent: 'shipper' });
+    expect(repo).toContain('shipper lanes by repository.');
+    expect(repo).toContain('a self-addressed ledger_ask with meta.repo set to owner/name');
+
+    const thread = wakePrompt('ledger', undefined, { laneMode: 'thread', agent: 'builder' });
+    expect(thread).toContain('builder lanes by thread.');
+    expect(thread).toContain('a self-addressed ledger_ask');
+  });
+
+  it('keeps the lane sentence on a last turn', () => {
+    expect(wakePrompt('ledger', undefined, { lastTurn: true, lane: 'thread:A', laneMode: 'thread', agent: 'builder' })).toContain(
+      "You are builder's lane for ask A.",
+    );
+  });
+
+  it('says nothing about lanes to an agent without lane:, or to a task run', () => {
+    expect(wakePrompt('ledger')).not.toContain('lane');
+    expect(wakePrompt('manual', 'x', { task: true, laneMode: 'thread', agent: 'b' })).not.toContain('lane');
+  });
+});

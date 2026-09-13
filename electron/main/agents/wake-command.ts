@@ -449,6 +449,8 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
         ...(extra === undefined ? {} : { extra }),
         ...(lastTurn ? { lastTurn: true as const } : {}),
         ...(task || pending === undefined ? {} : { handoff: pending.handoff }),
+        // The lane sentence in the prompt (HIVE-188). A task run is no lane's.
+        ...(lane === STANDING_LANE || task ? {} : { lane }),
         kind,
         paths: {
           settings: containerSettings ?? settings,

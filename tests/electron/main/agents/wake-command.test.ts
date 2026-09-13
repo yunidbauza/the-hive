@@ -924,3 +924,23 @@ describe('a lane\'s working directory (HIVE-188)', () => {
     expect(task.cwd).toBe('/home/u/.hive/work/slack-watcher');
   });
 });
+
+describe('the lane in the wake prompt (HIVE-188)', () => {
+  it('tells a lane run which lane it is', () => {
+    files['/home/u/.hive/agents/slack-watcher/AGENT.md'] = AGENT_MD.replace('model: sonnet\n', 'model: sonnet\nlane: thread\n');
+
+    const built = build()('slack-watcher', 'ledger', 'ask A from overmind', { lane: 'thread:A' });
+
+    if ('problem' in built) throw new Error(built.problem);
+    expect(built.args.at(-1)).toContain("You are slack-watcher's lane for ask A.");
+  });
+
+  it('tells the standing lane of a laning agent how to hand work over', () => {
+    files['/home/u/.hive/agents/slack-watcher/AGENT.md'] = AGENT_MD.replace('model: sonnet\n', 'model: sonnet\nlane: thread\n');
+
+    const built = build()('slack-watcher', 'ledger');
+
+    if ('problem' in built) throw new Error(built.problem);
+    expect(built.args.at(-1)).toContain('slack-watcher lanes by thread.');
+  });
+});

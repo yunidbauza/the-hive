@@ -1,8 +1,10 @@
-import type {
-  AgentContainer,
-  AgentDefinition,
-  Autonomy,
-  RunKind,
+import {
+  STANDING_LANE,
+  type AgentContainer,
+  type AgentDefinition,
+  type AgentLane,
+  type Autonomy,
+  type RunKind,
 } from '@shared/agent-contract';
 import { AUTH_ENV_KEYS, DEFAULT_ENV_ARG, isSessionEnvDenied } from '@shared/config-contract';
 import { HOOK_ENV_GRANTS, HOOK_ENV_RECEIVER_URL } from '@shared/hook-contract';
@@ -95,6 +97,8 @@ export interface WakeInput {
    * anything would be worthless.
    */
   lastTurn?: true;
+  /** The lane this wake runs on (HIVE-188). Absent means standing. */
+  lane?: string;
   /**
    * The previous session's handoff, prefixed onto this wake's prompt.
    *
@@ -158,7 +162,16 @@ export interface WakeCommand {
 export function wakePrompt(
   trigger: string,
   extra?: string,
-  rotation?: { lastTurn?: true; handoff?: string; task?: true },
+  rotation?: {
+    lastTurn?: true;
+    handoff?: string;
+    task?: true;
+    /** The lane this run is (HIVE-188); absent or `standing` for the standing lane. */
+    lane?: string;
+    /** The definition's `lane:`, and the agent's name, for the lane sentence. */
+    laneMode?: AgentLane;
+    agent?: string;
+  },
 ): string {
   /*
     A last turn replaces the instruction rather than adding to it: "do the work,
@@ -202,8 +215,14 @@ export function wakePrompt(
     return `${because} This is a task run: a fresh conversation with no memory of your standing session, started for this one job. Do the job named above and nothing else — do not act on your ledger inbox and do not do your standing work; your standing session handles both. When the job is done, report the result with ledger_done, or with ledger_failed if it could not be done, then end your turn.`;
   }
 
+  // A task run is no lane's, so it gets no lane sentence; the return above is its whole prompt.
+  const lanes =
+    rotation?.laneMode === undefined || rotation.agent === undefined
+      ? ''
+      : ` ${laneSentence(rotation.agent, rotation.laneMode, rotation.lane)}`;
+
   if (rotation?.lastTurn === true) {
-    return `${because} This is your last turn on this session. Carry out your instructions for this wake as usual — they are standing work whether or not anything is waiting in your inbox — then post a handoff with ledger_handoff: what you watch, open threads and their ids, decisions and preferences you have learned, anything a fresh copy of you must know. Then finish your turn.`;
+    return `${because}${lanes} This is your last turn on this session. Carry out your instructions for this wake as usual — they are standing work whether or not anything is waiting in your inbox — then post a handoff with ledger_handoff: what you watch, open threads and their ids, decisions and preferences you have learned, anything a fresh copy of you must know. Then finish your turn.`;
   }
 
   /*
@@ -221,12 +240,23 @@ export function wakePrompt(
     inbox" and "do the work" read as one instruction with a precondition rather
     than two separate things to do.
   */
-  const normal = `${because} Read your ledger inbox, then carry out the instructions you were given. An empty inbox does not mean there is nothing to do — your instructions are standing work and this wake is one of the times to do them. End your turn when that work is done, or when you are waiting on an answer.`;
+  const normal = `${because}${lanes} Read your ledger inbox, then carry out the instructions you were given. An empty inbox does not mean there is nothing to do — your instructions are standing work and this wake is one of the times to do them. End your turn when that work is done, or when you are waiting on an answer.`;
 
   // The handoff comes first: it is the context the rest of the prompt assumes.
   return rotation?.handoff === undefined
     ? normal
     : `You are continuing from a previous session of yourself. Its handoff:\n\n${rotation.handoff}\n\n${normal}`;
+}
+
+/** One sentence on the lane this run is, or how the standing lane hands work over (HIVE-188). */
+function laneSentence(agent: string, mode: AgentLane, lane: string | undefined): string {
+  if (lane !== undefined && lane !== STANDING_LANE) {
+    const what = lane.startsWith('thread:') ? `ask ${lane.slice('thread:'.length)}` : lane.slice('repo:'.length);
+    return `You are ${agent}'s lane for ${what}. Entries on this lane wake you; entries for other lanes are not yours.`;
+  }
+  return mode === 'repo'
+    ? `${agent} lanes by repository. Hand repository work over with a self-addressed ledger_ask with meta.repo set to owner/name; it opens that repository's own conversation.`
+    : `${agent} lanes by thread. Hand a new job over with a self-addressed ledger_ask; it opens its own conversation.`;
 }
 
 /**
@@ -374,6 +404,8 @@ export function wakeCommand(input: WakeInput): WakeCommand {
       ...(input.lastTurn === undefined ? {} : { lastTurn: input.lastTurn }),
       ...(input.handoff === undefined ? {} : { handoff: input.handoff }),
       ...(input.kind === 'task' ? { task: true as const } : {}),
+      ...(input.lane === undefined ? {} : { lane: input.lane }),
+      ...(input.def.lane === undefined ? {} : { laneMode: input.def.lane, agent: input.def.name }),
     }),
   ];
 
