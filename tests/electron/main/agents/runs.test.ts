@@ -1699,4 +1699,15 @@ describe('createRunTracker', () => {
       expect(state.read('a').status).toBe('sleeping');
     });
   });
+
+  it('kills one run by id and leaves its neighbours running (HIVE-185)', () => {
+    parallel = 2;
+    tracker.run('a', 'ledger', undefined, { lane: 'thread:A' });
+    tracker.run('a', 'ledger', undefined, { lane: 'thread:B' });
+
+    expect(tracker.kill('a', 'run-2')).toBe(true);
+    expect(tracker.kill('a', 'run-9')).toBe(false);
+    expect(childInstances[0]?.killSignals).toEqual([]);
+    expect(childInstances[1]?.killSignals).toEqual(['SIGTERM']);
+  });
 });

@@ -245,8 +245,8 @@ export interface RunTracker {
     extra?: string,
     options?: { job?: true; lane?: string },
   ): RunStart;
-  /** Every run under this name, signalled together. */
-  kill(name: string): boolean;
+  /** Every run under this name, or only `run` (HIVE-185). */
+  kill(name: string, run?: string): boolean;
   /**
    * The Stop hook fired for this agent. Arms the stall watchdog on the run
    * whose conversation `sessionUuid` names — a stale Stop for a run that has
@@ -1119,14 +1119,15 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       return { started: true, run, kind };
     },
 
-    kill(name) {
-      const live = liveOf(name);
+    kill(name, run) {
+      const live = liveOf(name).filter((candidate) => run === undefined || candidate.run === run);
 
       if (live.length === 0) return false;
 
-      // Every run under the name (HIVE-128). A kill is "stop this agent", and
-      // a stop button that left a task run writing would be lying.
-      for (const run of live) escalate(run, 'killed');
+      // Every run under the name when none is named (HIVE-128). A kill is "stop
+      // this agent", and a stop button that left a task run writing would be
+      // lying. One run when it is named (HIVE-185).
+      for (const each of live) escalate(each, 'killed');
 
       return true;
     },
