@@ -748,6 +748,18 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     });
   };
 
+  /** The queue's fields of a ledger entry, and no others (HIVE-184). */
+  const pendingOf = (entry: LedgerEntry): PendingWakeEntry => {
+    const run = entry.meta?.['run'];
+    return {
+      kind: entry.kind,
+      id: entry.id,
+      from: entry.from,
+      ...(entry.thread === undefined ? {} : { thread: entry.thread }),
+      ...(typeof run === 'string' && run !== '' ? { run } : {}),
+    };
+  };
+
   /** Whether the entry was taken. `false` means the queue was full. */
   const enqueue = (name: string, entry: PendingWakeEntry): boolean => {
     const queued = deps.state.read(name).pendingWake ?? [];
@@ -776,6 +788,9 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
           // Field by field, deliberately — it is what keeps an unrelated key
           // from a caller reaching `agents.json`.
           ...(entry.text === undefined ? {} : { text: entry.text }),
+          ...(entry.thread === undefined ? {} : { thread: entry.thread }),
+          ...(entry.run === undefined ? {} : { run: entry.run }),
+          ...(entry.lane === undefined ? {} : { lane: entry.lane }),
         },
       ],
     });
@@ -863,7 +878,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
 
       const decision = decide(deps.state.read(to).status, ask);
       if (decision === 'ignore') continue;
-      route(to, decision, { kind: ask.kind, id: ask.id, from: ask.from });
+      route(to, decision, pendingOf(ask));
     }
   };
 
@@ -896,7 +911,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
 
       if (decision === 'ignore') return;
 
-      route(to, decision, { kind: entry.kind, id: entry.id, from: entry.from });
+      route(to, decision, pendingOf(entry));
     },
 
     onEvent(name, entry, opts) {

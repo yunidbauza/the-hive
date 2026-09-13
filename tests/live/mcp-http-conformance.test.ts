@@ -12,9 +12,11 @@ import { containerMcpConfig } from '../../electron/main/mcp/container-config';
 import {
   HOOK_ENV_RECEIVER_URL,
   HOOK_ENV_RUN,
+  HOOK_ENV_RUN_TOKEN,
   HOOK_ENV_SESSION,
   HOOK_ENV_TOKEN,
   HOOK_HEADER_RUN,
+  HOOK_HEADER_RUN_TOKEN,
   HOOK_HEADER_SESSION,
   HOOK_HEADER_TOKEN,
 } from '../../electron/shared/hook-contract';
@@ -81,6 +83,8 @@ const EXPECTED_CONFIG = `${JSON.stringify(
             indistinguishable from a concurrent neighbour's.
           */
           [HOOK_HEADER_RUN]: `\${${HOOK_ENV_RUN}:-}`,
+          // HIVE-184: the run's token, collapsed to empty the same way.
+          [HOOK_HEADER_RUN_TOKEN]: `\${${HOOK_ENV_RUN_TOKEN}:-}`,
         },
       },
     },

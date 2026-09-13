@@ -485,7 +485,14 @@ sentences read, so a saturated run queues from the console exactly as it does
 from the ledger. At the default cap of 1 a job resolves to standing and the
 gate is byte-for-byte what it was.
 
-Each process carries `HIVE_RUN_ID` and `HIVE_RUN_KIND`. The MCP host stamps
+**Lanes (HIVE-183).** `lane: thread | repo` in a definition. The standing lane
+is the top-level `agents.json` fields, and other lanes live under `lanes`.
+Routing arrives in HIVE-185 and HIVE-186.
+
+Each process carries `HIVE_RUN_ID`, `HIVE_RUN_KIND` and `HIVE_RUN_TOKEN`. Since
+HIVE-184 the run id is an authenticated claim: the receiver refuses a ledger
+write naming a run without `HMAC(launchSecret, "run:" + run)`, because lanes
+route answers by `meta.run`. The MCP host stamps
 `meta.run` on every entry the run writes — over anything the model put there —
 and `openAsksFor` / `handoffFor` match on that stamp instead of scanning from
 `run.started`, which could not tell two concurrent runs apart. A task run's

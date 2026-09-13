@@ -27,6 +27,7 @@ import {
 } from '../../../../electron/shared/jira-contract';
 import {
   HOOK_HEADER_RUN,
+  HOOK_HEADER_RUN_TOKEN,
   HOOK_HEADER_SESSION,
   HOOK_HEADER_TOKEN,
   HOOK_MAX_BODY_BYTES,
@@ -508,6 +509,60 @@ describe('hook receiver', () => {
       );
 
       expect(response.status).toBe(404);
+    });
+
+    /*
+      HIVE-184: lanes route by `meta.run`, so a run id is a claim. A write that
+      names a run must carry that run's own token; otherwise nothing is written.
+    */
+    describe('a run id is an authenticated claim (HIVE-184)', () => {
+      const runPost = (run: string, token: string | undefined) =>
+        post(
+          LEDGER_POST_PATH,
+          { kind: 'post', body: 'from a run', meta: { run } },
+          {
+            [HOOK_HEADER_SESSION]: 'sess-a',
+            ...(token === undefined ? {} : { [HOOK_HEADER_RUN_TOKEN]: token }),
+          },
+        );
+      const written = async () => {
+        const read = await post(LEDGER_READ_PATH, {}, { [HOOK_HEADER_SESSION]: 'sess-a' });
+        return ((await read.json()) as LedgerSnapshot).entries;
+      };
+
+      it('writes meta.run when the token is the one derived for that run', async () => {
+        const response = await runPost('run-1', receiver.runToken('run-1'));
+        expect(response.status).toBe(200);
+        expect((await written())[0]?.meta?.['run']).toBe('run-1');
+      });
+
+      it("refuses 403 and writes nothing when the token is another run's", async () => {
+        const response = await runPost('run-1', receiver.runToken('run-2'));
+        expect(response.status).toBe(403);
+        expect(await written()).toEqual([]);
+      });
+
+      it('refuses 403 and writes nothing when there is no token', async () => {
+        expect((await runPost('run-1', undefined)).status).toBe(403);
+        expect(await written()).toEqual([]);
+      });
+
+      it('refuses 403 for a token of the wrong length rather than throwing', async () => {
+        expect((await runPost('run-1', 'short')).status).toBe(403);
+      });
+
+      it('keeps run tokens apart from session tokens', () => {
+        expect(receiver.runToken('sess-a')).not.toBe(receiver.tokenFor('sess-a'));
+      });
+
+      it('leaves a post with no run alone', async () => {
+        const response = await post(
+          LEDGER_POST_PATH,
+          { kind: 'post', body: 'hi' },
+          { [HOOK_HEADER_SESSION]: 'sess-a' },
+        );
+        expect(response.status).toBe(200);
+      });
     });
 
     it('stores the header session as `from`, ignoring the body', async () => {
@@ -3580,11 +3635,33 @@ describe('the MCP route', () => {
           arguments: { body: 'in a run', meta: { run: 'run-the-model-chose' } },
         },
       },
-      { [HOOK_HEADER_SESSION]: CALLER, [HOOK_HEADER_RUN]: 'run-real' },
+      {
+        [HOOK_HEADER_SESSION]: CALLER,
+        [HOOK_HEADER_RUN]: 'run-real',
+        [HOOK_HEADER_RUN_TOKEN]: receiver.runToken('run-real'),
+      },
     );
 
     expect(posted).toHaveLength(1);
     expect((posted[0]?.request as { meta?: { run?: string } }).meta?.run).toBe('run-real');
+  });
+
+  it('refuses a run header whose token does not match, and posts nothing (HIVE-184)', async () => {
+    await rpc(
+      {
+        jsonrpc: '2.0',
+        id: 10,
+        method: 'tools/call',
+        params: { name: 'ledger_post', arguments: { body: 'forged' } },
+      },
+      {
+        [HOOK_HEADER_SESSION]: CALLER,
+        [HOOK_HEADER_RUN]: 'run-real',
+        [HOOK_HEADER_RUN_TOKEN]: receiver.runToken('run-other'),
+      },
+    );
+
+    expect(posted).toEqual([]);
   });
 
   it('leaves meta.run alone when no run header is sent', async () => {

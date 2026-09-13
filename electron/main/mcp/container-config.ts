@@ -2,9 +2,11 @@ import type { ContainerFreshness } from '@shared/config-contract';
 import {
   HOOK_ENV_RECEIVER_URL,
   HOOK_ENV_RUN,
+  HOOK_ENV_RUN_TOKEN,
   HOOK_ENV_SESSION,
   HOOK_ENV_TOKEN,
   HOOK_HEADER_RUN,
+  HOOK_HEADER_RUN_TOKEN,
   HOOK_HEADER_SESSION,
   HOOK_HEADER_TOKEN,
 } from '@shared/hook-contract';
@@ -50,6 +52,8 @@ export interface ResolvedIdentity {
   token: string;
   /** Absent for a pty session, which has no run. */
   run?: string;
+  /** The run's token (HIVE-184). Absent with the run. */
+  runToken?: string;
 }
 
 const shellRef = (name: string, fallback = ''): string =>
@@ -78,6 +82,7 @@ export function containerHiveServerSpec(
           modes agree on what a pty session sends.
         */
         [HOOK_HEADER_RUN]: resolved.run ?? '',
+        [HOOK_HEADER_RUN_TOKEN]: resolved.runToken ?? '',
       },
     };
   }
@@ -96,6 +101,8 @@ export function containerHiveServerSpec(
         indistinguishable from a concurrent neighbour's (HIVE-128).
       */
       [HOOK_HEADER_RUN]: shellRef(HOOK_ENV_RUN, ':-'),
+      // HIVE-184: the run's token, collapsed to empty the same way.
+      [HOOK_HEADER_RUN_TOKEN]: shellRef(HOOK_ENV_RUN_TOKEN, ':-'),
     },
   };
 }

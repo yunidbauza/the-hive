@@ -70,6 +70,9 @@ const state = (): AgentState => ({
   },
   recordRun: vi.fn(),
   clearSlackNeedsAuth: vi.fn(() => []),
+  // Lanes arrive in HIVE-185; nothing here reads them yet (HIVE-184).
+  lane: vi.fn(() => ({ runsSinceRotate: 0 })),
+  patchLane: vi.fn(() => ({ runsSinceRotate: 0 })),
   forget: (name) => {
     delete stored[name];
   },
@@ -645,6 +648,8 @@ Read the channel and report.
         },
         recordRun: vi.fn(),
         clearSlackNeedsAuth: vi.fn(() => []),
+        lane: vi.fn(() => ({ runsSinceRotate: 0 })),
+        patchLane: vi.fn(() => ({ runsSinceRotate: 0 })),
         forget: (name) => {
           delete localState[name];
         },

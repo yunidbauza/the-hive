@@ -2783,6 +2783,8 @@ export function registerIpcHandlers(
       set: (run, owner, grants) => hooks.receiverGrants()?.set(run, owner, grants),
       delete: (run) => hooks.receiverGrants()?.delete(run),
     },
+    // HIVE-184: read per call for the reason `grants` is; the receiver binds later.
+    runToken: (run) => hooks.runToken(run),
     /*
       A run's own entries are `from` the **agent**: a run is the agent's
       activity and the log is read back by name. That is the same rule

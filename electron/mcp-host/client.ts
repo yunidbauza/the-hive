@@ -5,7 +5,11 @@ import {
   type ProjectsDirectory,
 } from '@shared/config-contract';
 import { PR_PATH, type PrLookupReply } from '@shared/github-contract';
-import { HOOK_HEADER_SESSION, HOOK_HEADER_TOKEN } from '@shared/hook-contract';
+import {
+  HOOK_HEADER_RUN_TOKEN,
+  HOOK_HEADER_SESSION,
+  HOOK_HEADER_TOKEN,
+} from '@shared/hook-contract';
 import {
   JIRA_COMMENT_PATH,
   JIRA_GET_PATH,
@@ -60,6 +64,8 @@ export interface ReceiverClientOptions {
    * concurrent neighbour's, so it cannot be a value the model chose.
    */
   run?: string;
+  /** The run's token, from `HIVE_RUN_TOKEN` (HIVE-184), sent beside every stamped write. */
+  runToken?: string;
   fetch: typeof globalThis.fetch;
   timeoutMs?: number;
 }
@@ -69,6 +75,7 @@ export function createReceiverClient({
   session,
   token,
   run,
+  runToken,
   fetch,
   timeoutMs = RECEIVER_TIMEOUT_MS,
 }: ReceiverClientOptions): ReceiverClient {
@@ -83,6 +90,7 @@ export function createReceiverClient({
           'content-type': 'application/json',
           [HOOK_HEADER_SESSION]: session,
           [HOOK_HEADER_TOKEN]: token,
+          ...(runToken === undefined ? {} : { [HOOK_HEADER_RUN_TOKEN]: runToken }),
         },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(limitMs),

@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest';
 import {
   HOOK_ENV_RECEIVER_URL,
   HOOK_ENV_RUN,
+  HOOK_ENV_RUN_TOKEN,
   HOOK_ENV_SESSION,
   HOOK_ENV_TOKEN,
   HOOK_HEADER_RUN,
+  HOOK_HEADER_RUN_TOKEN,
   HOOK_HEADER_SESSION,
   HOOK_HEADER_TOKEN,
 } from '@shared/hook-contract';
@@ -28,6 +30,7 @@ describe('containerHiveServerSpec — exec-env', () => {
     const spec = containerHiveServerSpec('exec-env');
 
     expect(spec.headers[HOOK_HEADER_RUN]).toBe(`\${${HOOK_ENV_RUN}:-}`);
+    expect(spec.headers[HOOK_HEADER_RUN_TOKEN]).toBe(`\${${HOOK_ENV_RUN_TOKEN}:-}`);
   });
 
   it('references the session and token rather than resolving them', () => {
@@ -51,6 +54,7 @@ describe('containerHiveServerSpec — rewrite', () => {
     session: 'sess-1',
     token: 'deadbeef',
     run: 'run-7',
+    runToken: 'rt-7',
   };
 
   it('bakes the resolved origin, because the container env is stale', () => {
@@ -65,15 +69,18 @@ describe('containerHiveServerSpec — rewrite', () => {
     expect(spec.headers[HOOK_HEADER_SESSION]).toBe('sess-1');
     expect(spec.headers[HOOK_HEADER_TOKEN]).toBe('deadbeef');
     expect(spec.headers[HOOK_HEADER_RUN]).toBe('run-7');
+    expect(spec.headers[HOOK_HEADER_RUN_TOKEN]).toBe('rt-7');
   });
 
   it('sends an empty run for a pty session, which the route reads as absent', () => {
     const spec = containerHiveServerSpec('rewrite', {
       ...resolved,
       run: undefined,
+      runToken: undefined,
     });
 
     expect(spec.headers[HOOK_HEADER_RUN]).toBe('');
+    expect(spec.headers[HOOK_HEADER_RUN_TOKEN]).toBe('');
   });
 
   it('refuses to emit without the values it must bake', () => {

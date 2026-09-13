@@ -1,0 +1,84 @@
+{
+  "shipper": {
+    "status": "sleeping",
+    "runsSinceRotate": 72,
+    "runs": [
+      {
+        "run": "5c7af421-c49c-4229-8736-4728d6cb6cb3",
+        "kind": "standing",
+        "trigger": "interval",
+        "startedAt": 1789274530558,
+        "endedAt": 1789274536892,
+        "outcome": "done",
+        "costUsd": 0.07527400000000001,
+        "turns": 2,
+        "sessionUuid": "2175a011-f031-43ad-b756-d779e9bca41c"
+      },
+      {
+        "run": "a03e5d3f-7d9a-4980-bdc7-14568d561adc",
+        "kind": "standing",
+        "trigger": "interval",
+        "startedAt": 1789275130581,
+        "endedAt": 1789275136610,
+        "outcome": "done",
+        "costUsd": 0.076767,
+        "turns": 2,
+        "sessionUuid": "2175a011-f031-43ad-b756-d779e9bca41c"
+      }
+    ],
+    "nextRunAt": 1789275730578,
+    "skipsSinceRun": 0,
+    "today": {
+      "day": "2026-09-13",
+      "runs": 10,
+      "usd": 14.9065
+    },
+    "lastRunAt": 1789275136610,
+    "sessionUuid": "2175a011-f031-43ad-b756-d779e9bca41c",
+    "pendingWake": [
+      {
+        "kind": "ask",
+        "id": "01J9RECORDED",
+        "from": "overmind"
+      }
+    ],
+    "rotateFailures": 0
+  },
+  "builder": {
+    "status": "sleeping",
+    "runsSinceRotate": 21,
+    "runs": [
+      {
+        "run": "782a53f0-3b2d-4c07-88c5-6e6f6adf6cea",
+        "kind": "standing",
+        "trigger": "ledger",
+        "startedAt": 1789272243600,
+        "endedAt": 1789272254888,
+        "outcome": "done",
+        "costUsd": 1.2204875,
+        "turns": 3,
+        "sessionUuid": "a624cc9c-e638-4c3b-95d9-987bd78548b8"
+      },
+      {
+        "run": "56010208-fd7e-4818-8c11-73c4682f3901",
+        "kind": "standing",
+        "trigger": "ledger",
+        "startedAt": 1789272254889,
+        "endedAt": 1789272265014,
+        "outcome": "done",
+        "costUsd": 1.2177905,
+        "turns": 3,
+        "sessionUuid": "a624cc9c-e638-4c3b-95d9-987bd78548b8"
+      }
+    ],
+    "skipsSinceRun": 0,
+    "pendingWake": [],
+    "today": {
+      "day": "2026-09-13",
+      "runs": 3,
+      "usd": 7.7005
+    },
+    "lastRunAt": 1789272265014,
+    "sessionUuid": "a624cc9c-e638-4c3b-95d9-987bd78548b8"
+  }
+}

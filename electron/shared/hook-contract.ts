@@ -387,17 +387,22 @@ export const HOOK_HEADER_TOKEN = 'x-hive-token';
  * neighbour's (HIVE-128).
  *
  * Optional, exactly as the environment variable is: a pty session has no run.
- * Unlike the two above it is **not** an authenticated claim — it narrows a
- * write to a run, it never widens what the caller may reach — so it is stamped
- * where the body cannot override it and otherwise left alone.
+ * It is stamped where the body cannot override it.
  *
- * Concretely, the bound on forging it is the caller's own identity: `from` is
- * still taken from {@link HOOK_HEADER_SESSION}, and the readers that key on
- * `meta.run` — `openAsksFor` and `handoffFor` in `main/ipc/index.ts` — filter on
- * `from` as well. So a caller can at worst cross-attribute between runs it
- * already owns, never reach another party's.
+ * Since HIVE-184 it **is** an authenticated claim. Lanes (HIVE-183) route an
+ * answer to the conversation of the run that asked, by `meta.run`, so a forged
+ * run id would steer an answer into another lane's conversation. The receiver
+ * refuses a ledger write whose run id comes without that run's own token,
+ * {@link HOOK_HEADER_RUN_TOKEN}. `from` is still taken from
+ * {@link HOOK_HEADER_SESSION}; the token proves the run, not the party.
  */
 export const HOOK_HEADER_RUN = 'x-hive-run';
+
+/**
+ * The run's own token (HIVE-184): HMAC-SHA256(launchSecret, "run:" + run).
+ * Required beside a run id on every ledger write; see {@link HOOK_HEADER_RUN}.
+ */
+export const HOOK_HEADER_RUN_TOKEN = 'x-hive-run-token';
 
 /**
  * A session's identity, resolved rather than referenced (HIVE-132).
@@ -426,6 +431,8 @@ export const HOOK_ENV_SESSION = 'HIVE_SESSION_ID';
 export const HOOK_ENV_RUN = 'HIVE_RUN_ID';
 /** `standing` or `task` — `RunKind` in `agent-contract.ts` (HIVE-128). */
 export const HOOK_ENV_RUN_KIND = 'HIVE_RUN_KIND';
+/** The process's run token, sent as {@link HOOK_HEADER_RUN_TOKEN} (HIVE-184). */
+export const HOOK_ENV_RUN_TOKEN = 'HIVE_RUN_TOKEN';
 
 /**
  * The environment variable carrying a session's grants, as a JSON array of

@@ -753,3 +753,29 @@ Body.
     ).toEqual(['container.hive_dir', 'container.name', 'container.workspace']);
   });
 });
+
+describe('lane (HIVE-184)', () => {
+  const withLane = (value: string) =>
+    GOOD.replace('autonomy: ask\n', `autonomy: ask\nlane: ${value}\n`);
+
+  it('parses thread and repo', () => {
+    expect(definition(withLane('thread')).lane).toBe('thread');
+    expect(definition(withLane('repo')).lane).toBe('repo');
+  });
+
+  it('leaves lane absent when the key is absent, which is one lane', () => {
+    expect(definition(GOOD).lane).toBeUndefined();
+    expect('lane' in definition(GOOD)).toBe(false);
+  });
+
+  it('refuses any other value with a reason', () => {
+    expect(problems(withLane('ticket'))).toContainEqual({
+      field: 'lane',
+      reason: 'Must be one of: thread, repo.',
+    });
+  });
+
+  it('parses a lane without parallel > 1; the cap serializes its lanes', () => {
+    expect(definition(withLane('thread')).limits.parallel).toBe(1);
+  });
+});

@@ -284,6 +284,25 @@ describe('createScheduler', () => {
     expect(woke).toEqual([]);
   });
 
+  it('keeps the thread and the writing run on a queued entry (HIVE-184)', () => {
+    state.patch(AGENT, { status: 'working' });
+
+    scheduler.onEntry(
+      entry({ id: 'a2', kind: 'answer', from: 'overmind', thread: 'a1', meta: { run: 'run-7' } }),
+    );
+
+    expect(state.read(AGENT).pendingWake).toEqual([
+      { kind: 'answer', id: 'a2', from: 'overmind', thread: 'a1', run: 'run-7' },
+    ]);
+  });
+
+  it('keeps neither when the entry has none, so a pre-lane queue is byte-identical', () => {
+    state.patch(AGENT, { status: 'working' });
+    scheduler.onEntry(entry({ id: 'a3' }));
+
+    expect(state.read(AGENT).pendingWake).toEqual([{ kind: 'ask', id: 'a3', from: 'overmind' }]);
+  });
+
   it('queues while working and wakes once when the run closes', () => {
     state.patch(AGENT, { status: 'working' });
 
