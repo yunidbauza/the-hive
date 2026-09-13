@@ -193,15 +193,18 @@ does not use it for that either.
 3. A linked worktree: `git -C <main working tree> worktree remove <that path>`.
    On a refusal, `git -C <that path> status --porcelain --untracked-files=all`.
    The worktree is disposable only when **all** of these hold:
-   - the path is under `~/.hive/work/`, an agent's worktree and never the
+   - the path is under `$HOME/.hive/work/`, an agent's worktree and never the
      person's checkout;
-   - no line is a tracked change: every line starts with `??`;
+   - the status prints at least one line, and no line is a tracked change:
+     every line starts with `??`;
    - every `??` path starts with `.hive/`, the agent's own notes folder.
 
    Disposable: `git -C <main working tree> worktree remove --force <that path>`,
    and the report says "removed the agent's `.hive/` notes with it". Anything
    else: no `--force`. Those files are somebody's work; stop and report the
-   paths. Then `git -C <main working tree> worktree prune`. An agent worktree
+   paths. An empty status after a refusal is a stop too: git refused for
+   another reason (a submodule, a lock), and the report names it. A refusal
+   of `--force` is a stop; never `--force` twice. Then `git -C <main working tree> worktree prune`. An agent worktree
    under `~/.hive/work/<agent>/` is a linked worktree of the project and goes
    the same way.
 4. `git -C <main working tree> status --porcelain` and
@@ -284,6 +287,6 @@ Name the target in full; "merged PR 58" is unfalsifiable.
 - Resolving a thread to clear the gate.
 - `--delete-branch`.
 - A checkout, merge or pull in a tree with uncommitted files or on another branch.
-- `--force` on a worktree whose leftovers are not all under `.hive/`, or on the person's checkout.
+- `--force` on a worktree whose leftovers are not all under `.hive/`, on an empty status, twice, or on the person's checkout.
 - Transitioning on a branch-name key.
 - Reporting "no key supplied" without quoting the arguments line.

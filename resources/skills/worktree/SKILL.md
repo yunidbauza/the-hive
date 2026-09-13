@@ -73,8 +73,9 @@ git -C "$REPO" worktree add --detach "$WT" "origin/<branch>"
 git -C "$WT" push origin HEAD:<branch>      # after each round's commits
 ```
 
-Then write `$WT/.hive/.gitignore` containing the single line `*`, if it is
-not there, whether the worktree is new or reused. `.hive/` is the Hive's
+Then, for an agent worktree under `$HOME/.hive/work/`, new or reused, write
+`$WT/.hive/.gitignore` containing the single line `*` if it is not there.
+Never in a worktree that is not yours. `.hive/` is the Hive's
 working folder (plans, specs, a builder's progress notes). Ignored from the
 start, it never shows as untracked, and `merge-pr`'s teardown removes the
 worktree without `--force`.
@@ -99,11 +100,13 @@ Not yours, unless you are the one who made it and the work is abandoned.
 git -C "$REPO" worktree remove "$WT"
 ```
 
-A refusal means uncommitted files. Stop and say so. Never `--force`.
+A refusal means uncommitted files. Stop and say so. Never `--force`. The one
+exception is `merge-pr`'s teardown of an agent worktree whose only leftovers
+are under `.hive/`, and it is `merge-pr`'s to make.
 
 ## Red flags
 
 - Branching off the current branch instead of `origin/<default>`.
 - A `worktree-<slug>` branch left unrenamed.
 - Working in the project's own checkout from an agent run.
-- `git worktree remove --force` to make a refusal go away.
+- `git worktree remove --force` to make a refusal go away (`merge-pr`'s `.hive/`-only case is the one exception).
