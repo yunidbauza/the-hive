@@ -2655,8 +2655,8 @@ export function registerIpcHandlers(
     // `permissions` is armed later, alongside `scheduler` — read through the
     // module binding for the same reason `hooks`/`mcp` are read through
     // getters here rather than closed over as values.
-    pendingGrants: (name) => [
-      ...(permissions?.grantsFor(name) ?? []),
+    pendingGrants: (name, lane) => [
+      ...(permissions?.grantsFor(name, lane) ?? []),
       // HIVE-166: consent from the config becomes a rule on the shipper's wake.
       ...(autoMergeGrants?.grantsFor(name) ?? []),
     ],

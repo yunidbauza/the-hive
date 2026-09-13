@@ -569,3 +569,26 @@ describe('onAnswer', () => {
     expect(written).toContain('Bash(git *)');
   });
 });
+
+describe('grantsFor, per lane (HIVE-187)', () => {
+  const begun = (run: string, lane?: string) => ({
+    id: `s-${run}`, ts: 0, from: 'drone', kind: 'event' as const, body: 'run.started — ledger',
+    meta: { run, ...(lane === undefined ? {} : { lane }) },
+  });
+  const laneAsk = (id: string, run: string) => ({ ...ask(id, 'drone', RUNGS), meta: { ...ask(id, 'drone', RUNGS).meta, run } });
+
+  it('hands lane A\'s grant to lane A only, and leaves it unconsumed for a sibling\'s wake', () => {
+    const d = deps([begun('rA', 'thread:A'), begun('rB', 'thread:B'), laneAsk('a1', 'rA'), answer('n1', 'a1', 'allow-once')]);
+    const permissions = createPermissions(d);
+
+    expect(permissions.grantsFor('drone', 'thread:B')).toEqual([]);
+    expect(d.append).not.toHaveBeenCalled();
+    expect(permissions.grantsFor('drone', 'thread:A')).toEqual(['literal:Bash:git push']);
+  });
+
+  it('gives a grant from a run with no lane (or no run at all) to the standing lane, as before', () => {
+    const d = deps([begun('r0'), laneAsk('a1', 'r0'), answer('n1', 'a1', 'allow-once')]);
+    expect(createPermissions(d).grantsFor('drone', 'thread:A')).toEqual([]);
+    expect(createPermissions(d).grantsFor('drone')).toEqual(['literal:Bash:git push']);
+  });
+});

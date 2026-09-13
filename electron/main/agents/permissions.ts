@@ -1,7 +1,8 @@
-import { parseList, readFrontmatter } from '@shared/agent-contract';
+import { STANDING_LANE, parseList, readFrontmatter } from '@shared/agent-contract';
 import type { AgentWriteResult } from '@shared/agent-contract';
 import { OVERMIND } from '@shared/ledger-contract';
 import type { LedgerEntry, LedgerPostRequest } from '@shared/ledger-contract';
+import { laneOfRun } from '@shared/ledger-derive';
 import { isToolName, oneShotRuleFor, rungsFor } from '@shared/permission-rules';
 
 import { patchFrontmatter } from './patch';
@@ -77,7 +78,11 @@ export interface PermissionDeps {
 }
 
 export interface Permissions {
-  grantsFor: (name: string) => string[];
+  /**
+   * The one-time grants waiting for this agent's next wake on `lane`
+   * (HIVE-187). Absent means the standing lane.
+   */
+  grantsFor: (name: string, lane?: string) => string[];
   onAnswer: (entry: LedgerEntry) => Promise<void>;
   /**
    * Whether `entry` is an answer to a permission ask — the one case a caller
@@ -154,11 +159,19 @@ export function createPermissions(deps: PermissionDeps): Permissions {
   };
 
   return {
-    grantsFor(name) {
+    grantsFor(name, lane = STANDING_LANE) {
       const grants: string[] = [];
+      const log = deps.entries();
 
-      for (const ask of deps.entries()) {
+      for (const ask of log) {
         if (!isPermissionAsk(ask) || ask.from !== name) continue;
+        /*
+          A one-time grant belongs to the conversation whose run asked
+          (HIVE-187). Another lane's ask is skipped, not consumed: it waits for
+          its own lane's wake. A task run has no lane, so its asks resolve to
+          standing, where they always went.
+        */
+        if (laneOfRun(name, ask.meta?.['run'], log) !== lane) continue;
         if (consumed(ask.id)) continue;
 
         const answer = answerTo(ask.id);

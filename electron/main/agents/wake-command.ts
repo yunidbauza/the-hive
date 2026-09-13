@@ -119,7 +119,8 @@ export interface WakeCommandDeps {
    * wake it answered rather than to whichever wake happened to be building
    * next.
    */
-  pendingGrants: (name: string) => string[];
+  /** The one-time grants for this wake's lane (HIVE-187); `standing` for a task run. */
+  pendingGrants: (name: string, lane: string) => string[];
   fs?: WakeFs;
   /**
    * How `resolveClaude` decides a candidate is runnable.
@@ -474,7 +475,7 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
           hook: deps.hookEnv(name),
           subscriptionAuth: deps.subscriptionAuth(),
         },
-        grants: deps.pendingGrants(name),
+        grants: deps.pendingGrants(name, task ? STANDING_LANE : lane),
         ...(def.container === undefined
           ? {}
           : {

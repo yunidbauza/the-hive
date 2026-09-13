@@ -944,3 +944,19 @@ describe('the lane in the wake prompt (HIVE-188)', () => {
     expect(built.args.at(-1)).toContain('slack-watcher lanes by thread.');
   });
 });
+
+describe('grants per lane (HIVE-187)', () => {
+  it('asks for the grants of the wake\'s own lane, and a task run for the standing lane\'s', () => {
+    const pendingGrants = vi.fn((_name: string, _lane: string): string[] => []);
+
+    build({ pendingGrants })('slack-watcher', 'ledger', undefined, { lane: 'thread:A' });
+    build({ pendingGrants })('slack-watcher', 'manual', 'review', { kind: 'task', lane: 'thread:A' });
+    build({ pendingGrants })('slack-watcher', 'ledger');
+
+    expect(pendingGrants.mock.calls).toEqual([
+      ['slack-watcher', 'thread:A'],
+      ['slack-watcher', 'standing'],
+      ['slack-watcher', 'standing'],
+    ]);
+  });
+});
