@@ -1151,7 +1151,10 @@ asked, so the tool is in `HIVE_CONSENT_TOOLS` and in `ONCE_ONLY_TOOLS`
 - a one-shot names the exact call (`project=<p>;on=<b>`);
 - `matches` lets no other rule allow it, not a bare name, a glob or `*`;
 - `waker.ts` narrows `def.tools`, so `--allowedTools` never names it, even
-  through `mcp__hive__*`.
+  through `mcp__hive__*`;
+- a session's settings file carries one ask rule for it, which outranks the
+  allow rule Claude Code's "don't ask again" writes. It grants nothing, so
+  HIVE-93's no-grant line holds.
 
 The route is `/projects/auto-merge`. A landed write is pushed to the renderer
 on `config:changed`, so Settings › Projects shows it without a reload.

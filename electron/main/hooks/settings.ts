@@ -12,6 +12,7 @@ import {
   statusCommand,
 } from '@shared/hook-contract';
 import { METRICS_REFRESH_SECONDS } from '@shared/metrics-contract';
+import { ONCE_ONLY_TOOLS } from '@shared/permission-rules';
 
 /**
  * The settings file the app hands every session (HIVE-62, HIVE-79).
@@ -83,9 +84,10 @@ export const METRICS_SCRIPT_FILE = join(HOOK_SETTINGS_DIR, 'statusline.sh');
  * The agent variant, which differs from the session file in exactly one key.
  *
  * A second file rather than a key on the first, because the first merges above
- * the user's own scope and HIVE-93 rules out putting `permissions` there: a
- * grant written into a session's settings is one the user can neither see among
- * their own nor revoke. An agent is not a session — it has no tty, no way to
+ * the user's own scope and HIVE-93 rules out a grant there, or a blanket ask
+ * that would prompt a person for every call (its one narrow ask rule is retro
+ * B's): a grant written into a session's settings is one the user can neither
+ * see among their own nor revoke. An agent is not a session — it has no tty, no way to
  * answer a prompt, and a definition that already states what it may use — so
  * the fence belongs on this side of the line and nowhere near an interactive
  * session.
@@ -168,6 +170,11 @@ export interface HookSettings {
    * fleet-within-a-fleet this exists to prevent.
    */
   disableAgentView?: boolean;
+  /**
+   * Ask rules only, never a grant (HIVE-93, retro B). A session file carries
+   * the once-only tools; the agent file carries `*`.
+   */
+  permissions?: { ask: string[] };
 }
 
 /**
@@ -319,13 +326,20 @@ export function hookSettings(
     disableAgentView: true,
     theme: CLAUDE_THEME,
     /*
-      No `permissions` block, deliberately (HIVE-93). `/done`'s `curl` is
-      authorised by `allowed-tools` in the generated skill's own frontmatter
-      instead — see `skills/done-skill.ts`. This file merges above the user's
-      scope, so a grant written here is one they can neither see among their own
-      settings nor revoke; the skill's frontmatter puts the authorisation three
-      lines above the command it authorises, in a file they can read.
+      No grant, deliberately (HIVE-93). `/done`'s `curl` is authorised by
+      `allowed-tools` in the generated skill's own frontmatter instead — see
+      `skills/done-skill.ts`. This file merges above the user's scope, so a
+      grant written here is one they can neither see among their own settings
+      nor revoke; the skill's frontmatter puts the authorisation three lines
+      above the command it authorises, in a file they can read.
+
+      One ask rule is the exception, and it grants nothing (retro B).
+      `project_auto_merge` must ask the person on every call, and Claude
+      Code's "Yes, don't ask again" writes an allow rule into the user's own
+      settings that would cover it. An ask rule outranks any allow, so the
+      prompt comes back every time.
     */
+    permissions: { ask: [...ONCE_ONLY_TOOLS] },
   };
 }
 
@@ -334,8 +348,9 @@ export function hookSettings(
  *
  * Same hooks, same theme, same disabled agent view — an agent's headless turn
  * is still a `claude` process reporting through the same receiver — plus the
- * one key {@link AGENT_SETTINGS_FILE}'s doc explains why `hookSettings` may
- * never carry: `permissions.ask`. No `statusLine`: that mechanism is Claude
+ * blanket `permissions.ask: ["*"]` {@link AGENT_SETTINGS_FILE}'s doc explains
+ * why `hookSettings` may never carry; it replaces the session file's one
+ * once-only ask rule. No `statusLine`: that mechanism is Claude
  * Code's interactive footer, which does not run under `-p`, so writing one
  * here would promise a UI that never renders.
  */

@@ -249,7 +249,12 @@ describe('hookSettings — command transport (HIVE-137)', () => {
 });
 
 describe('the settings file grants no permissions', () => {
-  it('writes no permissions block', async () => {
+  /*
+    Retro B: one ask rule and nothing else. `project_auto_merge` must ask every
+    time, and an ask rule outranks the allow rule a session's own "don't ask
+    again" writes. An ask grants nothing, so HIVE-93's line still holds.
+  */
+  it('writes only the once-only ask rule, and no allow or deny', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'hive-done-'));
     const path = await writeHookSettings(dir, 'http://127.0.0.1:51234/hook');
 
@@ -257,13 +262,15 @@ describe('the settings file grants no permissions', () => {
       const raw = await readFile(path, 'utf8');
       const written = JSON.parse(raw) as Record<string, unknown>;
 
-      expect(written).not.toHaveProperty('permissions');
+      expect(written['permissions']).toEqual({ ask: ['mcp__hive__project_auto_merge'] });
       /*
         Asserted on the raw text too. A nested grant somewhere else in the file
         would satisfy the property check above and still be a permission the
         user never wrote.
       */
-      expect(raw).not.toContain('permissions');
+      expect(raw).not.toContain('"allow"');
+      expect(raw).not.toContain('"deny"');
+      expect(raw).not.toContain('defaultMode');
     }
   });
 
@@ -291,9 +298,9 @@ describe('the settings file grants no permissions', () => {
 /**
  * The agent-only settings file (HIVE-119).
  *
- * `hookSettings` must never carry a `permissions` block — HIVE-93, reasserted
- * above — but an agent's headless turn has no tty to answer a prompt at, so
- * its fence lives in a sibling file instead.
+ * `hookSettings` must never carry a grant — HIVE-93, reasserted above; its one
+ * ask rule is retro B's — but an agent's headless turn has no tty to answer a
+ * prompt at, so its fence lives in a sibling file instead.
  */
 describe('agentSettings', () => {
   it('fences an agent with a blanket ask rule', () => {
@@ -306,10 +313,10 @@ describe('agentSettings', () => {
     expect(agentSettings(url).hooks).toEqual(hookSettings(url).hooks);
   });
 
-  it('leaves the shared settings file without any permissions block', () => {
-    expect(hookSettings('http://127.0.0.1:1/hook')).not.toHaveProperty(
-      'permissions',
-    );
+  it('leaves the shared settings file only the once-only ask rule', () => {
+    expect(hookSettings('http://127.0.0.1:1/hook').permissions).toEqual({
+      ask: ['mcp__hive__project_auto_merge'],
+    });
   });
 
   it('writes the agent file beside the shared one', async () => {
