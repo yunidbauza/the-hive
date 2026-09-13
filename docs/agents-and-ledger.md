@@ -511,6 +511,19 @@ and the standing tick still skips while the agent's rollup is not `sleeping`
 or `failed`. Both err toward a late or an extra standing wake, never a lost
 entry.
 
+**Lane directories, claims and prompts (HIVE-188).** The standing lane runs in
+`~/.hive/work/<agent>/`, so files already there stay the standing lane's. Every
+other lane runs in `~/.hive/work/<agent>/lanes/<key>/`, with the key passed
+through `encodeURIComponent` (`repo%3Aa%2Fb`). That encoding is one-to-one, so
+two lanes never share a directory. A closed thread lane keeps its record and
+directory for a day, then the sweep removes both. A release is refused when
+the claim and the release both carry `meta.run` and the two runs belong to
+different lanes of the agent: "<task> is held by <agent>'s <lane> lane". The
+overmind still releases anything, and a claim or release with no run keeps
+the party rule. A lane run's prompt names its lane, and the standing run of
+an agent with `lane:` is told to hand lane work over with a self-addressed
+`ledger_ask` (carrying `meta.repo` when the agent lanes by repository).
+
 Each process carries `HIVE_RUN_ID`, `HIVE_RUN_KIND` and `HIVE_RUN_TOKEN`. Since
 HIVE-184 the run id is an authenticated claim: the receiver refuses a ledger
 write naming a run without `HMAC(launchSecret, "run:" + run)`, because lanes
