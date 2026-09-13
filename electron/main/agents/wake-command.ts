@@ -30,6 +30,7 @@ import { dirname, join } from 'node:path';
 import {
   AGENT_FILE,
   KNOWN_AGENT_MCP,
+  STANDING_LANE,
   parseList,
   readFrontmatter,
   type AgentContainer,
@@ -337,7 +338,18 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
           'receiver may still be starting. Try again in a moment.',
       };
     }
-    const previous = deps.state.read(name);
+    /*
+      The conversation this wake continues (HIVE-185). Every field below is
+      read from, and written to, this lane only: a lane never resumes, rotates
+      or consumes another lane's session.
+    */
+    const lane = options?.lane ?? STANDING_LANE;
+    const previous = deps.state.lane(name, lane);
+    /*
+      `forceRotate` is the console's `rotate <agent>`, and it means the
+      standing conversation (HIVE-122). Another lane never consumes it.
+    */
+    const forced = lane === STANDING_LANE && deps.state.read(name).forceRotate === true;
     /*
       A resumed session carries every earlier turn, so its cost per wake climbs
       without bound. Rotation bounds it — but as a handover, not an amnesia
@@ -376,8 +388,7 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
       !task &&
       pending === undefined &&
       previous.sessionUuid !== undefined &&
-      (previous.forceRotate === true ||
-        previous.runsSinceRotate >= def.limits.rotateAfter);
+      (forced || previous.runsSinceRotate >= def.limits.rotateAfter);
     const workdir = deps.workdir(name);
     const systemPrompt = deps.promptFile(name);
     let agentMcp: string | null = null;
@@ -415,11 +426,9 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
       the agent's memory gone anyway, which is strictly worse than the stale
       counter that ordering was originally written to prevent.
     */
-    if (!task && (pending !== undefined || previous.forceRotate === true)) {
-      deps.state.patch(name, {
-        pendingSession: undefined,
-        forceRotate: undefined,
-      });
+    if (!task && (pending !== undefined || forced)) {
+      deps.state.patchLane(name, lane, { pendingSession: undefined });
+      if (forced) deps.state.patch(name, { forceRotate: undefined });
     }
 
     const resuming =
