@@ -192,7 +192,7 @@ export function expiredAsks(
       entry.kind === 'ask' &&
       !closed.has(entry.id) &&
       !told.has(entry.id) &&
-      now - entry.ts >= ttlOf(entry),
+      agedFor(entry, entries, now) >= ttlOf(entry),
   );
 }
 
@@ -219,7 +219,7 @@ export function openAsks(entries: readonly LedgerEntry[], now: number): OpenAsk[
     if (entry.kind !== 'ask') continue;
     if (closed.has(entry.id)) continue;
     const ageMs = now - entry.ts;
-    if (ageMs >= ttlOf(entry)) continue;
+    if (agedFor(entry, entries, now) >= ttlOf(entry)) continue;
     open.push({ ...entry, kind: 'ask', open: true, ageMs });
   }
   return open;
@@ -517,4 +517,22 @@ export function isHeld(ask: LedgerEntry, log: readonly LedgerEntry[]): boolean {
   const target = afterTarget(ask);
   if (target === undefined) return false;
   return !log.some((entry) => releasesAfter(entry, target));
+}
+
+/**
+ * How long an ask has been aging toward its ttl, which {@link openAsks} and
+ * {@link expiredAsks} both read (retro C).
+ *
+ * A held ask does not age while it waits for its PR: a chain whose earlier PR
+ * sits a day in review would otherwise lose the next job, with nothing said to
+ * anyone. Released, it ages from the release. Every other ask ages from when
+ * it was posted, as it always has. `OpenAsk.ageMs` still reports the time since
+ * the post, because that is what a person reading the card means by age.
+ */
+function agedFor(ask: LedgerEntry, entries: readonly LedgerEntry[], now: number): number {
+  const target = afterTarget(ask);
+  if (target === undefined) return now - ask.ts;
+  const release = entries.find((entry) => releasesAfter(entry, target));
+  if (release === undefined) return 0;
+  return now - Math.max(ask.ts, release.ts);
 }

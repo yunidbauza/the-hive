@@ -592,3 +592,43 @@ describe('held asks: meta.after (retro C)', () => {
     expect(isHeld(post, [post])).toBe(false);
   });
 });
+
+/*
+  Retro C, from the Task 2 review: a held ask must not expire while it waits.
+  A chain whose earlier PR sits a day in review would otherwise lose the next
+  job without a word. Held, it does not age; released, it ages from then.
+*/
+describe('a held ask does not age until its PR merges (retro C)', () => {
+  const held = entry({
+    id: 'h1',
+    kind: 'ask',
+    to: 'builder',
+    ts: NOW - 2 * LEDGER_ASK_TTL_MS,
+    meta: { after: 'a/b#3' },
+  });
+  const closedAt = (ts: number): LedgerEntry =>
+    entry({ id: 'c1', from: 'shipper', ts, meta: { stage: 'closed', pr: 3, repo: 'a/b' } });
+
+  it('stays open and unexpired while its PR is open, however old', () => {
+    expect(openAsks([held], NOW).map((ask) => ask.id)).toEqual(['h1']);
+    expect(expiredAsks([held], NOW)).toEqual([]);
+  });
+
+  it('ages from its release, not from when it was posted', () => {
+    const released = NOW - 1000;
+    const log = [held, closedAt(released)];
+
+    expect(openAsks(log, NOW).map((ask) => ask.id)).toEqual(['h1']);
+    expect(expiredAsks(log, NOW)).toEqual([]);
+
+    const later = released + LEDGER_ASK_TTL_MS;
+    expect(openAsks(log, later)).toEqual([]);
+    expect(expiredAsks(log, later).map((ask) => ask.id)).toEqual(['h1']);
+  });
+
+  it('leaves an ask without after aging from its post', () => {
+    const plain = entry({ id: 'p1', kind: 'ask', to: 'builder', ts: NOW - LEDGER_ASK_TTL_MS });
+    expect(openAsks([plain], NOW)).toEqual([]);
+    expect(expiredAsks([plain], NOW).map((ask) => ask.id)).toEqual(['p1']);
+  });
+});
