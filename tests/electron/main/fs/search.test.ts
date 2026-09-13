@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -151,15 +151,24 @@ describe('what it refuses to read', () => {
 
   it('keeps going when one directory cannot be read', async () => {
     write('src/readable.ts', 'findme\n');
-    mkdirSync(join(root, 'locked'), { mode: 0o000 });
+    const locked = join(root, 'locked');
+    mkdirSync(locked, { mode: 0o000 });
 
-    const result = await search('findme');
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.value.hits).toHaveLength(1);
-
-    // Restore so the temp dir can be removed.
-    mkdirSync(join(root, 'locked'), { recursive: true, mode: 0o755 });
+    /*
+      Restored with `chmod`, in a `finally`. The restore used to be a second
+      `mkdirSync(…, { recursive: true, mode: 0o755 })`, which is a no-op on a
+      directory that exists: the mode stayed 000, and `afterEach`'s `rmSync`
+      failed on a directory it could not read (ENOTEMPTY). A failed assertion
+      skipped it too.
+    */
+    try {
+      const result = await search('findme');
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.hits).toHaveLength(1);
+    } finally {
+      chmodSync(locked, 0o755);
+    }
   });
 });
 
