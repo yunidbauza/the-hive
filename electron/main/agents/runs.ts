@@ -1,6 +1,7 @@
 import {
   AGENT_KILL_GRACE_MS,
   AGENT_STALL_GRACE_MS,
+  STANDING_LANE,
   type LiveRunSummary,
   type QueueableRefusal,
   type RunKind,
@@ -141,7 +142,7 @@ export interface RunTrackerDeps {
     name: string,
     trigger: string,
     extra?: string,
-    options?: { kind?: RunKind },
+    options?: { kind?: RunKind; lane?: string },
   ) =>
     | (WakeCommand & { sessionUuid: string; lastTurn: boolean; kind: RunKind })
     | { problem: string };
@@ -234,12 +235,15 @@ export interface RunTracker {
    * A `job` is a wake carrying its own work — the console's
    * `run <agent> <prompt>`. It becomes a task run when the cap allows, and an
    * ordinary standing wake otherwise.
+   *
+   * `lane` is the conversation a standing wake continues (HIVE-185). Absent
+   * means the standing lane. A task run ignores it.
    */
   run(
     name: string,
     trigger: string,
     extra?: string,
-    options?: { job?: true },
+    options?: { job?: true; lane?: string },
   ): RunStart;
   /** Every run under this name, signalled together. */
   kill(name: string): boolean;
@@ -288,6 +292,11 @@ interface LiveRun {
   run: string;
   /** Which conversation this is: the agent's own, or a one-off job (HIVE-128). */
   kind: RunKind;
+  /**
+   * The lane this run holds (HIVE-185); `standing` for the standing lane and
+   * for every task run.
+   */
+  lane: string;
   trigger: string;
   /** The console prompt a task run carries, when it carries one. */
   extra?: string;
@@ -341,6 +350,8 @@ interface FinalizeInfo {
    * the one conversation, and a task run's uuid died with its turn.
    */
   kind: RunKind;
+  /** The lane the run held (HIVE-185). A close writes this lane's fields only. */
+  lane: string;
   trigger: string;
   startedAt: number;
   /**
@@ -406,6 +417,7 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
     trigger: live.trigger,
     ...(live.extra === undefined ? {} : { extra: live.extra }),
     startedAt: live.startedAt,
+    ...(live.kind === 'standing' && live.lane !== STANDING_LANE ? { lane: live.lane } : {}),
   });
 
   const clearTimers = (live: LiveRun) => {
@@ -795,13 +807,21 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
         gate it always was.
       */
       const kind: RunKind = options?.job === true && parallel > 1 ? 'task' : 'standing';
+      /*
+        The lane this conversation is (HIVE-185). A task run is no lane's: it
+        is sessionless and never resumed, so it neither holds a lane's slot
+        nor reads one's state.
+      */
+      const lane = kind === 'task' ? STANDING_LANE : (options?.lane ?? STANDING_LANE);
+      const onLane = kind === 'standing' && lane !== STANDING_LANE;
 
       /*
-        One conversation at a time, whatever the cap says. Two `--resume`s of
-        the same session would interleave two turns into one transcript, which
-        is the memory corruption task runs exist to avoid by being sessionless.
+        One live run per lane, whatever the cap says. Two `--resume`s of one
+        session would interleave two turns into one transcript, which is the
+        memory corruption task runs exist to avoid by being sessionless. Keyed
+        by lane since HIVE-185: another lane is another conversation.
       */
-      if (kind === 'standing' && live.some((other) => other.kind === 'standing')) {
+      if (kind === 'standing' && live.some((other) => other.kind === 'standing' && other.lane === lane)) {
         return { started: false, refused: 'working' };
       }
 
@@ -835,7 +855,7 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
         };
       }
 
-      const command = deps.command(name, trigger, extra, { kind });
+      const command = deps.command(name, trigger, extra, { kind, ...(onLane ? { lane } : {}) });
 
       if ('problem' in command) {
         return { started: false, refused: 'invalid', reason: command.problem };
@@ -848,7 +868,13 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
         from: name,
         kind: 'event',
         body: `run.started — ${trigger}`,
-        meta: { run, trigger, kind, ...(extra === undefined ? {} : { extra }) },
+        meta: {
+          run,
+          trigger,
+          kind,
+          ...(extra === undefined ? {} : { extra }),
+          ...(onLane ? { lane } : {}),
+        },
       });
 
       /*
@@ -932,7 +958,7 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
 
         finalizeRun(
           name,
-          { run, kind, trigger, startedAt, lastTurn: command.lastTurn },
+          { run, kind, lane, trigger, startedAt, lastTurn: command.lastTurn },
           'failed',
           null,
           message,
@@ -953,6 +979,7 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       const started: LiveRun = {
         run,
         kind,
+        lane,
         trigger,
         ...(extra === undefined ? {} : { extra }),
         startedAt,

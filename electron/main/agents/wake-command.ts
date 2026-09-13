@@ -166,7 +166,7 @@ export type BuildWakeCommand = (
   name: string,
   trigger: string,
   extra?: string,
-  options?: { kind?: RunKind },
+  options?: { kind?: RunKind; lane?: string },
 ) => WakeInvocation | { problem: string };
 
 const describe = (cause: unknown): string =>

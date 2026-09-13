@@ -53,6 +53,7 @@ describe('createRunTracker', () => {
     trigger: string;
     extra?: string;
     kind?: string;
+    lane?: string;
   }[];
   /** What `limits.parallel` says for the agent under test (HIVE-128). */
   let parallel: number;
@@ -90,6 +91,7 @@ describe('createRunTracker', () => {
           trigger,
           ...(extra === undefined ? {} : { extra }),
           ...(options?.kind === undefined ? {} : { kind: options.kind }),
+          ...(options?.lane === undefined ? {} : { lane: options.lane }),
         });
 
         return {
@@ -1565,6 +1567,60 @@ describe('createRunTracker', () => {
       expect(spawnCalls[0]?.file).toBe('claude');
       expect(spawnCalls[0]?.options).toMatchObject({ cwd: '/home/u/.hive/work/a' });
       expect(events).toEqual(['set run-9 a 2']);
+    });
+  });
+
+  describe('lanes (HIVE-185)', () => {
+    it('runs two lanes at once under parallel: 2 — the second starts before the first ends', () => {
+      parallel = 2;
+
+      expect(tracker.run('a', 'ledger', undefined, { lane: 'thread:A' })).toMatchObject({ started: true, run: 'run-1' });
+      expect(tracker.run('a', 'ledger', undefined, { lane: 'thread:B' })).toMatchObject({ started: true, run: 'run-2' });
+      expect(tracker.liveRuns('a').map((run) => run.lane)).toEqual(['thread:A', 'thread:B']);
+      expect(commandArgs.map((call) => call.lane)).toEqual(['thread:A', 'thread:B']);
+    });
+
+    it('refuses a second wake on a lane that is already running: working', () => {
+      parallel = 3;
+      tracker.run('a', 'ledger', undefined, { lane: 'thread:A' });
+
+      expect(tracker.run('a', 'ledger', undefined, { lane: 'thread:A' })).toEqual({ started: false, refused: 'working' });
+      expect(commandCalls).toBe(1);
+    });
+
+    it('refuses a wake over the cap across lanes: saturated', () => {
+      parallel = 2;
+      tracker.run('a', 'ledger');
+      tracker.run('a', 'ledger', undefined, { lane: 'repo:a/x' });
+
+      expect(tracker.run('a', 'ledger', undefined, { lane: 'repo:b/y' })).toMatchObject({ started: false, refused: 'saturated' });
+    });
+
+    it('treats no lane as the standing lane, exactly as before', () => {
+      parallel = 3;
+      tracker.run('a', 'ledger');
+
+      expect(tracker.run('a', 'ledger', undefined, { lane: 'standing' })).toEqual({ started: false, refused: 'working' });
+      expect(commandArgs[0]).not.toHaveProperty('lane');
+      expect(tracker.liveRuns('a')[0]).not.toHaveProperty('lane');
+      expect(ledger[0]?.meta).not.toHaveProperty('lane');
+    });
+
+    it('names a non-standing lane on run.started and on the live summary', () => {
+      parallel = 2;
+      tracker.run('a', 'ledger', undefined, { lane: 'thread:A' });
+
+      expect(ledger[0]).toMatchObject({ body: 'run.started — ledger', meta: { run: 'run-1', lane: 'thread:A' } });
+      expect(tracker.liveRuns('a')[0]).toMatchObject({ run: 'run-1', lane: 'thread:A' });
+    });
+
+    it('never gives a task run a lane', () => {
+      parallel = 3;
+      tracker.run('a', 'manual', 'review', { job: true, lane: 'thread:A' });
+
+      expect(tracker.liveRuns('a')[0]).toMatchObject({ kind: 'task' });
+      expect(tracker.liveRuns('a')[0]).not.toHaveProperty('lane');
+      expect(commandArgs[0]).not.toHaveProperty('lane');
     });
   });
 });
