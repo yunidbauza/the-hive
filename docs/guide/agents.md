@@ -87,10 +87,11 @@ Keys are snake_case. An unknown key is an error, not ignored.
 | `autonomy` | `ask` (ask before anything consequential) or `act` | `ask` |
 | `skills` | skill names to allow | none |
 | `mcp` | `[slack]` | none |
+| `lane` | `thread` or `repo`, see [Lanes](#lanes) | none |
 | `limits.turns` | turns per wake | 40 |
 | `limits.budget_usd` / `limits.daily_usd` | per-wake / per-day spend cap | none |
 | `limits.rotate_after` | wakes before a fresh session | 50 |
-| `limits.parallel` | task runs at once | 1 |
+| `limits.parallel` | runs at once, across lanes and task runs | 1 |
 | `container.*` | run inside a container, see [Containers](containers.md) | none |
 
 A `#` after two or more spaces starts a comment; after one space it is text, so
@@ -112,7 +113,22 @@ A `#` after two or more spaces starts a comment; after one space it is text, so
 - With `check: onchange` (the default), a tick with nothing new is skipped. The **Wake** tile
   counts skips. Use `check: always` when the work lives outside the ledger.
 - An agent that is **asking** skips scheduled wakes; your answer is its wake.
-- `limits.daily_usd` stops scheduled wakes for the rest of the day and says so in the inbox.
+- `limits.daily_usd` holds every wake once the day's spend reaches it, and says so in the
+  inbox. A held wake runs when a run ends or the next day.
+
+## Lanes
+
+`lane: thread` or `lane: repo` lets an agent hold several conversations at once. With
+`thread`, each new ask opens its own conversation and keeps it until that ask closes. With
+`repo`, each `meta.repo` gets one conversation that every ask for that repository joins. The
+agent's standing conversation stays: it takes schedules, broadcasts and anything no lane
+claims. Each lane has its own session, working directory and queue.
+
+Up to `limits.parallel` runs go at once, counted across every lane and task run. A second
+wake on a busy lane waits for that lane's run to end, a wake over the cap waits for any run
+to end, and a wake over the day's budget waits for a run to end or for the next day. Nothing
+is dropped: the entry stays queued on its lane. The mechanism is in
+[agents and the ledger](../agents-and-ledger.md).
 
 ## The tools fence
 

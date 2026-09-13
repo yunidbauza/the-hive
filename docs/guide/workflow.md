@@ -72,6 +72,11 @@ Then one of two things happens:
 
 Either way the branch ends as a **draft** pull request. Nothing marks it ready yet.
 
+A plan split into several PRs goes out as one ask per PR. The builder takes each ask as its
+own conversation, two at a time, so independent PRs build in parallel. A PR that depends on
+another is posted held on the PR it needs (`meta.after`), and reaches the builder when that
+PR merges.
+
 ## Ship
 
 The draft PR goes to the shipper by `ledger_ask`, from your session or from the builder. The
@@ -88,6 +93,10 @@ shipper holds it stage by stage, and each stage is a line in the ledger:
 | `approval` | waits for a review only when one is required or requested, and asks your session once; with no review coming it goes to merge |
 | `merge` | `merge-pr` re-checks every block, merges, tears the branch down, moves the ticket to Done |
 | `closed` | your session gets a "PR merged" notice in its terminal, and closes itself when its own work is done |
+
+Two repositories ship at once: the shipper keeps one conversation per repository, up to
+three. Two PRs on one repository queue, one after the other, because both sync and merge in
+your checkout, and two at once would collide.
 
 Auto-merge is a project's `autoMerge` flag in `~/.hive/config.json`
 ([Settings › Projects](settings.md)). With it on, the shipper's merge call is granted for
