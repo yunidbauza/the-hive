@@ -36,6 +36,18 @@ describe('readEnvironment', () => {
     });
   });
 
+  it('reads an empty run token as no token, even with a run (HIVE-184)', () => {
+    expect(
+      readEnvironment({
+        HIVE_SESSION_ID: 'pr-reviewer',
+        HIVE_HOOK_TOKEN: 'tok',
+        HIVE_RECEIVER_URL: 'http://127.0.0.1:4100',
+        HIVE_RUN_ID: 'run-9',
+        HIVE_RUN_TOKEN: '',
+      }),
+    ).toEqual({ session: 'pr-reviewer', token: 'tok', url: 'http://127.0.0.1:4100', run: 'run-9' });
+  });
+
   it('reads an empty run id as no run at all', () => {
     expect(
       readEnvironment({
