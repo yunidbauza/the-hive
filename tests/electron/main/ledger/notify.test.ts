@@ -373,10 +373,10 @@ describe('createLedgerNotifier', () => {
   });
 
   /**
-   * Whole-branch review, finding 2. The shape production actually emits: an
-   * agent's own `ledger_failed` carries no `meta.run` at all — nothing in
-   * `mcp-host/tools.ts` stamps one — so the dedup this proves has to key off
-   * the party (`entry.from`), not a run id that never arrives.
+   * The fallback: an entry with no `meta.run`, as a session or a log from
+   * before the stamp writes it. The host stamps `meta.run` on every agent
+   * write (HIVE-128), so the dedup keys on the run, and falls back to the
+   * party (`entry.from`) only when no run is named (HIVE-185).
    */
   it('does not mint a second card when the agent already said it failed', () => {
     const { raise, onEntry } = harness();
@@ -449,6 +449,20 @@ describe('createLedgerNotifier', () => {
     );
 
     expect(raise).toHaveBeenCalledTimes(2);
+  });
+
+  it('suppresses only the receipt of the run that said it failed (HIVE-185)', () => {
+    const { raise, onEntry } = harness();
+    onEntry(entry({ from: 'drone', kind: 'failed', body: 'gave up', meta: { run: 'r-A' } }));
+    raise.mockClear();
+
+    // A sibling lane's run fails without saying so: its receipt is the only news.
+    onEntry(entry({ id: 'end-B', from: 'drone', kind: 'event', body: 'run.ended — failed', meta: { run: 'r-B', outcome: 'failed' } }));
+    expect(raise).toHaveBeenCalledTimes(1);
+
+    raise.mockClear();
+    onEntry(entry({ id: 'end-A', from: 'drone', kind: 'event', body: 'run.ended — failed', meta: { run: 'r-A', outcome: 'failed' } }));
+    expect(raise).not.toHaveBeenCalled();
   });
 
   /**

@@ -112,29 +112,24 @@ const slackLinkFor = (
  * turn cap, a budget cap, a kill, a stall. That is also what keeps a
  * three-hourly watcher that found nothing from filing a green card every wake.
  *
- * ## Why `spokenFor` is keyed on the party, not the run (whole-branch review,
- * finding 2)
+ * ## Why `spokenFor` is keyed on the run
  *
- * It used to be keyed on `meta.run`, which only `finalizeRun` ever stamps —
- * the run receipt itself. An agent's own `ledger_failed` goes through
- * `shared/mcp-tools.ts`, whose schema (`ledger-tools.ts`) has no run field and
- * whose `AGENT_PREAMBLE` never tells an agent its own run id, so the
- * agent-posted `failed` this dedup exists to notice never carried one. The
- * dedup could not fire in production, and the old test proved nothing because
- * it hand-built a `meta.run` shape nothing real produces.
+ * The MCP host stamps `meta.run` on every entry a run writes (HIVE-128), and
+ * the receiver checks it against the run's token (HIVE-184). So an agent's own
+ * `failed` and main's `run.ended` receipt for that run carry the same id.
+ * Lanes put several runs of one agent in flight (HIVE-185), and keyed on the
+ * party alone, one run's report would swallow a sibling run's receipt.
  *
- * The party is what both entries agree on: an agent's `failed` and the
- * `run.ended` receipt for the run that just ended are both entries `from` that
- * same agent, and one agent has at most one run in flight. That is a fact
- * this module can already ask `isAgent` about, with no run-tracking to keep in
- * step with `runs.ts`.
+ * The party is the fallback, for an entry that names no run: a session, or a
+ * log written before the stamp.
  */
 export function createLedgerNotifier(
   deps: LedgerNotifierDeps,
 ): (entry: LedgerEntry) => void {
   /**
-   * Agents whose own `ledger_failed` has already been turned into a card, so
-   * the run receipt that follows stays quiet.
+   * Runs whose own `ledger_failed` has already been turned into a card, so
+   * the run receipt that follows stays quiet. A party stands in for a report
+   * that names no run.
    *
    * A run's `event` — the receipt below — is what **consumes** an entry here,
    * on *any* outcome, not only the ones that would otherwise raise a second
@@ -143,6 +138,9 @@ export function createLedgerNotifier(
    * would silently find it already set and go unreported.
    */
   const spokenFor = new Set<string>();
+
+  /** The run an entry speaks for, or its party when it names none (HIVE-185). */
+  const speakerOf = (entry: LedgerEntry): string => str(entry.meta?.run) ?? entry.from;
 
   return (entry) => {
     const meta = entry.meta ?? {};
@@ -260,7 +258,7 @@ export function createLedgerNotifier(
     if (entry.kind === 'done' || entry.kind === 'failed') {
       if (entry.thread !== undefined) deps.dismiss(entry.thread);
       if (!deps.isAgent(entry.from)) return;
-      if (entry.kind === 'failed') spokenFor.add(entry.from);
+      if (entry.kind === 'failed') spokenFor.add(speakerOf(entry));
       const [first, rest] = split(entry.body);
       const link = slackLinkFor(meta);
       deps.raise({
@@ -405,10 +403,15 @@ export function createLedgerNotifier(
     /*
       Consumed here, on any outcome — this is the run that `spokenFor` was
       remembering, whatever it ended as. `Set.delete` answers whether the
-      party was in fact spoken for, which is exactly the dedup check: only
-      suppress the receipt when the agent's own report got there first.
+      run, or the party for a report that named no run, was in fact spoken
+      for, which is exactly the dedup check: only suppress the receipt when
+      the agent's own report got there first. Both deletes run, so a flag is
+      consumed on any outcome.
     */
-    const alreadyReported = spokenFor.delete(entry.from);
+    const run = str(meta.run);
+    const byRun = run !== undefined && spokenFor.delete(run);
+    const byParty = spokenFor.delete(entry.from);
+    const alreadyReported = byRun || byParty;
     if (!CUT_OFF.has(outcome) || alreadyReported) return;
 
     deps.raise({
