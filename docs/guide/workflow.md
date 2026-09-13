@@ -87,7 +87,7 @@ shipper holds it stage by stage, and each stage is a line in the ledger:
 | `findings` | new reviewer comments and bot findings go to the fixer, round by round |
 | `approval` | waits for a review only when one is required or requested, and asks your session once; with no review coming it goes to merge |
 | `merge` | `merge-pr` re-checks every block, merges, tears the branch down, moves the ticket to Done |
-| `closed` | your session is asked whether to close |
+| `closed` | your session gets a "PR merged" notice in its terminal, and closes itself when its own work is done |
 
 Auto-merge is a project's `autoMerge` flag in `~/.hive/config.json`
 ([Settings › Projects](settings.md)). With it on, the shipper's merge call is granted for
@@ -95,6 +95,11 @@ that repository and the approval wait is skipped. With it off, the merge stops a
 [tools fence](agents.md#the-tools-fence) and becomes a card in your inbox: one click merges,
 one click refuses. With no required or requested review, a clean PR goes straight to that
 card.
+
+A session can turn it on for you: ask it to turn auto-merge on, and it calls the
+`project_auto_merge` tool, which always asks you first. You approve that prompt for that
+one call; nothing grants the tool standing, so the next call asks again. Settings ›
+Projects shows the switch as soon as it is written.
 
 ## What you see
 
@@ -121,7 +126,8 @@ not there.
 
 Agents and sessions reach the Hive through MCP tools. The reads and the ledger are granted to
 every agent; the two that write to your Jira are not, and an agent calls them only with a
-`tools:` entry or your consent on a card:
+`tools:` entry or your consent on a card. `project_auto_merge` is narrower still: every
+call asks you, and no `tools:` entry can grant it:
 
 | Tool | Answers | Grant |
 | --- | --- | --- |
@@ -132,6 +138,7 @@ every agent; the two that write to your Jira are not, and an agent calls them on
 | `jira_get` | the ticket: description, parent, comments and links, through the token the Work tab holds | standing |
 | `jira_transition` | a status move by name; never backwards | `tools:` entry or a card |
 | `jira_comment` | a comment, from markdown | `tools:` entry or a card |
+| `project_auto_merge` | turns a project's auto-merge on or off; answers the projects list | a card or prompt, every call |
 | `approve` | the fence's own prompt tool; the CLI calls it, you never do | standing |
 
 The builder and the shipper list `jira_transition`; nobody shipped lists `jira_comment`. The
