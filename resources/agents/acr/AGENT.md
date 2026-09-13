@@ -6,6 +6,7 @@ model: sonnet
 wake:
   on: [ledger]
 autonomy: act
+lane: thread
 skills: [pr-review]
 tools: [Read, Grep, Glob, Write, TodoWrite, Skill, ReportFindings, Bash, Agent]
 limits:

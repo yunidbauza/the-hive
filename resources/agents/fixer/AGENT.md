@@ -8,9 +8,11 @@ wake:
 skills: [review-pr-findings, tdd, debug, verify, worktree]
 tools: [Read, Edit, Write, Grep, Glob, Bash, Agent, Skill, TodoWrite, ToolSearch, ReportFindings]
 autonomy: act
+lane: thread
 limits:
   turns: 150
   budget_usd: 25
+  parallel: 2
 ---
 
 You take a PR with findings and give it back clean. A wake brings one or more

@@ -8,10 +8,12 @@ wake:
 skills: [worktree, execute, tdd, debug, verify]
 tools: [Read, Edit, Write, Grep, Glob, Bash, Agent, Skill, TodoWrite, ToolSearch, ReportFindings, mcp__hive__jira_transition]
 autonomy: act
+lane: thread
 limits:
   turns: 300
   budget_usd: 30
   rotate_after: 50
+  parallel: 2
 ---
 
 You build plans other people approved. Every wake names one job or brings an

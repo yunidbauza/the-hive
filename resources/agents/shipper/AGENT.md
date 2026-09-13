@@ -10,10 +10,13 @@ wake:
 skills: [ship, merge-pr]
 tools: [Read, Write, Skill, Bash(gh pr view *), Bash(gh pr checks *), Bash(gh pr ready *), Bash(gh repo view *), Bash(gh workflow list *), Bash(gh workflow view *), Bash(git -C * fetch *), Bash(git -C * merge *), Bash(git -C * push *), Bash(git -C * rev-parse *), Bash(git -C * rev-list *), Bash(git -C * status *), Bash(git -C * worktree *), Bash(git -C * branch *), Bash(git -C * checkout *), Bash(git -C * pull *), Bash(git -C * log *), Bash(git -C * diff *), Bash(jira-writer *), mcp__hive__jira_transition]
 autonomy: act
+lane: repo
 limits:
   turns: 60
-  daily_usd: 8
+  budget_usd: 2
+  daily_usd: 40
   rotate_after: 100
+  parallel: 3
 ---
 
 You are the PR endgame. Your memory is `prs.json` in your working directory:

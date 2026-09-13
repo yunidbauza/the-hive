@@ -100,4 +100,24 @@ describe('the Jira writes are consented, not standing', () => {
       expect(toolsOf(name).some((rule) => matches(rule, 'mcp__hive__jira_comment', {}))).toBe(false);
     }
   });
+
+  it.each([
+    ['shipper', 'repo', 3],
+    ['builder', 'thread', 2],
+    ['fixer', 'thread', 2],
+    ['acr', 'thread', 3],
+  ] as const)('%s lanes by %s with parallel %i (HIVE-189)', (name, lane, parallel) => {
+    const source = readFileSync(join(resources, 'agents', name, 'AGENT.md'), 'utf8');
+    const result = parseAgent(source, { folder: name, skillNames: shippedSkills, hiveSkillNames: shippedSkills, integrations: ['slack'] });
+    if (!('def' in result)) throw new Error(`${name} does not parse`);
+    expect(result.def.lane).toBe(lane);
+    expect(result.def.limits.parallel).toBe(parallel);
+  });
+
+  it('gives the shipper a day that fits a real shipping day, and a per-run cap its lanes reserve (HIVE-189)', () => {
+    const source = readFileSync(join(resources, 'agents', 'shipper', 'AGENT.md'), 'utf8');
+    const result = parseAgent(source, { folder: 'shipper', skillNames: shippedSkills, hiveSkillNames: shippedSkills, integrations: ['slack'] });
+    if (!('def' in result)) throw new Error('shipper does not parse');
+    expect(result.def.limits).toMatchObject({ dailyUsd: 40, budgetUsd: 2, parallel: 3 });
+  });
 });
