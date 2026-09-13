@@ -7,7 +7,15 @@ import {
   expectAgentSource,
   fillAgentSource,
 } from './fixtures/agent-source';
-import { launchHive } from './fixtures/hive-app';
+import { launchHive, SHIPPED_AGENTS } from './fixtures/hive-app';
+
+/**
+ * The authored agent's own row in the fleet table. The shipped agents are
+ * seeded beside it on every launch (HIVE-162), so "the" agent row is no longer
+ * one row (retro D).
+ */
+const watcherRow = (page: Page) =>
+  page.getByTestId('agent-row').filter({ hasText: 'slack-watcher' });
 
 /**
  * The Agents tab and the agent view, against the built app (HIVE-116).
@@ -178,7 +186,11 @@ test('lists an authored agent in the rail, grouped by state', async ({}, testInf
     await expect(panel.getByText('Sleeping', { exact: true })).toBeVisible();
     await expect(panel.getByRole('button', { name: /slack-watcher/ })).toBeVisible();
     // The status is a word on screen, never colour alone.
-    await expect(panel.getByText('sleeping', { exact: true })).toBeVisible();
+    await expect(
+      panel
+        .getByRole('button', { name: /slack-watcher/ })
+        .getByText('sleeping', { exact: true }),
+    ).toBeVisible();
   } finally {
     await app.close();
   }
@@ -325,9 +337,12 @@ test('lists agents in the fleet table, under a heading, in the same columns', as
 
     const table = page.getByTestId('session-table');
 
-    await expect(table.getByText(/AGENTS · 1/)).toBeVisible();
+    // The authored one, plus the shipped agents seeded beside it.
+    await expect(
+      table.getByText(`AGENTS · ${SHIPPED_AGENTS.length + 1}`),
+    ).toBeVisible();
 
-    const row = page.getByTestId('agent-row');
+    const row = watcherRow(page);
 
     await expect(row).toBeVisible();
     // The wake, in the two cells a session spends on its checkout.
@@ -366,7 +381,7 @@ test('opens the agent view from the fleet table row', async ({}, testInfo) => {
   try {
     await authorAgent(page);
 
-    await page.getByTestId('agent-row').getByRole('button').click();
+    await watcherRow(page).getByRole('button').click();
 
     await expect(page.locator('[data-view="agent"]')).toBeVisible();
   } finally {
@@ -420,7 +435,7 @@ test('pauses and resumes from the console, and the table agrees', async ({}, tes
   try {
     await authorAgent(page);
 
-    const status = page.getByTestId('agent-row').locator('[data-col="status"]');
+    const status = watcherRow(page).locator('[data-col="status"]');
     const input = page.getByRole('textbox', { name: 'Overmind command' });
     const transcript = page.getByRole('main').locator('.xterm');
 
@@ -491,13 +506,21 @@ test('pauses from the agent view, and the rail agrees', async ({}, testInfo) => 
 
     const panel = page.locator('[data-panel="agents"]');
 
-    await expect(panel.getByText('sleeping', { exact: true })).toBeVisible();
+    await expect(
+      panel
+        .getByRole('button', { name: /slack-watcher/ })
+        .getByText('sleeping', { exact: true }),
+    ).toBeVisible();
 
     await panel.getByRole('button', { name: /slack-watcher/ }).click();
     await expect(page.locator('[data-view="agent"]')).toBeVisible();
     await page.getByRole('button', { name: /Pause/ }).click();
 
-    await expect(panel.getByText('paused', { exact: true })).toBeVisible();
+    await expect(
+      panel
+        .getByRole('button', { name: /slack-watcher/ })
+        .getByText('paused', { exact: true }),
+    ).toBeVisible();
     // The control names the move, not the state — one button, not two.
     await expect(page.getByRole('button', { name: /Resume/ })).toBeVisible();
   } finally {

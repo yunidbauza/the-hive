@@ -161,7 +161,7 @@ test('draws two live task runs and counts them in the rail and the fleet', async
 
     // And the fleet table, which draws the same count from the same push.
     await expect(
-      page.getByTestId('agent-row').locator('[data-col="status"]'),
+      page.getByTestId('agent-row').filter({ hasText: 'fanout' }).locator('[data-col="status"]'),
     ).toHaveText('working ·2');
 
     // …and the run log draws each of them as its own row, in the receipts'
