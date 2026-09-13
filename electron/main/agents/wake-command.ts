@@ -68,7 +68,8 @@ export interface WakeCommandDeps {
   /** `~/.hive/agents`. Read per call, so a relocated config is honoured. */
   agentsRoot: () => string;
   /** `~/.hive/work/<name>`, created before the spawn. */
-  workdir: (name: string) => string;
+  /** The lane's working directory (HIVE-188); `standing` is the agent's own. */
+  workdir: (name: string, lane: string) => string;
   /** `<userData>/hive/agents/<name>.system.md`, rewritten before the spawn. */
   promptFile: (name: string) => string;
   /** `<userData>/hive/plugin` — the skills The Hive generates. */
@@ -389,7 +390,8 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
       pending === undefined &&
       previous.sessionUuid !== undefined &&
       (forced || previous.runsSinceRotate >= def.limits.rotateAfter);
-    const workdir = deps.workdir(name);
+    // A task run has always run in the agent's own directory; a lane runs in its own (HIVE-188).
+    const workdir = deps.workdir(name, task ? STANDING_LANE : lane);
     const systemPrompt = deps.promptFile(name);
     let agentMcp: string | null = null;
 

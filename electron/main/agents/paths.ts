@@ -1,6 +1,6 @@
 import { dirname, join } from 'node:path';
 
-import { AGENTS_DIR } from '@shared/agent-contract';
+import { AGENTS_DIR, STANDING_LANE } from '@shared/agent-contract';
 import { LEDGER_DIR } from '@shared/ledger-contract';
 
 import { configPath } from '../config/paths';
@@ -50,6 +50,17 @@ export const agentStateFile = (): string =>
  */
 export const agentWorkdir = (name: string): string =>
   join(dirname(configPath()), 'work', name);
+
+/**
+ * A lane's working directory (HIVE-188). The standing lane keeps the agent's
+ * own, so files already there (the shipper's `prs.json`) become the standing
+ * lane's. Every other lane gets `lanes/<key>`, encoded one-to-one so no two
+ * keys can ever share a directory.
+ */
+export const laneWorkdir = (name: string, lane: string): string =>
+  lane === STANDING_LANE
+    ? agentWorkdir(name)
+    : join(agentWorkdir(name), 'lanes', encodeURIComponent(lane));
 
 /**
  * `<userData>/hive/agents/<name>.system.md` — the generated system prompt.
