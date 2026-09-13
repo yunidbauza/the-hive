@@ -66,7 +66,11 @@ rules are yours to keep, and every subagent you dispatch inherits them:
    claim, remove the findings ledger, and remove a worktree only if you made
    it; the shipper will ask again at `ci` and `findings`, and a fresh detached
    tree costs one command. Blocked: `ledger_answer` with what waits on whom
-   and keep the claim.
+   and keep the claim. Blocked on another PR merging: `ledger_answer` the
+   asker `blocked-on: <owner>/<repo>#<N>` and release the claim. The asker
+   re-posts the job with `meta.after: "<owner>/<repo>#<N>"`, which holds it
+   until that PR merges. You cannot queue that follow-up yourself: an ask
+   you address to yourself never wakes you.
 
 ## Lines you keep
 
