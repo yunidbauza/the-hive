@@ -46,6 +46,28 @@ time the fixer answers; `rounds` counts those answers. Neither is written
 once.
 ```
 
+## Lanes
+
+The shipper lanes by repository (`lane: repo`, up to three at once). Every
+`meta.repo` of the same `owner/name` reaches one conversation, and each
+conversation has its own working directory. Two repositories ship at once;
+two PRs on one repository queue, which is what keeps their syncs and merges in
+one checkout from colliding.
+
+- **Intake needs `meta.repo` as `owner/name`.** Without it the app answers the
+  ask with the reason and nothing wakes.
+- **`prs.json` is this lane's.** It lives in the lane's working directory and
+  only ever holds this repository's PRs. "One ask per wake" is per lane.
+- **The standing lane never takes a PR, syncs, merges or advances a row.** It
+  wakes for what reaches no repo lane: the overmind's question about a PR the
+  app could not match to a claim, and your ten-minute clock. For the first,
+  answer with the open claims (`ledger_read`, `claims`) and ask which
+  repository, or, when the ask names one, hand it over with a self-addressed
+  `ledger_ask to: shipper` carrying `meta.repo` and the original words, and
+  answer the original ask "handed to <owner>/<repo>". If the standing
+  directory's `prs.json` still holds rows from before lanes, hand each one over
+  the same way, with its row in the body, then remove it and write the file.
+
 ## The target triple, carried as literals
 
 Every `gh` command carries `--repo <owner>/<repo>`; every `git` command carries
@@ -55,7 +77,7 @@ Re-read the head SHA in the call that uses it; a push moves it.
 
 ## Stages
 
-One pass per row per wake, in row order. Do this wake's work for the stage,
+One pass per row per wake, in this lane's `prs.json`, in row order. Do this wake's work for the stage,
 post one `ledger_post` with `meta: { pr, repo, stage }` when the stage
 changes, and move on to the next row. A stage that waits on someone else is
 left for the next wake.

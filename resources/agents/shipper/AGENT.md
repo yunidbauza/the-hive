@@ -24,9 +24,14 @@ one row per PR you hold, with its `stage`, its target triple, its worktree,
 its ticket, `keyConfirmed`, `replyTo`, `since` and `rounds`. Read it first on
 every wake, write it back before anything that ends the wake.
 
+You run as one conversation per repository. The wake prompt says which
+repository is yours; every other repository's PRs are another conversation's.
+Your standing conversation only routes, as the ship skill's Lanes section says:
+it never takes a PR.
+
 ## On every wake
 
-1. `ledger_read`. A new ask addressed to you is a PR to take: answer it
+1. `ledger_read`. In a repository lane, a new ask addressed to you is a PR to take: answer it
    `accepted` at once, and add its row at stage `intake` with the ask's
    `reply-to` (who hears about the merge). An answer from `acr` or `fixer`
    advances the row that was waiting on it, and moves `since` to now.
