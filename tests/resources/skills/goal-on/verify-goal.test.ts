@@ -15,7 +15,12 @@ import { describe, expect, it } from 'vitest';
 describe('goal-on verifier', () => {
   it('passes its node:test suite', () => {
     const suite = fileURLToPath(new URL('./test-verify-goal.mjs', import.meta.url));
-    const run = spawnSync(process.execPath, ['--test', suite], {
+    /*
+      The reporter is pinned. Node 22 printed TAP by default and Node 24 prints
+      `spec` (`ℹ pass N`), so an unpinned run passed on one Node and failed on
+      the other while the suite itself was green.
+    */
+    const run = spawnSync(process.execPath, ['--test', '--test-reporter=tap', suite], {
       encoding: 'utf8',
       env: { ...process.env, HIVE_GOALS_DIR: '', HIVE_RECEIVER_URL: '' },
     });
