@@ -73,6 +73,12 @@ git -C "$REPO" worktree add --detach "$WT" "origin/<branch>"
 git -C "$WT" push origin HEAD:<branch>      # after each round's commits
 ```
 
+Then write `$WT/.hive/.gitignore` containing the single line `*`, if it is
+not there, whether the worktree is new or reused. `.hive/` is the Hive's
+working folder (plans, specs, a builder's progress notes). Ignored from the
+start, it never shows as untracked, and `merge-pr`'s teardown removes the
+worktree without `--force`.
+
 Then install and baseline as above. Put the path in every `ledger_post` you
 write for the job, as `meta.worktree`, with the project checkout it was cut
 from as `meta.checkout` (the `repo` path your job named): the shipper tears
