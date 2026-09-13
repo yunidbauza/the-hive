@@ -20,6 +20,7 @@ import {
   resolveBrief,
   prVerdict,
   hasBranchRef,
+  ghPrCheck,
   section,
   checkboxItems,
   hasEvidence,
@@ -531,6 +532,54 @@ test('the branch ref is what proves we are standing in the right repository', ()
   assert.equal(hasBranchRef(repo, 'probe-branch'), true);
   assert.equal(hasBranchRef(repo, 'no-such-branch-2f9a'), false, 'a branch this repo never had');
   assert.equal(hasBranchRef(mkdtempSync(join(tmpdir(), 'not-a-repo-')), 'probe-branch'), false, 'not a repo at all');
+});
+
+// --- after the shipper's teardown, the repository is confirmed by gh ---------
+//
+// Retro F: goal 5142b4fa had every Outcome box ticked and PR #255 MERGED on its
+// branch, and still stayed ACTIVE. The shipper's merge-pr teardown deletes the
+// branch locally and on origin, so the ref check alone answered 'unknown' for every
+// goal shipped through the shipper. With the ref gone, `gh repo view` succeeding in
+// the directory is what says we stand in a checkout of the repository gh resolves.
+
+/** A stand-in for spawnSync that answers git and gh by what the test says is true. */
+const stubRun = ({ ref, repo, prs = [] }) => {
+  const calls = [];
+  const run = (cmd, args) => {
+    calls.push(`${cmd} ${args[0] === '-C' ? args[2] : args[0]}`);
+    if (cmd === 'git') return { status: ref ? 0 : 1, stdout: '' };
+    if (cmd === 'gh' && args[0] === 'repo') {
+      return repo ? { status: 0, stdout: '{"nameWithOwner":"a/b"}' } : { status: 1, stdout: '' };
+    }
+    if (cmd === 'gh' && args[0] === 'pr') return { status: 0, stdout: JSON.stringify(prs) };
+    return { status: 1, stdout: '' };
+  };
+  return { run, calls };
+};
+
+const shippedHeader = 'status: ACTIVE\nbranch: goal/x\n';
+const merged = [{ number: 255, state: 'MERGED', isDraft: false, headRefName: 'goal/x' }];
+
+test('ghPrCheck: a merged PR matches once the shipper has deleted its branch', () => {
+  const { run } = stubRun({ ref: false, repo: true, prs: merged });
+  assert.equal(ghPrCheck(shippedHeader, tmpdir(), run), 'match');
+});
+
+test('ghPrCheck: with the repo confirmed and the branch gone, no PR is a real mismatch', () => {
+  const { run } = stubRun({ ref: false, repo: true, prs: [] });
+  assert.equal(ghPrCheck(shippedHeader, tmpdir(), run), 'mismatch');
+});
+
+test('ghPrCheck: with the branch gone and no repo gh can resolve, it stays unknown', () => {
+  const { run, calls } = stubRun({ ref: false, repo: false, prs: merged });
+  assert.equal(ghPrCheck(shippedHeader, tmpdir(), run), 'unknown');
+  assert.ok(!calls.includes('gh pr'), 'never asks for PRs from a repository it could not confirm');
+});
+
+test('ghPrCheck: with the branch ref present, nothing changes and gh repo view is not asked', () => {
+  const { run, calls } = stubRun({ ref: true, repo: false, prs: merged });
+  assert.equal(ghPrCheck(shippedHeader, tmpdir(), run), 'match');
+  assert.ok(!calls.includes('gh repo'), 'the ref is the fast path');
 });
 
 test('receiptFor: one event per written status, naming the goal and its budget', () => {

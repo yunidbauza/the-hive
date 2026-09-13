@@ -272,9 +272,31 @@ export function prVerdict(branch, stdout) {
  * branch ref is the cheap local tell: it exists in the repo the work happened in
  * (worktree branches share the ref namespace) and not in an unrelated one.
  */
-export function hasBranchRef(dir, branch) {
+export function hasBranchRef(dir, branch, run = spawnSync) {
   try {
-    const r = spawnSync('git', ['-C', dir, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], {
+    const r = run('git', ['-C', dir, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], {
+      encoding: 'utf8',
+      timeout: GH_TIMEOUT_MS,
+    });
+    return !r.error && r.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Is `dir` a checkout of a repository `gh` can resolve?
+ *
+ * The other way to know we stand in the right repository, for when the branch ref is
+ * gone. `gh repo view` answers only from a directory whose remote names a GitHub
+ * repository, and `gh pr list` resolves the same repository from the same directory.
+ * A plain directory, an unrelated local repo with no GitHub remote, or an
+ * unauthenticated `gh` all fail it, and the verdict stays 'unknown'.
+ */
+export function repoConfirmed(dir, run = spawnSync) {
+  try {
+    const r = run('gh', ['repo', 'view', '--json', 'nameWithOwner'], {
+      cwd: dir,
       encoding: 'utf8',
       timeout: GH_TIMEOUT_MS,
     });
@@ -289,7 +311,7 @@ export function hasBranchRef(dir, branch) {
  * rather than by the checked-out branch, because `workspace: worktree` briefs are
  * verified from a session whose cwd is the shared checkout, sitting on main.
  */
-export function ghPrCheck(header, cwd) {
+export function ghPrCheck(header, cwd, run = spawnSync) {
   const branch = headerValue(header, 'branch');
   if (!branch || /^TBD/i.test(branch)) return 'unknown';
 
@@ -311,11 +333,17 @@ export function ghPrCheck(header, cwd) {
 
   // Standing in the wrong repository produces a confident, wrong 'mismatch'. Refuse to
   // answer instead: 'unknown' releases the turn without claiming anything either way.
-  if (!hasBranchRef(dir, branch)) return 'unknown';
+  //
+  // The branch ref alone was the wrong test (retro F). The shipper's merge-pr teardown
+  // deletes the branch locally and on origin, so every goal shipped through the
+  // shipper answered 'unknown' forever and never reached DONE. The ref stays the fast
+  // path; when it is gone, a directory `gh` resolves to a GitHub repository is what
+  // identifies the repo, and then 'no PR' is a real answer.
+  if (!hasBranchRef(dir, branch, run) && !repoConfirmed(dir, run)) return 'unknown';
 
   let stdout = null;
   try {
-    const r = spawnSync(
+    const r = run(
       'gh',
       ['pr', 'list', '--head', branch, '--state', 'all', '--json', 'number,state,isDraft,headRefName', '--limit', '30'],
       { cwd: dir, encoding: 'utf8', timeout: GH_TIMEOUT_MS },
