@@ -725,6 +725,7 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
      */
     'getRemote',
     'onCloneDone',
+    'onConfigChanged',
     'reload',
     'removeProject',
     'renameProject',

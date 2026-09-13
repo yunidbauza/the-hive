@@ -104,6 +104,8 @@ export function projectsDirectoryFor(snapshot: ConfigSnapshot): ProjectsDirector
 export interface ProjectAutoMergeDeps {
   config: () => ConfigSnapshot;
   setAutoMerge: (request: SetProjectAutoMergeRequest) => ConfigSnapshot;
+  /** Told the snapshot a landed write produced, so the renderer can show it. */
+  announce?: (snapshot: ConfigSnapshot) => void;
 }
 
 /**
@@ -140,5 +142,6 @@ export function projectAutoMergeFor(
     );
   }
 
+  deps.announce?.(written);
   return projectsDirectoryFor(written);
 }

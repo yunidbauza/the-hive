@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 
 import { App } from '@/app';
 
-import { loadProjectConfig } from '@lib/project-config';
+import { loadProjectConfig, watchProjectConfig } from '@lib/project-config';
 import { readSessionHistory } from '@lib/session-history';
 import { useHiveStore } from '@stores/hive-store';
 import '@/styles/tokens.css';
@@ -26,6 +26,9 @@ if (!rootElement) {
  * A no-op in the browser demo, where there is no bridge to ask.
  */
 void loadProjectConfig();
+// A config write the renderer did not make, pushed by main (retro B). For the
+// app's lifetime, so the unsubscribe is not kept.
+watchProjectConfig();
 
 /**
  * Put last run's fleet back on the table (HIVE-87).

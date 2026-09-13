@@ -3097,6 +3097,8 @@ export function registerIpcHandlers(
       const directory = projectAutoMergeFor(request, {
         config: getConfig,
         setAutoMerge: setProjectAutoMerge,
+        // Settings › Projects shows a write it did not make (retro B, Task 4).
+        announce: (snapshot) => send(CH.configChanged, snapshot),
       });
       console.info(
         `[projects] ${caller} set autoMerge ${request.on ? 'on' : 'off'} on ${request.project}`,

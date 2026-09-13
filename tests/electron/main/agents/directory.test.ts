@@ -308,6 +308,20 @@ describe('projectAutoMergeFor (retro B)', () => {
     expect(onDisk('the-hive')).toBe(true);
   });
 
+  it('announces the snapshot the write produced, and nothing on a refusal', async () => {
+    const { deps } = await load();
+    const announce = vi.fn();
+
+    projectAutoMergeFor({ project: 'hive', on: true }, { ...deps, announce });
+
+    expect(announce).toHaveBeenCalledTimes(1);
+    const announced = announce.mock.calls[0]?.[0] as { projects: { id: string; autoMerge?: boolean }[] };
+    expect(announced.projects.find((entry) => entry.id === 'the-hive')?.autoMerge).toBe(true);
+
+    expect(() => projectAutoMergeFor({ project: 'nope', on: true }, { ...deps, announce })).toThrow();
+    expect(announce).toHaveBeenCalledTimes(1);
+  });
+
   it('finds a project by its id as well, and turns it off again', async () => {
     const { deps } = await load();
 
