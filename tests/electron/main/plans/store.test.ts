@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -308,6 +308,26 @@ describe('createPlans: plan file and plan mode (HIVE-180)', () => {
       ],
       allDone: false,
     });
+  });
+
+  it("reads plan mode's plan from tool_response, where claude 2.1.270 sends it", () => {
+    // PostToolUse carries `tool_input: {}`; only PreToolUse has `tool_input.plan`.
+    const post = readFileSync(join(__dirname, '../../../fixtures/hooks/exit-plan-mode-2.1.270.jsonl'), 'utf8')
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .map((line) => JSON.parse(line) as { hook_event_name: string; tool_input: unknown; tool_response?: unknown })
+      .find((body) => body.hook_event_name === 'PostToolUse');
+    const plans = createPlans({ send: vi.fn() });
+
+    void plans.onTool({
+      entityId: 'sess-01',
+      toolName: 'ExitPlanMode',
+      toolInput: post?.tool_input,
+      toolResponse: post?.tool_response,
+    });
+
+    expect(plans.get('sess-01')?.source).toBe('plan-mode');
+    expect(plans.get('sess-01')?.tasks.map((task) => task.id)).toEqual(['1', '2']);
   });
 
   it('a plan-mode plan with no tasks, or no plan string, offers nothing', () => {

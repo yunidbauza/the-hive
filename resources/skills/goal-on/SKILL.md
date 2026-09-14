@@ -154,9 +154,15 @@ writes `DONE`.
 2. `hive:worktree` (or, for `current`, `git checkout -b goal/<slug>
    origin/<default>`). Record `branch:`, `repo:` and `worktree:` as absolute
    paths: the verifier's PR check runs `gh` from `worktree:` or `repo:`.
-3. Big enough to plan? `hive:plan` straight from the brief (no brainstorm:
-   the brief is the design, and every question was asked in Phase 1), then
-   `hive:execute` inline. Otherwise implement.
+3. Plan, always: the plan file is what the Hive's plan panel reads, and a
+   terminal session has no task tools to fall back on. Big enough to plan?
+   `hive:plan` straight from the brief (no brainstorm: the brief is the
+   design, and every question was asked in Phase 1), then `hive:execute`
+   inline. Otherwise write a short one yourself, a `## Task N: <name>` per
+   Outcome item with its `- [ ]` steps, and tick each step as it lands.
+   Either way it goes in `.hive/plans/YYYY-MM-DD-goal-<slug>.md` under the
+   directory you are working in (the worktree, when there is one): the Hive
+   reads a plan file only from under the session's own cwd.
 4. `hive:verify`: the repository's gates, a browser drive for any UI surface.
 5. Append the output. Push. `gh pr create --draft`. Record the PR URL in
    the evidence and **tick the items now**: `ledger_ask` ends the turn, so

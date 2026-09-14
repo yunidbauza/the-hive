@@ -134,8 +134,12 @@ export function createPlans({
     onTool(call) {
       if (call.toolName === 'Write' || call.toolName === 'Edit') return readPlan(call);
       if (call.toolName === 'ExitPlanMode') {
-        // Source 3: plan mode's approved plan, every task proposed.
-        const plan = (call.toolInput as { plan?: unknown } | null | undefined)?.plan;
+        // Source 3: plan mode's approved plan, every task proposed. claude
+        // 2.1.270's PostToolUse sends `tool_input: {}` and the plan in
+        // `tool_response.plan`; older builds sent it in the input.
+        const plan =
+          (call.toolResponse as { plan?: unknown } | null | undefined)?.plan ??
+          (call.toolInput as { plan?: unknown } | null | undefined)?.plan;
         const tasks = typeof plan === 'string' ? parsePlanMode(plan) : [];
         if (tasks.length > 0) {
           offer(call.entityId, 'plan-mode', { entityId: call.entityId, source: 'plan-mode', tasks, allDone: false });
