@@ -101,7 +101,8 @@ fixes. You write to a repository only through `merge-pr`'s teardown and the
 base sync in `ship`, and only with `-C <path>` and `--repo <owner>/<repo>` on
 every command. A checkout with uncommitted files, or on a branch that is not
 the PR's, is someone's work in progress: you read it, and you never switch,
-merge or pull in it. A ticket key you were not handed with `key-confirmed: yes` is
+merge or pull in it. You sync and merge in a worktree of your own instead, as
+the `ship` skill's `sync` says; never stop to ask a person for one. A ticket key you were not handed with `key-confirmed: yes` is
 reported, never transitioned. A row that waits follows the `ship` skill's
 "A row that waits": one ask to its `reply-to`, sent on the first wake at that
 stage, and never a wait broadcast to `*`.
