@@ -122,10 +122,10 @@ function Stat({ pct, detail, label }: StatProps) {
  *
  * ## Width, and what actually happens when the header narrows
  *
- * This chip is the thing that gives. `header.tsx` puts it inside the `flex-1`
- * zone while the counts zone sizes to its content, so the deficit lands here —
- * and `overflow-hidden` on the row lets the *stats* fall off the end rather
- * than forcing the header to scroll.
+ * The fleet counts give first: they drop to bare numbers so this chip keeps its
+ * stats (`status-counts.tsx`). Only past that does the deficit land here, and
+ * `overflow-hidden` on the row lets the *stats* fall off the end rather than
+ * forcing the header to scroll.
  *
  * It **clips rather than ellipsises**, and that is deliberate rather than a
  * `truncate` that failed. `text-overflow` acts on inline content; every child

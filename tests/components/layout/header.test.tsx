@@ -76,7 +76,7 @@ describe('Header', () => {
 
     expect(screen.getByText('The Hive')).toBeInTheDocument();
     expect(screen.getByText(/Opus 4.5 · high/)).toBeInTheDocument();
-    expect(screen.getByText('4 working')).toBeInTheDocument();
+    expect(screen.getByTestId('status-counts')).toHaveTextContent('4 working');
     expect(
       screen.getByRole('button', { name: 'Switch to light theme' }),
     ).toBeInTheDocument();
@@ -122,6 +122,29 @@ describe('Header', () => {
       expect(counts).toHaveTextContent('4 working');
       expect(controls).not.toHaveTextContent('4 working');
       expect(controls).toHaveTextContent('New session');
+    });
+
+    /**
+     * The counts zone takes the leftover width and the chips zone does not, so
+     * a narrow window compacts the counts before it clips the chip. The zone is
+     * the size container the counts' words query, in the counts' own font so
+     * its `ch` units are theirs. `rail-alignment.spec.ts` measures the effect.
+     */
+    it('gives the counts the leftover width, as a container in their font', () => {
+      render(<Header />);
+
+      const [left, counts] = Array.from(screen.getByRole('banner').children);
+      expect(left).toHaveClass('min-w-0');
+      expect(left).not.toHaveClass('flex-1');
+      expect(counts).toHaveClass(
+        '@container',
+        'flex-1',
+        'min-w-[18ch]',
+        'justify-end',
+        'font-mono',
+        'text-xs',
+      );
+      expect(counts).not.toHaveClass('shrink-0');
     });
 
     /**
@@ -249,7 +272,7 @@ describe('Header', () => {
 
     expect(screen.queryByText(/Opus 4.5/)).not.toBeInTheDocument();
     expect(screen.getByText('The Hive')).toBeInTheDocument();
-    expect(screen.getByText('4 working')).toBeInTheDocument();
+    expect(screen.getByTestId('status-counts')).toHaveTextContent('4 working');
   });
 
   describe('theme toggle', () => {
