@@ -18,9 +18,22 @@ describe('restartRequired', () => {
     ['server bind', { server: { ...boot.server, bind: { ...boot.server.bind, port: 7500 } } }],
     ['login environment', { importLoginEnv: !boot.importLoginEnv }],
     ['login environment', { shell: '/bin/bash' }],
-    ['remote attach', { remote: { ...boot.remote, mode: boot.remote.mode === 'local' ? 'remote' : 'local' } }],
   ] as const)('names %s when it changed', (label, over) => {
     expect(restartRequired(boot, edited(over as Partial<ConfigSnapshot>))).toEqual([label]);
+  });
+
+  /*
+    `remote.mode` is mutated live by Attach/Detach (`set-remote.ts`), and the
+    Settings UI's own switch for it says "Applies immediately" — so, unlike
+    everything else in this list, it must never require a restart.
+  */
+  it('never names remote attach: Attach/Detach applies live, not at launch', () => {
+    expect(
+      restartRequired(
+        boot,
+        edited({ remote: { ...boot.remote, mode: boot.remote.mode === 'local' ? 'remote' : 'local' } }),
+      ),
+    ).toEqual([]);
   });
 
   it('names each field once, in a fixed order', () => {

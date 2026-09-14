@@ -234,6 +234,13 @@ export function AdvancedSection() {
   const [restart, setRestart] = useState<string[]>([]);
   /** A reload has landed and its outcome has not been read off yet. */
   const [pending, setPending] = useState(false);
+  /**
+   * The last reload's channel failed, so `snapshot` never moved (Settings
+   * review). Cleared by the next reload's own outcome, success or failure —
+   * never implicitly, or a stale failure would linger under a success it no
+   * longer describes.
+   */
+  const [reloadFailed, setReloadFailed] = useState(false);
 
   /**
    * Keyed on *whether* there is a snapshot, never on the snapshot itself.
@@ -327,7 +334,21 @@ export function AdvancedSection() {
   }
 
   const onReload = async (): Promise<void> => {
-    setRestart(await reloadProjectConfig());
+    const next = await reloadProjectConfig();
+
+    /*
+      `null` means the channel failed and the snapshot never moved: report
+      that distinctly rather than firing the success effect below against a
+      stale read, and leave `restart` exactly as it was — a real "Restart to
+      apply" from before this click is still true and must stay on screen.
+    */
+    if (next === null) {
+      setReloadFailed(true);
+      return;
+    }
+
+    setReloadFailed(false);
+    setRestart(next);
     setPending(true);
   };
 
@@ -383,7 +404,12 @@ export function AdvancedSection() {
             Reload
           </button>
         </div>
-        {reloaded === null ? (
+        {reloadFailed ? (
+          <p className="text-[11.5px] text-red">
+            Reload failed — config, skills and agents are unchanged. Check the
+            log and try again.
+          </p>
+        ) : reloaded === null ? (
           <p className="text-[11.5px] text-subtle">
             The file is deliberately not watched. Edit it by hand and reload here
             — a config that changed under a live session would leave the terminal
@@ -394,6 +420,11 @@ export function AdvancedSection() {
         ) : (
           <p className="text-[11.5px] text-green">{reloaded}</p>
         )}
+        {/*
+          Independent of `reloadFailed`: a restart requirement a past reload
+          found is still true, and must not disappear because a later reload's
+          channel happened to fail.
+        */}
         {reloaded !== null && restart.length > 0 && (
           <p className="text-[11.5px] text-amber">Restart to apply: {restart.join(', ')}.</p>
         )}

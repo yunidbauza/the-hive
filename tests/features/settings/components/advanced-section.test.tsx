@@ -173,6 +173,39 @@ describe('AdvancedSection', () => {
     ).toBeInTheDocument();
   });
 
+  /*
+    `reloadProjectConfig` answers `null` on a failed IPC round trip — the
+    snapshot is unchanged, so this must never read as a success, and any real
+    restart requirement already on screen must survive it (Settings review).
+  */
+  it('reports a failed reload distinctly, and never as success', async () => {
+    render(<AdvancedSection />);
+
+    reloadProjectConfig.mockResolvedValue(null);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reload' }));
+
+    expect(await screen.findByText(/reload failed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/^Reloaded —/)).not.toBeInTheDocument();
+  });
+
+  it('keeps a real restart banner on screen when a later reload fails', async () => {
+    render(<AdvancedSection />);
+
+    reloadProjectConfig.mockImplementation(() => {
+      install({ projects: [project('alpha')] });
+      return Promise.resolve(['receiver bind']);
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Reload' }));
+    expect(await screen.findByText('Restart to apply: receiver bind.')).toBeInTheDocument();
+
+    reloadProjectConfig.mockResolvedValue(null);
+    await userEvent.click(screen.getByRole('button', { name: 'Reload' }));
+
+    expect(await screen.findByText(/reload failed/i)).toBeInTheDocument();
+    expect(screen.getByText('Restart to apply: receiver bind.')).toBeInTheDocument();
+  });
+
   it('reports problems rather than a count when the reload found some', async () => {
     render(<AdvancedSection />);
 

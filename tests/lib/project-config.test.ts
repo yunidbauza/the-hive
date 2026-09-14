@@ -189,13 +189,18 @@ describe('loadProjectConfig', () => {
     channel failed, so the snapshot already held is still exactly true.
     Clearing it blanked every Settings pane and reopened the spawn gate.
   */
-  it('keeps the last good snapshot when a reload\'s channel fails', async () => {
+  /*
+    `null` distinctly, not `[]` — `[]` is a real answer ("nothing needs a
+    restart") and a caller that cannot tell it from "the read never happened"
+    reports success on a snapshot that is still stale (Settings review).
+  */
+  it('keeps the last good snapshot when a reload\'s channel fails, and says so', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const held = snapshot([{ id: 'nova-web', status: 'missing' }]);
     setProjectConfigForTest(held);
     withBridge(() => Promise.reject(new Error('channel gone')));
 
-    await expect(reloadProjectConfig()).resolves.toEqual([]);
+    await expect(reloadProjectConfig()).resolves.toBeNull();
 
     expect(projectConfigSnapshot()).toBe(held);
     expect(projectAccess('nova-web').spawnable).toBe(false);
