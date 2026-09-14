@@ -1358,6 +1358,13 @@ export interface ConfigSnapshot {
   errors: string[];
 }
 
+/**
+ * What Settings › Advanced › Reload answers with: the snapshot it installed,
+ * plus the fields it read but cannot apply until the app relaunches
+ * (`electron/main/config/restart-required.ts`). Empty when nothing is waiting.
+ */
+export type ConfigReloadResult = ConfigSnapshot & { restartRequired: string[] };
+
 /** The schema version this build writes (story 101). */
 export const CONFIG_VERSION = 2;
 

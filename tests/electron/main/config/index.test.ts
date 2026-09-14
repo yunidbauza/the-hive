@@ -356,6 +356,26 @@ describe('caching', () => {
     });
     expect(module.getConfig().projects).toHaveLength(1);
   });
+
+  /*
+    The launch-only fields were read from the first snapshot, so a reload
+    diffs against that one, not against whatever the last reload installed.
+  */
+  it('keeps the launch snapshot as the boot config across reloads', async () => {
+    const path = writeConfig({ version: 1, projects: [], importLoginEnv: true });
+
+    vi.resetModules();
+    const module = await import('../../../../electron/main/config/index');
+    const first = module.getConfig();
+
+    writeFileSync(path, JSON.stringify({ version: 1, projects: [], importLoginEnv: false }));
+    module.reloadConfig();
+    module.reloadConfig();
+
+    expect(module.getConfig().importLoginEnv).toBe(false);
+    expect(module.bootConfig()).toBe(first);
+    expect(module.bootConfig().importLoginEnv).toBe(true);
+  });
 });
 
 describe('schema v1 compatibility (story 101)', () => {

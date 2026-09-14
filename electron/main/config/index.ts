@@ -305,11 +305,23 @@ function backfillKeys(
 }
 
 let cached: ConfigSnapshot | null = null;
+let boot: ConfigSnapshot | null = null;
 
 /** The snapshot every consumer reads. Loads on first use. */
 export function getConfig(): ConfigSnapshot {
   cached ??= loadConfig();
+  boot ??= cached;
   return cached;
+}
+
+/**
+ * The first snapshot this process installed, which a reload never replaces.
+ *
+ * What the launch-only fields were read from (`restart-required.ts`), so a
+ * reload can say which of them the running app is still ignoring.
+ */
+export function bootConfig(): ConfigSnapshot {
+  return boot ?? getConfig();
 }
 
 /** Re-read the file. This is what `window.hive.config.reload()` reaches. */
@@ -345,6 +357,7 @@ export function onConfigChange(listener: ConfigListener): () => void {
 function install(next: ConfigSnapshot): ConfigSnapshot {
   const before = cached;
   cached = next;
+  boot ??= next;
   for (const listener of [...configListeners]) {
     try {
       listener(before, next);

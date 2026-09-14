@@ -22,6 +22,7 @@ import type {
   CloneRequest,
   CloneStartResult,
   CommandDiagnostic,
+  ConfigReloadResult,
   ConfigSnapshot,
   DeviceNameRequest,
   DiagnoseCommandRequest,
@@ -242,7 +243,7 @@ const bridge: HiveBridge = {
   appInfo: (): Promise<AppInfo> => ipcRenderer.invoke(CH.appInfo),
   config: {
     get: (): Promise<ConfigSnapshot> => ipcRenderer.invoke(CH.configGet),
-    reload: (): Promise<ConfigSnapshot> => ipcRenderer.invoke(CH.configReload),
+    reload: (): Promise<ConfigReloadResult> => ipcRenderer.invoke(CH.configReload),
     // Story 101's mutating verbs. All `invoke`: the dialog needs its result,
     // and the other two return the fresh snapshot so the renderer never has to
     // follow a write with a reload.

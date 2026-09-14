@@ -184,18 +184,34 @@ describe('loadProjectConfig', () => {
     expect(projectAccess('nova-web').spawnable).toBe(true);
   });
 
-  it('stays permissive when the channel itself fails', async () => {
+  /*
+    `mutate`'s rule, not `read`'s: the file on disk did not change because the
+    channel failed, so the snapshot already held is still exactly true.
+    Clearing it blanked every Settings pane and reopened the spawn gate.
+  */
+  it('keeps the last good snapshot when a reload\'s channel fails', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    setProjectConfigForTest(snapshot([{ id: 'nova-web', status: 'missing' }]));
+    const held = snapshot([{ id: 'nova-web', status: 'missing' }]);
+    setProjectConfigForTest(held);
     withBridge(() => Promise.reject(new Error('channel gone')));
 
-    await reloadProjectConfig();
+    await expect(reloadProjectConfig()).resolves.toEqual([]);
 
-    // A broken IPC hop is not something the user can fix by editing their
-    // config, so it must not lock the app.
-    expect(projectConfigSnapshot()).toBeNull();
-    expect(projectAccess('nova-web').spawnable).toBe(true);
+    expect(projectConfigSnapshot()).toBe(held);
+    expect(projectAccess('nova-web').spawnable).toBe(false);
     expect(console.error).toHaveBeenCalled();
+  });
+
+  it('answers with what the reload cannot apply until a relaunch', async () => {
+    const next = snapshot([{ id: 'nova-web', status: 'ok' }]);
+    withBridge(
+      () => Promise.resolve(next),
+      () => Promise.resolve({ ...next, restartRequired: ['receiver bind'] }),
+    );
+
+    await expect(reloadProjectConfig()).resolves.toEqual(['receiver bind']);
+
+    expect(projectConfigSnapshot()).toEqual(next);
   });
 
   /**

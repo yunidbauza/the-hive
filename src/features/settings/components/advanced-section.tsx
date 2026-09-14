@@ -43,7 +43,9 @@ import { useRemoteLink } from '@stores/hive-store';
  * alternative: "a config that changes under a live session raises questions
  * about the PTY already running in the old directory … the explicit reload in
  * 107 is the answer." So reload is not a convenience here — it is the whole
- * mechanism by which a hand-edited file reaches a running app. And it reports
+ * mechanism by which a hand-edited file reaches a running app, and the same
+ * goes for `~/.hive/skills` and `~/.hive/agents`: main regenerates the plugin
+ * every agent run reads and re-lists the agents before it answers. It reports
  * what it found, because a button that flashes and says nothing leaves the user
  * unable to tell a successful reload from a broken one, which is precisely the
  * question they pressed it to answer.
@@ -228,6 +230,8 @@ export function AdvancedSection() {
   const [checking, setChecking] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [reloaded, setReloaded] = useState<string | null>(null);
+  // What the last reload read but the running app cannot apply (launch-only).
+  const [restart, setRestart] = useState<string[]>([]);
   /** A reload has landed and its outcome has not been read off yet. */
   const [pending, setPending] = useState(false);
 
@@ -306,7 +310,9 @@ export function AdvancedSection() {
     }
 
     const count = snapshot.projects.length;
-    setReloaded(`Reloaded — ${count === 1 ? '1 project' : `${count} projects`}.`);
+    setReloaded(
+      `Reloaded — ${count === 1 ? '1 project' : `${count} projects`}; skills and agents refreshed.`,
+    );
   }, [pending, snapshot]);
 
   if (!snapshot) {
@@ -321,7 +327,7 @@ export function AdvancedSection() {
   }
 
   const onReload = async (): Promise<void> => {
-    await reloadProjectConfig();
+    setRestart(await reloadProjectConfig());
     setPending(true);
   };
 
@@ -381,10 +387,15 @@ export function AdvancedSection() {
           <p className="text-[11.5px] text-subtle">
             The file is deliberately not watched. Edit it by hand and reload here
             — a config that changed under a live session would leave the terminal
-            already running in the old directory.
+            already running in the old directory. Reload also picks up skills and
+            agents edited on disk; the next session and agent run use them, and
+            a running session keeps what it started with.
           </p>
         ) : (
           <p className="text-[11.5px] text-green">{reloaded}</p>
+        )}
+        {reloaded !== null && restart.length > 0 && (
+          <p className="text-[11.5px] text-amber">Restart to apply: {restart.join(', ')}.</p>
         )}
       </SettingsGroup>
 

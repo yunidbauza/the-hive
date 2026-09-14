@@ -2,7 +2,8 @@
 
 `~/.hive/config.json` holds your projects and everything Settings changes. It is meant to stay
 hand-editable. Settings writes it for you; if you edit it by hand, press **Reload** in
-**Settings › Advanced**.
+**Settings › Advanced**. The same button picks up skills and agents edited under `~/.hive`, and
+names any field that only takes effect after a restart.
 
 **On this page:** [Where it lives](#where-it-lives) · [A complete example](#a-complete-example) ·
 [Top-level keys](#top-level-keys) · [Project keys](#project-keys) ·
