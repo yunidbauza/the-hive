@@ -290,11 +290,16 @@ const wholeNumberOf = (value: unknown): number | undefined => {
  * owners must not share a badge. Newest wins; the ledger is appended in order
  * and mirrored in order, so the last match is the latest.
  *
- * Posts, not the claim itself: the claim is one entry at intake and the
- * renderer's 500-entry tail can roll past it mid-ship, while a stage post is
- * rewritten at every stage. Two entries end the reading: a `release` of the
- * claim, and a `closed` post, which the shipper writes after its release.
- * Read from the log, never stored: one truth per number on screen.
+ * The claim itself lights the pill too, so shipping starts the instant the
+ * shipper takes the PR rather than waiting on its first stage post — but it
+ * is a best-effort head start, not the lasting signal: a claim is one entry
+ * at intake and the renderer's 500-entry tail can roll past it mid-ship,
+ * where a stage post is rewritten at every stage and so never ages out that
+ * way. Once a stage post lands it takes over the newest-first reading below;
+ * if the claim rolls out of the tail with no post yet written, the pill goes
+ * dark until one arrives. Two entries end the reading outright: a `release`
+ * of the claim, and a `closed` post, which the shipper writes after its
+ * release. Read from the log, never stored: one truth per number on screen.
  */
 export function isShipping(entries: readonly LedgerEntry[], slug: string, n: number): boolean {
   const wanted = slug.toLowerCase();
@@ -303,8 +308,8 @@ export function isShipping(entries: readonly LedgerEntry[], slug: string, n: num
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i]!;
     if (entry.from !== 'shipper') continue;
-    if (entry.kind === 'release') {
-      if (taskOf(entry)?.toLowerCase() === claim) return false;
+    if (entry.kind === 'release' || entry.kind === 'claim') {
+      if (taskOf(entry)?.toLowerCase() === claim) return entry.kind === 'claim';
       continue;
     }
     if (entry.kind !== 'post') continue;
