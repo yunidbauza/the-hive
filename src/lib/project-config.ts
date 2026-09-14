@@ -252,9 +252,33 @@ export async function loadProjectConfig(): Promise<void> {
   }
 }
 
-/** Re-read the file the user just edited, without restarting the app. */
-export const reloadProjectConfig = (): Promise<void> =>
-  read((bridge) => bridge.config.reload());
+/**
+ * Re-read the file the user just edited, and main's skills and agents with it,
+ * without restarting the app.
+ *
+ * Resolves with the fields main read but cannot apply until a relaunch, or
+ * `null` when the read itself never happened. `null`, not `[]`: `[]` is a real
+ * answer — "nothing needs a restart" — and a caller that cannot tell it apart
+ * from "the channel failed" reports the reload as a success against a
+ * snapshot that never moved, and erases any restart requirement still true
+ * from before (Settings review). A failed channel keeps the snapshot already
+ * held, {@link mutate}'s rule: the file did not change because the hop
+ * failed, so what the window holds is still true. `?? []` for a server from
+ * before the field existed.
+ */
+export async function reloadProjectConfig(): Promise<string[] | null> {
+  const bridge = window.hive;
+  if (!bridge) return null;
+
+  try {
+    const { restartRequired, ...next } = await bridge.config.reload();
+    await install(next);
+    return restartRequired ?? [];
+  } catch (cause) {
+    console.error('[hive] could not reload the workspace config:', cause);
+    return null;
+  }
+}
 
 /**
  * Add a directory the user chose (story 101).

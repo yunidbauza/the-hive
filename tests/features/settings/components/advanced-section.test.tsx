@@ -76,7 +76,7 @@ beforeEach(() => {
   readAppInfo.mockResolvedValue(info());
   revealConfigFile.mockResolvedValue(undefined);
   resetConfigToTemplate.mockResolvedValue(undefined);
-  reloadProjectConfig.mockResolvedValue(undefined);
+  reloadProjectConfig.mockResolvedValue([]);
   install();
 });
 
@@ -131,13 +131,31 @@ describe('AdvancedSection', () => {
 
     reloadProjectConfig.mockImplementation(() => {
       install({ projects: [project('alpha')] });
-      return Promise.resolve();
+      return Promise.resolve([]);
     });
 
     await userEvent.click(screen.getByRole('button', { name: 'Reload' }));
 
     expect(reloadProjectConfig).toHaveBeenCalledTimes(1);
-    expect(await screen.findByText('Reloaded — 1 project.')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Reloaded — 1 project; skills and agents refreshed.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/restart to apply/i)).not.toBeInTheDocument();
+  });
+
+  it('names what a reload read but cannot apply until a relaunch', async () => {
+    render(<AdvancedSection />);
+
+    reloadProjectConfig.mockImplementation(() => {
+      install({ projects: [project('alpha')] });
+      return Promise.resolve(['receiver bind', 'server mode']);
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reload' }));
+
+    expect(
+      await screen.findByText('Restart to apply: receiver bind, server mode.'),
+    ).toBeInTheDocument();
   });
 
   it('pluralises the reload count', async () => {
@@ -145,12 +163,47 @@ describe('AdvancedSection', () => {
 
     reloadProjectConfig.mockImplementation(() => {
       install({ projects: [project('alpha'), project('beta')] });
-      return Promise.resolve();
+      return Promise.resolve([]);
     });
 
     await userEvent.click(screen.getByRole('button', { name: 'Reload' }));
 
-    expect(await screen.findByText('Reloaded — 2 projects.')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Reloaded — 2 projects; skills and agents refreshed.'),
+    ).toBeInTheDocument();
+  });
+
+  /*
+    `reloadProjectConfig` answers `null` on a failed IPC round trip — the
+    snapshot is unchanged, so this must never read as a success, and any real
+    restart requirement already on screen must survive it (Settings review).
+  */
+  it('reports a failed reload distinctly, and never as success', async () => {
+    render(<AdvancedSection />);
+
+    reloadProjectConfig.mockResolvedValue(null);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reload' }));
+
+    expect(await screen.findByText(/reload failed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/^Reloaded —/)).not.toBeInTheDocument();
+  });
+
+  it('keeps a real restart banner on screen when a later reload fails', async () => {
+    render(<AdvancedSection />);
+
+    reloadProjectConfig.mockImplementation(() => {
+      install({ projects: [project('alpha')] });
+      return Promise.resolve(['receiver bind']);
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Reload' }));
+    expect(await screen.findByText('Restart to apply: receiver bind.')).toBeInTheDocument();
+
+    reloadProjectConfig.mockResolvedValue(null);
+    await userEvent.click(screen.getByRole('button', { name: 'Reload' }));
+
+    expect(await screen.findByText(/reload failed/i)).toBeInTheDocument();
+    expect(screen.getByText('Restart to apply: receiver bind.')).toBeInTheDocument();
   });
 
   it('reports problems rather than a count when the reload found some', async () => {
@@ -158,7 +211,7 @@ describe('AdvancedSection', () => {
 
     reloadProjectConfig.mockImplementation(() => {
       install({ errors: ['config: not a directory'] });
-      return Promise.resolve();
+      return Promise.resolve([]);
     });
 
     await userEvent.click(screen.getByRole('button', { name: 'Reload' }));

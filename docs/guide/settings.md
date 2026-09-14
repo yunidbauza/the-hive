@@ -76,7 +76,10 @@ One row per event: Off, Inbox or Both. See [The inbox](inbox.md#choosing-what-re
 ## Advanced
 
 - **Config file**: its path, **Reveal in Finder**, **Reload**. The file is not watched: edit
-  it by hand, then Reload.
+  it by hand, then Reload. Reload also picks up skills and agents edited under `~/.hive`, so
+  the next session and agent run use them. A running session keeps what it started with, and
+  the few fields read only at launch (receiver bind, server mode and bind, login environment,
+  remote attach) are named under the button as needing a restart.
 - **Containers**: the host alias, and **Accept connections off loopback**
   ([Containers](containers.md)).
 - **Server mode**: **Serve this machine**, **Attach to a server**, paired devices

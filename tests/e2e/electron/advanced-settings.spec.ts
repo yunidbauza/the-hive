@@ -1,5 +1,5 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 import { expect, test, type Page } from '@playwright/test';
 
@@ -137,7 +137,55 @@ test('reload re-reads a file edited underneath the running app', async ({}, test
 
   await page.getByRole('button', { name: 'Reload' }).click();
 
-  await expect(page.getByText('Reloaded — 2 projects.')).toBeVisible();
+  await expect(
+    page.getByText('Reloaded — 2 projects; skills and agents refreshed.'),
+  ).toBeVisible();
+
+  await app.close();
+});
+
+/*
+  Reload is the one button for everything hand-editable, and skills are too.
+  An agent wake reads the generated plugin and never regenerates it, so before
+  this a skill edited on disk reached no agent run until some terminal opened.
+  Asserted against the plugin folder every run is handed with `--plugin-dir`.
+*/
+test('reload regenerates the skills plugin and names what needs a restart', async ({}, testInfo) => {
+  const { configPath, repoDir } = seed((name) => testInfo.outputPath(name));
+  const userDataDir = testInfo.outputPath('user-data');
+  const app = await launchHive({ userDataDir, configPath });
+  const page = await app.firstWindow();
+  await page.waitForSelector('header');
+
+  await openAdvanced(page);
+
+  // Written after launch, so only a regeneration after this point can copy it.
+  const skillDir = join(dirname(configPath), 'skills', 'reload-probe');
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(
+    join(skillDir, 'SKILL.md'),
+    '---\nname: reload-probe\ndescription: written by hand while the app runs\n---\n\nProbe.\n',
+  );
+  const copied = join(userDataDir, 'hive', 'plugin', 'skills', 'reload-probe', 'SKILL.md');
+  expect(existsSync(copied)).toBe(false);
+
+  // And a launch-only field, which a reload reads but cannot apply.
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      version: 2,
+      // The seed's shell, kept: dropping it is a login-environment change too.
+      shell: '/bin/sh',
+      projects: [{ id: 'scratch-repo', name: 'scratch-repo', path: repoDir, icon: 'ph-folder' }],
+      receiver: { bind: { host: '127.0.0.1', port: 47_811, allowedOrigins: [] } },
+    }),
+  );
+
+  await page.getByRole('button', { name: 'Reload' }).click();
+
+  await expect(page.getByText('Reloaded — 1 project; skills and agents refreshed.')).toBeVisible();
+  await expect(page.getByText('Restart to apply: receiver bind.')).toBeVisible();
+  expect(existsSync(copied)).toBe(true);
 
   await app.close();
 });

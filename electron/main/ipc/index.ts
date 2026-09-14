@@ -34,6 +34,7 @@ import type {
   BrowseListing,
   CloneStartResult,
   CommandDiagnostic,
+  ConfigReloadResult,
   ConfigSnapshot,
   EnvDiagnostic,
   SetRemoteResult,
@@ -196,6 +197,7 @@ import { createWakeCommand } from '../agents/wake-command';
 import { createCloneFlow, type CloneFlow } from '../clone';
 import {
   addProject,
+  bootConfig,
   configPath,
   getConfig,
   onConfigChange,
@@ -219,6 +221,7 @@ import {
 import { diagnoseEnv } from '../config/env-diagnostic';
 import { loginEnvStatus } from '../config/login-env';
 import { serverBindRefusal } from '../config/parse';
+import { restartRequired } from '../config/restart-required';
 import { diagnoseCommand, effectiveRuntime, receiverHostAliases } from '../config/runtime';
 import { onDisplayWake } from '../display-wake';
 import {
@@ -971,8 +974,8 @@ let agentsListed = false;
  * be the record of what happened. A run that is already going was authorised
  * when it started, so it keeps its name until it ends.
  */
-function refreshKnownAgents(): void {
-  void agents
+function refreshKnownAgents(): Promise<void> {
+  const listed = agents
     ?.list()
     .then((snapshot) => {
       knownAgents.clear();
@@ -1039,6 +1042,8 @@ function refreshKnownAgents(): void {
       // schedules have ever been read. A failed listing must not license the
       // tick to clear the times a previous one established.
     });
+  // Returned for Reload, which answers only once the caches are rebuilt.
+  return listed ?? Promise.resolve();
 }
 /**
  * Who the socket is held open for, as `subscriptions.ts` asks it (HIVE-124).
@@ -2560,12 +2565,12 @@ export function registerIpcHandlers(
     `agents:list` would not already return.
   */
   agents.onChange(() => {
-    refreshKnownAgents();
+    void refreshKnownAgents();
 
     fanOut.emit(CH.agentsChanged, undefined);
   });
 
-  refreshKnownAgents();
+  void refreshKnownAgents();
 
   /*
     The MCP config runtime (HIVE-112). Written once, its content depends only
@@ -3491,7 +3496,7 @@ export function registerIpcHandlers(
    * because it was never trusted with the input.
    */
   handle(CH.configGet, (): ConfigSnapshot => getConfig());
-  handle(CH.configReload, (): ConfigSnapshot => {
+  handle(CH.configReload, async (): Promise<ConfigReloadResult> => {
     /*
       A reload can repoint, add or remove a project, which changes which
       repository a directory should be measured against. `session-roots` caches
@@ -3516,9 +3521,23 @@ export function registerIpcHandlers(
     */
     slackBridge?.sync();
     // HIVE-176. `disabledSessionPlugins` is hand-editable too.
-    void hooks.rewriteSettings();
+    await hooks.rewriteSettings();
 
-    return snapshot;
+    /*
+      Reload is the one button for everything hand-editable, and skills and
+      agents are hand-editable too. A terminal spawn regenerates the plugin on
+      its own; an agent wake does not, so without this a skill edited on disk
+      never reached a headless run until some terminal happened to open. The
+      agent caches are the watcher's to keep, and this recovers a missed event.
+      Both awaited, so the answer means the next run sees them.
+    */
+    await skills?.sync();
+    await refreshKnownAgents();
+    fanOut.emit(CH.agentsChanged, undefined);
+    // Every other window and attached client, which Reload never told.
+    send(CH.configChanged, snapshot);
+
+    return { ...snapshot, restartRequired: restartRequired(bootConfig(), snapshot) };
   });
 
   /**

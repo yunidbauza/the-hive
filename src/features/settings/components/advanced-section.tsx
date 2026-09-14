@@ -43,7 +43,9 @@ import { useRemoteLink } from '@stores/hive-store';
  * alternative: "a config that changes under a live session raises questions
  * about the PTY already running in the old directory … the explicit reload in
  * 107 is the answer." So reload is not a convenience here — it is the whole
- * mechanism by which a hand-edited file reaches a running app. And it reports
+ * mechanism by which a hand-edited file reaches a running app, and the same
+ * goes for `~/.hive/skills` and `~/.hive/agents`: main regenerates the plugin
+ * every agent run reads and re-lists the agents before it answers. It reports
  * what it found, because a button that flashes and says nothing leaves the user
  * unable to tell a successful reload from a broken one, which is precisely the
  * question they pressed it to answer.
@@ -228,8 +230,17 @@ export function AdvancedSection() {
   const [checking, setChecking] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [reloaded, setReloaded] = useState<string | null>(null);
+  // What the last reload read but the running app cannot apply (launch-only).
+  const [restart, setRestart] = useState<string[]>([]);
   /** A reload has landed and its outcome has not been read off yet. */
   const [pending, setPending] = useState(false);
+  /**
+   * The last reload's channel failed, so `snapshot` never moved (Settings
+   * review). Cleared by the next reload's own outcome, success or failure —
+   * never implicitly, or a stale failure would linger under a success it no
+   * longer describes.
+   */
+  const [reloadFailed, setReloadFailed] = useState(false);
 
   /**
    * Keyed on *whether* there is a snapshot, never on the snapshot itself.
@@ -306,7 +317,9 @@ export function AdvancedSection() {
     }
 
     const count = snapshot.projects.length;
-    setReloaded(`Reloaded — ${count === 1 ? '1 project' : `${count} projects`}.`);
+    setReloaded(
+      `Reloaded — ${count === 1 ? '1 project' : `${count} projects`}; skills and agents refreshed.`,
+    );
   }, [pending, snapshot]);
 
   if (!snapshot) {
@@ -321,7 +334,21 @@ export function AdvancedSection() {
   }
 
   const onReload = async (): Promise<void> => {
-    await reloadProjectConfig();
+    const next = await reloadProjectConfig();
+
+    /*
+      `null` means the channel failed and the snapshot never moved: report
+      that distinctly rather than firing the success effect below against a
+      stale read, and leave `restart` exactly as it was — a real "Restart to
+      apply" from before this click is still true and must stay on screen.
+    */
+    if (next === null) {
+      setReloadFailed(true);
+      return;
+    }
+
+    setReloadFailed(false);
+    setRestart(next);
     setPending(true);
   };
 
@@ -377,14 +404,29 @@ export function AdvancedSection() {
             Reload
           </button>
         </div>
-        {reloaded === null ? (
+        {reloadFailed ? (
+          <p className="text-[11.5px] text-red">
+            Reload failed — config, skills and agents are unchanged. Check the
+            log and try again.
+          </p>
+        ) : reloaded === null ? (
           <p className="text-[11.5px] text-subtle">
             The file is deliberately not watched. Edit it by hand and reload here
             — a config that changed under a live session would leave the terminal
-            already running in the old directory.
+            already running in the old directory. Reload also picks up skills and
+            agents edited on disk; the next session and agent run use them, and
+            a running session keeps what it started with.
           </p>
         ) : (
           <p className="text-[11.5px] text-green">{reloaded}</p>
+        )}
+        {/*
+          Independent of `reloadFailed`: a restart requirement a past reload
+          found is still true, and must not disappear because a later reload's
+          channel happened to fail.
+        */}
+        {reloaded !== null && restart.length > 0 && (
+          <p className="text-[11.5px] text-amber">Restart to apply: {restart.join(', ')}.</p>
         )}
       </SettingsGroup>
 

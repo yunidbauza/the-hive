@@ -38,6 +38,7 @@ import type {
   CloneRequest,
   CloneStartResult,
   CommandDiagnostic,
+  ConfigReloadResult,
   ConfigSnapshot,
   DeviceNameRequest,
   DiagnoseCommandRequest,
@@ -1843,7 +1844,7 @@ export interface HiveBridge {
    */
   config: {
     get(): Promise<ConfigSnapshot>;
-    reload(): Promise<ConfigSnapshot>;
+    reload(): Promise<ConfigReloadResult>;
     /** Native directory dialog, owned by main. Resolves null when cancelled. */
     chooseDirectory(): Promise<string | null>;
     /**

@@ -88,6 +88,32 @@ vi.mock('../../../../electron/main/shutdown', () => ({
   onShutdown: (hook: () => void) => shutdownHooks.push(hook),
 }));
 
+/*
+  The two runtimes Reload has to refresh, stubbed so the spec can see it
+  refresh them and never reads a real `~/.hive`. Their own behaviour is
+  covered in `tests/electron/main/skills` and `tests/electron/main/agents`.
+*/
+const skillsSync = vi.fn(() => Promise.resolve({} as never));
+const agentsList = vi.fn(() => Promise.resolve({ agents: [], agentsRoot: '/tmp/.hive/agents' }));
+
+vi.mock('../../../../electron/main/skills', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  createSkillsRuntime: () => ({ sync: skillsSync, pluginDirPath: () => null, list: vi.fn() }),
+}));
+
+vi.mock('../../../../electron/main/agents', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  createAgentsRuntime: () => ({
+    list: agentsList,
+    read: vi.fn(),
+    write: vi.fn(),
+    remove: vi.fn(),
+    rename: vi.fn(),
+    onChange: () => () => {},
+    close: vi.fn(),
+  }),
+}));
+
 /**
  * The one object every mocked verb answers with, so identity is assertable.
  *
@@ -98,6 +124,7 @@ const snapshot = emptySnapshot('/tmp/config.json', '/bin/zsh');
 
 vi.mock('../../../../electron/main/config/index', () => ({
   getConfig: vi.fn(() => snapshot),
+  bootConfig: vi.fn(() => snapshot),
   onConfigChange: vi.fn(() => () => {}),
   reloadConfig: vi.fn(() => snapshot),
   loadConfig: vi.fn(() => snapshot),
@@ -211,6 +238,56 @@ describe('story 103 config channels', () => {
       invoke(CH.configReorderProjects, trustedEvent, { ids: ['a', 'a'] }),
     ).rejects.toThrow(/duplicate id/);
     expect(config.reorderProjects).not.toHaveBeenCalled();
+  });
+
+  /*
+    Settings › Advanced › Reload. It re-read the file and nothing else, so a
+    skill edited on disk never reached an agent run (the plugin only
+    regenerated on a terminal spawn) and a missed folder event left the
+    scheduler's agent caches stale for good.
+  */
+  it('regenerates the skills plugin, re-lists agents and tells every surface before it answers', async () => {
+    resetIpcHandlers();
+    handlers.clear();
+    const emit = vi.fn();
+    registerIpcHandlers({ emit });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const listsBefore = agentsList.mock.calls.length;
+    const syncsBefore = skillsSync.mock.calls.length;
+
+    let finishSync!: () => void;
+    skillsSync.mockImplementationOnce(
+      () => new Promise((resolve) => (finishSync = () => resolve({} as never))),
+    );
+    let answered = false;
+    const reply = invoke(CH.configReload, trustedEvent, undefined).then((result) => {
+      answered = true;
+      return result;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(skillsSync.mock.calls.length).toBe(syncsBefore + 1);
+    expect(answered).toBe(false);
+
+    finishSync();
+    const result = await reply;
+
+    expect(config.reloadConfig).toHaveBeenCalledTimes(1);
+    expect(agentsList.mock.calls.length).toBeGreaterThan(listsBefore);
+    expect(emit).toHaveBeenCalledWith(CH.agentsChanged, undefined);
+    expect(emit).toHaveBeenCalledWith(CH.configChanged, snapshot);
+    expect(result).toEqual({ ...snapshot, restartRequired: [] });
+  });
+
+  it('names the launch-only fields a reload read but cannot apply', async () => {
+    vi.mocked(config.reloadConfig).mockReturnValueOnce({
+      ...snapshot,
+      importLoginEnv: !snapshot.importLoginEnv,
+    });
+
+    const result = await invoke(CH.configReload, trustedEvent, undefined);
+
+    expect(result).toMatchObject({ restartRequired: ['login environment'] });
   });
 
   it('refuses a re-point that tries to name a second path', async () => {
