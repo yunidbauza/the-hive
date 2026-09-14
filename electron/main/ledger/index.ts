@@ -70,6 +70,19 @@ export function createLedger(options: LedgerOptions): Ledger {
   const now = options.now ?? Date.now;
   const store = createLedgerStore({ dir: options.dir, now });
 
+  /**
+   * The ask a `thread` reference names, or nothing — the same lookup the
+   * thread-resolution block below repeats for its own purposes, pulled out
+   * here so the `to` guard can ask it too, before that block ever runs.
+   */
+  const askOfThread = (thread: string | undefined): LedgerEntry | undefined => {
+    if (thread === undefined) return undefined;
+    const all = store.all();
+    const canonical = resolveRef(all, thread);
+    if (canonical === undefined) return undefined;
+    return all.find((entry) => entry.id === canonical && entry.kind === 'ask');
+  };
+
   const ledger: Ledger = {
     read(query) {
       const all = store.all();
@@ -97,9 +110,26 @@ export function createLedger(options: LedgerOptions): Ledger {
         An entry to a name nobody answers to is accepted, visible to no one,
         and an ask there leaves its asker waiting on nobody; refused, the
         writer learns at once and can re-address it.
+
+        Trusted the same way when the caller wrote `to` itself, as long as it
+        names a party the resolved thread already holds of record —
+        `scheduler.ts`'s expiry sweep and every reply `permissions.ts` writes
+        set `to: ask.from` directly, rather than leaving `to` for the
+        default below to fill in, so the exemption above would otherwise
+        never reach them (HIVE-115 review). Only `knowsParty`'s *current*
+        answer about that party can have changed since the ask was written —
+        aged out of session history, say — and that is not a reason to
+        refuse a reply to a question it genuinely asked, or a grant it
+        genuinely holds. Checked against the resolved thread specifically:
+        a `to` that does not match *that* thread's own asker still needs
+        `knowsParty` to say yes, same as an unthreaded one.
       */
       if (request.to !== undefined && !options.knowsParty(request.to)) {
-        return refuse(404, `unknown party: ${request.to}`);
+        const ask = askOfThread(request.thread);
+        const trusted = ask !== undefined && (request.to === ask.from || request.to === ask.to);
+        if (!trusted) {
+          return refuse(404, `unknown party: ${request.to}`);
+        }
       }
       if (!(LEDGER_KINDS as readonly string[]).includes(request.kind)) {
         return refuse(400, `unknown kind: ${String(request.kind)}`);

@@ -86,6 +86,59 @@ describe('createLedger', () => {
     expect(ledger.read({}).entries).toHaveLength(0);
   });
 
+  /*
+    scheduler.ts's expiry sweep, and five sites in permissions.ts, all set
+    `to: ask.from` directly alongside `thread: ask.id` — the exact shape the
+    thread-derivation exemption is meant to cover, but written by the caller
+    rather than defaulted here. A party that was known when the ask was
+    written can age out of session history by the time the sweep or a grant
+    reply runs; the write addressing it back must still land, or (in the
+    sweep's case, where the write *is* the dedup) it retries, refused the
+    same way, every sixty seconds forever — the exact orphaned-ask failure
+    this guard exists to close, reintroduced in its own bookkeeping.
+  */
+  describe('a to matching the resolved thread\'s own party is trusted (HIVE-115 review)', () => {
+    it('accepts to: ask.from set directly, even once that party has aged out', () => {
+      const asked = ledger.append({ from: 'sess-live', to: OVERMIND, kind: 'ask', body: 'grant?' });
+      if (!asked.ok) throw new Error('setup failed');
+
+      // A later wake, after `sess-live` no longer resolves — the exact shape
+      // `deps.append({ from: OVERMIND, to: ask.from, kind: 'event', thread: ask.id, ... })`
+      // takes in scheduler.ts and permissions.ts.
+      const agedOut = createLedger({
+        dir,
+        now: () => clock,
+        knowsParty: (id) => id !== 'sess-live',
+      });
+
+      const result = agedOut.append({
+        from: OVERMIND,
+        to: 'sess-live',
+        kind: 'event',
+        thread: asked.id,
+        body: 'ask expired',
+      });
+
+      expect(result).toMatchObject({ ok: true });
+      expect(agedOut.read({}).entries.at(-1)).toMatchObject({ to: 'sess-live' });
+    });
+
+    it('still refuses an unknown to that is not actually a party to the named thread', () => {
+      const asked = ledger.append({ from: 'sess-a', to: 'sess-b', kind: 'ask', body: 'ship?' });
+      if (!asked.ok) throw new Error('setup failed');
+
+      const result = ledger.append({
+        from: OVERMIND,
+        to: 'sess-gone',
+        kind: 'event',
+        thread: asked.id,
+        body: 'unrelated',
+      });
+
+      expect(result).toEqual({ ok: false, status: 404, reason: 'unknown party: sess-gone' });
+    });
+  });
+
   it('refuses a body over the cap without appending', () => {
     const result = ledger.append({
       from: 'sess-a',
