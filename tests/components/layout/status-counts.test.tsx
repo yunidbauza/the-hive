@@ -25,24 +25,48 @@ describe('StatusCounts', () => {
 
     render(<StatusCounts />);
 
-    expect(screen.getByText('0 working')).toBeInTheDocument();
-    expect(screen.getByText('0 waiting')).toBeInTheDocument();
-    expect(screen.getByText(/0 idle · 0 ended/)).toBeInTheDocument();
+    expect(screen.getByTestId('status-counts')).toHaveTextContent(
+      '0 working · 0 waiting · 0 idle · 0 ended',
+    );
   });
 
   it('renders the seeded counts', () => {
     render(<StatusCounts />);
 
-    expect(screen.getByText('4 working')).toBeInTheDocument();
-    expect(screen.getByText('2 waiting')).toBeInTheDocument();
-    expect(screen.getByText(/2 idle · 2 ended/)).toBeInTheDocument();
+    expect(screen.getByTestId('status-counts')).toHaveTextContent(
+      '4 working · 2 waiting · 2 idle · 2 ended',
+    );
   });
 
   it('colours only the two statuses that want attention', () => {
     render(<StatusCounts />);
 
-    expect(screen.getByText('4 working')).toHaveClass('text-green');
-    expect(screen.getByText('2 waiting')).toHaveClass('text-amber');
+    const spans = screen.getByTestId('status-counts').children;
+    expect(spans[0]).toHaveTextContent('4 working');
+    expect(spans[0]).toHaveClass('text-green');
+    expect(spans[1]).toHaveTextContent('2 waiting');
+    expect(spans[1]).toHaveClass('text-amber');
+  });
+
+  /**
+   * When the header narrows, the words leave and the numbers stay:
+   * `4 · 2 · 2 · 2`, told apart by colour, so the model chip keeps its stats.
+   * `sr-only` rather than `hidden`, so a screen reader still hears every word.
+   * Which width triggers it is the header zone's container query; the browser
+   * half is in `rail-alignment.spec.ts`.
+   */
+  it('lets each word, and nothing else, go screen-reader-only when narrow', () => {
+    render(<StatusCounts />);
+
+    const words = screen
+      .getByTestId('status-counts')
+      .querySelectorAll('.\\@max-\\[44ch\\]\\:sr-only');
+    expect(Array.from(words, (w) => w.textContent)).toEqual([
+      ' working',
+      ' waiting',
+      ' idle',
+      ' ended',
+    ]);
   });
 
   /**
@@ -51,7 +75,8 @@ describe('StatusCounts', () => {
    */
   it('follows a status change without local state', () => {
     render(<StatusCounts />);
-    expect(screen.getByText('4 working')).toBeInTheDocument();
+    const el = screen.getByTestId('status-counts');
+    expect(el).toHaveTextContent('4 working');
 
     act(() => {
       useHiveStore
@@ -59,22 +84,20 @@ describe('StatusCounts', () => {
         .appendEntityLines('rails-upgrade', [], 'working');
     });
 
-    expect(screen.getByText('5 working')).toBeInTheDocument();
-    expect(screen.getByText(/1 idle/)).toBeInTheDocument();
+    expect(el).toHaveTextContent('5 working');
+    expect(el).toHaveTextContent('1 idle');
   });
 
   /**
-   * The counts are the header's shock absorber: centring the model chip makes
-   * both side tracks size to the wider one, and at 1440 that is 113px more than
-   * the bar has. This paragraph gives up the difference so the chip does not
-   * have to. Ellipsis over wrap, because the header is one line tall — and the
-   * tooltip so nothing is actually lost. `smoke.spec.ts` measures the effect;
-   * happy-dom cannot, so what is pinned here is the mechanism.
+   * One line, never wrapped, because the header is one line tall. Truncation is
+   * a backstop past the compact form, and the tooltip keeps the full sentence
+   * whichever form is on screen. happy-dom performs no layout, so what is
+   * pinned here is the mechanism.
    */
   it('truncates on one line rather than wrapping, and keeps the full string in its tooltip', () => {
     render(<StatusCounts />);
 
-    const counts = screen.getByText(/2 idle · 2 ended/);
+    const counts = screen.getByTestId('status-counts');
     // `min-w-0` is not decoration — without it a flex item refuses to shrink
     // below its content and `truncate` never fires.
     expect(counts).toHaveClass('min-w-0', 'truncate');

@@ -103,32 +103,61 @@ test.describe('the counts stay clear of the controls', () => {
 });
 
 /**
- * Which zone gives when the header runs out of room.
+ * Which zone gives when the header runs out of room: the counts' words first.
  *
- * `model-chip.tsx` and `status-counts.tsx` both claim the chip is the thing
- * that shrinks; nothing measured it, and at one point the flex sizing did the
- * opposite. The counts carry no tooltip, so losing characters there loses
- * information outright — where the chip keeps its whole string in a `title`.
+ * With room, the full sentence. Narrower, the counts drop to `0 · 0 · 0 · 0`
+ * so the model chip beside them keeps its stats, and only past that compact
+ * floor does the chip clip. The chip itself needs a session, which the browser
+ * target cannot start; `chrome.spec.ts` measures it on the desktop target. What
+ * this browser can show is the counts' half: whole at one width, compact at a
+ * narrower one, never ellipsised in either, and still on the rail's line.
  */
-test('the counts survive a narrow window intact', async ({ page }) => {
-  await page.setViewportSize({ width: 1040, height: 800 });
-  await page.goto('/?sim=0');
+test.describe('when the header narrows', () => {
+  /** How many mono characters wide the counts render, and whether they clip. */
+  const countsAt = async (page: import('@playwright/test').Page, width: number) => {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto('/?sim=0');
 
-  const counts = page.getByTestId('status-counts');
-  await expect(counts).toBeVisible();
+    const counts = page.getByTestId('status-counts');
+    await expect(counts).toBeVisible();
+    const { chars, clipped } = await counts.evaluate((el) => {
+      const probe = document.createElement('span');
+      probe.textContent = '0';
+      el.append(probe);
+      const ch = probe.getBoundingClientRect().width;
+      probe.remove();
+      return {
+        chars: Math.round(el.getBoundingClientRect().width / ch),
+        clipped: el.scrollWidth > el.clientWidth + 1,
+      };
+    });
+    return { counts, chars, clipped };
+  };
 
-  // Nothing ellipsised: the rendered text still carries every one of the four
-  // numbers, and the element is not narrower than the text it holds.
-  const text = (await counts.textContent()) ?? '';
-  expect(text).toContain('working');
-  expect(text).toContain('waiting');
-  expect(text).toContain('idle');
-  expect(text).toContain('ended');
+  test('the counts keep their words while they fit', async ({ page }) => {
+    const { chars, clipped } = await countsAt(page, 1040);
 
-  const clipped = await counts.evaluate(
-    (el) => el.scrollWidth > el.clientWidth + 1,
-  );
-  expect(clipped).toBe(false);
+    // `0 working · 0 waiting · 0 idle · 0 ended`, every character of it.
+    expect(chars).toBe(40);
+    expect(clipped).toBe(false);
+  });
+
+  test('the counts drop to numbers, whole, when they do not', async ({ page }) => {
+    const { counts, chars, clipped } = await countsAt(page, 860);
+
+    // `0 · 0 · 0 · 0`, and none of it ellipsised.
+    expect(chars).toBe(13);
+    expect(clipped).toBe(false);
+
+    // The words left the screen, not the page: a screen reader still hears them.
+    await expect(counts).toHaveText('0 working · 0 waiting · 0 idle · 0 ended');
+
+    const railBox = await page
+      .getByRole('complementary', { name: 'Activity' })
+      .boundingBox();
+    const countsBox = (await counts.boundingBox())!;
+    expect(Math.abs(countsBox.x + countsBox.width - railBox!.x)).toBeLessThanOrEqual(1);
+  });
 });
 
 test('the counts still end on the rail line when narrow', async ({ page }) => {

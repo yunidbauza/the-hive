@@ -53,12 +53,10 @@ import {
  * The brand claims exactly the rail's width (the `--cc-rail-w-left` token
  * minus this header's own `px-4`), so whatever follows it starts on that line.
  *
- * The left cluster is `min-w-0` and the right one does not shrink, so the model
- * chip is what gives when the window narrows. That is the right way round now:
- * the chip already truncates by design and carries its full text in a `title`,
- * while the fleet counts have no tooltip and would simply lose information.
- * (Under the old grid the counts absorbed the deficit instead, because the chip
- * was the thing being centred and could not be allowed to move.)
+ * The left cluster sizes to its content and the counts zone takes the rest, so
+ * the counts give first: they drop to bare numbers (`status-counts.tsx`) while
+ * the model chip keeps every stat. Only once the counts are at that compact
+ * floor does the left cluster, `min-w-0`, start clipping the chip.
  *
  * ## Target-specific additions, both on the left
  *
@@ -124,7 +122,7 @@ export function Header() {
         desktop && '[-webkit-app-region:drag]',
       )}
     >
-      <div className="flex min-w-0 flex-1 items-center">
+      <div className="flex min-w-0 items-center">
         {/*
           The brand claims exactly the left rail's width **at its expanded
           size**, so whatever follows it starts on that line — the same
@@ -211,13 +209,20 @@ export function Header() {
         the header. `chip-alignment.spec.ts` measures the two against each
         other, the same way it already measures the chips against the left rail.
 
-        `shrink-0`, not `shrink`. The counts are short, fixed-width and have no
-        tooltip; the model chip beside them is long and carries its whole string
-        in a `title`. So the chip is the right thing to absorb a narrow window,
-        and it can only do that if this zone declines to. Letting both shrink is
-        what made the two components' comments disagree about which one gave.
+        `flex-1` from a zero basis: this zone takes whatever the chips leave and
+        right-aligns the counts in it, so they still end on the rail's line. It
+        is a size container, and its width now depends on the chips and never on
+        its own text, so the counts can switch to bare numbers below
+        `44ch` without the switch feeding back into the width that chose
+        it. `font-mono text-xs` is here for the `ch` units: the query and the
+        floor both resolve them in this element's font, which has to be the
+        counts' own.
+
+        The floor, `18ch`, is the compact form with two-digit counts all round
+        (`12 · 10 · 3 · 120` is 17). Below it the flex row freezes this zone
+        and shrinks the chips instead, which is the last resort.
       */}
-      <div className="ml-[14px] flex shrink-0 items-center">
+      <div className="@container ml-[14px] flex min-w-[18ch] flex-1 items-center justify-end font-mono text-xs">
         <StatusCounts />
       </div>
 

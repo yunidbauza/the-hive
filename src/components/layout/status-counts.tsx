@@ -15,12 +15,20 @@ import { useCounts, useIdleDetailCounts } from '@stores/hive-store';
  * much of the hive is no longer running — and a fifth number would cost the
  * header width it does not have (see below).
  *
- * `truncate` keeps this to one line. It is a backstop rather than the usual
- * mechanism now: the chip beside it is what gives when the header narrows, so
- * these numbers ordinarily render whole. If it ever does run out, the ellipsis
- * eats the **tail** — `ended`, the least urgent number — and the full string
- * stays in the `title`. That ordering is why `idle` and `ended` were merged into
- * one `restText`: they are the two the user is least likely to be missing.
+ * ## What gives when the header narrows: the words, then the chip
+ *
+ * The counts zone in `header.tsx` takes whatever width the model chip leaves,
+ * and is a size container. Below `44ch` (see `Word`) it drops the four words and
+ * reads `1 · 0 · 0 · 20`: the colours already say which number is which, and
+ * the chip beside it keeps its context and limit stats. It used to be the other
+ * way round, the counts `shrink-0` and the chip clipped, which cost the stats
+ * the user actually glances at to keep four words they learn in a day.
+ *
+ * The words go `sr-only`, not `hidden`, so a screen reader still hears
+ * `1 working`; the `title` keeps the full sentence for a pointer.
+ *
+ * `truncate` keeps this to one line and is only a backstop: the zone's floor is
+ * the compact form, and past that it is the chip that clips.
  *
  * ## Where its right edge lands
  *
@@ -28,29 +36,24 @@ import { useCounts, useIdleDetailCounts } from '@stores/hive-store';
  * control cluster the rail's own width, and which `rail-alignment.spec.ts`
  * measures in a real browser. The alignment is the reason there is no right
  * padding here, and adding some would quietly undo it.
- *
- * This zone does **not** shrink — `header.tsx` marks it `shrink-0`. The model
- * chip absorbs a narrow window instead, because it carries its full string in a
- * `title` and these numbers carry nothing.
  */
 export function StatusCounts() {
   const { working, waiting, idle, done, terminated } = useCounts();
   const { agents, script } = useIdleDetailCounts();
 
-  // Built once and reused for both the spans and the tooltip: two copies of the
-  // same sentence drift the moment a separator changes on one of them.
+  // The tooltip's sentence. The spans split each of these into a number and a
+  // `Word`, so the two can only drift in the words, which are literals.
   const workingText = `${working} working`;
   const waitingText = `${waiting} waiting`;
   const endedText = `${done + terminated} ended`;
-  const restText = `${idle} idle · ${endedText}`;
 
   /**
    * The breakdown lives in the tooltip, not on screen (HIVE-83).
    *
    * The visible tally stays five numbers — widening it was the thing this
-   * story deliberately did not do — and the detail costs no width here. Unlike
-   * `endedText`, the working figure is *not* reused verbatim for the span: it
-   * is the one number deliberately different in each place, carrying the
+   * story deliberately did not do — and the detail costs no width here. The
+   * working figure is the one number deliberately different in each place,
+   * carrying the
    * breakdown only where there is room for it.
    */
   const idleDetailText =
@@ -85,10 +88,32 @@ export function StatusCounts() {
       title={`${workingText}${idleDetailText} · ${waitingText} · ${idleText} · ${endedText}`}
       className="min-w-0 truncate font-mono text-xs text-muted"
     >
-      <span className="text-green">{workingText}</span>
+      <span className="text-green">
+        {working}
+        <Word> working</Word>
+      </span>
       {' · '}
-      <span className="text-amber">{waitingText}</span>
-      {` · ${restText}`}
+      <span className="text-amber">
+        {waiting}
+        <Word> waiting</Word>
+      </span>
+      {` · ${idle}`}
+      <Word> idle</Word>
+      {` · ${done + terminated}`}
+      <Word> ended</Word>
     </p>
   );
+}
+
+/**
+ * A label that leaves the screen, not the accessibility tree, when narrow.
+ *
+ * `44ch` is the full sentence with two-digit counts all round;
+ * `1 working · 0 waiting · 0 idle · 20 ended` is 41, so at worst this compacts
+ * a few characters early rather than ellipsising. `ch`, because a container
+ * query resolves it in the container's own font, which `header.tsx` sets to
+ * this mono size.
+ */
+function Word({ children }: { children: string }) {
+  return <span className="@max-[44ch]:sr-only">{children}</span>;
 }

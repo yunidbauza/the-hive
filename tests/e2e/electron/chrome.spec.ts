@@ -144,6 +144,71 @@ test('the model chip starts on the left rail edge, not the header midpoint', asy
   }
 });
 
+/**
+ * A narrow header gives the counts' words up before the model chip's text.
+ *
+ * The browser suite proves the counts compact; only this target has a chip to
+ * protect. This suite stubs `claude`, so the chip is only its short label and
+ * never its stats; to squeeze it the way a real session's full chip is
+ * squeezed at 1100px, the window's minimum is lifted and it goes to 940px.
+ * That leaves the counts too few characters for the full sentence and more
+ * than the `18ch` floor. Under the old priority the counts kept all 40
+ * characters and the chip lost its label to the clip.
+ */
+test('a narrow header compacts the counts and leaves the model chip whole', async ({}, testInfo) => {
+  const configPath = testInfo.outputPath('hive-config.json');
+  writeProjectConfig(configPath, { id: PROJECT, path: REAL_DIRECTORY });
+
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+
+  try {
+    const page = await app.firstWindow();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForSelector('header');
+
+    await startSession(page, PROJECT);
+
+    await app.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0]!;
+      window.setMinimumSize(800, 600);
+      window.setSize(940, 760);
+    });
+    await expect
+      .poll(() => page.evaluate(() => window.innerWidth))
+      .toBe(940);
+
+    const chip = page.getByRole('banner').getByTestId('model-chip');
+    await expect(chip).toBeVisible();
+
+    // The row that clips is the chip's inner one; the brain icon sits outside it.
+    const chipClipped = await chip.evaluate((el) => {
+      const row = el.querySelector(':scope > span')!;
+      return row.scrollWidth > row.clientWidth + 1;
+    });
+    expect(chipClipped).toBe(false);
+
+    const countsChars = await page.getByTestId('status-counts').evaluate((el) => {
+      const probe = document.createElement('span');
+      probe.textContent = '0';
+      el.append(probe);
+      const ch = probe.getBoundingClientRect().width;
+      probe.remove();
+      return Math.round(el.getBoundingClientRect().width / ch);
+    });
+    // Numbers only: four one-digit counts and three separators.
+    expect(countsChars).toBe(13);
+
+    await page
+      .getByRole('banner')
+      .screenshot({ path: testInfo.outputPath('narrow-header.png') });
+  } finally {
+    await app.close();
+  }
+});
+
 test('the traffic lights get their own row above the header', async ({ page }) => {
   await page.waitForSelector('header');
 
