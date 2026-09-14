@@ -22,7 +22,11 @@ import { afterAll, afterEach, vi } from 'vitest';
  * `HIVE_LIVE_*_PROOF` flag): those drive a real `claude`, which needs the real
  * home for its login, and they isolate their own `HIVE_*` paths.
  */
-if (!Object.keys(process.env).some((key) => /^HIVE_LIVE_\w+_PROOF$/.test(key))) {
+if (
+  !Object.entries(process.env).some(
+    ([key, value]) => /^HIVE_LIVE_\w+_PROOF$/.test(key) && value === '1',
+  )
+) {
   const home = mkdtempSync(join(tmpdir(), 'hive-test-home-'));
   process.env['HOME'] = home;
   afterAll(() => {
