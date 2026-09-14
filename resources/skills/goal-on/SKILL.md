@@ -165,7 +165,9 @@ writes `DONE`.
    `status: DONE` yourself.** The verifier writes it once the boxes, the
    evidence and a real PR on `branch:` agree.
 6. `mcp__hive__agents` lists `shipper`: `ledger_ask to: shipper` with the
-   intake shape from `ship`, `reply-to` this session, `ticket: none`. It
+   intake shape from `ship`, `reply-to: $HIVE_SESSION_ID` (this session's
+   `sess-…` party name, never the brief's `session:` UUID, which no party
+   answers to), `ticket: none`. It
    does not: say the draft PR is ready and stop; the tail is the person's.
 
 The goal is met at draft PR raised, plus the shipper woken when there is one.

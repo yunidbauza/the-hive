@@ -75,6 +75,17 @@ describe('createLedger', () => {
     expect(ledger.read({}).entries).toHaveLength(0);
   });
 
+  it('refuses an entry addressed to a party it does not know, so no ask is orphaned', () => {
+    // A goal session once wrote its Claude session UUID as `reply-to`; the
+    // shipper's final ask went there, was accepted, and nobody could see it.
+    for (const kind of ['ask', 'post'] as const) {
+      const result = ledger.append({ from: 'shipper', to: 'sess-gone', kind, body: 'merged?' });
+
+      expect(result).toEqual({ ok: false, status: 404, reason: 'unknown party: sess-gone' });
+    }
+    expect(ledger.read({}).entries).toHaveLength(0);
+  });
+
   it('refuses a body over the cap without appending', () => {
     const result = ledger.append({
       from: 'sess-a',

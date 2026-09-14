@@ -28,9 +28,14 @@ ledger_ask
     worktree: /abs/path/or/none        (an agent worktree merge-pr may remove)
     ticket: HIVE-123 | none
     key-confirmed: yes | no            (yes only when the key came from work-on's arguments)
-    reply-to: <session id> | overmind
+    reply-to: <$HIVE_SESSION_ID, sess-…> | overmind
   meta: { pr: 214, repo: "yunidbauza/the-hive", ticket: "HIVE-123", stage: "intake" }
 ```
+
+`reply-to` is a party name: the asker's `$HIVE_SESSION_ID`, never a Claude
+session UUID. A write to a name no party answers to is refused `unknown
+party`; on that refusal the row's `replyTo` becomes the intake ask's `from`
+and the write is sent again.
 
 The shipper answers the ask with `accepted` at once, so the asker is free, and
 adds the row to `prs.json` in its working directory:

@@ -91,6 +91,16 @@ export function createLedger(options: LedgerOptions): Ledger {
       if (!options.knowsParty(request.from)) {
         return refuse(404, `unknown party: ${request.from}`);
       }
+      /*
+        The same rule for the addressee, and only as the caller wrote it: the
+        `to` derived from a thread below names a party the log already holds.
+        An entry to a name nobody answers to is accepted, visible to no one,
+        and an ask there leaves its asker waiting on nobody; refused, the
+        writer learns at once and can re-address it.
+      */
+      if (request.to !== undefined && !options.knowsParty(request.to)) {
+        return refuse(404, `unknown party: ${request.to}`);
+      }
       if (!(LEDGER_KINDS as readonly string[]).includes(request.kind)) {
         return refuse(400, `unknown kind: ${String(request.kind)}`);
       }

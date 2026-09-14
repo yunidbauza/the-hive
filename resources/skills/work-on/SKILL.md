@@ -98,7 +98,7 @@ ledger_ask
     spec: .hive/specs/YYYY-MM-DD-<slug>.md   (or: none)
     ship: yes
     key-confirmed: yes                       (the key came from this invocation)
-    reply-to: <this session's id>            (overmind with --detach)
+    reply-to: <$HIVE_SESSION_ID, sess-…>     (overmind with --detach)
   meta: { ticket: "<KEY>", repo: "<owner>/<repo>", plan: "...", stage: "build",
           intent: "wait for the builder; answer its questions from the spec" }
 ```
@@ -147,7 +147,7 @@ transition_issue <KEY> <id>`), `hive:execute`, `hive:verify`, then:
 2. `git push -u origin <branch>`.
 3. `gh pr create --draft` with what changed and how it was verified.
 4. `shipper` listed by `mcp__hive__agents`: `ledger_ask to: shipper` (see
-   `ship` for the intake shape) with `reply-to: <this session>` and
+   `ship` for the intake shape) with `reply-to: $HIVE_SESSION_ID` and
    `key-confirmed: yes` (the key came from this invocation), then stay for
    the shipper's final ask, or `/done`. No shipper on this machine: say the
    draft PR is ready and stop.
