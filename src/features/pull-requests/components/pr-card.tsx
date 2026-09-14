@@ -6,7 +6,7 @@ import type { Pr } from '@/types/pull-request';
 import { Icon } from '@components/ui/icon';
 import { Tag } from '@components/ui/tag';
 import { composeBadges, prStateText } from '@features/shared/pr-presentation';
-import { useOpenEntity, useShipStage } from '@stores/hive-store';
+import { useOpenEntity, useShipping } from '@stores/hive-store';
 
 interface PrCardProps {
   pr: Pr;
@@ -75,14 +75,15 @@ interface PrCardProps {
  */
 export function PrCard({ pr }: PrCardProps) {
   const openEntity = useOpenEntity();
-  const stage = useShipStage(`${pr.owner}/${pr.repo}`, pr.n);
+  const shipping = useShipping(`${pr.owner}/${pr.repo}`, pr.n);
   /*
-    The shipper's stage rides beside the GitHub badges (HIVE-171). Its own
+    Whether the shipper holds the PR rides beside the GitHub badges (HIVE-171):
+    it is what tells a draft under review from one nobody is driving. Its own
     badge rather than a rule in `composeBadges`: that table is a pure function
     of the PR record, and this comes from the ledger.
   */
   const badges = composeBadges(pr);
-  if (stage !== undefined) badges.push({ text: `ship: ${stage}`, tone: 'brand' });
+  if (shipping) badges.push({ text: 'shipping', tone: 'brand' });
   const isLive = pr.state !== 'merged';
 
   const openSession = () => {

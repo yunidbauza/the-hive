@@ -36,7 +36,7 @@ describe('PrCard', () => {
     expect(screen.getByText('nova-web')).toBeInTheDocument();
   });
 
-  it('adds the shipper\'s stage from the ledger as one more badge (HIVE-171)', () => {
+  it('adds a shipping badge while the shipper holds the PR (HIVE-171)', () => {
     useHiveStore.getState().hydrateLedger([
       {
         id: 's1',
@@ -49,7 +49,8 @@ describe('PrCard', () => {
     ]);
     render(<PrCard pr={pr()} />);
 
-    expect(screen.getByText('ship: approval')).toBeInTheDocument();
+    expect(screen.getByText('shipping')).toBeInTheDocument();
+    expect(screen.queryByText(/approval/)).not.toBeInTheDocument();
   });
 
   it('shows no shipper badge for the same short name under another owner (HIVE-171)', () => {
@@ -65,7 +66,7 @@ describe('PrCard', () => {
     ]);
     render(<PrCard pr={pr()} />);
 
-    expect(screen.queryByText('ship: approval')).not.toBeInTheDocument();
+    expect(screen.queryByText('shipping')).not.toBeInTheDocument();
   });
 
   it('renders the badges the rule table composes', () => {

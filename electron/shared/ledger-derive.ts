@@ -277,31 +277,34 @@ const wholeNumberOf = (value: unknown): number | undefined => {
 };
 
 /**
- * The shipper's latest stage for one PR, or nothing (HIVE-171).
+ * Whether the shipper is holding one PR (HIVE-171).
+ *
+ * A yes or no, not the stage: most stages restate a GitHub badge the card
+ * already has, and the one thing the card cannot say without this is whether
+ * anyone is driving the PR at all.
  *
  * The shipper posts one `post` per stage change with `meta: { pr, repo, stage }`
  * (`resources/skills/ship/SKILL.md`), `repo` as `owner/name`, and its claim on
  * the PR is the key `owner/name#N`. The whole slug is compared, case-insensitive
  * as GitHub's own names are: two repos with one short name under different
  * owners must not share a badge. Newest wins; the ledger is appended in order
- * and mirrored in order, so the last match is the latest. A `release` of the
- * claim ends the reading: the shipper is no longer holding the PR, so a merged
- * card does not go on wearing the closing stage. Read from the log, never
- * stored: one truth per number on screen.
+ * and mirrored in order, so the last match is the latest.
+ *
+ * Posts, not the claim itself: the claim is one entry at intake and the
+ * renderer's 500-entry tail can roll past it mid-ship, while a stage post is
+ * rewritten at every stage. Two entries end the reading: a `release` of the
+ * claim, and a `closed` post, which the shipper writes after its release.
+ * Read from the log, never stored: one truth per number on screen.
  */
-export function shipStageFor(
-  entries: readonly LedgerEntry[],
-  slug: string,
-  n: number,
-): string | undefined {
+export function isShipping(entries: readonly LedgerEntry[], slug: string, n: number): boolean {
   const wanted = slug.toLowerCase();
-  if (wanted === '') return undefined;
+  if (wanted === '') return false;
   const claim = `${wanted}#${n}`;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i]!;
     if (entry.from !== 'shipper') continue;
     if (entry.kind === 'release') {
-      if (taskOf(entry)?.toLowerCase() === claim) return undefined;
+      if (taskOf(entry)?.toLowerCase() === claim) return false;
       continue;
     }
     if (entry.kind !== 'post') continue;
@@ -312,9 +315,9 @@ export function shipStageFor(
       continue;
     }
     if (repo.toLowerCase() !== wanted) continue;
-    return stage.slice(0, STAGE_TEXT_MAX);
+    return stage !== 'closed';
   }
-  return undefined;
+  return false;
 }
 
 /** Where an agent is working (HIVE-172). */
@@ -334,7 +337,7 @@ export interface AgentSite {
  * outside every project path, which is why the checkout has to be named too:
  * the renderer maps it to a project, and a terminal needs one.
  *
- * Three rules, all read newest-first as {@link shipStageFor} is:
+ * Three rules, all read newest-first as {@link isShipping} is:
  * - A `release` from the agent ends the reading. Its job is over and the
  *   shipper removes the worktree after the merge, so a path from before it is
  *   a directory that is gone.
@@ -376,7 +379,7 @@ export interface BuildProgress {
  *
  * The builder posts one `post` per completed task with
  * `meta: { ticket, stage: "build", task, worktree }` (`resources/agents/builder`).
- * Same reading rule as {@link shipStageFor}: the newest matching post.
+ * Same reading rule as {@link isShipping}: the newest matching post.
  */
 export function buildProgressFor(
   entries: readonly LedgerEntry[],

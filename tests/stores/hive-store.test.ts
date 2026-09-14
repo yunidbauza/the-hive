@@ -66,7 +66,7 @@ import {
   useNavOrder,
   useOpenAskCount,
   useSessionNameReports,
-  useShipStage,
+  useShipping,
   useTerminalHostIds,
   useThread,
 } from '@stores/hive-store';
@@ -5427,9 +5427,9 @@ describe('the ledger slice', () => {
       entry({ id: '2', from: 'builder', kind: 'post', meta: { ticket: 'ACME-9', stage: 'build', task: 2 } }),
     ]);
 
-    const ship = renderHook(() => useShipStage('acme/nova', 4));
+    const ship = renderHook(() => useShipping('acme/nova', 4));
     const build = renderHook(() => useBuildProgress('ACME-9'));
-    expect(ship.result.current).toBe('ci');
+    expect(ship.result.current).toBe(true);
     expect(build.result.current).toEqual({ stage: 'build', task: 2 });
 
     const before = build.result.current;
@@ -5439,11 +5439,11 @@ describe('the ledger slice', () => {
 
     act(() =>
       useHiveStore.getState().hydrateLedger([
-        entry({ id: '3', from: 'shipper', kind: 'post', meta: { pr: 4, repo: 'acme/nova', stage: 'merge' } }),
+        entry({ id: '3', from: 'shipper', kind: 'post', meta: { pr: 4, repo: 'acme/nova', stage: 'closed' } }),
       ]),
     );
     ship.rerender();
-    expect(ship.result.current).toBe('merge');
+    expect(ship.result.current).toBe(false);
   });
 
   /**

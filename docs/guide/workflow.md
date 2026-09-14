@@ -113,7 +113,7 @@ Projects shows the switch as soon as it is written.
 ## What you see
 
 - **The Work tab.** A ticket the builder is building shows `builder · task N done` under its
-  title. A PR the shipper holds shows one more badge, `ship: <stage>`, beside the GitHub
+  title. A PR the shipper holds shows one more badge, `shipping`, beside the GitHub
   ones. Both come off the ledger and go when the work is released.
 - **The inbox.** Every question an agent cannot answer itself, every merge that needs your
   consent, and every goal that finished or failed.

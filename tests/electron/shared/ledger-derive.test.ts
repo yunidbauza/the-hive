@@ -14,13 +14,13 @@ import {
   buildProgressFor,
   claims,
   expiredAsks,
+  isShipping,
   keepNewest,
   laneOfRun,
   matches,
   nextRef,
   openAsks,
   resolveRef,
-  shipStageFor,
   thread,
   ttlOf,
   STAGE_TEXT_MAX,
@@ -36,7 +36,7 @@ const entry = (over: Partial<LedgerEntry> & Pick<LedgerEntry, 'id'>): LedgerEntr
   ...over,
 });
 
-describe('shipStageFor and buildProgressFor (HIVE-171)', () => {
+describe('isShipping and buildProgressFor (HIVE-171)', () => {
   const posts = [
     entry({ id: 'p1', from: 'shipper', body: 'stage', meta: { pr: 214, repo: 'yunidbauza/the-hive', stage: 'intake' } }),
     entry({ id: 'p2', from: 'shipper', body: 'stage', meta: { pr: 214, repo: 'Yunidbauza/The-Hive', stage: 'ci' } }),
@@ -47,48 +47,56 @@ describe('shipStageFor and buildProgressFor (HIVE-171)', () => {
     entry({ id: 'b3', from: 'builder', body: 'task', meta: { ticket: 'HIVE-8', stage: 'verify' } }),
   ];
 
-  it('reads the newest shipper stage for a PR by number and whole slug, case-insensitively', () => {
-    expect(shipStageFor(posts, 'yunidbauza/the-hive', 214)).toBe('ci');
-    expect(shipStageFor(posts, 'behiques/incorpx', 9)).toBe('merge');
+  it('reads a PR as shipping by number and whole slug, case-insensitively', () => {
+    expect(isShipping(posts, 'yunidbauza/the-hive', 214)).toBe(true);
+    expect(isShipping(posts, 'behiques/incorpx', 9)).toBe(true);
   });
 
   it('matches the whole slug, never a tail or a substring of it', () => {
-    expect(shipStageFor(posts, 'the-hive', 214)).toBeUndefined();
-    expect(shipStageFor(posts, 'someone-else/the-hive', 214)).toBeUndefined();
-    expect(shipStageFor(posts, 'hive', 214)).toBeUndefined();
-    expect(shipStageFor(posts, '', 214)).toBeUndefined();
+    expect(isShipping(posts, 'the-hive', 214)).toBe(false);
+    expect(isShipping(posts, 'someone-else/the-hive', 214)).toBe(false);
+    expect(isShipping(posts, 'hive', 214)).toBe(false);
+    expect(isShipping(posts, '', 214)).toBe(false);
   });
 
-  it('answers nothing for a PR nobody shipped, and reads only the shipper\'s posts', () => {
-    expect(shipStageFor(posts, 'yunidbauza/the-hive', 1)).toBeUndefined();
-    expect(shipStageFor(posts.filter((e) => e.from !== 'shipper'), 'yunidbauza/the-hive', 214)).toBeUndefined();
-    const asked = [
-      ...posts,
-      entry({ id: 'p5', from: 'shipper', kind: 'ask', to: 'fixer', body: 'fix', meta: { pr: 214, repo: 'yunidbauza/the-hive', stage: 'findings' } }),
-    ];
-    expect(shipStageFor(asked, 'yunidbauza/the-hive', 214)).toBe('ci');
+  it('answers false for a PR nobody shipped, and reads only the shipper\'s posts', () => {
+    expect(isShipping(posts, 'yunidbauza/the-hive', 1)).toBe(false);
+    expect(isShipping(posts.filter((e) => e.from !== 'shipper'), 'yunidbauza/the-hive', 214)).toBe(false);
   });
 
-  it('stops reading once the shipper released its claim on the PR', () => {
+  it('stops once the shipper released its claim on the PR', () => {
     const released = [
       ...posts,
-      entry({ id: 'p6', from: 'shipper', body: 'stage', meta: { pr: 214, repo: 'yunidbauza/the-hive', stage: 'closed' } }),
       entry({ id: 'r1', from: 'shipper', kind: 'release', body: 'released', meta: { task: 'Yunidbauza/the-hive#214' } }),
     ];
-    expect(shipStageFor(released, 'yunidbauza/the-hive', 214)).toBeUndefined();
-    expect(shipStageFor(released, 'behiques/incorpx', 9)).toBe('merge');
-    expect(shipStageFor(released.slice(0, -1), 'yunidbauza/the-hive', 214)).toBe('closed');
+    expect(isShipping(released, 'yunidbauza/the-hive', 214)).toBe(false);
+    expect(isShipping(released, 'behiques/incorpx', 9)).toBe(true);
   });
 
-  it('accepts a number written as digits, and clamps a stage to what a card can show', () => {
-    const loose = [
-      entry({ id: 'l1', from: 'shipper', body: 'stage', meta: { pr: '77', repo: 'acme/nova', stage: 'x'.repeat(60) } }),
-      entry({ id: 'l2', from: 'shipper', body: 'stage', meta: { pr: 7.5, repo: 'acme/nova', stage: 'never' } }),
-      entry({ id: 'l3', from: 'builder', body: 'task', meta: { ticket: 'ACME-1', stage: 'build', task: '4' } }),
+  /*
+    The `closed` step releases the claim first and posts "PR #N merged" with
+    `stage: "closed"` after it, so the post is the newer entry. Read as a
+    stage, it left `ship: closed` on every merged card.
+  */
+  it('stops at the closing post the shipper writes after its release', () => {
+    const closed = [
+      ...posts,
+      entry({ id: 'r1', from: 'shipper', kind: 'release', body: 'released', meta: { task: 'yunidbauza/the-hive#214' } }),
+      entry({ id: 'p6', from: 'shipper', to: 'sess-a', body: 'PR #214 merged', meta: { pr: 214, repo: 'yunidbauza/the-hive', stage: 'closed' } }),
     ];
-    expect(shipStageFor(loose, 'acme/nova', 77)).toBe('x'.repeat(STAGE_TEXT_MAX));
-    expect(shipStageFor(loose, 'acme/nova', 7)).toBeUndefined();
-    expect(buildProgressFor(loose, 'ACME-1')).toEqual({ stage: 'build', task: 4 });
+    expect(isShipping(closed, 'yunidbauza/the-hive', 214)).toBe(false);
+    expect(isShipping(closed, 'behiques/incorpx', 9)).toBe(true);
+  });
+
+  it('accepts a number written as digits, and nothing that is not whole', () => {
+    const loose = [
+      entry({ id: 'l1', from: 'shipper', body: 'stage', meta: { pr: '77', repo: 'acme/nova', stage: 'ci' } }),
+      entry({ id: 'l2', from: 'shipper', body: 'stage', meta: { pr: 7.5, repo: 'acme/nova', stage: 'ci' } }),
+      entry({ id: 'l3', from: 'builder', body: 'task', meta: { ticket: 'ACME-1', stage: 'x'.repeat(60), task: '4' } }),
+    ];
+    expect(isShipping(loose, 'acme/nova', 77)).toBe(true);
+    expect(isShipping(loose, 'acme/nova', 7)).toBe(false);
+    expect(buildProgressFor(loose, 'ACME-1')).toEqual({ stage: 'x'.repeat(STAGE_TEXT_MAX), task: 4 });
   });
 
   it('reads the newest builder progress for a ticket, key case-insensitive, task optional', () => {

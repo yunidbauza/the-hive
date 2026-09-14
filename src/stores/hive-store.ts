@@ -91,9 +91,9 @@ import {
 import {
   agentSiteFor,
   buildProgressFor,
+  isShipping,
   matches,
   openAsks,
-  shipStageFor,
   thread,
   type BuildProgress,
 } from '@shared/ledger-derive';
@@ -7548,15 +7548,15 @@ export const useLedgerEntries = (filter?: LedgerReadQuery): LedgerEntry[] => {
 };
 
 /**
- * The shipper's latest stage for a PR, for its card's badge (HIVE-171).
+ * Whether the shipper holds a PR, for its card's badge (HIVE-171).
  *
  * `slug` is `owner/name`. Memoised over the tail like `useBuildProgress`, so
  * the scan runs once per ledger change rather than once per store change.
  */
-export const useShipStage = (slug: string, n: number): string | undefined => {
+export const useShipping = (slug: string, n: number): boolean => {
   const entries = useHiveStore((state) => state.ledger);
 
-  return useMemo(() => shipStageFor(entries, slug, n), [entries, slug, n]);
+  return useMemo(() => isShipping(entries, slug, n), [entries, slug, n]);
 };
 
 /** The builder's latest progress on a ticket, for its card's line (HIVE-171). */
