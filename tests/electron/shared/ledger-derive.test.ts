@@ -64,6 +64,25 @@ describe('isShipping and buildProgressFor (HIVE-171)', () => {
     expect(isShipping(posts.filter((e) => e.from !== 'shipper'), 'yunidbauza/the-hive', 214)).toBe(false);
   });
 
+  /*
+    The shipper claims at intake and may post no stage until `ci`, so the
+    claim alone has to carry the pill through the self review.
+  */
+  it('reads the shipper\'s own claim as shipping before any stage post', () => {
+    const claimed = [
+      entry({ id: 'c1', from: 'shipper', kind: 'claim', body: 'claimed', meta: { task: 'Acme/Nova#5' } }),
+      entry({ id: 'c2', from: 'fixer', kind: 'claim', body: 'claimed', meta: { task: 'acme/nova#6' } }),
+    ];
+    expect(isShipping(claimed, 'acme/nova', 5)).toBe(true);
+    expect(isShipping(claimed, 'acme/nova', 6)).toBe(false);
+    expect(isShipping(claimed, 'acme/nova', 55)).toBe(false);
+    const released = [
+      ...claimed,
+      entry({ id: 'r1', from: 'shipper', kind: 'release', body: 'released', meta: { task: 'acme/nova#5' } }),
+    ];
+    expect(isShipping(released, 'acme/nova', 5)).toBe(false);
+  });
+
   it('stops once the shipper released its claim on the PR', () => {
     const released = [
       ...posts,

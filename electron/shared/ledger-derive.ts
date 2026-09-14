@@ -303,8 +303,8 @@ export function isShipping(entries: readonly LedgerEntry[], slug: string, n: num
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i]!;
     if (entry.from !== 'shipper') continue;
-    if (entry.kind === 'release') {
-      if (taskOf(entry)?.toLowerCase() === claim) return false;
+    if (entry.kind === 'release' || entry.kind === 'claim') {
+      if (taskOf(entry)?.toLowerCase() === claim) return entry.kind === 'claim';
       continue;
     }
     if (entry.kind !== 'post') continue;
