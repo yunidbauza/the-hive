@@ -23,7 +23,7 @@ export type TerminalFontId =
   | 'consolas'
   | 'courier';
 
-export interface TerminalFontOption {
+interface TerminalFontOption {
   id: TerminalFontId;
   label: string;
   stack: string;

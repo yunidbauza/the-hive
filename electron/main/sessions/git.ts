@@ -73,7 +73,7 @@ export const MIN_INTERVAL_MS = 2_000;
  * `rev-parse` that has not answered in three seconds is a wedged filesystem or
  * a lock nobody is going to release, and waiting longer only holds a timer open.
  */
-export const READ_TIMEOUT_MS = 3_000;
+const READ_TIMEOUT_MS = 3_000;
 
 /** What Git prints for a detached HEAD, which is not a branch name. */
 const DETACHED = 'HEAD';

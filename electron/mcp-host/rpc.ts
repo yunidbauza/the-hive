@@ -33,7 +33,7 @@ import { handleMessage, rpcFailure, type RpcHandlers } from '@shared/mcp-protoco
  */
 export { handleMessage, type RpcHandlers };
 
-export interface ServeOptions {
+interface ServeOptions {
   input: NodeJS.ReadableStream;
   /** Where a reply goes. The entry point points this at stdout. */
   write: (line: string) => void;

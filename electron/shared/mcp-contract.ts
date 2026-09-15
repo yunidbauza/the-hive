@@ -100,13 +100,13 @@ export interface JsonRpcRequest {
   params?: Record<string, unknown>;
 }
 
-export interface JsonRpcSuccess {
+interface JsonRpcSuccess {
   jsonrpc: typeof JSONRPC_VERSION;
   id: string | number;
   result: unknown;
 }
 
-export interface JsonRpcFailure {
+interface JsonRpcFailure {
   jsonrpc: typeof JSONRPC_VERSION;
   id: string | number;
   error: { code: number; message: string };

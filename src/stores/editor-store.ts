@@ -45,9 +45,9 @@ import { baseName, readFile, writeFile } from '@lib/explorer/fs-client';
  * dismisses it: the user opened that file and should be told it went away, not
  * have the tab vanish.
  */
-export type BufferRefusal = 'binary' | 'too-large';
+type BufferRefusal = 'binary' | 'too-large';
 
-export interface OpenFile {
+interface OpenFile {
   /** `${projectId}:${relPath}` — unique across projects, stable across renames of neither. */
   key: string;
   projectId: string;
@@ -522,7 +522,7 @@ const editorActionsSelector = (state: EditorState) => ({
  * Deliberately not the whole `OpenFile`: the strip re-renders on every
  * keystroke otherwise, because `text` changes on every keystroke.
  */
-export interface EditorTab {
+interface EditorTab {
   key: string;
   name: string;
   relPath: string;

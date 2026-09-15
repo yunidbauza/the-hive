@@ -66,7 +66,7 @@ import { join } from 'node:path';
  */
 
 /** What wrote a title, as far as the transcript can say. */
-export type TitleVerdict =
+type TitleVerdict =
   /** A `custom-title` record carries exactly this name — the user renamed. */
   | 'rename'
   /** An `ai-title` record carries exactly this name — Claude guessed. */
@@ -135,7 +135,7 @@ export function transcriptPath(home: string, cwd: string, sessionUuid: string): 
   return null;
 }
 
-export interface TitleOriginReader {
+interface TitleOriginReader {
   /**
    * What wrote `name` in the conversation `sessionUuid` names, started in `cwd`.
    *
@@ -146,7 +146,7 @@ export interface TitleOriginReader {
   classify(cwd: string, sessionUuid: string, name: string): TitleVerdict;
 }
 
-export interface TitleOriginOptions {
+interface TitleOriginOptions {
   /** Overridable for tests; defaults to the real home directory. */
   home?: string;
   /** Overridable for tests; defaults to {@link TAIL_BYTES}. */

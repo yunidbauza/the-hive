@@ -44,7 +44,7 @@ export interface McpRuntime {
   hiveServerSpec(): StdioServerSpec | null;
 }
 
-export interface McpRuntimeOptions {
+interface McpRuntimeOptions {
   /** `app.getPath('userData')`, passed in so these tests need no Electron. */
   userDataPath: string;
   /** `process.execPath`. */

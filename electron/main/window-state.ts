@@ -22,13 +22,13 @@ export interface WindowRect {
   height: number;
 }
 
-export interface WindowState {
+interface WindowState {
   rect: WindowRect | null;
   maximized: boolean;
 }
 
 /** A display's usable area, i.e. Electron's `Display['workArea']`. */
-export type WorkArea = WindowRect;
+type WorkArea = WindowRect;
 
 export const EMPTY_STATE: WindowState = { rect: null, maximized: false };
 
@@ -40,7 +40,7 @@ export const EMPTY_STATE: WindowState = { rect: null, maximized: false };
  * overlapping by one pixel, which is indistinguishable from offscreen. This is
  * roughly "enough of the header to grab and drag".
  */
-export const MIN_VISIBLE = { width: 96, height: 48 } as const;
+const MIN_VISIBLE = { width: 96, height: 48 } as const;
 
 function isRect(value: unknown): value is WindowRect {
   if (typeof value !== 'object' || value === null) return false;

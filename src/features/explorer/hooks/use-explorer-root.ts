@@ -42,7 +42,7 @@ import { hasFsBridge, readRoot } from '@lib/explorer/fs-client';
  * before main has answered is precisely the guess this hook removes. The
  * explorer holds its tree back for the one round trip instead.
  */
-export interface ExplorerRoot {
+interface ExplorerRoot {
   /** `''` for the project root; the worktree's absolute path when widened. */
   key: string;
   /** Whether main accepted the session's working directory as a second root. */

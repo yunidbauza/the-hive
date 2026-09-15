@@ -14,7 +14,7 @@ import { checkForUpdatesInteractively } from './updates';
  * them through a real Electron boot would be slow and indirect.
  */
 
-export interface LifecycleDeps {
+interface LifecycleDeps {
   /** Injected so tests do not need a real `BrowserWindow`. */
   createWindow: (options?: { withSplash?: boolean }) => unknown;
   platform?: NodeJS.Platform;

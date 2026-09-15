@@ -34,7 +34,7 @@ const EMPTY: AgentRunState = {
   runs: [],
 };
 
-export interface AgentStateOptions {
+interface AgentStateOptions {
   path: string;
   debounceMs?: number;
 }

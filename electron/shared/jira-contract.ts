@@ -29,7 +29,7 @@ export const JIRA_TOKEN_ENV = 'JIRA_API_KEY';
 export const JIRA_SITE_ENV = 'JIRA_DOMAIN';
 
 /** Where an effective setting came from, for copy that has to explain itself. */
-export type JiraSiteSource = 'config' | 'environment';
+type JiraSiteSource = 'config' | 'environment';
 
 /**
  * Where the account email came from.
@@ -37,7 +37,7 @@ export type JiraSiteSource = 'config' | 'environment';
  * `credential` means the token value carried it — `JIRA_API_KEY` in its
  * `email:token` form, which is how the `jira-writer` tooling writes it.
  */
-export type JiraEmailSource = 'config' | 'credential';
+type JiraEmailSource = 'config' | 'credential';
 
 /**
  * Where the credential comes from — never what it is.
@@ -419,7 +419,7 @@ export interface JiraToolCommentRequest {
 }
 
 /** The parent, when the issue has one: an Epic for a story, a story for a subtask. */
-export interface JiraParentRef {
+interface JiraParentRef {
   key: string;
   summary: string;
 }

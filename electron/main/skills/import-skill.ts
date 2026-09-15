@@ -81,7 +81,7 @@ import { frontmatter } from './read';
  * ponytail: one ceiling for both, generous for a skill (text and a few
  * scripts); split it if skills start shipping large assets.
  */
-export const MAX_SKILL_ZIP_BYTES = 100_000_000;
+const MAX_SKILL_ZIP_BYTES = 100_000_000;
 
 const STORED = 0;
 const DEFLATE = 8;

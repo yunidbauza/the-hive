@@ -35,7 +35,7 @@ export type CallHandler = (payload: unknown, reporter: RemoteReporter) => unknow
  * is on the type rather than special-cased, so a second notify channel that
  * grows a surface dependency does not need this signature widened under it.
  */
-export type NotifyHandler = (payload: unknown, reporter: RemoteReporter) => void;
+type NotifyHandler = (payload: unknown, reporter: RemoteReporter) => void;
 
 /**
  * Which handler answers which channel, recorded as they are registered

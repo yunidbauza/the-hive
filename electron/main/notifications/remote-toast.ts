@@ -86,7 +86,7 @@ function asToast(payload: unknown): ToastPayload | null {
   };
 }
 
-export interface RemoteToastOptions {
+interface RemoteToastOptions {
   /** Call a channel on the attached server — `RemoteClient.call`. */
   call: (channel: Channel, payload: unknown) => Promise<unknown>;
   /**

@@ -4,7 +4,7 @@ import { attachRequest } from '../../remote-client/index';
 import { frameBytes } from '../../remote-client/socket';
 
 /** A session's resume point, with the id it belongs to. */
-export interface TrackedPoint {
+interface TrackedPoint {
   sessionId: string;
   point: ResumePoint;
 }

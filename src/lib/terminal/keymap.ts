@@ -14,7 +14,7 @@
  */
 
 /** What should happen to a key event arriving at a live terminal. */
-export type TerminalKeyAction =
+type TerminalKeyAction =
   /** Let xterm encode it and send it to the pty. The default, deliberately. */
   | 'to-pty'
   /** Copy the selection; the pty must not see it. */
@@ -467,7 +467,7 @@ const isBlankInputRow = (row: string): boolean =>
  * Three answers rather than two, because "no" has two very different meanings
  * and the app needs to tell them apart (HIVE-79).
  */
-export type BareBackClaim =
+type BareBackClaim =
   /** Claude's input, and empty: the app takes the key. */
   | 'claim'
   /**
@@ -680,7 +680,7 @@ export interface TerminalChordDetail {
 export const backChordLabel = (isMac: boolean): string =>
   isMac ? '⌘[' : 'Ctrl+Shift+←';
 
-export interface KeyContext {
+interface KeyContext {
   isMac: boolean;
   /** Whether the terminal currently holds a selection. */
   hasSelection: boolean;

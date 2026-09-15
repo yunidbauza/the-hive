@@ -50,7 +50,7 @@ export class FsGuardError extends Error {
   }
 }
 
-export interface ResolvedTarget {
+interface ResolvedTarget {
   /** The project's real root, symlinks resolved. */
   root: string;
   /** The real absolute path of the target. */

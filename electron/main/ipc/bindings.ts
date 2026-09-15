@@ -12,7 +12,7 @@
  * but recording the same channel twice and unbinding it twice would make the
  * second `removeAllListeners` a silent no-op that looked like it worked.
  */
-export interface BindingTarget {
+interface BindingTarget {
   removeHandler(channel: string): void;
   removeAllListeners(channel: string): void;
 }

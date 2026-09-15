@@ -16,7 +16,7 @@ import { normalizeLines } from '@lib/terminal/text';
  * of the seam and would otherwise import this one's caller.
  */
 
-export type SendResult = { ok: true } | { ok: false; reason: string };
+type SendResult = { ok: true } | { ok: false; reason: string };
 
 /**
  * Line breaks are kept; every other control character is dropped.

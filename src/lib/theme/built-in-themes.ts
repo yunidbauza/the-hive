@@ -33,7 +33,7 @@ import {
  */
 
 /** Beeswax and warm oak. */
-export const HONEYCOMB_THEME: HiveTheme = {
+const HONEYCOMB_THEME: HiveTheme = {
   hiveThemeVersion: HIVE_THEME_VERSION,
   name: 'Honeycomb',
   author: 'Built in',
@@ -99,7 +99,7 @@ export const HONEYCOMB_THEME: HiveTheme = {
 };
 
 /** Achromatic chrome, one lime wire running through it. */
-export const GRAPHITE_THEME: HiveTheme = {
+const GRAPHITE_THEME: HiveTheme = {
   hiveThemeVersion: HIVE_THEME_VERSION,
   name: 'Graphite',
   author: 'Built in',
@@ -165,7 +165,7 @@ export const GRAPHITE_THEME: HiveTheme = {
 };
 
 /** Deep harbour blue-green, with light coming off the water. */
-export const TIDEWATER_THEME: HiveTheme = {
+const TIDEWATER_THEME: HiveTheme = {
   hiveThemeVersion: HIVE_THEME_VERSION,
   name: 'Tidewater',
   author: 'Built in',
@@ -231,7 +231,7 @@ export const TIDEWATER_THEME: HiveTheme = {
 };
 
 /** Fired clay with a turquoise seam. */
-export const TERRACOTTA_THEME: HiveTheme = {
+const TERRACOTTA_THEME: HiveTheme = {
   hiveThemeVersion: HIVE_THEME_VERSION,
   name: 'Terracotta',
   author: 'Built in',
@@ -297,7 +297,7 @@ export const TERRACOTTA_THEME: HiveTheme = {
 };
 
 /** Nordic slate. Every colour pulled a third of the way to grey. */
-export const PORCELAIN_THEME: HiveTheme = {
+const PORCELAIN_THEME: HiveTheme = {
   hiveThemeVersion: HIVE_THEME_VERSION,
   name: 'Porcelain',
   author: 'Built in',
@@ -363,7 +363,7 @@ export const PORCELAIN_THEME: HiveTheme = {
 };
 
 /** Warm ash and hot filament. */
-export const CINDER_THEME: HiveTheme = {
+const CINDER_THEME: HiveTheme = {
   hiveThemeVersion: HIVE_THEME_VERSION,
   name: 'Cinder',
   author: 'Built in',

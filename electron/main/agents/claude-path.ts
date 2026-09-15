@@ -23,7 +23,7 @@ import { delimiter, isAbsolute, join } from 'node:path';
  * honouring such a value; agents say so instead of guessing.
  */
 
-export type ClaudeResolution = { path: string } | { problem: string };
+type ClaudeResolution = { path: string } | { problem: string };
 
 const isExecutableFile = (path: string): boolean => {
   try {

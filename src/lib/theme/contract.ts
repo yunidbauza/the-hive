@@ -55,13 +55,13 @@ export const TERMINAL_KEYS = [
  */
 export const TERMINAL_SURFACE_KEYS = ['surface', 'surfaceAlt'] as const;
 
-export type UiKey = (typeof UI_KEYS)[number];
-export type SyntaxKey = (typeof SYNTAX_KEYS)[number];
-export type TerminalKey = (typeof TERMINAL_KEYS)[number];
+type UiKey = (typeof UI_KEYS)[number];
+type SyntaxKey = (typeof SYNTAX_KEYS)[number];
+type TerminalKey = (typeof TERMINAL_KEYS)[number];
 
 export type UiColors = Record<UiKey, string>;
 export type SyntaxColors = Record<SyntaxKey, string>;
-export type TerminalSurfaceKey = (typeof TERMINAL_SURFACE_KEYS)[number];
+type TerminalSurfaceKey = (typeof TERMINAL_SURFACE_KEYS)[number];
 
 export type TerminalColors = Record<TerminalKey, string> &
   Partial<Record<TerminalSurfaceKey, string>>;

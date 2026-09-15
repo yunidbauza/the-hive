@@ -72,7 +72,7 @@ export const CLAUDE_THEME = 'dark-ansi';
  * spawn and a toggle must not reach backwards into a session already reading
  * one. {@link CLAUDE_THEME} removed the variation, and the pair with it.
  */
-export const HOOK_SETTINGS_FILE = join(
+const HOOK_SETTINGS_FILE = join(
   HOOK_SETTINGS_DIR,
   'claude-hooks.settings.json',
 );
@@ -103,7 +103,7 @@ export const AGENT_SETTINGS_FILE = join(
 
 export type { HookIdentity } from '@shared/hook-contract';
 
-export interface HookSettings {
+interface HookSettings {
   hooks: Record<string, unknown[]>;
   /**
    * Plugins switched off for Hive sessions (HIVE-176), `name@marketplace` to

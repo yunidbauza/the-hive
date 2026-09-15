@@ -174,7 +174,7 @@ export interface DeviceStore {
   writeDevices: (devices: readonly ServerDevice[]) => boolean;
 }
 
-export type PairOutcome =
+type PairOutcome =
   | { ok: true; device: ServerDevice; token: string }
   /** An *active* device already holds this name — refused before anything is minted. */
   | { ok: false; reason: 'duplicate-name' }
@@ -274,7 +274,7 @@ export function digestOf(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
-export type VerifyResult = 'ok' | 'unknown' | 'revoked';
+type VerifyResult = 'ok' | 'unknown' | 'revoked';
 
 /**
  * Checks `token` against the device named `id` in `devices`.
@@ -323,7 +323,7 @@ export function revokeNamed(
   return found ? { devices: next, revoked: true } : { devices, revoked: false };
 }
 
-export type RevokeOutcome =
+type RevokeOutcome =
   | { revoked: true }
   /** No device holds `name` — nothing to persist, and nothing wrong either. */
   | { revoked: false; reason: 'not-found' }

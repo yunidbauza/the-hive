@@ -45,7 +45,7 @@ export interface HttpServerSpec {
 }
 
 /** What `rewrite` bakes in place of the `${VAR}` references. */
-export interface ResolvedIdentity {
+interface ResolvedIdentity {
   /** The receiver's origin as the *container* must address it. */
   receiverUrl: string;
   session: string;

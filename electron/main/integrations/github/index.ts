@@ -64,7 +64,7 @@ export interface Github {
   resolveProjects(): Promise<Map<string, RepoRef>>;
 }
 
-export interface GithubDeps {
+interface GithubDeps {
   /** The current config. Read per call — projects change while the app runs. */
   config: () => ConfigSnapshot;
   /**

@@ -31,7 +31,7 @@ import {
   type AgentRunFiles,
 } from './registry';
 
-export interface AgentsRuntimeOptions {
+interface AgentsRuntimeOptions {
   /**
    * How a delete or a rename reaches the run bookkeeping that is keyed by an
    * agent's name but does not live in its folder (HIVE-115).

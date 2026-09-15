@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils';
 
-export interface KeyHintProps {
+interface KeyHintProps {
   /** Rendered in order, separated by the app's middot. */
   hints: readonly string[];
   className?: string;

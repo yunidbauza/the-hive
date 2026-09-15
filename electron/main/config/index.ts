@@ -330,7 +330,7 @@ export function reloadConfig(): ConfigSnapshot {
 }
 
 /** Told the snapshot a change replaced (`null` before the first load) and the one installed. */
-export type ConfigListener = (before: ConfigSnapshot | null, after: ConfigSnapshot) => void;
+type ConfigListener = (before: ConfigSnapshot | null, after: ConfigSnapshot) => void;
 
 const configListeners = new Set<ConfigListener>();
 

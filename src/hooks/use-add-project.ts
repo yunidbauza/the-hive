@@ -3,7 +3,7 @@ import { useCallback } from 'react';
 import { useChooseDirectory } from '@hooks/use-choose-directory';
 import { addProjectToConfig } from '@lib/project-config';
 
-export interface AddProject {
+interface AddProject {
   /**
    * Map a directory as a project.
    *

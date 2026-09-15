@@ -21,7 +21,7 @@ import {
 } from './window-state';
 
 /** Where geometry lives. Per-instance, so `--user-data-dir` isolates it. */
-export const windowStatePath = (): string =>
+const windowStatePath = (): string =>
   join(app.getPath('userData'), 'window-state.json');
 
 /** How long to coalesce a drag or resize before writing. */
@@ -85,7 +85,7 @@ export function applyWebContentsPolicy(win: BrowserWindow): void {
 }
 
 /** Wire geometry persistence to a window. Exported for tests. */
-export function trackWindowState(win: BrowserWindow, statePath: string): void {
+function trackWindowState(win: BrowserWindow, statePath: string): void {
   const persist = debounce(() => {
     if (win.isDestroyed()) return;
     const maximized = win.isMaximized();
@@ -102,7 +102,7 @@ export function trackWindowState(win: BrowserWindow, statePath: string): void {
   win.on('close', () => persist.flush());
 }
 
-export interface CreateWindowOptions {
+interface CreateWindowOptions {
   /**
    * Open the cold-start splash in front of this window (the Overmind Chamber).
    *

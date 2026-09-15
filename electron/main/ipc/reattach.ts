@@ -16,7 +16,7 @@ import { classifyCause, type CloseCause, type RemoteClient } from '../../remote-
  */
 export const BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000] as const;
 
-export interface ReattachDeps {
+interface ReattachDeps {
   /** The far machine's name, for every status this loop emits. */
   serverName: string;
   /** One dial. Rejects the way `connectRemote` does. */

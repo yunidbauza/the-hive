@@ -729,7 +729,7 @@ export function adfBlocksToText(blocks: readonly AdfBlock[]): string {
 }
 
 /** One ticket as prose (HIVE-174), bounded by {@link JIRA_TEXT_MAX}. */
-export function jiraIssueText(value: JiraToolIssue): string {
+function jiraIssueText(value: JiraToolIssue): string {
   const { issue, detail, comments, links, partial } = value;
   const lines = [
     `${issue.key} "${issue.summary}"`,

@@ -7,7 +7,7 @@ import { MCP_SERVER_NAME } from '@shared/mcp-contract';
  * The `--mcp-config` file every Hive session is launched with (HIVE-112).
  */
 
-export interface McpConfigOptions {
+interface McpConfigOptions {
   /**
    * The app's own binary — `process.execPath`.
    *

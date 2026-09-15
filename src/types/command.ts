@@ -13,7 +13,7 @@
  */
 
 /** Commands whose failure is a *shape* problem the parser can see by itself. */
-export type UsageCommand =
+type UsageCommand =
   | 'open'
   | 'send'
   | 'spawn'

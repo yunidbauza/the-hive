@@ -79,7 +79,7 @@ interface Manifest {
   files: Record<string, string>;
 }
 
-export interface SeedOptions {
+interface SeedOptions {
   /** The shipped tree: `<source>/skills/<name>/…` and `<source>/agents/<name>/AGENT.md`. */
   source: string;
   /** `~/.hive`, the folder that holds `skills/` and `agents/`. */

@@ -75,7 +75,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * first time — or a `spawn` typed into the console — running under whatever the
  * user's own `claude` configuration says.
  */
-export interface SessionOptions {
+interface SessionOptions {
   /**
    * Whether to unset the API credentials before invoking `claude` (HIVE-79).
    *
@@ -438,7 +438,7 @@ export const sessionCommand = (
   return `${prefix}${line} && exit`;
 };
 
-export interface BootstrapOptions {
+interface BootstrapOptions {
   /** Send the command to a session's pty. */
   write: (entityId: string, data: string) => void;
   /**

@@ -49,7 +49,7 @@ import type { SurfaceId } from './surfaces';
  * the honest default: it is exactly what a single-renderer app has, and it
  * reproduces the pre-HIVE-145 behaviour where any ack released the window.
  */
-export const SOLE_CONSUMER = 'sole-consumer';
+const SOLE_CONSUMER = 'sole-consumer';
 
 /**
  * The bound {@link Channel.acks} produces when nothing may be released yet.

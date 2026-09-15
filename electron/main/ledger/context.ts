@@ -24,7 +24,7 @@ import { ledgerMarker, type LedgerEntry } from '@shared/ledger-contract';
  * `deliver.ts` used to enforce on the body moved out of the pty path with the
  * body itself; the pty now sees a ref or an id main minted and nothing else.
  */
-export interface EntryContextOptions {
+interface EntryContextOptions {
   /**
    * The ask this closes, when the caller may see it. An answer's ask is
    * where the ref and the asker's `meta.intent` come from; passed only when

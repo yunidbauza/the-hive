@@ -21,7 +21,7 @@ export interface HostPort {
   on(event: 'message', listener: (event: { data: HostCommand }) => void): void;
 }
 
-export interface PtyHostDeps {
+interface PtyHostDeps {
   port: HostPort;
   sessions: SessionOperations;
   /** Injected so a test can observe the exit instead of ending the run. */

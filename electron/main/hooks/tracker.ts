@@ -15,7 +15,7 @@ import type {
  */
 export const UNPAIRED = 'unpaired';
 
-export interface TrackerInput {
+interface TrackerInput {
   entityId: string;
   event: StatusHookEvent;
   toolUseId?: string;
@@ -33,7 +33,7 @@ export interface TrackerInput {
   notificationType?: HookNotificationType;
 }
 
-export interface DerivedState {
+interface DerivedState {
   status: ObservedStatus;
   detail?: IdleDetail;
 }
@@ -133,7 +133,7 @@ interface Session {
  * every `PermissionRequest` — which means a status assertion could never catch
  * it. This is the seam that can.
  */
-export interface HeldCounts {
+interface HeldCounts {
   outstanding: number;
   blocked: number;
   agents: number;

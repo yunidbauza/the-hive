@@ -48,7 +48,7 @@ import { useActiveEntity, useProjects } from '@stores/hive-store';
  * worktree prefix for a project reached for another reason are gone with the
  * fallbacks above.
  */
-export interface ExplorerTarget {
+interface ExplorerTarget {
   project: ProjectRow | null;
   /** Project-relative directory to root the tree at. `''` is the project root. */
   root: string;

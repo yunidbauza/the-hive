@@ -5,7 +5,7 @@ import type { NotificationAction, NotificationKind } from '@shared/notification-
  * What the hub hands this module. Four functions rather than the hub itself,
  * so the mapping can be tested without one.
  */
-export interface LedgerNotifierDeps {
+interface LedgerNotifierDeps {
   raise: (input: {
     kind: NotificationKind;
     id: string;

@@ -41,7 +41,7 @@ import type { BrowseListing } from '@shared/config-contract';
  * button says which path it will add, in full, at all times.
  */
 
-export interface DirectoryPickerProps {
+interface DirectoryPickerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Called with the absolute path of the chosen folder. */

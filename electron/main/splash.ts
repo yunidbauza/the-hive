@@ -96,7 +96,7 @@ function fadeOut(
   }, SPLASH_FADE_STEP_MS);
 }
 
-export interface CreateSplashOptions {
+interface CreateSplashOptions {
   /** Injected by the unit test. */
   now?: () => number;
   setIntervalFn?: typeof setInterval;

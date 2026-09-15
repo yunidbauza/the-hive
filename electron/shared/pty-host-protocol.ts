@@ -43,13 +43,13 @@ export interface SpawnCommand {
   foreground?: true;
 }
 
-export interface WriteCommand {
+interface WriteCommand {
   type: 'write';
   sessionId: string;
   data: string;
 }
 
-export interface ResizeCommand {
+interface ResizeCommand {
   type: 'resize';
   sessionId: string;
   cols: number;
@@ -57,12 +57,12 @@ export interface ResizeCommand {
 }
 
 /** Raise SIGWINCH at the current size, so a child with a stale size redraws. */
-export interface RefreshCommand {
+interface RefreshCommand {
   type: 'refresh';
   sessionId: string;
 }
 
-export interface KillCommand {
+interface KillCommand {
   type: 'kill';
   sessionId: string;
   signal?: string;
@@ -75,18 +75,18 @@ export interface KillCommand {
  * the producing process blocks on `write`, exactly as it would piping to a
  * slow consumer in a shell.
  */
-export interface PauseCommand {
+interface PauseCommand {
   type: 'pause';
   sessionId: string;
 }
 
-export interface ResumeCommand {
+interface ResumeCommand {
   type: 'resume';
   sessionId: string;
 }
 
 /** Kill every session and exit. Sent on app quit (story 081's shutdown hook). */
-export interface ShutdownCommand {
+interface ShutdownCommand {
   type: 'shutdown';
 }
 
@@ -142,12 +142,12 @@ export interface ErrorMessage {
  * watching. A host watching a hung *main* process could do nothing useful with
  * the answer — the window it would report to is the thing that hung.
  */
-export interface PingMessage {
+interface PingMessage {
   type: 'ping';
   seq: number;
 }
 
-export interface PongMessage {
+interface PongMessage {
   type: 'pong';
   seq: number;
 }

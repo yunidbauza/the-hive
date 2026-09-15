@@ -51,7 +51,7 @@ import type {
 
 import { inQuiet, minutesOf } from './wake-schedule';
 
-export interface ParseContext {
+interface ParseContext {
   folder: string;
   /**
    * Every skill name this machine can offer — Hive, personal, and plugin.
@@ -75,7 +75,7 @@ export interface ParseContext {
   integrations: readonly string[];
 }
 
-export type ParseResult =
+type ParseResult =
   | { def: AgentDefinition }
   | { problems: AgentProblem[] };
 

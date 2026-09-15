@@ -42,9 +42,9 @@ import {
  * had one is a refactor of `electron/main/index.ts`; a mode added to a switch is
  * a branch.
  */
-export type IpcMode = 'local' | 'remote';
+type IpcMode = 'local' | 'remote';
 
-export interface RegisterIpcOptions {
+interface RegisterIpcOptions {
   /**
    * Where main → renderer pushes go. Defaults to every live window either
    * way: in local mode that is the only surface there is, and in remote mode
@@ -194,7 +194,7 @@ let localAppInfo: (() => AppInfo) | null = null;
  * that Ruling 19 forbids writing to disk until the switch has succeeded, so
  * the stored config is exactly the wrong place to read it from there.
  */
-export interface SwitchIpcOptions {
+interface SwitchIpcOptions {
   /** Where main → renderer pushes go, as in {@link RegisterIpcOptions}. */
   broadcaster?: Broadcaster;
   /**
@@ -313,7 +313,7 @@ let reattachEpoch = 0;
 let lastLinkStatus: RemoteLinkStatus | null = null;
 
 /** What {@link AppInfo.remoteLink} answers — the last status pushed, or none. */
-export function attachedLinkStatus(): RemoteLinkStatus | null {
+function attachedLinkStatus(): RemoteLinkStatus | null {
   return lastLinkStatus;
 }
 

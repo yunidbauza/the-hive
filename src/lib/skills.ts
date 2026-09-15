@@ -150,7 +150,7 @@ export const deleteSkill = (name: string): Promise<string | null> =>
  * editor has to follow it there. Reporting only "it failed" loses exactly the
  * fact needed to recover — see {@link renameSkill}.
  */
-export interface RenameOutcome {
+interface RenameOutcome {
   /** Did the folder actually move? */
   moved: boolean;
   /** Why it did not finish, or `null` when it did. */

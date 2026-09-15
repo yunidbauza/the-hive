@@ -82,7 +82,7 @@ export interface UpdateCapability {
  * to be able to check — a development run, most often — and saying "error"
  * about it would send someone looking for a fault that is not there.
  */
-export type UpdateState =
+type UpdateState =
   | 'idle'
   | 'checking'
   | 'available'

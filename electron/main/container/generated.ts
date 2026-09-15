@@ -122,7 +122,7 @@ export const CONTAINER_AGENT_FILE = 'claude-agent.settings.json';
 const SCRIPT_FILE = 'statusline.sh';
 
 /** What only the caller placing these files can know (HIVE-133). */
-export interface ContainerSetOptions {
+interface ContainerSetOptions {
   /**
    * Where this set will be visible *inside* the container, when that differs
    * from where it is written.

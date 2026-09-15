@@ -25,7 +25,7 @@ import { trayIconPath } from './app-icon';
  * the app icon's own geometry — see `trayIcon`.
  */
 
-export interface TrayDeps {
+interface TrayDeps {
   /**
    * Must actually re-read the config file on every call, not merely be
    * called again — `getConfig()` alone answers a snapshot cached at boot

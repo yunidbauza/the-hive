@@ -48,7 +48,7 @@ const MODEL_LABELS: Record<Model, string> = {
 };
 
 /** Sessions with no explicit model are Opus at high effort, as in the concept. */
-export const DEFAULT_MODEL: Model = 'opus';
+const DEFAULT_MODEL: Model = 'opus';
 export const DEFAULT_EFFORT = 'high';
 
 /**

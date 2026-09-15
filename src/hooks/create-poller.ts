@@ -23,7 +23,7 @@ import { useEffect } from 'react';
  * with two counters would couple their lifetimes, and the WORK panel mounts
  * both.
  */
-export interface PollerOptions {
+interface PollerOptions {
   /** The cadence, in milliseconds. */
   intervalMs: number;
 }

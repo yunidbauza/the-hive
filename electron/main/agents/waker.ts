@@ -54,7 +54,7 @@ import { createPathMap } from '../sessions/path-map';
  */
 const FOREGROUND_ONLY = { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' };
 
-export interface WakePaths {
+interface WakePaths {
   settings: string;
   pluginDir: string;
   mcpConfig: string;
@@ -62,14 +62,14 @@ export interface WakePaths {
   workdir: string;
 }
 
-export interface WakeEnv {
+interface WakeEnv {
   base: NodeJS.ProcessEnv;
   /** `HIVE_SESSION_ID`, `HIVE_HOOK_TOKEN`, `HIVE_RECEIVER_URL`. */
   hook: Record<string, string>;
   subscriptionAuth: boolean;
 }
 
-export interface WakeInput {
+interface WakeInput {
   claudePath: string;
   def: AgentDefinition;
   /** Absent on the very first run, which mints one instead. */
@@ -134,7 +134,7 @@ export interface WakeInput {
  * moment it spawns, knows those. `sessionUuid` is the handle a stop inside
  * the container uses: it is on the argv of every wake and unique per run.
  */
-export interface ContainerWake {
+interface ContainerWake {
   runtime: string;
   name: string;
   /** The binary inside; `claude` unless the block says otherwise. */

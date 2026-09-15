@@ -236,7 +236,7 @@ export function assertId(value: unknown, label: string): string {
  * that arrived with a trailing space would be refused for a reason invisible on
  * screen.
  */
-export function assertProjectKey(value: unknown, label: string): string {
+function assertProjectKey(value: unknown, label: string): string {
   const key = assertString(value, label).trim();
   if (!isProjectKey(key)) return fail(`${label}: expected ${PROJECT_KEY_HINT}`);
   return key;
@@ -1855,7 +1855,7 @@ export function parseJiraIssueRequest(input: unknown): JiraIssueRequest {
  */
 const TRANSITION_ID = /^[0-9]{1,10}$/;
 
-export function assertJiraTransitionId(value: unknown, label: string): string {
+function assertJiraTransitionId(value: unknown, label: string): string {
   const id = assertString(value, label);
   if (!TRANSITION_ID.test(id)) {
     return fail(`${label}: expected a numeric transition id`);

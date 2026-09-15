@@ -43,7 +43,7 @@ export class SessionRefusedError extends Error {
   }
 }
 
-export interface RestartRequest {
+interface RestartRequest {
   entityId: string;
   projectId: string;
   cols: number;

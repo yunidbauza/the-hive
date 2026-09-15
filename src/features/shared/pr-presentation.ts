@@ -46,7 +46,7 @@ export function findingsDescription(findings: number): string | null {
   return `${findings} open finding${findings === 1 ? '' : 's'}`;
 }
 
-export interface PrBadge {
+interface PrBadge {
   text: string;
   tone: TagTone;
 }

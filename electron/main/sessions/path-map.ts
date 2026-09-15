@@ -9,7 +9,7 @@ import { join } from 'node:path';
  * `PLUGIN_DIR`, `CONTAINER_DIR` and `AGENT_MCP_DIR` are all rooted there — and
  * none of them is under `project.path`. One extra root covers all four.
  */
-export interface PathMapRoots {
+interface PathMapRoots {
   /** The resolved, symlink-free project directory. */
   projectPath: string;
   /** Electron's `userData`; the hive root is `<userData>/hive`. */

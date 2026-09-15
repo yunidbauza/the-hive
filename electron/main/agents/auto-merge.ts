@@ -81,7 +81,7 @@ export function autoMergeRulesFor(
   return rules;
 }
 
-export interface AutoMergeDeps {
+interface AutoMergeDeps {
   projects: () => readonly ProjectConfig[];
   /** `Github.resolveProjects`: project id → repository, for the projects it can answer for. */
   resolve: () => Promise<Map<string, RepoRef>>;

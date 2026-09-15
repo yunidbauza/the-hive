@@ -46,10 +46,10 @@ import {
  */
 
 /** Matching `gh.ts`'s posture of bounding every external call. */
-export const JIRA_TIMEOUT_MS = 10_000;
+const JIRA_TIMEOUT_MS = 10_000;
 
 /** 256 KiB. A 100-issue page of six narrow fields is well inside this. */
-export const MAX_RESPONSE_BYTES = 256 * 1024;
+const MAX_RESPONSE_BYTES = 256 * 1024;
 
 /**
  * How long a `Retry-After` this client is willing to actually wait (HIVE-68).
@@ -59,10 +59,10 @@ export const MAX_RESPONSE_BYTES = 256 * 1024;
  * with `retryAfter` set, so the pane can say *when* rather than making the user
  * wait inside a verb with no way to cancel.
  */
-export const JIRA_MAX_RETRY_DELAY_MS = 5_000;
+const JIRA_MAX_RETRY_DELAY_MS = 5_000;
 
 /** The backoff before the single 5xx retry. */
-export const JIRA_BACKOFF_MS = 500;
+const JIRA_BACKOFF_MS = 500;
 
 /** Injected so no test touches the network. */
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
@@ -81,7 +81,7 @@ const realSleep: Sleep = (ms) =>
     setTimeout(resolve, ms);
   });
 
-export interface JiraCredential {
+interface JiraCredential {
   email: string;
   token: string;
 }

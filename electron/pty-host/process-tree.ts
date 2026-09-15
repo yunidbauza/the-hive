@@ -39,7 +39,7 @@ export interface ProcessControl {
  * Giving up early leaves budget for the signals, which are the part that
  * actually kills anything.
  */
-export const PS_TIMEOUT_MS = 500;
+const PS_TIMEOUT_MS = 500;
 
 /**
  * The lowest pid or pgid worth signalling.
@@ -148,7 +148,7 @@ function readProcessTable(): Promise<string> {
   });
 }
 
-export interface ProcessControlDeps {
+interface ProcessControlDeps {
   /** Injected so tests never exec a real `ps`. */
   readTable?: () => Promise<string>;
   platform?: NodeJS.Platform;

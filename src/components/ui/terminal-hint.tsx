@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils';
 
-export interface TerminalHintProps {
+interface TerminalHintProps {
   /** What just happened, in the user's terms. Left-aligned. */
   said: string;
   /** The key that fixes it, drawn as a cap. Right-aligned. */

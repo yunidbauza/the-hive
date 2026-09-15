@@ -767,7 +767,7 @@ export function windowBoundReason(channel: string): string | null {
  * locally. The hide was the honest thing to do without this channel and is
  * retired by it.
  */
-export const PROCESS_LOCAL_REFUSALS = {
+const PROCESS_LOCAL_REFUSALS = {
   [CH.appInfo]:
     "app:info describes the process that answers it: its own Electron build, its log path, its binds. A server answering it for a peer would pass its own identity off as the peer's, so the asking machine answers it and a server refuses it.",
   [CH.updatesStatus]:
@@ -895,7 +895,7 @@ export const PAYLOAD_SCOPED = {
  * `PAYLOAD_SCOPED` without a sentence here is a compile error rather than a
  * payload the receiving end forgets to refuse.
  */
-export const PAYLOAD_SCOPED_REFUSALS = {
+const PAYLOAD_SCOPED_REFUSALS = {
   [CH.notificationsAct]:
     "notifications:act carrying a url or an update verb is carried out by the machine whose user clicked it. A server refuses to open a browser or drive its own updater on a peer's say-so; the asking machine acts on its own click.",
 } as const satisfies Record<keyof typeof PAYLOAD_SCOPED, string>;
@@ -1210,8 +1210,6 @@ export type ClientFrame = AttachRequest | CallFrame | NotifyFrame;
 
 /** Server to client. */
 export type ServerFrame = AttachAccepted | AttachRefused | ResultFrame | ErrorFrame | EventFrame;
-
-export type RemoteFrame = ClientFrame | ServerFrame;
 
 /**
  * The frame kind for a channel name off the wire, or `null` if there is no such

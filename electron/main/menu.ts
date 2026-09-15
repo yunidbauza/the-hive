@@ -13,7 +13,7 @@ import { Menu, type MenuItemConstructorOptions } from 'electron';
  * copy-on-selection and Ctrl-C-as-SIGINT have to coexist.
  */
 
-export interface MenuContext {
+interface MenuContext {
   isMac: boolean;
   /** DevTools is a dev-only affordance; a shipped app does not offer it. */
   isDev: boolean;

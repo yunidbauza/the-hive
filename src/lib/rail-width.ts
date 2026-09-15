@@ -68,7 +68,7 @@ export const RAIL_STRIP = 44;
 export type RailDisplay = 'expanded' | 'collapsed' | 'hidden';
 
 /** One density's pair of minimums — what {@link clampRailWidths} is handed. */
-export interface RailMinimums {
+interface RailMinimums {
   left: number;
   right: number;
 }

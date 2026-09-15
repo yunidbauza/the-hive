@@ -21,12 +21,6 @@
  * Nothing may ever write a `rule` that came off an ask.
  */
 
-export interface PermissionPromptPayload {
-  tool_name: string;
-  input: Record<string, unknown>;
-  tool_use_id?: string;
-}
-
 export type PermissionDecision =
   | { behavior: 'allow'; updatedInput: Record<string, unknown> }
   | { behavior: 'deny'; message: string };
@@ -255,7 +249,7 @@ export function isToolName(value: unknown): value is string {
  * rules that came out of `rungsFor`, and `isToolName` forbids the `:` that
  * would be needed to forge one.
  */
-export const LITERAL_PREFIX = 'literal:';
+const LITERAL_PREFIX = 'literal:';
 
 export function matches(
   rule: string,

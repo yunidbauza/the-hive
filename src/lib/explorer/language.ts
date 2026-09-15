@@ -24,7 +24,7 @@ import type { LanguageSupport } from '@codemirror/language';
  * a `CHANGELOG` all read perfectly well unhighlighted, and adding a grammar per
  * file type anybody might have is not a finishable task.
  */
-export type LanguageId =
+type LanguageId =
   | 'javascript'
   | 'jsx'
   | 'typescript'
@@ -43,7 +43,7 @@ export type LanguageId =
   | 'xml'
   | 'shell';
 
-export interface LanguageDef {
+interface LanguageDef {
   id: LanguageId;
   /** What the editor's status line calls it. */
   label: string;

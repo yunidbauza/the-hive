@@ -31,7 +31,7 @@ export interface ImportOk {
   notes: string[];
 }
 
-export interface ImportFailed {
+interface ImportFailed {
   ok: false;
   title: string;
   detail: string;

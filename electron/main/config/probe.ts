@@ -21,7 +21,7 @@ import type { PathProbe } from '../../shared/config-contract';
  * of the session model — `DEFAULT_SHELL` is `/bin/sh`, `LOGIN_SHELL_ARGS` is
  * `['-l']`, and nothing packages a Windows build.
  */
-export interface CommandProbe {
+interface CommandProbe {
   /** The command was used as a path, not searched for on `PATH`. */
   isPath: boolean;
   /** Absolute path to the executable that would run, or `null`. */

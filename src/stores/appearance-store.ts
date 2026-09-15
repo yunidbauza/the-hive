@@ -51,12 +51,12 @@ import { isHiveTheme } from '@lib/theme/validate';
 export type ThemePreference = 'system' | 'dark' | 'light';
 
 /** What the DOM actually gets. */
-export type ResolvedTheme = 'dark' | 'light';
+type ResolvedTheme = 'dark' | 'light';
 
 export type Density = 'comfortable' | 'compact';
 
 /** Which rail a width belongs to. */
-export type RailSide = 'left' | 'right';
+type RailSide = 'left' | 'right';
 
 /**
  * Where an opened file renders.

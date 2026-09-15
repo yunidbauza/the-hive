@@ -50,7 +50,7 @@ import {
  * assertable.
  */
 
-export interface ReceiverClientOptions {
+interface ReceiverClientOptions {
   /** The receiver's base URL, from `HIVE_RECEIVER_URL`. */
   url: string;
   /** This process's party id, from `HIVE_SESSION_ID`. */

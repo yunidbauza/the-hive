@@ -59,7 +59,7 @@ import { createSearchPanel } from '@components/editor/search-panel';
  * direction that keeps the editor consistent.
  */
 
-export interface EditorSurfaceProps {
+interface EditorSurfaceProps {
   /** Which file this content belongs to. Changing it swaps states. */
   fileKey: string;
   value: string;

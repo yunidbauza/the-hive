@@ -23,7 +23,7 @@ export interface PlanTask {
   steps?: PlanStep[];
 }
 
-export interface PlanBuild {
+interface PlanBuild {
   askId: string;
   state: 'building' | 'failed' | 'blocked';
 }

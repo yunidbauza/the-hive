@@ -26,7 +26,7 @@ import { LEDGER_REF_PREFIX } from '@shared/ledger-contract';
  * message on the way. Prose that happens to start with the verb is far more
  * likely than a thread named after an English pronoun.
  */
-export type AgentInput =
+type AgentInput =
   | { kind: 'answer'; thread: string; body: string }
   | { kind: 'ask'; body: string }
   | { kind: 'empty' };

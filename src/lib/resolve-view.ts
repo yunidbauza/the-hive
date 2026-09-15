@@ -14,7 +14,7 @@ export type ViewState =
   | 'terminal';
 
 /** The orchestrator's reserved tab id. */
-export const ORCH_TAB = 'orch';
+const ORCH_TAB = 'orch';
 
 export interface ViewInput {
   /** `'orch'`, or an entity id. */

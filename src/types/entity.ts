@@ -638,7 +638,7 @@ export const terminalOf = (session: Session): string =>
  * the typographic convention for "no value" and it reads as one glance rather
  * than a word the eye has to parse in a 100px column.
  */
-export const NO_BRANCH = '—';
+const NO_BRANCH = '—';
 
 /**
  * What to print in a session's branch slot (HIVE-78).
@@ -768,7 +768,7 @@ export const endedReason = (session: Session): string => {
  * that" is a different thing to tell the user than "nothing does", and a
  * resolver that collapsed them would have to pick one silently.
  */
-export type EntityRefMatch =
+type EntityRefMatch =
   | { kind: 'found'; id: string }
   | { kind: 'none' }
   | { kind: 'ambiguous'; labels: string[] };

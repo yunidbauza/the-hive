@@ -63,7 +63,7 @@ import { transcriptPath } from './title-origin';
 const PERSIST_DEBOUNCE_MS = 400;
 
 /** A patch is any part of a record except the identity, which is the key. */
-export type SessionPatch = Partial<Omit<SessionRecord, 'id'>> & {
+type SessionPatch = Partial<Omit<SessionRecord, 'id'>> & {
   /**
    * Who decided the `name` in this patch, when one is being written.
    *
@@ -80,7 +80,7 @@ export type SessionPatch = Partial<Omit<SessionRecord, 'id'>> & {
   nameOrigin?: SessionNameOrigin;
 };
 
-export interface BeginOptions {
+interface BeginOptions {
   /**
    * This `begin` continues a previous run's conversation under its own id
    * (HIVE-88), so the record is kept the way a restart keeps it — ticket,

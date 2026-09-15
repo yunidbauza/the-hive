@@ -215,7 +215,7 @@ export const PHRASES = {
  *
  * Contract: returns `[0, 1)`, exactly like `Math.random`.
  */
-export type Rng = () => number;
+type Rng = () => number;
 
 /**
  * One phrase from the pool.

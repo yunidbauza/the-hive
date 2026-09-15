@@ -36,7 +36,7 @@ import { ACTIVITY_IDLE_MS, type DerivedStatus } from '@shared/session-contract';
  * `idle` two seconds after it stops.
  */
 
-export interface ActivityOptions {
+interface ActivityOptions {
   /** Called only when the derived status actually changes. */
   onStatus: (entityId: string, status: DerivedStatus) => void;
   idleAfterMs?: number;

@@ -5,7 +5,7 @@ import { useAddProject } from '@hooks/use-add-project';
 import { useAttachedServer } from '@hooks/use-project-config';
 
 /** Which of the panel's two registers this control is drawn in. */
-export type NewProjectVariant = 'line' | 'cta';
+type NewProjectVariant = 'line' | 'cta';
 
 /**
  * One control, two registers — and nothing else differs between them.

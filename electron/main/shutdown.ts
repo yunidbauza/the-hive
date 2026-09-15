@@ -12,7 +12,7 @@
  * background forever. That bug is invisible until someone checks `ps`.
  */
 
-export type ShutdownHook = () => void | Promise<void>;
+type ShutdownHook = () => void | Promise<void>;
 
 const hooks: ShutdownHook[] = [];
 

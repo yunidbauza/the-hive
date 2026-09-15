@@ -101,7 +101,7 @@ export function projectsDirectoryFor(snapshot: ConfigSnapshot): ProjectsDirector
 }
 
 /** What {@link projectAutoMergeFor} needs from the config module; injected so a test can fail the write. */
-export interface ProjectAutoMergeDeps {
+interface ProjectAutoMergeDeps {
   config: () => ConfigSnapshot;
   setAutoMerge: (request: SetProjectAutoMergeRequest) => ConfigSnapshot;
   /** Told the snapshot a landed write produced, so the renderer can show it. */

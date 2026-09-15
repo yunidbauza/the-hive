@@ -37,7 +37,7 @@ export const SLACK_TOOL_PREFIX = `mcp__${SLACK_SERVER_KEY}__`;
 export const SLACK_TOOL_GLOB = `${SLACK_TOOL_PREFIX}*`;
 
 /** The descriptor `--mcp-config` expects under {@link SLACK_SERVER_KEY}. */
-export interface SlackServerSpec {
+interface SlackServerSpec {
   type: 'http';
   url: string;
   oauth: { clientId: string; callbackPort: number };

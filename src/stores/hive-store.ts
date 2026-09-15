@@ -143,7 +143,7 @@ export const ACK_DELAY_MS = 2000;
 const ACK_LINE = '● Acknowledged — working on it';
 
 /** Where a message came from. The transcript records who spoke. */
-export type MessageOrigin = 'orchestrator' | 'session';
+type MessageOrigin = 'orchestrator' | 'session';
 
 /**
  * What happened to a message (story 097).
@@ -156,7 +156,7 @@ export type MessageOrigin = 'orchestrator' | 'session';
  * `demo` still carries the timer handle so the simulation (story 061) and the
  * tests keep cancelling deterministically rather than racing a real wait.
  */
-export type SendOutcome =
+type SendOutcome =
   | { kind: 'routed' }
   | { kind: 'refused'; reason: string }
   | { kind: 'demo'; timer: ReturnType<typeof setTimeout> };
@@ -203,7 +203,7 @@ export type TicketSource =
  * order. Comparing what came back against what the store last asked for is what
  * stops the slower of the two from painting over the newer.
  */
-export interface PrSearchState {
+interface PrSearchState {
   /** What produced `results`. `''` when nothing has been searched. */
   term: string;
   /**
@@ -345,7 +345,7 @@ function agentTerminalSite(
 }
 
 /** What `spawnTerminal` may be told beyond the project (entry points). */
-export interface SpawnTerminalOptions {
+interface SpawnTerminalOptions {
   /**
    * Where the shell starts. Absent means the project's path. "Terminal here"
    * passes a session's observed cwd, which differs from the project path
@@ -6067,7 +6067,7 @@ export const useAgentLines = (name: string): TermLine[] =>
  */
 const EMPTY_RUNS: RunSummary[] = [];
 
-export interface AgentGroup {
+interface AgentGroup {
   key: 'awake' | 'sleeping' | 'paused';
   label: string;
   ids: string[];
@@ -6189,7 +6189,7 @@ export const useAgentLiveCount = (name: string): number =>
     return entity !== undefined && isAgent(entity) ? entity.live.length : 0;
   });
 
-export interface AgentFacts {
+interface AgentFacts {
   status: AgentStatus;
   /** The open ask this agent is waiting on, when it is `asking`. */
   askRef?: string;
@@ -6507,7 +6507,7 @@ export const useAskingAgentCount = (): number =>
   });
 
 /** An agent's pull request: always a number, linkable only when the sweep knows it. */
-export interface AgentPr {
+interface AgentPr {
   n: number;
   url?: string;
 }
@@ -6930,7 +6930,7 @@ export const useUpdateTicket = (): ((issue: JiraIssue) => void) =>
  * `project` are what a pull request is matched against, `ticket` is the reverse
  * of `Session.ticket`, and `ended` is `isEnded(status)` already applied.
  */
-export interface SessionFacet {
+interface SessionFacet {
   id: string;
   /**
    * Optional since HIVE-78, because {@link Session.branch} is.
@@ -7004,7 +7004,7 @@ function sameFacets(
   });
 }
 
-export function selectSessionFacets(state: HiveState): SessionFacet[] {
+function selectSessionFacets(state: HiveState): SessionFacet[] {
   const next: SessionFacet[] = [];
 
   /*

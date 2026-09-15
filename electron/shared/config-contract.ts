@@ -760,7 +760,7 @@ export interface ServerBindConfig {
  * verified with `crypto.verify`, no dependency) are an additive variant later
  * rather than a migration. `sha256` is the only variant this build mints.
  */
-export type ServerCredential = { kind: 'sha256'; digest: string };
+type ServerCredential = { kind: 'sha256'; digest: string };
 
 export interface ServerDevice {
   id: string;
@@ -1477,7 +1477,7 @@ export const DEFAULT_CLAUDE_COMMAND = 'claude';
  * Refused rather than silently dropped: a setting that vanishes is worse than
  * one that names itself.
  */
-export const UNSAFE_ENV_PREFIXES: readonly string[] = ['LD_', 'DYLD_'];
+const UNSAFE_ENV_PREFIXES: readonly string[] = ['LD_', 'DYLD_'];
 
 export const UNSAFE_ENV_KEYS: readonly string[] = [
   'NODE_OPTIONS',
@@ -1518,7 +1518,7 @@ export const RESERVED_ENV_KEYS: readonly string[] = ['TERM', 'COLORTERM', 'PWD']
  * variable. Anything the user exports from their own shell profile still
  * arrives, because sessions run a login shell.
  */
-export const SESSION_ENV_PREFIXES: readonly string[] = ['CLAUDE_'];
+const SESSION_ENV_PREFIXES: readonly string[] = ['CLAUDE_'];
 
 /**
  * The session marker with no underscore, which no prefix above can catch.
@@ -1526,7 +1526,7 @@ export const SESSION_ENV_PREFIXES: readonly string[] = ['CLAUDE_'];
  * Separate from {@link SESSION_ENV_PREFIXES} because `'CLAUDECODE'` does not
  * start with `'CLAUDE_'`. Dropping it would reopen the leak on its own.
  */
-export const SESSION_ENV_KEYS: readonly string[] = ['CLAUDECODE'];
+const SESSION_ENV_KEYS: readonly string[] = ['CLAUDECODE'];
 
 /**
  * The credentials that make `claude` bill an API account instead of a plan.
@@ -1639,7 +1639,7 @@ export const COLORTERM = 'truecolor';
  * copies of the same list is how the message row and the terminal drifted apart
  * in HIVE-65.
  */
-export const SESSION_ENV_DENY_EXACT: readonly string[] = [
+const SESSION_ENV_DENY_EXACT: readonly string[] = [
   'ELECTRON_RUN_AS_NODE',
   'NODE_OPTIONS',
   'NODE_PATH',

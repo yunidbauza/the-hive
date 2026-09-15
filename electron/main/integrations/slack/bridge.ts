@@ -95,7 +95,7 @@ export interface SlackBridge {
   stop(): void;
 }
 
-export interface SlackBridgeDeps {
+interface SlackBridgeDeps {
   tokens: { read(): { appToken?: string; botToken?: string } };
   config: () => { socketMode: boolean; commanders: string[] };
   subscriptions: () => SlackSubscriptions;

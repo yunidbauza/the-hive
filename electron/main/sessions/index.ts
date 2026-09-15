@@ -247,7 +247,7 @@ export interface SessionsOptions {
   onAgentTurnEnded?: (name: string, sessionUuid?: string) => void;
 }
 
-export interface OpenRequest {
+interface OpenRequest {
   entityId: string;
   projectId: string;
   cols: number;
@@ -306,7 +306,7 @@ export interface OpenRequest {
  * `open()` would hit the `unmapped` refusal, which is right for a session and
  * wrong for this.
  */
-export interface OpenCommandRequest {
+interface OpenCommandRequest {
   entityId: string;
   cwd: string;
   file: string;
@@ -318,7 +318,7 @@ export interface OpenCommandRequest {
 }
 
 /** How a command session ended. */
-export interface CommandExit {
+interface CommandExit {
   /** `-1` when nothing ran or nothing concluded — never a real status then. */
   exitCode: number;
   /**
@@ -344,7 +344,7 @@ export interface CommandExit {
  * on top (hooks, title, status, metrics, history) is a registration this
  * request never makes.
  */
-export interface OpenTerminalRequest {
+interface OpenTerminalRequest {
   entityId: string;
   projectId: string;
   cols: number;

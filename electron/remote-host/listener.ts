@@ -175,7 +175,7 @@ function frameByteLength(data: Buffer | ArrayBuffer | Buffer[]): number {
   return data.byteLength;
 }
 
-export interface RemoteListener {
+interface RemoteListener {
   /** Starts listening. Resolves the bound address, or `null` on bind failure. */
   start: () => Promise<string | null>;
   /** Closes the socket. Resolves once it is actually closed. */

@@ -179,7 +179,7 @@ export class RemoteCallError extends Error {
  * of those is a loop that cannot converge, and worse, it would leave the pane
  * saying "reconnecting" about something that is never going to reconnect.
  */
-export type CloseKind = 'transport' | 'terminal';
+type CloseKind = 'transport' | 'terminal';
 
 /** Why a connection ended, in the terms the reconnect loop branches on. */
 export interface CloseCause {

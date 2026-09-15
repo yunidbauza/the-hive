@@ -57,7 +57,7 @@ export type SurfaceId = string;
  * reports its own, because a served Mac's windows say nothing about a laptop
  * four time zones away. See `isForegroundFor` in `ipc/index.ts`.
  */
-export type SurfaceKind = 'window' | 'socket';
+type SurfaceKind = 'window' | 'socket';
 
 export interface Surface {
   readonly id: SurfaceId;
@@ -84,7 +84,7 @@ export interface Surface {
  */
 export type AttachedSurface = AttachedSocket & RemoteReporter;
 
-export interface SurfaceRegistry {
+interface SurfaceRegistry {
   /**
    * A local window reported itself. `send` is how main pushes to it —
    * `contents.send`, injected rather than imported so this module never needs

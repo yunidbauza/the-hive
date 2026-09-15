@@ -102,12 +102,12 @@ const nextMidnightAfter = (at: number): number => {
  * measured in hours: {@link LEDGER_ASK_TTL_MS} is a day, and an ask that dies
  * up to sixty seconds late has cost nobody anything.
  */
-export const LEDGER_SWEEP_MS = 60_000;
+const LEDGER_SWEEP_MS = 60_000;
 
 /** How long a closed thread lane's record and directory are kept (HIVE-188). */
-export const LANE_RETENTION_MS = 24 * 60 * 60 * 1000;
+const LANE_RETENTION_MS = 24 * 60 * 60 * 1000;
 
-export interface SchedulerDeps {
+interface SchedulerDeps {
   /**
    * `RunTracker.run`, in full.
    *

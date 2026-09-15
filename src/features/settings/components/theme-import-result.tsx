@@ -19,9 +19,9 @@ import type { ImportResult } from '@lib/theme/validate';
  * itself only ever renders a `ThemeBanner`.
  */
 
-export type ThemeBannerTone = 'ok' | 'warn' | 'err';
+type ThemeBannerTone = 'ok' | 'warn' | 'err';
 
-export interface ThemeBanner {
+interface ThemeBanner {
   tone: ThemeBannerTone;
   title: string;
   detail: string;
@@ -47,7 +47,7 @@ const TOTAL_COLOUR_KEYS =
   (UI_KEYS.length + SYNTAX_KEYS.length + TERMINAL_KEYS.length) * THEME_MODES.length;
 
 /** Turn a raw `importTheme()` result into the three strings the banner shows. */
-export function themeBannerOf(result: ImportResult): ThemeBanner {
+function themeBannerOf(result: ImportResult): ThemeBanner {
   if (!result.ok) {
     return { tone: 'err', title: result.title, detail: result.detail };
   }

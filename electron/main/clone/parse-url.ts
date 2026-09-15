@@ -13,7 +13,7 @@
  * and transport checks below are for.
  */
 
-export type CloneUrlVerdict =
+type CloneUrlVerdict =
   | { ok: true; url: string; repoName: string }
   | { ok: false; reason: string };
 

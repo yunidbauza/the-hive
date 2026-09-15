@@ -195,7 +195,7 @@ export type NotificationAction =
  * ledger thread, a session's terminal id — so they are correct to proxy and
  * would break if they were answered locally.
  */
-export type ActionScope = 'this-machine' | 'fleet';
+type ActionScope = 'this-machine' | 'fleet';
 
 /**
  * The one place an action's scope is written down.
@@ -363,7 +363,7 @@ export interface ToastPayload {
 }
 
 /** Everything any consumer needs to know about a kind. */
-export interface NotificationKindSpec {
+interface NotificationKindSpec {
   source: NotificationSource;
   /** The settings switch label. Sentence case, no trailing period. */
   label: string;

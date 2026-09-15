@@ -77,7 +77,7 @@ import type { NotificationHub } from './hub';
  * somebody still attending, so a promotion would nag them.
  */
 
-export interface NotifierOptions {
+interface NotifierOptions {
   hub: NotificationHub;
   /**
    * Is this session's terminal the one the user is looking at right now
@@ -99,7 +99,7 @@ export interface NotifierOptions {
   isForegroundEverywhere: (entityId: string) => boolean;
 }
 
-export interface Notifier {
+interface Notifier {
   /** Called for every main → renderer broadcast. Most are not event classes. */
   observe(channel: string, payload: unknown): void;
   /**

@@ -33,7 +33,7 @@ import { createLedgerStore } from './store';
  * be broken.
  */
 
-export interface LedgerOptions {
+interface LedgerOptions {
   dir: string;
   /** {@link OVERMIND} plus every session this app has, live or resumable. */
   knowsParty: (id: string) => boolean;

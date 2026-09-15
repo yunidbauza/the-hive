@@ -48,7 +48,7 @@ import type { RpcHandlers } from './rpc';
  * `index.ts` is the thin entry point that wires this to stdio.
  */
 
-export interface HostEnvironment {
+interface HostEnvironment {
   session: string;
   token: string;
   url: string;

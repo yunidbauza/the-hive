@@ -91,7 +91,7 @@ export interface SkillSummary {
  * The `valid` discriminant is what lets one list render both kinds without the
  * renderer inferring anything from which array a row arrived in.
  */
-export interface SkillProblem {
+interface SkillProblem {
   name: string;
   reason: string;
   valid: false;

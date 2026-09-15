@@ -1040,7 +1040,7 @@ export function projectIdForPath(path: string): string | null {
 }
 
 /** Which field of a project answered to what the user typed (HIVE-94). */
-export type ProjectRefField = 'key' | 'id' | 'name';
+type ProjectRefField = 'key' | 'id' | 'name';
 
 /**
  * What one project reference resolved to.
@@ -1050,7 +1050,7 @@ export type ProjectRefField = 'key' | 'id' | 'name';
  * Collapsing them would make the console tell someone their project does not
  * exist while it is sitting in the list twice.
  */
-export type ProjectRefResult =
+type ProjectRefResult =
   | { kind: 'none' }
   | { kind: 'match'; project: ProjectConfig; matched: ProjectRefField }
   | {

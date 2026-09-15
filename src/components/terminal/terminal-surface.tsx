@@ -43,7 +43,7 @@ const DEFAULT_FONT_SIZE = 12.5;
 /** Deep enough that no fixture transcript can reach the top of the buffer. */
 const DEFAULT_SCROLLBACK = 5000;
 
-export interface TerminalSurfaceProps {
+interface TerminalSurfaceProps {
   /** The only channel in or out. See `lib/terminal/terminal-transport.ts`. */
   transport: TerminalTransport;
   /**

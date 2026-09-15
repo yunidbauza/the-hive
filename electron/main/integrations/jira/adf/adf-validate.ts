@@ -28,7 +28,7 @@ const INLINE_TYPES = new Set([
   'inlineCard',
 ]);
 
-export interface AdfViolation {
+interface AdfViolation {
   ok: false;
   /** Where, as a path into the document — `content[3].content[1]`. */
   path: string;
@@ -45,7 +45,7 @@ export interface AdfViolation {
   blockIndex?: number;
 }
 
-export type AdfValidation = { ok: true } | AdfViolation;
+type AdfValidation = { ok: true } | AdfViolation;
 
 const fail = (
   path: string,

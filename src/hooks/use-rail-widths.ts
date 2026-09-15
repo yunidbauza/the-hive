@@ -10,7 +10,7 @@ import { useShowActivityRail } from '@stores/ui-store';
  * `min` and `max` are the **effective** bounds, not the constants — see
  * {@link useRailWidths} on why the difference matters.
  */
-export interface RailHandleBounds {
+interface RailHandleBounds {
   value: number;
   min: number;
   max: number;

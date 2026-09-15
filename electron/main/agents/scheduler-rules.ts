@@ -117,7 +117,7 @@ export function decide(
 }
 
 /** Where an entry goes, or why an ask is turned away (HIVE-186). */
-export type LaneRoute = { lane: string } | { refuse: string };
+type LaneRoute = { lane: string } | { refuse: string };
 
 /** `owner/name`, the only `meta.repo` a repo lane keys on. */
 const REPO_SLUG = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -141,7 +141,7 @@ export function isClosedLane(lane: string, entries: readonly LedgerEntry[], exce
 }
 
 /** The lane a new ask to `agent` opens, by the definition's `lane:`. */
-export function openedLane(
+function openedLane(
   agent: string,
   mode: AgentLane | undefined,
   ask: LedgerEntry,

@@ -33,7 +33,7 @@ import {
  * typing rather than a form field.
  */
 
-export type SlackCommand =
+type SlackCommand =
   | { kind: 'refused' }
   | { kind: 'broadcast' }
   | { kind: 'command'; agent: string; task: string };

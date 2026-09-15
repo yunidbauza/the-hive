@@ -53,7 +53,7 @@ import type { Ledger } from './index';
  */
 const DELIVERABLE: readonly LedgerKind[] = ['ask', 'answer', 'post'];
 
-export interface DeliverOptions {
+interface DeliverOptions {
   ledger: Pick<Ledger, 'read' | 'append'>;
   isLive: (entityId: string) => boolean;
   isIdle: (entityId: string) => boolean;

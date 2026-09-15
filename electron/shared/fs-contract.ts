@@ -20,7 +20,7 @@
  */
 
 /** What a directory entry is. Symlinks report the kind of their **target**. */
-export type FsEntryKind = 'dir' | 'file';
+type FsEntryKind = 'dir' | 'file';
 
 /**
  * One entry in a directory listing.
@@ -269,9 +269,9 @@ export const BINARY_SNIFF_BYTES = 8192;
  * Shared because both processes need the same answer: the renderer to build the
  * tree, and main to filter watcher events before they cost anything.
  */
-export const ALWAYS_HIDDEN = '.git';
+const ALWAYS_HIDDEN = '.git';
 
-export const NOISE_ENTRIES = [
+const NOISE_ENTRIES = [
   'node_modules',
   'dist',
   'out',

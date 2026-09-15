@@ -26,7 +26,7 @@ import { rename, rm } from 'node:fs/promises';
 import type { AgentRunFiles } from './registry';
 import type { AgentState } from './state';
 
-export interface AgentRunFilesDeps {
+interface AgentRunFilesDeps {
   /** `agents.json`, once it has been opened. */
   state: () => AgentState | null;
   /** `~/.hive/work/<name>`. */

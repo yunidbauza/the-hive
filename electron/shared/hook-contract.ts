@@ -323,7 +323,7 @@ export const HOOK_STATUS: Record<StatusHookEvent, ObservedStatus> = {
  * `tests/live/hook-conformance.test.ts` reads it for exactly that reason, and
  * every other comment about this wait points here rather than naming a number.
  */
-export const NOTIFICATION_TYPES = ['idle_prompt', 'permission_prompt'] as const;
+const NOTIFICATION_TYPES = ['idle_prompt', 'permission_prompt'] as const;
 
 export type HookNotificationType = (typeof NOTIFICATION_TYPES)[number];
 

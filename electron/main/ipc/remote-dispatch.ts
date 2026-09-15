@@ -30,7 +30,7 @@ import type { IpcRegistry, RemoteReporter } from './registry';
 const DEVICE_GRANT: Authorization = 'execute';
 
 /** Why a frame was refused before any handler ran. */
-export type DispatchRefusal =
+type DispatchRefusal =
   | 'unknown-channel'
   | 'wrong-frame-kind'
   | 'window-bound'

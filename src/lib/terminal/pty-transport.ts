@@ -318,7 +318,7 @@ function openChannel(entityId: string): EntityChannel {
  * process yet, and one that exited needs a restart. Those are different
  * problems with different fixes, and `session-input.ts` words them apart.
  */
-export type ChannelState = 'live' | 'exited' | 'none';
+type ChannelState = 'live' | 'exited' | 'none';
 
 export function sessionChannelState(entityId: string): ChannelState {
   const channel = channels.get(entityId);
@@ -326,7 +326,7 @@ export function sessionChannelState(entityId: string): ChannelState {
   return channel.closed ? 'exited' : 'live';
 }
 
-export type SpawnOutcome = { ok: true } | { ok: false; reason: string };
+type SpawnOutcome = { ok: true } | { ok: false; reason: string };
 
 /**
  * What a spawn asks for beyond a process (story 109).

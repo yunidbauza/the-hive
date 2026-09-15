@@ -37,7 +37,7 @@ import type { SessionOperations } from './sessions';
  * interactive paths — which is precisely why Claude Code's TUI renders at all.
  */
 
-export interface SessionManagerOptions {
+interface SessionManagerOptions {
   maxSessions?: number;
   scrollbackBytes?: number;
   killGraceMs?: number;

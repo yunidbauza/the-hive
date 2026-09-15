@@ -25,7 +25,7 @@ const TONE_TEXT: Record<TagTone, string> = {
  * laid on top of it. Works in both themes for the same reason the fill does —
  * panel and chip are a fixed step apart, whichever direction the theme steps.
  */
-export type TagSurface = 'panel' | 'raised';
+type TagSurface = 'panel' | 'raised';
 
 const SURFACE_FILL: Record<TagSurface, string> = {
   panel: 'bg-chip',

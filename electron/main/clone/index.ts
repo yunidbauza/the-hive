@@ -36,7 +36,7 @@ import { parseCloneUrl } from './parse-url';
  */
 
 /** Whether a parent directory is one we may clone into. */
-export type ParentVerdict =
+type ParentVerdict =
   | { ok: true; path: string }
   | { ok: false; reason: string };
 

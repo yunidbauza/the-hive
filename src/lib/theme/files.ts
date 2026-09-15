@@ -26,7 +26,7 @@
 import { MAX_THEME_BYTES } from '@lib/theme/contract';
 
 /** What `pickThemeFile` resolves on success — the file's name, not its path. */
-export interface PickedThemeFile {
+interface PickedThemeFile {
   name: string;
   contents: string;
 }

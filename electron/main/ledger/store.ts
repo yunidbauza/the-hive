@@ -14,7 +14,7 @@ import { nextRef } from '@shared/ledger-derive';
  * writer can disagree about what happened is not a ledger.
  */
 
-export interface LedgerStoreOptions {
+interface LedgerStoreOptions {
   dir: string;
   /** Overridable for tests. */
   now?: () => number;

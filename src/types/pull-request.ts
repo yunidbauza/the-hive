@@ -1,5 +1,5 @@
 export type PrListState = 'open' | 'approved' | 'draft' | 'merged';
-export type PrChecks = 'passing' | 'running' | 'failing';
+type PrChecks = 'passing' | 'running' | 'failing';
 
 /**
  * A pull request as shown in the PRs panel.

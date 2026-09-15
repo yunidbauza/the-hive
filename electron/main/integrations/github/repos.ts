@@ -40,7 +40,7 @@ import type { RunAsync } from './run';
 /** `owner/name`, as `nameWithOwner` spells it. */
 const NAME_WITH_OWNER = /^([^/\s]+)\/([^/\s]+)$/;
 
-export interface RepoResolution {
+interface RepoResolution {
   repos: RepoRef[];
   /**
    * Why resolution came up short, when it did.

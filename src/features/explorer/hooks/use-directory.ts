@@ -4,7 +4,7 @@ import { readDir } from '@lib/explorer/fs-client';
 import { sortEntries } from '@lib/explorer/sort';
 import type { DirEntry } from '@shared/fs-contract';
 
-export interface DirectoryState {
+interface DirectoryState {
   entries: DirEntry[] | null;
   loading: boolean;
   error: string | null;

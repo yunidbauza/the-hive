@@ -1167,7 +1167,6 @@ export const EVENT_CHANNELS = [
   CH.agentsStatus,
   CH.agentsLines,
 ] as const;
-export type EventChannel = (typeof EVENT_CHANNELS)[number];
 
 export interface SpawnRequest {
   sessionId: string;
@@ -1507,7 +1506,7 @@ export type NotificationActivateEvent =
  * the loop is running and the sessions on the far machine are still there;
  * `disconnected` means it is not, and no amount of waiting will change that.
  */
-export type RemoteLinkState = 'attached' | 'reconnecting' | 'disconnected';
+type RemoteLinkState = 'attached' | 'reconnecting' | 'disconnected';
 
 /**
  * What {@link CH.configGetRemote} answers: this machine's own `remote` block,

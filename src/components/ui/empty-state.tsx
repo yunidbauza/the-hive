@@ -12,7 +12,7 @@ import type { PhraseKey } from '@lib/swarm/phrases';
  * that drifts upward stops being a mark and becomes the illustration this
  * component's doc rules out.
  */
-export const RAIL_CREATURE_SIZE = 44;
+const RAIL_CREATURE_SIZE = 44;
 
 /**
  * A creature — or a control — without a phrase is a compile error, not a silent

@@ -53,7 +53,7 @@ export const runtimeLine = (info: AppInfo): string =>
   `electron ${info.electron} · chromium ${info.chrome}`;
 
 /** What the update row should say and do. */
-export interface UpdateCopy {
+interface UpdateCopy {
   /** The button's text, or `null` when there is no button to show. */
   label: string | null;
   /** The line under it. Empty string means "say nothing". */

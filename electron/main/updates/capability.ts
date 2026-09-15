@@ -59,7 +59,7 @@ import type { UpdateCapability } from '@shared/update-contract';
 const run = promisify(execFile);
 
 /** Everything the probe touches, injected so a test needs no bundle. */
-export interface CapabilityProbeDeps {
+interface CapabilityProbeDeps {
   packaged: boolean;
   platform: NodeJS.Platform;
   /** The `.app` bundle, or whatever `codesign` should be pointed at. */
@@ -85,7 +85,7 @@ async function readSignature(bundlePath: string): Promise<string> {
   return `${stdout}\n${stderr}`;
 }
 
-export function defaultProbeDeps(): CapabilityProbeDeps {
+function defaultProbeDeps(): CapabilityProbeDeps {
   return {
     packaged: app.isPackaged,
     platform: process.platform,

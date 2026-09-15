@@ -47,7 +47,7 @@ export const PULL_MAX = 96;
 /** How long the deltas must stop for before the gesture counts as released. */
 const RELEASE_MS = 140;
 
-export type PullPhase = 'idle' | 'pulling' | 'armed' | 'refreshing';
+type PullPhase = 'idle' | 'pulling' | 'armed' | 'refreshing';
 
 interface UsePullToRefresh {
   /** Attach to the panel's own root; the scroll parent is found from it. */

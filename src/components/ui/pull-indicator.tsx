@@ -3,7 +3,7 @@ import { ArrowDown, ArrowClockwise } from '@phosphor-icons/react';
 import { useReducedMotion } from '@/hooks/use-reduced-motion';
 import { cn } from '@/lib/utils';
 
-export type PullIndicatorPhase = 'idle' | 'pulling' | 'armed' | 'refreshing';
+type PullIndicatorPhase = 'idle' | 'pulling' | 'armed' | 'refreshing';
 
 interface PullIndicatorProps {
   /** How far the list has been pulled, in pixels. Drives the height directly. */

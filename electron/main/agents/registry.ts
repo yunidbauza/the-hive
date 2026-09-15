@@ -59,12 +59,12 @@ const DEBOUNCE_MS = 120;
  * actual logic in it, becomes untestable without real waits. Production passes
  * {@link watchFolder}; tests pass something they can fire by hand.
  */
-export type WatchFactory = (
+type WatchFactory = (
   root: string,
   onEvent: () => void,
 ) => { close: () => void } | null;
 
-export const watchFolder: WatchFactory = (root, onEvent) => {
+const watchFolder: WatchFactory = (root, onEvent) => {
   try {
     return watch(root, { recursive: true }, onEvent);
   } catch {
@@ -104,7 +104,7 @@ export interface AgentRunFiles {
   carry: (from: string, to: string) => Promise<void>;
 }
 
-export interface RegistryOptions {
+interface RegistryOptions {
   root: string;
   /** See {@link AgentRunFiles}. */
   runFiles?: AgentRunFiles;

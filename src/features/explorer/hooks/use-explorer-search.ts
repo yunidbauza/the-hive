@@ -35,7 +35,7 @@ import {
 
 const DEBOUNCE_MS = 300;
 
-export interface ExplorerSearchState {
+interface ExplorerSearchState {
   results: SearchResults | null;
   searching: boolean;
   error: string | null;

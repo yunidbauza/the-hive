@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRemoteCapabilities } from '@hooks/use-project-config';
 import { chooseProjectDirectory } from '@lib/project-config';
 
-export interface ChooseDirectory<T> {
+interface ChooseDirectory<T> {
   /**
    * Open whichever chooser is right for this window.
    *

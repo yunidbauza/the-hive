@@ -225,7 +225,7 @@ export function mergePath(loginPath: string, inheritedPath: string): string {
   return merged.join(delimiter);
 }
 
-export interface ImportLoginEnvOptions {
+interface ImportLoginEnvOptions {
   /** `importLoginEnv` from the config. `false` makes this a reported no-op. */
   enabled: boolean;
   /** The login shell to ask — `defaultShell()`, resolved by the caller. */

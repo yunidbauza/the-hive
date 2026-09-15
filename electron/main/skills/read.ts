@@ -18,7 +18,7 @@ import { readBundle } from './bundle';
  * `hooks/settings.ts` uses for the settings it generates.
  */
 
-export interface UserSkill {
+interface UserSkill {
   name: string;
   /**
    * From the frontmatter, for the pane's list. Empty when none is declared.

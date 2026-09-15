@@ -326,7 +326,7 @@ export function isShipping(entries: readonly LedgerEntry[], slug: string, n: num
 }
 
 /** Where an agent is working (HIVE-172). */
-export interface AgentSite {
+interface AgentSite {
   /** The worktree the agent's newest post named, absolute. */
   worktree: string;
   /** The project checkout that worktree belongs to, when the post named it. */
@@ -494,7 +494,7 @@ export function nextRef(entries: readonly LedgerEntry[]): string {
  * released are read off the log, never remembered, so a restart loses
  * neither. An ask without a parseable `after` is never held.
  */
-export interface AfterTarget {
+interface AfterTarget {
   repo: string;
   pr: number;
 }
@@ -558,7 +558,7 @@ function agedFor(ask: LedgerEntry, releases: ReadonlyMap<string, number>, now: n
 }
 
 /** How long a held ask waits for its PR before it expires like any other (retro C). */
-export const LEDGER_HELD_MAX_MS = 7 * LEDGER_ASK_TTL_MS;
+const LEDGER_HELD_MAX_MS = 7 * LEDGER_ASK_TTL_MS;
 
 const targetKey = (repo: string, pr: number): string => `${repo.toLowerCase()}#${String(pr)}`;
 

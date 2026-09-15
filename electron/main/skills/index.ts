@@ -143,7 +143,7 @@ export interface SkillsRuntime {
   importSkill(pick: () => Promise<string[]>): Promise<SkillsSnapshot>;
 }
 
-export interface SkillsRuntimeOptions {
+interface SkillsRuntimeOptions {
   userDataPath: string;
   /** The Claude Code plugin registry, read for the snapshot's plugin names (HIVE-176). */
   installedPlugins?: () => string;

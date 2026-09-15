@@ -51,7 +51,7 @@ export interface HostChild {
   on(event: 'spawn', listener: () => void): void;
 }
 
-export interface SupervisorOptions {
+interface SupervisorOptions {
   /** Creates a host process. Injected so tests never fork anything. */
   fork: () => HostChild;
   /** Injected clock for the crash-loop window. */
@@ -64,7 +64,7 @@ export interface SupervisorOptions {
 }
 
 /** Why a session stopped being live. */
-export interface SessionLost {
+interface SessionLost {
   sessionId: string;
   reason: 'host-crashed';
 }

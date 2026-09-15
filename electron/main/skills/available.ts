@@ -35,7 +35,7 @@ import { isSkillFolder } from './read';
  * knows `agentsRoot()`.
  */
 
-export interface SkillRoots {
+interface SkillRoots {
   /** `~/.hive/skills` — the folder Settings › Skills writes. */
   hive: string;
   /** `~/.claude/skills` — the user's own, which The Hive does not manage. */
@@ -190,7 +190,7 @@ async function pluginSkills(file: string): Promise<string[]> {
  * agent could be called `graphify`, refused on account of a folder The Hive
  * neither manages nor mentions.
  */
-export interface AvailableSkills {
+interface AvailableSkills {
   all: string[];
   hive: string[];
 }

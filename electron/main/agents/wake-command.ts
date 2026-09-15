@@ -158,14 +158,14 @@ export interface WakeCommandDeps {
  * re-derive that — the counter it was decided from is still sitting at its old
  * value, deliberately (HIVE-122).
  */
-export type WakeInvocation = WakeCommand & {
+type WakeInvocation = WakeCommand & {
   sessionUuid: string;
   lastTurn: boolean;
   /** Which conversation this wake is (HIVE-128). Echoed from the request. */
   kind: RunKind;
 };
 
-export type BuildWakeCommand = (
+type BuildWakeCommand = (
   name: string,
   trigger: string,
   extra?: string,
