@@ -29,7 +29,6 @@ const FEATURE_SLICES = [
   'pull-requests',
   'sessions',
   'settings',
-  'simulation',
   'work',
 ];
 

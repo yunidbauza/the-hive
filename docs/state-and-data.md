@@ -252,7 +252,7 @@ Components never read a store object directly and never call `getState()`.
 | `useSessionPr(id)` | one row's PR, matched on its branch |
 | `useHasResumable()` | whether the fleet table reserves its Resume column |
 | `useMarkRead()` | mark one notification read, by index |
-| `usePushNotif()` | push a notification — the simulation's entry point |
+| `usePushNotif()` | push a notification |
 | `useActiveEntity()` | the entity behind `activeTab`, or `null` |
 | `useLedgerEntries(filter?)` | the ledger tail, by the shared query rules |
 | `useOpenAsks()` / `useOpenAskCount()` | asks unanswered and not yet TTL-retired |
@@ -288,8 +288,8 @@ is not `new Date()`: a demo recorded at 03:11 should not say so, and a wall
 clock makes a store's tests unassertable.
 
 **It currently has no producer.** The activity feed was its only one, and the
-project explorer replaced that panel. The module stays because simulation
-(below) is meant to stamp through it rather than introduce a second clock —
+project explorer replaced that panel. The module stays because a scripted demo
+(HIVE-30, below) would stamp through it rather than introduce a second clock —
 deleting a documented seam because it is briefly unused is how the second clock
 gets written.
 
@@ -303,10 +303,10 @@ gets written.
 
 ### Simulation (not built yet)
 
-Scripted event replay is still a placeholder. What is already in place for it:
+Scripted event replay (HIVE-30) is not built. Its empty placeholder slice and
+the `?sim=1` flag nothing read were removed in HIVE-192; the story recreates
+both if it lands. The seams it would use are still in place:
 
-- `?sim=1` sets `SIMULATION_ENABLED` in `src/config/env.ts`. Nothing consumes it
-  yet.
 - `appendEntityLines(id, lines, status?)` is the intended write path for replayed
   events: it appends transcript and optionally moves a session's status in one
   step. `pushNotif` is the inbox's, and both should stamp through the fake clock
@@ -314,9 +314,6 @@ Scripted event replay is still a placeholder. What is already in place for it:
 - The browser-target `sendToEntity` path returns its acknowledgement timer as
   `{ kind: 'demo', timer }` (see [Where a message actually goes](#where-a-message-actually-goes)),
   so a scripted run can cancel it rather than race a real wait.
-
-What is still to build: the event script format, the driver that feeds events into
-the stores, and the rule for what simulation may and may not mutate.
 
 ## What the store seeds, and what it no longer does
 

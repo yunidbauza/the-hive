@@ -42,8 +42,7 @@ src/
   components/terminal/   the terminal seam (speaks only TerminalTransport)
   components/editor/     the editor seam
   features/<slice>/      agents, editor, explorer, inbox, orchestrator, projects,
-                         pull-requests, sessions, settings, work, shared,
-                         simulation (a placeholder)
+                         pull-requests, sessions, settings, work, shared
   stores/                hive, ui, appearance, editor
 electron/
   main/                  config, sessions, hooks, ledger, agents, integrations, server
