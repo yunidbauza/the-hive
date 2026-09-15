@@ -200,4 +200,15 @@ describe('PrSearchRow', () => {
     expect(useUiStore.getState().prSearchTerm).toBe('');
     expect(useUiStore.getState().prSearchAllRepos).toBe(false);
   });
+
+  it('empties the box on Escape', async () => {
+    render(<PrSearchRow projectId="nova-web" />);
+    await type('carapace');
+
+    await act(async () => {
+      await userEvent.type(screen.getByLabelText('Search pull requests'), '{Escape}');
+    });
+
+    expect(useUiStore.getState().prSearchTerm).toBe('');
+  });
 });

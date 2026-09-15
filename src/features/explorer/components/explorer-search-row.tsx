@@ -1,5 +1,4 @@
-import { MagnifyingGlass, X } from '@phosphor-icons/react';
-
+import { SearchBox } from '@components/ui/search-box';
 import type { FsSearchMode } from '@shared/fs-contract';
 import {
   useClearExplorerSearch,
@@ -52,37 +51,7 @@ export function ExplorerSearchRow({ status }: ExplorerSearchRowProps) {
 
   return (
     <div className="flex shrink-0 flex-col gap-1.5 pb-1">
-      <div className="flex items-center gap-2 rounded-lg border border-border bg-panel-2 px-2 py-1.5 focus-within:border-brand">
-        <MagnifyingGlass size={12} className="shrink-0 text-subtle" />
-        <input
-          type="search"
-          value={term}
-          onChange={(event) => {
-            setTerm(event.target.value);
-          }}
-          onKeyDown={(event) => {
-            // Escape empties the box rather than closing anything: the panel is
-            // a rail tab, not an overlay, and there is nothing to dismiss.
-            if (event.key !== 'Escape' || term === '') return;
-            event.preventDefault();
-            clear();
-          }}
-          placeholder="Search files"
-          aria-label="Search files"
-          spellCheck={false}
-          className="min-w-0 flex-1 bg-transparent text-[11.5px] text-ink outline-none placeholder:text-subtle"
-        />
-        {term === '' ? null : (
-          <button
-            type="button"
-            onClick={clear}
-            className="shrink-0 rounded-[4px] text-subtle hover:text-ink"
-          >
-            <X size={11} />
-            <span className="sr-only">Clear the search</span>
-          </button>
-        )}
-      </div>
+      <SearchBox label="Search files" value={term} onChange={setTerm} onClear={clear} />
 
       {term === '' ? null : (
         <div className="flex items-center gap-2 px-0.5">

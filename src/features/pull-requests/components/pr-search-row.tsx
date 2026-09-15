@@ -1,6 +1,6 @@
-import { MagnifyingGlass, X } from '@phosphor-icons/react';
 import { useEffect, useRef } from 'react';
 
+import { SearchBox } from '@components/ui/search-box';
 import { GH_MERGED_PAGE, GH_OPEN_PAGE } from '@shared/github-contract';
 import {
   usePrSearch,
@@ -137,29 +137,7 @@ export function PrSearchRow({ projectId }: PrSearchRowProps) {
 
   return (
     <div className="flex shrink-0 flex-col gap-1.5 pb-1">
-      <div className="flex items-center gap-2 rounded-lg border border-border bg-panel-2 px-2 py-1.5 focus-within:border-brand">
-        <MagnifyingGlass size={12} className="shrink-0 text-subtle" />
-        <input
-          type="search"
-          value={term}
-          onChange={(event) => {
-            setTerm(event.target.value);
-          }}
-          placeholder="Search pull requests"
-          aria-label="Search pull requests"
-          className="min-w-0 flex-1 bg-transparent text-[11.5px] text-ink outline-none placeholder:text-subtle"
-        />
-        {term === '' ? null : (
-          <button
-            type="button"
-            onClick={clearTerm}
-            className="shrink-0 rounded-[4px] text-subtle hover:text-ink"
-          >
-            <X size={11} />
-            <span className="sr-only">Clear the search</span>
-          </button>
-        )}
-      </div>
+      <SearchBox label="Search pull requests" value={term} onChange={setTerm} onClear={clearTerm} />
 
       {/*
         The second line is only drawn while a search is on, because with an
