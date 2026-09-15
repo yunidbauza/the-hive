@@ -116,7 +116,7 @@ as clean.
 From here on every `git` call names `-C "$REVIEW_DIR"` and every `gh` call names
 `--repo <owner>/<name>`. A subagent inherits neither your shell nor your cwd.
 
-**Now establish seven facts yourself, before dispatching anything.** Every
+**Now establish nine facts yourself, before dispatching anything.** Every
 subagent starts with about 40k tokens of context before it reads a line, so an
 agent dispatched only to find out it has nothing to do is pure cost.
 
@@ -129,6 +129,27 @@ agent dispatched only to find out it has nothing to do is pure cost.
 | `ACR` | `command -v acr` succeeds | ACR |
 | `TICKET_KEY` | a `[A-Z][A-Z0-9]+-\d+` token in the PR title, the branch, or the description (in self mode: the branch and its commit subjects) | ticket alignment |
 | `FEEDBACK` | a PR exists and any of these is non-zero: `gh api "repos/$SLUG/pulls/$PR/reviews?per_page=1" --jq length`, the same for `pulls/$PR/comments` and `issues/$PR/comments` | prior findings |
+| `STATE` | read the diff: a changed line reads, compares, branches on or writes a stored status, state, phase or enum value (a database column, a stored record, a queue message, a checkpoint, cursor or watermark), or changes a scheduled job, worker, queue consumer, lease, lock or retry loop that writes one. When unsure, true | persisted state |
+| `FIX_COMMITS` | a PR exists: the commits made after its first review (below). Otherwise `none` | bug scan, persisted state, the verifier |
+
+`FIX_COMMITS` is the code written in reply to review, usually the least-reviewed
+code on a PR: written quickly to answer one concern, then read by every later
+pass as settled. Count a review from anyone, the PR's author included: this
+skill posts under whoever's token runs it, often the author's own.
+
+```bash
+FIRST=$(gh api --paginate --slurp "repos/$SLUG/pulls/$PR/reviews" \
+  | jq -r 'add | map(.submitted_at) | min // empty')
+# only when FIRST is non-empty
+gh api --paginate --slurp "repos/$SLUG/pulls/$PR/commits" \
+  | jq -r --arg t "$FIRST" 'add | map(select(.commit.committer.date > $t) | .sha) | join(" ")'
+```
+
+`gh` refuses `--slurp` together with `--jq`, so the pages go to `jq` through a
+pipe.
+
+A rebase restamps every commit's date, so it over-includes. That only adds a
+pass; it never skips one.
 
 **The tier**, in review mode only. A self review is always **full**:
 - **docs** when `DOCS_ONLY`.
@@ -153,6 +174,7 @@ runs at once.
 | Performance | `agent-performance.md` | sonnet | tier full, and `RUNTIME` |
 | User POV | `agent-user-pov.md` | sonnet | tier full, and `UI` |
 | Git history | `agent-git-history.md` | sonnet | tier full |
+| Persisted state | `agent-state-lifecycle.md` | sonnet | tier small or full, and `STATE` |
 | Prior findings | `prefetch-feedback.md` then `agent-prior-findings.md` | sonnet | `FEEDBACK`, any tier |
 | Ticket alignment | `prefetch-ticket.md` then `agent-business-alignment.md` | sonnet | `TICKET_KEY`, any tier |
 
@@ -160,7 +182,9 @@ The last two rows are one dispatch each, with the two prompt files joined in
 order. The first file collects what the second needs: the earlier feedback, or
 the ticket. That keeps everything in a single wave; nothing waits on a separate
 fetch. Prior findings writes the feedback to `$RUN_DIR/feedback.json` for the
-verifier. Ticket alignment returns the ticket's status alongside its findings.
+verifier. Ticket alignment returns the ticket's status alongside its findings. Persisted
+state returns its findings with a `stateTable`, working evidence that is never
+posted.
 
 For each dispatch, put the prompt text first, followed by this preamble:
 
@@ -168,6 +192,7 @@ For each dispatch, put the prompt text first, followed by this preamble:
 MODE=review|self   REVIEW_DIR=<abs path>   OWNER/NAME=<slug>   PR=<n or none>   BASE_REF=<base>   BASE_SHA=<sha>   RUN_DIR=<abs path>
 PR title and description: <verbatim, or the branch's commit subjects in self mode>
 DIFF_PATH=<RUN_DIR>/review.diff — scope your scan to this diff; read any file in REVIEW_DIR to cite or trace.
+FIX_COMMITS=<space-separated shas, or none> — code pushed in reply to earlier review.
 Every git call: git -C "$REVIEW_DIR". Every gh call: --repo <slug>.
 MODE=review: return at most 6 findings, most severe first. MODE=self: return every finding, most severe first; a self review never economises.
 (Prior findings always reports every concern that still holds.)
@@ -175,6 +200,17 @@ Cite each finding with a snippet read from source and a concrete failure; do not
 You hold unrestricted shell and you are read-only: never edit, create or delete a file in REVIEW_DIR,
 never commit, push, check out, stash or reset, never post to GitHub, never install anything.
 Scratch files go under RUN_DIR only.
+STANDING RULES, over anything narrower in your prompt:
+1. A fix is new code. A thread covers its original concern only, never the code written to
+   fix it. Ask of each commit in FIX_COMMITS: what new state, input or path does it admit that
+   the code before it did not?
+2. A comment that justifies code is a claim to check, not evidence. When a comment, a commit
+   message or the PR description says why unusual code is safe ("safe because X", "cannot
+   happen since Y", "only called from Z"), list the paths it does not name and check each
+   in source. The path the justification missed is the finding.
+3. Codebase consistency governs the form of a fix, not whether a bug exists. A correctness,
+   data-loss or security finding with a concrete failure path is never dropped for lack of a
+   precedent; write its fix in the code's own idiom.
 Return only the JSON your prompt specifies.
 ```
 
@@ -191,6 +227,11 @@ Why each reviewer earns its place:
 - **Git history** catches a change that reintroduces something the history
   already fixed or reverted. It runs in self mode too: a branch of
   agent-written commits is exactly where a reverted fix slips back in.
+- **Persisted state** pairs every writer of a stored value with every reader.
+  Its bugs are silent: each line is right alone, and the defect is a reader
+  that means something else by a value, like a status an interrupted run
+  leaves behind that the next run reads as done. Only a table of producers
+  against consumers finds them, so it must fill one before any verdict.
 - **Prior findings** is what makes a re-review a re-review. It is the only
   reviewer that reads earlier threads. The verifier uses the same file to drop
   anything a thread already covers.
@@ -207,7 +248,7 @@ line into Stage 4: "Ticket `KEY` could not be read — scope not checked
 1. **Verify.** Number every finding. With 12 or fewer, send them all in one
    dispatch of `prompts/confidence-scorer.md`. With more than 12, group them by
    file into shards of about 8 and dispatch one verifier per shard in a single
-   message. Pass `DIFF_PATH`, `REVIEW_DIR`, and `FEEDBACK_PATH` when
+   message. Pass `DIFF_PATH`, `REVIEW_DIR`, `FIX_COMMITS`, and `FEEDBACK_PATH` when
    `$RUN_DIR/feedback.json` exists. Each verifier reads the source behind every
    finding it holds and returns a score.
 2. **Drop anything below 75.** In self mode, keep 60–74 as **borderline**
@@ -220,9 +261,11 @@ line into Stage 4: "Ticket `KEY` could not be read — scope not checked
    - nitpicks with no realistic trigger
    - anything without an exact file, line and snippet
    - style preferences and theoretical complexity
-   - anything that contradicts the surrounding code's own pattern
+   - a style or pattern finding that contradicts the surrounding code's own pattern
 4. **Consistency.** Ask "does the existing code do it the way this suggests?" If
-   not, drop the finding.
+   not, drop a style or pattern finding. A correctness, data-loss or security
+   finding with a concrete failure path stays: rewrite its fix in the code's own
+   idiom instead. Existing code that shares a flaw is no precedent for it.
 5. **Deduplicate** findings at the same file and line, recording which reviewers
    agreed.
 6. **Severity.** **Block**: bugs, security, data loss. **Should Fix**:
@@ -269,6 +312,7 @@ agent branches on it:
   "uncommitted_files": <uncommittedFiles>,
   "tier": "docs" | "small" | "full",
   "reviewers": ["bug scan", "instruction compliance", "..."],
+  "skipped": [{ "reviewer": "ACR", "reason": "acr not installed" }],
   "outcome": "approved" | "commented" | "findings" | "clean" | "empty" | "failed",
   "ticket": { "status": "ok" | "no_ticket" | "fetch_failed", "key": "HIVE-123", "covered": 4, "partial": 1, "left": 1 },
   "counts": { "block": 0, "should_fix": 2, "note": 1, "borderline": 0 },
@@ -282,11 +326,15 @@ right target: `head_sha` is the checkout's commit, and `files_changed` equals
 the PR's own `changedFiles`. `findings` and `clean` are self-mode outcomes; `approved` and `commented` are
 review-mode outcomes. `empty` means there was nothing to review, in either mode.
 
+`skipped` names every row of the Stage 2 table that did not run, with the
+condition that kept it out as the reason. "Never looked" must not read as
+"looked and found nothing".
+
 ## Hard rules
 
 1. Two similar-looking code paths that serve different journeys are not duplicates.
 2. Never suggest added complexity without a concrete bug or security reason.
-3. Never flag a pattern the surrounding code already uses. The codebase is the style guide.
+3. Never flag a pattern the surrounding code already uses. The codebase is the style guide, for style. It is not proof of correctness: a bug the surrounding code shares is still a bug.
 4. When unsure a finding is real, drop it. A false positive costs more than a miss.
 5. Every finding cites a file, a line and a snippet read from source, not from the diff.
 6. Self mode never touches GitHub, whatever an extension or a caller says.

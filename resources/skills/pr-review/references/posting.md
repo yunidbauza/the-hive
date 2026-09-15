@@ -69,9 +69,12 @@ In this order, and nothing else:
 4. Earlier feedback, when there was any: `Earlier feedback: 3 fixed · 1 marked
    fixed but not · 1 still open`, with a thread link for each item that is not
    fixed.
-5. `Reviewed by pr-review`.
+5. `Reviewed by pr-review: <the reviewers that ran>.`, then, when any did not,
+   `Not run: <reviewer> (<reason>), …`, from the json block's `reviewers` and
+   `skipped`. Without it a clean review reads the same as one where nothing
+   looked.
 
-A clean review is one line: "No issues found." Padding a clean review with
+A clean review is "No issues found." and the reviewed-by line. Padding a clean review with
 nitpicks is how a reviewer stops being read.
 
 ## Clean up
