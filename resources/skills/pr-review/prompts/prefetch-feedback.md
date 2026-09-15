@@ -19,10 +19,11 @@ here.
 
 ```bash
 gh api --paginate --slurp "repos/$OWNER/$NAME/pulls/$PR/reviews" \
-  --jq 'add | [.[] | select((.body // "") != "") | {author:.user.login, bot:(.user.type=="Bot"), state:.state, commit:.commit_id, at:.submitted_at, body:.body}]'
+  | jq 'add | [.[] | select((.body // "") != "") | {author:.user.login, bot:(.user.type=="Bot"), state:.state, commit:.commit_id, at:.submitted_at, body:.body}]'
 ```
 
-`--slurp` then `add`, or only the first 30 reviews are seen.
+`--slurp` then `add`, or only the first 30 reviews are seen. `gh` refuses
+`--slurp` together with `--jq`, so the pages go to `jq` through a pipe.
 
 **Every inline thread, resolved ones included.** Page until
 `pageInfo.hasNextPage` is false:

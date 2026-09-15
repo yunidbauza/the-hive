@@ -12,6 +12,7 @@ You will be given:
 1. The findings, numbered (file, line, snippet, problem description, suggested fix, review lens)
 2. `DIFF_PATH`, the PR diff, and `REVIEW_DIR`, the code it applies to
 3. `FEEDBACK_PATH`, when the PR has earlier feedback: a file holding every earlier review, thread and comment on it (`PR_COMMENTS` below). The reviewers never saw it, so you are the one who drops what a thread already covers.
+4. `FIX_COMMITS`: the commits pushed after the PR's first review, the code written in reply to feedback (may be `none`)
 
 ## Your Task
 
@@ -40,6 +41,14 @@ Score each finding on its own evidence. Two findings about the same area do not 
 - If an existing thread explicitly states this issue is intentional, a known tradeoff, or deferred to a future ticket — score 0. The author has already addressed it; surfacing it again adds noise.
 - If a root comment asks a question that this finding would answer — increase the score by 10 (ceiling: 100). The finding is directly relevant to a human question in flight.
 - If an existing thread already raised this exact issue, score 0. The prior-findings reviewer owns it and has reported it on its own if it still holds.
+- A thread covers the concern it names: not its file, not its function, and not the code written to fix it. Apply the rules above only when the thread is about this finding's exact problem.
+- **A finding about a fix is new.** When the finding is about code in `FIX_COMMITS` (a new state, early exit or swallowed error the fix introduced), the thread it answered does not cover it. Score it on its own evidence.
+
+**Justifying comments are claims, not evidence.** A code comment, commit message or PR description saying why the code is safe ("cannot happen because…", "safe since…") does not make a finding "intentional". Only an author statement in `PR_COMMENTS` about this specific concern does. If the finding names a path the comment does not cover, and you can see that path in source, the comment counts for nothing.
+
+**Codebase consistency is not correctness.** Do not score a correctness, data-loss or security finding down because the codebase has no precedent for its fix, or because older code shares the flaw.
+
+**Persisted-state findings (lens `"persisted state"`)** pair a producer of a stored value with a consumer that misreads it. `file`/`line` is the side the diff changed; `pairedWith` is the other side. Read both. 80 or above when both lines hold in source and the sequence is concrete: a named producer writes a named value under a named condition (an interrupted run, an error branch, a retry), and the consumer's code does the wrong thing with it. 50 to 79 when the producing condition is not shown to be reachable. Below 50 when either side is missing from source. The pairing is what the diff introduces, so the other side being pre-existing, or on a line the user did not modify, is not a reason to score 0.
 
 **Prior findings (lens `"prior finding"`)** are the exception to "pre-existing scores 0" and "lines the user did not modify score 0": an earlier reviewer raised it on this PR, and the question is only whether it still holds in the code now. Score it on that alone. A `reopened` finding — marked fixed, still present — whose snippet you can see in the current source is 90 or above.
 
