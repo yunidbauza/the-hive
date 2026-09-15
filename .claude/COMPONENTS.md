@@ -149,6 +149,7 @@ contract for their owning story, not existing code.
 | `SecretField` | `ui/secret-field.tsx` | **HIVE-67** | `label: string`, `value: string`, `onChange(value: string): void`, `onCommit?(): void`, `placeholder?: string`, `hint?: string`, `className?: string` | **built** |
 | `SplitHandle` | `ui/split-handle.tsx` | **explorer** | `axis: 'horizontal' \| 'vertical'`, `containerRef: RefObject<HTMLElement>`, `ratio: number`, `onRatio(ratio: number): void` | **built** |
 | `Button` | `ui/button.tsx` | **HIVE-118** | `variant?: 'primary' \| 'secondary' \| 'danger' \| 'ghost'`, `size?: 'sm' \| 'md'`, plus `ButtonHTMLAttributes<HTMLButtonElement>` | **built** |
+| `SearchBox` | `ui/search-box.tsx` | **HIVE-192** | `label: string`, `value: string`, `onChange(value: string): void`, `onClear(): void` | **built** |
 
 `Badge` moved from story 030 to 021: the header's bell needs an unread count,
 and 021 lands first. 030's tab-bar badges reuse it rather than building a second.
@@ -240,6 +241,10 @@ Contracts worth knowing before reusing them:
   the atom does not sweep those eleven call sites** — that is separate
   follow-up work, not an endorsement to keep hand-rolling the same string
   elsewhere.
+- **`SearchBox` owns only the box.** The explorer, PR and Work rows each keep
+  their own second line (mode, scope, count) and pass one `onClear` for both the
+  clear button and Escape. Escape on an empty box is left alone, so it never
+  takes a key something else wanted.
 
 ## Layout
 
