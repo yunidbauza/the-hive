@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent } from 'react';
+import { InlineConfirm } from '@features/settings/components/inline-confirm';
 
 interface ProjectRemoveConfirmProps {
   projectName: string;
@@ -37,83 +37,27 @@ export function ProjectRemoveConfirm({
   onConfirm,
   onCancel,
 }: ProjectRemoveConfirmProps) {
-  const cancel = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    /*
-      Focus lands on Cancel, never Remove: the destructive option should not be
-      one stray Enter away the moment the row changes shape.
-
-      Done in an effect rather than with `autoFocus`, which `jsx-a11y` bans —
-      rightly, for the usual case of a page stealing focus on load. This is the
-      opposite: the user just chose "Remove", and a confirmation they have to go
-      find with the mouse would be the accessibility problem.
-    */
-    cancel.current?.focus();
-  }, []);
-
   const sessions =
     liveSessionCount === 1
       ? '1 live session will keep running'
       : `${liveSessionCount} live sessions will keep running`;
 
-  /**
-   * Escape backs out, handled on the buttons rather than the container.
-   *
-   * The container carries `role="alertdialog"`, which `jsx-a11y` classes as
-   * non-interactive — and it is right that a plain region should not be
-   * listening for keys. The buttons *are* interactive, focus starts on Cancel
-   * and the only other stop is Remove, so listening on both covers every
-   * position focus can hold inside this confirmation. Escape pressed outside it
-   * belongs to whatever does have focus, which is the correct behaviour rather
-   * than a gap.
-   */
-  const escapes = (event: KeyboardEvent) => {
-    if (event.key !== 'Escape') return;
-    /*
-      Stops bubble-phase ancestors seeing it. Keeping the settings dialog open
-      is a separate matter — Radix decides on a document-capture listener that
-      runs first, which `data-escape-scope` below is what answers.
-    */
-    event.stopPropagation();
-    onCancel();
-  };
-
   return (
-    <div
-      role="alertdialog"
-      // Claims Escape from the settings dialog — see `settings-overlay.tsx`.
-      data-escape-scope=""
-      aria-label={`Remove ${projectName}?`}
-      className="border-b border-border-soft bg-red/8 px-3 py-2.5 last:border-b-0"
+    <InlineConfirm
+      label={`Remove ${projectName}?`}
+      title={
+        <>
+          Remove <span className="font-medium">{projectName}</span> from your
+          projects?
+        </>
+      }
+      confirmLabel="Remove"
+      className="border-b border-border-soft last:border-b-0"
+      onConfirm={onConfirm}
+      onCancel={onCancel}
     >
-      <p className="text-[12.5px] text-ink">
-        Remove <span className="font-medium">{projectName}</span> from your
-        projects?
-      </p>
-      <p className="mt-0.5 text-[11.5px] text-subtle">
-        {sessions} — they just stop resolving to a folder. The directory on disk
-        is untouched.
-      </p>
-      <div className="mt-2 flex justify-end gap-1.5">
-        <button
-          ref={cancel}
-          type="button"
-          onClick={onCancel}
-          onKeyDown={escapes}
-          className="rounded-md border border-border px-2.5 py-1 text-[12px] text-muted hover:bg-hover hover:text-ink"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          onClick={onConfirm}
-          onKeyDown={escapes}
-          className="rounded-md bg-red px-2.5 py-1 text-[12px] font-medium text-bg hover:opacity-90"
-        >
-          Remove
-        </button>
-      </div>
-    </div>
+      {sessions} — they just stop resolving to a folder. The directory on disk
+      is untouched.
+    </InlineConfirm>
   );
 }
