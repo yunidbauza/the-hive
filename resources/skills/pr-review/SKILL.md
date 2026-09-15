@@ -140,9 +140,12 @@ skill posts under whoever's token runs it, often the author's own.
 ```bash
 FIRST=$(gh api --paginate --slurp "repos/$SLUG/pulls/$PR/reviews" \
   | jq -r 'add | map(.submitted_at) | min // empty')
-# only when FIRST is non-empty
-gh api --paginate --slurp "repos/$SLUG/pulls/$PR/commits" \
-  | jq -r --arg t "$FIRST" 'add | map(select(.commit.committer.date > $t) | .sha) | join(" ")'
+if [ -n "$FIRST" ]; then
+  gh api --paginate --slurp "repos/$SLUG/pulls/$PR/commits" \
+    | jq -r --arg t "$FIRST" 'add | map(select(.commit.committer.date > $t) | .sha) | join(" ")'
+else
+  echo none
+fi
 ```
 
 `gh` refuses `--slurp` together with `--jq`, so the pages go to `jq` through a
