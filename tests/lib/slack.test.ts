@@ -1,3 +1,4 @@
+import { BRIDGE_ERROR } from '@lib/utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -8,7 +9,6 @@ import {
   setSlackTokens,
   signIn,
   signOut,
-  SLACK_BRIDGE_ERROR,
   subscribeSlackSocketStatus,
   testSlack,
   testSlackSocket,
@@ -179,7 +179,7 @@ describe('socket mode (HIVE-124)', () => {
     /** The writes say the same thing, in the shape a pane can render. */
     it('answers the writes with the bridge sentence rather than null', async () => {
       const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      const unreachable = { ok: false, message: SLACK_BRIDGE_ERROR };
+      const unreachable = { ok: false, message: BRIDGE_ERROR };
 
       await expect(setSlackTokens({ appToken: 'xapp-1' })).resolves.toEqual(unreachable);
       await expect(clearSlackTokens()).resolves.toEqual(unreachable);
@@ -282,7 +282,7 @@ describe('socket mode (HIVE-124)', () => {
 
       await expect(clearSlackTokens()).resolves.toEqual({
         ok: false,
-        message: SLACK_BRIDGE_ERROR,
+        message: BRIDGE_ERROR,
       });
     });
 

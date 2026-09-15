@@ -7,6 +7,7 @@ import { TextField } from '@components/ui/text-field';
 import { SettingsGroup } from '@features/settings/components/settings-group';
 import { searchJiraIssues } from '@lib/jira';
 import { setJiraConnection } from '@lib/project-config';
+import { BRIDGE_ERROR } from '@lib/utils';
 import { JIRA_DEFAULT_JQL } from '@shared/jira-contract';
 
 /**
@@ -64,7 +65,7 @@ export function JiraQueryGroup({ jql, canTest }: JiraQueryGroupProps) {
       if (result === null) {
         setVerdict({
           kind: 'refused',
-          message: 'The app could not reach its own main process.',
+          message: BRIDGE_ERROR,
         });
         return;
       }

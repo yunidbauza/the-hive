@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 
 import { AdfBlocks } from '@features/work/components/adf-blocks';
 import { addJiraComment, readJiraComments, readJiraLinks } from '@lib/jira';
+import { BRIDGE_ERROR } from '@lib/utils';
 import type { JiraComment, JiraLink } from '@shared/jira-contract';
 
 /**
@@ -69,7 +70,7 @@ export function TicketConversation({ issueKey }: TicketConversationProps) {
       if (comments === null || links === null) {
         setState({
           kind: 'problem',
-          message: 'The app could not reach its own main process.',
+          message: BRIDGE_ERROR,
         });
         return;
       }
@@ -102,7 +103,7 @@ export function TicketConversation({ issueKey }: TicketConversationProps) {
     void addJiraComment({ key: issueKey, markdown }).then((result) => {
       setPosting(false);
       if (result === null) {
-        setPostProblem(['The app could not reach its own main process.']);
+        setPostProblem([BRIDGE_ERROR]);
         return;
       }
       if (!result.ok) {

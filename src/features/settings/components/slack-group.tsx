@@ -18,12 +18,12 @@ import {
   setSlackTokens,
   signIn,
   signOut,
-  SLACK_BRIDGE_ERROR,
   subscribeSlackSocketStatus,
   testSlack,
   testSlackSocket,
   type SlackWrite,
 } from '@lib/slack';
+import { BRIDGE_ERROR } from '@lib/utils';
 import {
   DEFAULT_SLACK,
   type SetSlackRequest,
@@ -107,12 +107,12 @@ const UNKNOWN_TOKENS: SlackTokensState = {
  * broken bridge (`src/lib/slack.ts`) — reported as an error rather than left
  * to render nothing, the same choice `JiraCredentialGroup` makes for a failed
  * Jira verb. The sentence itself lives in `lib/slack.ts` as
- * {@link SLACK_BRIDGE_ERROR}, because the write wrappers there fall back to it
+ * {@link BRIDGE_ERROR}, because the write wrappers there fall back to it
  * too and two phrasings of "the app is broken" would read as two faults.
  */
 const bridgeError = (): SlackStatus => ({
   kind: 'error',
-  message: SLACK_BRIDGE_ERROR,
+  message: BRIDGE_ERROR,
 });
 
 type PillKind = 'off' | 'ok' | 'wait' | 'err';
@@ -951,7 +951,7 @@ export function SlackGroup({ agents }: SlackGroupProps) {
       setSocketTestResult(
         result ?? {
           kind: 'error',
-          message: 'The app could not reach its own main process.',
+          message: BRIDGE_ERROR,
         },
       );
     });

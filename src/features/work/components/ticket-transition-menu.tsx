@@ -13,6 +13,7 @@ import {
 } from '@components/ui/dropdown-menu';
 import { CATEGORY_TEXT, STATUS_PILL } from '@features/work/ticket-presentation';
 import { applyJiraTransition, readJiraTransitions } from '@lib/jira';
+import { BRIDGE_ERROR } from '@lib/utils';
 import type { JiraTransition } from '@shared/jira-contract';
 import { useUpdateTicket } from '@stores/hive-store';
 
@@ -90,7 +91,7 @@ export function TicketTransitionMenu({
     if (result === null) {
       setState({
         kind: 'problem',
-        message: 'The app could not reach its own main process.',
+        message: BRIDGE_ERROR,
       });
       return null;
     }
@@ -120,7 +121,7 @@ export function TicketTransitionMenu({
       if (result === null) {
         setState({
           kind: 'problem',
-          message: 'The app could not reach its own main process.',
+          message: BRIDGE_ERROR,
         });
         return;
       }

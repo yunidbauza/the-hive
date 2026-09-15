@@ -59,6 +59,7 @@ import {
   requestSpawnTerminal,
 } from '@lib/terminal/pty-transport';
 import { sendToSession } from '@lib/terminal/session-input';
+import { BRIDGE_ERROR } from '@lib/utils';
 import {
   SESSION_ID_PREFIX_PATTERN,
   type AgentLinesPush,
@@ -4952,7 +4953,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       if (epoch !== modeEpoch) return;
       if (status === null) {
         get().reportTicketFailure(
-          'The app could not reach its own main process.',
+          BRIDGE_ERROR,
         );
         return;
       }
@@ -4979,7 +4980,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       if (epoch !== modeEpoch) return;
       if (result === null) {
         get().reportTicketFailure(
-          'The app could not reach its own main process.',
+          BRIDGE_ERROR,
         );
         return;
       }
@@ -5177,7 +5178,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
       if (epoch !== modeEpoch) return;
 
       if (result === null) {
-        get().reportPrFailure('The app could not reach its own main process.');
+        get().reportPrFailure(BRIDGE_ERROR);
         return;
       }
 
@@ -5258,7 +5259,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           term,
           results: [],
           searching: false,
-          error: 'The app could not reach its own main process.',
+          error: BRIDGE_ERROR,
         },
       });
       return;
@@ -5351,7 +5352,7 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
           ...NO_TICKET_SEARCH,
           term,
           results: [],
-          error: 'The app could not reach its own main process.',
+          error: BRIDGE_ERROR,
         },
       });
       return;

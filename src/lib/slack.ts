@@ -1,3 +1,4 @@
+import { BRIDGE_ERROR } from '@lib/utils';
 import type {
   ConfigSnapshot,
   SetSlackRequest,
@@ -30,16 +31,6 @@ import type {
  */
 
 /**
- * What the pane says when the failure is the bridge itself.
- *
- * Exported because two modules need the same sentence: this one, when a verb
- * cannot be reached at all, and `slack-group.tsx`, which reports it in the
- * pill. Written once so a reader cannot be shown two different phrasings of
- * "the app is broken".
- */
-export const SLACK_BRIDGE_ERROR = 'The app could not reach its own main process.';
-
-/**
  * A rejected write, in the words main actually used.
  *
  * `ipcRenderer.invoke` wraps a handler's throw twice on the way back — once as
@@ -55,7 +46,7 @@ const reasonOf = (cause: unknown): string => {
   const raw = cause instanceof Error ? cause.message : String(cause);
   const reason = raw.replace(INVOKE_WRAPPER, '').replace(ERROR_CLASS, '').trim();
 
-  return reason === '' ? SLACK_BRIDGE_ERROR : reason;
+  return reason === '' ? BRIDGE_ERROR : reason;
 };
 
 /**
@@ -76,7 +67,7 @@ async function write<T>(
   run: (bridge: NonNullable<Window['hive']>) => Promise<T>,
 ): Promise<SlackWrite<T>> {
   const bridge = window.hive;
-  if (!bridge) return { ok: false, message: SLACK_BRIDGE_ERROR };
+  if (!bridge) return { ok: false, message: BRIDGE_ERROR };
 
   try {
     return { ok: true, value: await run(bridge) };

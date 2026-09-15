@@ -32,7 +32,6 @@ const subscribeSlackSocketStatus = vi.fn();
 const readSlackSocketState = vi.fn();
 
 vi.mock('@/lib/slack', () => ({
-  SLACK_BRIDGE_ERROR: 'The app could not reach its own main process.',
   readSlackStatus: () => status(),
   signIn: () => signIn(),
   signOut: () => signOut(),
