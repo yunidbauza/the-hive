@@ -884,7 +884,7 @@ functions in `electron/shared/ledger-derive.ts`:
 in `electron/main/`, for a structural reason rather than a stylistic one:
 `src/**` may not import `electron/main/**` — that's an ESLint-enforced
 boundary, not a convention — and the renderer's own selectors
-(`useOpenAsks`, `useOpenAskCount`, `useThread` in `src/stores/hive-store.ts`)
+(`useOpenAskCount`, `useThread` in `src/stores/hive-store.ts`)
 need exactly these same rules to stay in sync with what main computes from the
 authoritative log. Two copies of "what counts as open" would drift the first
 time one of them changed; one function main and the renderer both import
@@ -2363,7 +2363,7 @@ only the renderer has it.
 ## Related reading
 
 - [`docs/state-and-data.md`](state-and-data.md) — *The ledger slice is a mirror,
-  not a source*: the shape backing `useLedgerEntries` / `useOpenAsks` /
+  not a source*: the shape backing `useLedgerEntries` / `useOpenAskCount` /
   `useThread`, the 500-entry cap, why `hydrateLedger` merges rather than
   replaces, and why derived values live in selectors rather than in the store.
 - [`.claude/COMPONENTS.md`](../.claude/COMPONENTS.md) — why the disabled

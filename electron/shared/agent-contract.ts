@@ -125,7 +125,6 @@ export const WAKE_DAYS = [
 export type WakeDay = (typeof WAKE_DAYS)[number];
 
 export const WAKE_EVERY_FLOOR_MS = 60_000;
-export const WAKE_EVERY_DEFAULT_MS = 300_000;
 
 /**
  * Whether a scheduled tick has to justify itself (HIVE-121).

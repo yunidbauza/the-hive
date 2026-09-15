@@ -201,9 +201,6 @@ export const CRASH_WINDOW_MS = 60_000;
  */
 export const CRASH_LIMIT = 4;
 
-/** What a terminal writes when its host died underneath it. */
-export const SESSION_LOST_NOTICE = 'session lost (pty host crashed)';
-
 /**
  * Prefixed to a replayed transcript that had output dropped from its front
  * (story 092).

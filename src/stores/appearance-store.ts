@@ -1154,27 +1154,6 @@ const appearanceSettingsSelector = (state: AppearanceState) => ({
 export const useTheme = (): ResolvedTheme =>
   useAppearanceStore((state) => resolveTheme(state.theme, state.systemDark));
 
-/**
- * The same answer as {@link useTheme}, for a caller that is not a component.
- *
- * A hook cannot be called from a store action, and the one caller that needs
- * this is exactly that: `hive-store` reads the theme when it spawns a session,
- * so `claude` can be told which way round to paint its own UI in the terminal
- * it is about to draw into.
- *
- * Exported as a function rather than leaving the caller to `getState()` and
- * `resolveTheme` for itself, so `system` is resolved in the one place that
- * knows how — a caller that read `state.theme` directly would hand `'system'`
- * to something expecting a palette.
- */
-export const currentTheme = (): ResolvedTheme => {
-  const { theme, systemDark } = useAppearanceStore.getState();
-  return resolveTheme(theme, systemDark);
-};
-
-/** The stored preference — the appearance section's radio group, and nothing else. */
-export const useThemePreference = () => useAppearanceStore((state) => state.theme);
-
 /** Theme actions, referentially stable across unrelated state changes. */
 export const useThemeActions = () =>
   useAppearanceStore(useShallow(themeActionsSelector));
@@ -1186,10 +1165,6 @@ export const useThemes = (): Record<string, HiveTheme> =>
 /** The id of the theme currently painting the app — {@link BUILT_IN_THEME_ID} or a library key. */
 export const useActiveThemeId = (): string =>
   useAppearanceStore((state) => state.activeThemeId);
-
-/** The active theme itself, or `null` when the built-in is active. */
-export const useActiveTheme = (): HiveTheme | null =>
-  useAppearanceStore((state) => activeThemeOf(state));
 
 /** Theme-library actions, referentially stable across unrelated state changes. */
 export const useThemeLibraryActions = () =>
@@ -1207,9 +1182,6 @@ export const useThemeLibraryActions = () =>
  */
 export const useTerminalAppearance = () =>
   useAppearanceStore(useShallow(terminalAppearanceSelector));
-
-/** Rail density. */
-export const useDensity = () => useAppearanceStore((state) => state.density);
 
 /**
  * The header's sublabel, trimmed — empty means the line is not drawn.
@@ -1296,10 +1268,6 @@ export const useEditorAppearance = () =>
 
 export const useEditorLayout = () =>
   useAppearanceStore(useShallow(editorLayoutSelector));
-
-/** Whether the editor accepts input. Its own hook — the tab strip needs only this. */
-export const useEditorEditable = () =>
-  useAppearanceStore((state) => state.editorEditable);
 
 /** Written by dragging the divider, not by a settings control. */
 export const useSetEditorSplitRatio = () =>

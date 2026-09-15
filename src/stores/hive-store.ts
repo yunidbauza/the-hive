@@ -86,7 +86,6 @@ import {
   type LedgerReadQuery,
   type LedgerResult,
   type LedgerSnapshot,
-  type OpenAsk,
 } from '@shared/ledger-contract';
 import {
   agentSiteFor,
@@ -6047,24 +6046,10 @@ export const useAgentOrder = () =>
   useHiveStore(useShallow((state) => state.agentOrder));
 
 /**
- * One agent by name, or `null` if that id is not an agent (HIVE-114).
- *
- * Narrows rather than casting, so a caller handed a *session*'s id gets `null`
- * instead of a row that renders half-correctly — `entities` is one map and the
- * two kinds share it.
- */
-export const useAgent = (name: string) =>
-  useHiveStore((state) => {
-    const entity = state.entities[name];
-
-    return entity !== undefined && isAgent(entity) ? entity : null;
-  });
-
-/**
  * One agent's run log.
  *
- * A selector rather than `useAgent(name).lines` so a line batch re-renders the
- * run view and nothing else — the same reason every other consumer here goes
+ * A selector of its own rather than a field read off the whole agent entity, so
+ * a line batch re-renders the run view and nothing else — the same reason every other consumer here goes
  * through a named hook.
  */
 export const useAgentLines = (name: string): TermLine[] =>
@@ -7500,9 +7485,6 @@ export const useTicketCount = () =>
 export const useUnreadCount = () =>
   useHiveStore((state) => state.notifs.filter((notif) => notif.unread).length);
 
-/** Clear the whole inbox — the header bell (021) and the inbox panel (051). */
-export const useMarkAllRead = () => useHiveStore((state) => state.markAllRead);
-
 /** The inbox, newest first (story 051). */
 export const useNotifs = () => useHiveStore((state) => state.notifs);
 
@@ -7564,20 +7546,6 @@ export const useBuildProgress = (ticketKey: string): BuildProgress | undefined =
   const entries = useHiveStore((state) => state.ledger);
 
   return useMemo(() => buildProgressFor(entries, ticketKey), [entries, ticketKey]);
-};
-
-/**
- * Asks nobody has answered.
- *
- * `Date.now()` is read inside the memo, so `ageMs` is as fresh as the last
- * entry rather than as fresh as the last render. That is the right trade here:
- * the TTL is a day, and re-deriving on every tick to keep a minutes-old age
- * exact would re-render the inbox for nothing.
- */
-export const useOpenAsks = (): OpenAsk[] => {
-  const entries = useHiveStore((state) => state.ledger);
-
-  return useMemo(() => openAsks(entries, Date.now()), [entries]);
 };
 
 /** The badge. A number, so it needs no memo and no shallow compare. */
