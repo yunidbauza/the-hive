@@ -4662,7 +4662,7 @@ export function registerIpcHandlers(
    * Wake an agent now (HIVE-115).
    *
    * The trigger is `'manual'` and is written **here**, not taken from the
-   * payload — see `parseAgentRunRequest` and `BRIDGE_AGENTS_KEYS`. It is the
+   * payload — see `parseAgentRunRequest` and `HiveBridge['agents']`. It is the
    * only trigger this channel could report honestly, and it goes into the
    * ledger entry and the wake prompt, so accepting a renderer's word for it
    * would let the page write history.
@@ -4780,7 +4780,7 @@ export function registerIpcHandlers(
    * check, `pause` on an unknown name writes `{"ghost": {"status": "paused"}}`
    * into `agents.json` permanently — and an agent later created under that name
    * would be born paused, refusing every trigger for a reason nothing on screen
-   * explains. `BRIDGE_AGENTS_KEYS` claims these two verbs cannot create an
+   * explains. `HiveBridge['agents']` claims these two verbs cannot create an
    * agent; this is what makes that true of its run state as well.
    *
    * HIVE-122's `rotate` is the third caller, for exactly this reason: it too

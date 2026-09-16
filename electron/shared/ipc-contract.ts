@@ -895,7 +895,7 @@ export const CH = {
    * other `session:*` entry is a push main makes when it observes something;
    * these two are verbs the page calls. The direction comments above are worth
    * reading as a group for that reason — the namespace is no longer
-   * listeners-only, and `BRIDGE_SESSION_KEYS` says so too.
+   * listeners-only, and {@link HiveBridge.session} says so too.
    *
    * Read once, at boot. There is no subscription and no refresh: the file only
    * changes because *this* app wrote to it, so anything it could tell the
@@ -982,7 +982,7 @@ export const CH = {
    * `SKILL_NAME_PATTERN` makes traversal unrepresentable rather than merely
    * filtered) and **seven carry a path**: skill-relative, or, for
    * `skillsFileDrop` alone, an absolute one. (`pathToken` — the sixth of
-   * `BRIDGE_SKILLS_KEYS`'s fourteen bridge keys — is not a channel at all; it
+   * the fourteen bridge keys on {@link HiveBridge.skills} — is not a channel at all; it
    * never crosses IPC, so it does not appear in this list.) The thirteenth,
    * `skillsImport`, carries nothing at all: main opens the picker, and what it
    * creates is named by the imported SKILL.md.
@@ -997,7 +997,7 @@ export const CH = {
    *
    * `skillsFileDrop`'s `sources` are the one field in this whole namespace
    * that is an absolute path, and only preload can produce one — see
-   * `BRIDGE_SKILLS_KEYS` for how the renderer is kept from forging one.
+   * {@link HiveBridge.skills} for how the renderer is kept from forging one.
    * `skillsFileImport` carries no source at all: main opens a native dialog
    * and chooses for itself.
    *
@@ -1045,7 +1045,7 @@ export const CH = {
    * Wake an agent now, and stop one that is running (HIVE-115).
    *
    * The first two verbs in this group that make the machine *do* something
-   * rather than read or write a file, which is why `BRIDGE_AGENTS_KEYS` argues
+   * rather than read or write a file, which is why {@link HiveBridge.agents} argues
    * for each one. `run` is bounded the same way the five before it are: it
    * names an agent, never a command line, and main builds the argv from a
    * definition it read itself. HIVE-126 lets it carry a prompt as well, and the
@@ -1826,6 +1826,95 @@ export interface PtyDiagnostics {
  * (`src/types/hive-bridge.d.ts`, story 083) and the bridge's own surface test
  * all agree by construction. Widening the bridge means editing this type,
  * which is exactly the deliberate act the design is trying to force.
+ *
+ * ## What each namespace added, and what it did not widen
+ *
+ * The history below is the review record for this surface: every namespace
+ * that arrived after the first had to answer what a web page could now do that
+ * it could not before, and the answers are kept rather than summarised.
+ *
+ * Story 106 adds two namespaces, and the alarm firing was the point. What a web
+ * page can now do that it could not before: ask what this machine's `gh` looks
+ * like (`integrations.status`, no arguments, read-only, no token value ever
+ * returned), and hear that a notification was clicked
+ * (`notifications.onActivate`, main → renderer only). Neither widens what the
+ * renderer can *change*; the one new mutating verb is `config.setNotifications`,
+ * which goes through the same guarded write path as every other.
+ *
+ * HIVE-67 adds `jira`, and it is the first namespace that touches a secret, so
+ * the same alarm is worth ringing again. What a web page can now do that it
+ * could not before: learn *whether* a Jira credential exists and which source
+ * it comes from, store one, clear one, and cause exactly one authenticated
+ * request to the configured site. What it still cannot do: read a token back —
+ * there is no verb for it — or choose the host, which comes from the config and
+ * never from a payload.
+ *
+ * HIVE-80 adds `theme`. What a web page can now do that it could not before:
+ * ask the user, through a native dialog, to pick a `.json` file and read it
+ * back (`theme.pick`), and ask the user, through another native dialog, where
+ * to write one (`theme.save`). Neither verb takes a path from the renderer —
+ * both dialogs choose it — so this does not widen the bridge into a general
+ * file picker; it is bounded to the one round trip a theme import or export
+ * needs.
+ *
+ * HIVE-81 adds `ui`, and it is the first namespace whose one verb travels
+ * **out of** the renderer with nothing coming back. What a web page can now do
+ * that it could not before: tell main which of its own tabs is on the centre
+ * stage. It takes no path, names no other window, and reports only an id the
+ * renderer already holds — main uses it only to decide whether a notification
+ * it was already going to raise should be suppressed.
+ *
+ * HIVE-96 adds `skills`, and it is the second namespace after `fs` that writes
+ * to the disk. What a web page can now do that it could not before: create,
+ * rewrite and delete files under `~/.hive/skills` — and **only** there. No verb
+ * takes a path; each names a skill, and `SKILL_NAME_PATTERN` admits only
+ * `[a-z0-9-]+`, so the directory a request can reach is not a matter of
+ * validation but of what the name is able to express. `fs`, by contrast, has to
+ * accept a path and defend containment on the resolved result.
+ *
+ * HIVE-99 adds a fifth verb to that namespace and nothing to this list. It
+ * widens what the page may *do* to those files — move one — without widening
+ * where it may reach: `rename` names two skills under the same rule, and the
+ * argument for it is recorded on {@link HiveBridge.skills} rather than here,
+ * because it is a change to one namespace and not to the surface.
+ *
+ * HIVE-148 adds eight more to that namespace, still nothing to this list. A
+ * skill became a folder rather than one file, so seven of the eight now carry
+ * a path — the first time anything in `skills` has — and the eighth,
+ * `pathToken`, mints an id for a dropped `File` rather than taking or
+ * returning a path at all. Both are namespace changes, not surface ones, and
+ * the full argument for what bounds a path-carrying verb here — `assertSkillPath`
+ * at the boundary, `resolveInSkill`'s `realpath` containment behind it, and why
+ * the renderer still cannot forge a source for `fileDrop` — is recorded on
+ * {@link HiveBridge.skills}.
+ *
+ * HIVE-111 adds `ledger`. What a web page can now do that it could not before:
+ * read the whole correspondence log between every session and the overmind,
+ * append to it, and close an open ask — but always **as the overmind**. `post`
+ * and `answer` take no `from`; main supplies {@link OVERMIND} and would
+ * overwrite anything a caller sent, so this namespace cannot be used to forge
+ * another party's words the way a compromised page could try.
+ *
+ * HIVE-123 adds `slack`. What a web page can now do that it could not before:
+ * read Slack's MCP connection state, sign in, sign out, and spend one model
+ * turn confirming a workspace admin has approved the server. None of the four
+ * verbs takes an argument, and none returns a credential — Claude Code holds
+ * the OAuth token, this app only asks what state it is in.
+
+ *
+ * HIVE-179 adds `plans`. What a web page can now do that it could not before:
+ * read every session's task list and hear it change. Read-only.
+ *
+ * HIVE-144 adds `remote`. What a web page can now do that it could not
+ * before: store the device credential a `server.pair` mint on some *other*
+ * Hive handed back, and forget it. **Not** the same capability `server` adds
+ * below — see {@link HiveBridge.remote} for why the two are kept apart rather
+ * than sharing a namespace.
+ *
+ * HIVE-142 adds `server`. What a web page can now do that it could not
+ * before: mint a device credential, hand back its plaintext once, and revoke
+ * one by name. Neither verb is an ordinary settings write — see
+ * {@link HiveBridge.server}.
  */
 export interface HiveBridge {
   appInfo(): Promise<AppInfo>;
@@ -2229,14 +2318,55 @@ export interface HiveBridge {
    * only in preload). `assertSkillPath`/`assertSkillDir` is the string-shape
    * half of what bounds them; `resolveInSkill`'s `realpath` containment check
    * in main is the other half, and neither substitutes for the other. See
-   * `skills-contract.ts` for the full argument and `BRIDGE_SKILLS_KEYS` for
-   * why `pathToken` is what keeps the renderer from naming a path of its own.
+   * `skills-contract.ts` for the full argument; `pathToken` below is what
+   * keeps the renderer from naming a path of its own.
    *
    * The fourteenth, `import`, carries nothing: main opens the picker.
    *
    * Every mutating verb answers with the fresh snapshot rather than `void`, so
    * the pane never has to follow a mutation with a read, and the two can never
    * disagree about what is on disk.
+   *
+   * ## The argument for the fifth (HIVE-99)
+   *
+   * The four above could not express a **rename**, and the renderer's attempt at
+   * one was a duplicate: a skill's folder is named from its frontmatter, so
+   * editing `name:` and saving wrote a second folder and left the first — valid,
+   * listed, and still injected into every new session. One user action, two live
+   * commands, and the user had to discover the fork themselves.
+   *
+   * Synthesising it from the existing verbs cannot be made correct from here.
+   * `write` then `remove` leaves a window in which both folders exist; `remove`
+   * then `write` leaves one in which neither does. A crash, a refused write, or a
+   * spawn landing in that window turns the rename into exactly the duplicate this
+   * is meant to end, or into a skill that is simply gone. `rename(2)` has no such
+   * window, and only main can call it.
+   *
+   * What it does **not** widen: `rename` names two skills and no path, so the
+   * bound above is unchanged — `SKILL_NAME_PATTERN` on both fields, one directory
+   * main chose. It cannot reach a file `remove` could not already reach, and it
+   * refuses a `to` that exists rather than replacing it, so it cannot destroy a
+   * skill that `remove` was not already able to destroy.
+   *
+   * ## What the eight bundle verbs widen, and what holds them (HIVE-148)
+   *
+   * Seven of them carry a skill-relative path where the original five carried
+   * only a name, so the bound is no longer the shape of the payload alone. It is
+   * `assertSkillPath` at the boundary and a `realpath` containment check in
+   * `resolveInSkill` behind it, and the second is not optional: a bundle holding
+   * `escape -> /etc` satisfies every string rule.
+   *
+   * `pathToken` is the eighth and takes no path at all in either direction. It
+   * accepts a `File` and answers an opaque id, which is what keeps `fileDrop`
+   * from being a read-anywhere primitive: the renderer never holds a path, so it
+   * cannot name one it was not handed.
+   *
+   * ## `import`, the fourteenth
+   *
+   * Takes nothing and names nothing. Main opens the picker, and the skill it
+   * creates is named by the imported SKILL.md's frontmatter under the same
+   * `SKILL_NAME_PATTERN` every other verb is bound by, refusing a name already
+   * taken — so it cannot reach or replace anything `write` could not.
    */
   skills: {
     list(): Promise<SkillsSnapshot>;
@@ -2295,7 +2425,7 @@ export interface HiveBridge {
      * The only verb in this namespace — in this bridge — that is neither
      * `invoke` nor a listener: it runs synchronously in preload against a map
      * only preload holds, and never touches IPC at all. See
-     * `BRIDGE_SKILLS_KEYS` for why that is what keeps `fileDrop` from being a
+     * this namespace's own doc for why that is what keeps `fileDrop` from being a
      * read-anywhere primitive.
      */
     pathToken(file: File): string | null;
@@ -2542,7 +2672,12 @@ export interface HiveBridge {
     answer: (request: LedgerAnswerRequest) => Promise<LedgerResult>;
     onChanged: (callback: (entry: LedgerEntry) => void) => () => void;
   };
-  /** Every session's plan (HIVE-179). Read-only; see {@link BRIDGE_PLANS_KEYS}. */
+  /**
+   * Every session's plan (HIVE-179).
+   *
+   * Two reads and no write: main owns every rule about a plan, so a verb that
+   * set one from the page would be the change this namespace exists to refuse.
+   */
   plans: {
     list: () => Promise<PlansSnapshot>;
     onChanged: (callback: (event: PlanChangedEvent) => void) => () => void;
@@ -2555,6 +2690,149 @@ export interface HiveBridge {
    * a list of problems, each naming the field it belongs to — and the editor
    * renders each one beside the control it names. A snapshot could only say
    * that nothing changed.
+   *
+   * Five verbs matching {@link HiveBridge.skills} one for one, and the same
+   * security story: two readers and three writers, all bounded to one directory
+   * by the shape of what they accept rather than by a check they perform.
+   * `assertAgentName` is what makes that true, and it refuses the reserved names
+   * as well as any name that could be a path.
+   *
+   * The sixth is `onChanged`, and it widens nothing — it is a *listener*, not a
+   * verb. It carries no payload at all (the renderer re-`list`s on being poked),
+   * so it cannot leak the contents of a definition the renderer could not
+   * already have asked for. It exists because main became a second writer the
+   * moment the folder was declared hand-editable; see `CH.agentsChanged`.
+   *
+   * HIVE-115 appends `run`, HIVE-117 `pause`/`resume`. Each of those is a change
+   * to what the renderer may make the machine *do*, rather than to what it may
+   * read or write, and should be argued for here before it is written. HIVE-126
+   * widens no key but changes what one of them may *carry*, which the same rule
+   * covers and which is argued for below.
+   *
+   * ## The argument for `run` (HIVE-115)
+   *
+   * This is the first key in the namespace that starts a **process**, so it is
+   * the first that has to answer a question the five above never faced: what can
+   * a compromised renderer make this machine execute?
+   *
+   * The answer is *nothing it could not already write to disk*, and the reason is
+   * that the payload is {@link AgentRunRequest} — one name, through
+   * `assertAgentName`, the identical guard `read` and `remove` pass. No path, no
+   * argv, no flag, no environment, and no trigger string: main writes `manual`
+   * itself, because a person pressing a button is the only trigger this channel
+   * could honestly report. Main then reads the definition off a folder it chose,
+   * resolves `claudeCommand` from *its own* config, and builds the argv as an
+   * array handed straight to `spawn`. There is no shell anywhere on that path —
+   * `claude-path.ts` refuses a command carrying arguments rather than splitting
+   * one — so there is no quoting to get wrong and no alias to inherit.
+   *
+   * What `run` therefore widens is **timing, not reach**. A renderer that can
+   * call it can already call `write`, and `write` is the verb that decides what
+   * an agent *is*; `run` only decides when the definition the user already
+   * approved gets its turn. A page that could write an agent and not run it
+   * would be a page that has to wait for HIVE-121's timer to fire — the same
+   * process, a few minutes later.
+   *
+   * ## The argument for `extra` on `run` (HIVE-126)
+   *
+   * `run` shipped with one name and nothing else, and that omission was doing two
+   * jobs at once: keeping the renderer from naming a **trigger**, and keeping it
+   * from naming a **command line**. Only the first was ever load-bearing, and it
+   * is untouched — `trigger` is still refused outright, and main still writes
+   * `manual` itself.
+   *
+   * The paragraph above says "no argv", and `extra` is now the exception, so it
+   * has to be stated exactly. `wakeCommand` interpolates it into the single
+   * positional `-p` prompt — the last element of an array handed straight to
+   * `spawn`. It becomes prose *inside* one argument, never an argument of its
+   * own: it cannot introduce a flag, a path, or a variable, and there is still no
+   * shell on the path to quote it wrong. `assertText` bounds what that prose may
+   * be, the same way it bounds `spawn.task`, which is the closest thing already
+   * in this contract — free text from the console that ends up in a process.
+   *
+   * So the reach is unchanged and the *expressiveness* is not: a page can now say
+   * why a person pressed the button. The cost of it not being able to was a verb
+   * that lied. `run pr-reviewer review PR 1234` parsed, reported success, and
+   * woke an agent that had never heard of the PR. The alternative considered and
+   * rejected was routing a task through the ledger instead — which works, and is
+   * what `ask` is for, but makes `run` and `ask` two spellings of one act.
+   *
+   * ## The argument for `kill`
+   *
+   * Narrower than `run` by construction: it takes the same validated name and
+   * can only ever reach a process **this app started and is still tracking** —
+   * the tracker holds the child handle, and an unknown name answers `false`
+   * rather than signalling anything. It cannot name a pid.
+   *
+   * It has to exist. One run per agent at a time (§5) means a run that has
+   * stopped making progress blocks every future wake of that agent, and the only
+   * other way out is quitting the app — which takes the other twelve sessions
+   * with it.
+   *
+   * ## The argument for `pause` and `resume` (HIVE-117)
+   *
+   * The narrowest pair in the namespace, and the first that make the machine do
+   * *less*. Neither starts a process, stops one, or reads a file. Each takes the
+   * same validated {@link AgentNameRequest} the four verbs above take and writes
+   * a single field — `status` — to `agents.json`, a file main already owns and
+   * rewrites on every run.
+   *
+   * Against the question `run` had to answer — what can a compromised renderer
+   * make this machine execute? — the answer here is *strictly less than before*.
+   * `pause` can only subtract: a paused agent refuses every trigger, including
+   * the ones no renderer can reach (HIVE-120's ledger wakes, HIVE-121's timer).
+   * `resume` can only restore an agent to the state it was in before someone
+   * paused it — it cannot create an agent, change what one is, or wake one, and
+   * a renderer that wanted a run still has to call `run` and be refused or
+   * obeyed on `run`'s own terms.
+   *
+   * The one widening worth naming is availability: a renderer that can call
+   * `pause` can stop an agent the user is relying on. That is the same reach
+   * `kill` already has, on a verb that recovers with a single `resume`, where
+   * `kill` costs a turn. It is also, unlike `kill`, plainly visible — the row
+   * says `paused` until someone changes it.
+   *
+   * Why the refusal lives in `RunTracker.run` rather than on the `agents:run`
+   * channel: the channel is only today's caller. Guarding there would leave a
+   * paused agent woken by a clock the moment HIVE-121 lands, and the bug would
+   * look like the timer's.
+   *
+   * ## The argument for `rotate` (HIVE-122)
+   *
+   * Narrower than `run`, which it is otherwise a copy of. Both take a name and
+   * nothing else, both build their argv in main from a definition read off disk,
+   * and both go through `RunTracker.run` — so a paused agent refuses a rotate for
+   * the same reason it refuses a run. The one thing this verb can do that `run`
+   * cannot is set `forceRotate`, and the consequence of that field is bounded by
+   * what `rotate-after` already does unattended: the agent is asked to summarise
+   * itself, and its session is replaced by a fresh one carrying that summary.
+   *
+   * A renderer that called it in a loop would cost the user turns — the same
+   * reach `run` has, and bounded by the same one-run-per-agent rule.
+   *
+   * Why not a second field on `AgentRunRequest`: because a rotation is a *kind*
+   * of run rather than a reason for one, and a field naming the kind is exactly
+   * what that guard's closed key set exists to refuse. A separate channel keeps
+   * that argument intact and costs one constant.
+   *
+   * This sentence used to read that the key set "is only closed while nothing has
+   * needed to open it", and HIVE-126 is what needed to: `extra` carries a
+   * *reason*, which is prose, and it went on the payload. The line the two sit on
+   * opposite sides of is kind versus reason — not one more field.
+   *
+   * ## `onStatus` and `onLines` widen nothing
+   *
+   * Listeners, like `onChanged`, and the same test applies: can either carry
+   * something `list` would not already hand over? `onStatus` carries a subset of
+   * what `agents:list` returns for that agent — including, since HIVE-122,
+   * `sessionUuid`, which this comment used to name as the one field it withheld.
+   * A rotation moves that uuid mid-life, on an agent the user may well be
+   * watching, and nothing emits `agents:changed` on a run to carry it. It is
+   * still a subset — `agents:list` has always returned it — so the answer to the
+   * question above is unchanged. `onLines` carries the agent's own stdout, which
+   * is the one genuinely new fact, and it is the fact the feature exists to show:
+   * a run nobody can read is a run nobody can trust.
+
    */
   agents: {
     list(): Promise<AgentsSnapshot>;
@@ -2742,534 +3020,6 @@ export const REPLAY_BYTES = 256 * 1024;
  */
 export const RESIZE_THROTTLE_MS = 50;
 
-/**
- * The exact top-level key set of `window.hive`. The surface test asserts it.
- *
- * Story 106 adds two namespaces, and the alarm firing was the point. What a web
- * page can now do that it could not before: ask what this machine's `gh` looks
- * like (`integrations.status`, no arguments, read-only, no token value ever
- * returned), and hear that a notification was clicked
- * (`notifications.onActivate`, main → renderer only). Neither widens what the
- * renderer can *change*; the one new mutating verb is `config.setNotifications`,
- * which goes through the same guarded write path as every other.
- *
- * HIVE-67 adds `jira`, and it is the first namespace that touches a secret, so
- * the same alarm is worth ringing again. What a web page can now do that it
- * could not before: learn *whether* a Jira credential exists and which source
- * it comes from, store one, clear one, and cause exactly one authenticated
- * request to the configured site. What it still cannot do: read a token back —
- * there is no verb for it — or choose the host, which comes from the config and
- * never from a payload.
- *
- * HIVE-80 adds `theme`. What a web page can now do that it could not before:
- * ask the user, through a native dialog, to pick a `.json` file and read it
- * back (`theme.pick`), and ask the user, through another native dialog, where
- * to write one (`theme.save`). Neither verb takes a path from the renderer —
- * both dialogs choose it — so this does not widen the bridge into a general
- * file picker; it is bounded to the one round trip a theme import or export
- * needs.
- *
- * HIVE-81 adds `ui`, and it is the first namespace whose one verb travels
- * **out of** the renderer with nothing coming back. What a web page can now do
- * that it could not before: tell main which of its own tabs is on the centre
- * stage. It takes no path, names no other window, and reports only an id the
- * renderer already holds — main uses it only to decide whether a notification
- * it was already going to raise should be suppressed.
- *
- * HIVE-96 adds `skills`, and it is the second namespace after `fs` that writes
- * to the disk. What a web page can now do that it could not before: create,
- * rewrite and delete files under `~/.hive/skills` — and **only** there. No verb
- * takes a path; each names a skill, and `SKILL_NAME_PATTERN` admits only
- * `[a-z0-9-]+`, so the directory a request can reach is not a matter of
- * validation but of what the name is able to express. `fs`, by contrast, has to
- * accept a path and defend containment on the resolved result.
- *
- * HIVE-99 adds a fifth verb to that namespace and nothing to this list. It
- * widens what the page may *do* to those files — move one — without widening
- * where it may reach: `rename` names two skills under the same rule, and the
- * argument for it is recorded on {@link BRIDGE_SKILLS_KEYS} rather than here,
- * because it is a change to one namespace and not to the surface.
- *
- * HIVE-148 adds eight more to that namespace, still nothing to this list. A
- * skill became a folder rather than one file, so seven of the eight now carry
- * a path — the first time anything in `skills` has — and the eighth,
- * `pathToken`, mints an id for a dropped `File` rather than taking or
- * returning a path at all. Both are namespace changes, not surface ones, and
- * the full argument for what bounds a path-carrying verb here — `assertSkillPath`
- * at the boundary, `resolveInSkill`'s `realpath` containment behind it, and why
- * the renderer still cannot forge a source for `fileDrop` — is recorded on
- * {@link BRIDGE_SKILLS_KEYS}.
- *
- * HIVE-111 adds `ledger`. What a web page can now do that it could not before:
- * read the whole correspondence log between every session and the overmind,
- * append to it, and close an open ask — but always **as the overmind**. `post`
- * and `answer` take no `from`; main supplies {@link OVERMIND} and would
- * overwrite anything a caller sent, so this namespace cannot be used to forge
- * another party's words the way a compromised page could try.
- *
- * HIVE-123 adds `slack`. What a web page can now do that it could not before:
- * read Slack's MCP connection state, sign in, sign out, and spend one model
- * turn confirming a workspace admin has approved the server. None of the four
- * verbs takes an argument, and none returns a credential — Claude Code holds
- * the OAuth token, this app only asks what state it is in.
- */
-export const BRIDGE_KEYS = [
-  'agents',
-  'appInfo',
-  'config',
-  'fs',
-  'github',
-  'integrations',
-  'jira',
-  'ledger',
-  'notifications',
-  /**
-   * HIVE-179 adds `plans`. What a web page can now do that it could not
-   * before: read every session's task list and hear it change. Read-only —
-   * see {@link BRIDGE_PLANS_KEYS}.
-   */
-  'plans',
-  'pty',
-  /**
-   * HIVE-144 adds `remote`. What a web page can now do that it could not
-   * before: store the device credential a `server.pair` mint on some *other*
-   * Hive handed back, and forget it. **Not** the same capability `server`
-   * adds below — see the comment above {@link BRIDGE_REMOTE_KEYS} for why the
-   * two are kept apart rather than sharing a namespace.
-   */
-  'remote',
-  /**
-   * HIVE-142 adds `server`. What a web page can now do that it could not
-   * before: mint a device credential, hand back its plaintext once, and
-   * revoke one by name. Neither verb is an ordinary settings write — see the
-   * comment above {@link BRIDGE_SERVER_KEYS}.
-   */
-  'server',
-  'session',
-  'skills',
-  'slack',
-  'ui',
-  'updates',
-] as const;
-
-/**
- * The exact key set of `window.hive.skills` (HIVE-96, HIVE-99).
- *
- * Five, and the count is the security story the way it is for `jira` and
- * `integrations`: two readers and three writers, all five bounded to one
- * directory by the shape of what they accept rather than by a check they
- * perform. A sixth verb here is a change to what the renderer may do to the
- * user's disk, and should be argued for in this comment before it is written.
- *
- * ## The argument for the fifth (HIVE-99)
- *
- * The four above could not express a **rename**, and the renderer's attempt at
- * one was a duplicate: a skill's folder is named from its frontmatter, so
- * editing `name:` and saving wrote a second folder and left the first — valid,
- * listed, and still injected into every new session. One user action, two live
- * commands, and the user had to discover the fork themselves.
- *
- * Synthesising it from the existing verbs cannot be made correct from here.
- * `write` then `remove` leaves a window in which both folders exist; `remove`
- * then `write` leaves one in which neither does. A crash, a refused write, or a
- * spawn landing in that window turns the rename into exactly the duplicate this
- * is meant to end, or into a skill that is simply gone. `rename(2)` has no such
- * window, and only main can call it.
- *
- * What it does **not** widen: `rename` names two skills and no path, so the
- * bound above is unchanged — `SKILL_NAME_PATTERN` on both fields, one directory
- * main chose. It cannot reach a file `remove` could not already reach, and it
- * refuses a `to` that exists rather than replacing it, so it cannot destroy a
- * skill that `remove` was not already able to destroy.
- *
- * ## What the eight bundle verbs widen, and what holds them (HIVE-148)
- *
- * Seven of them carry a skill-relative path where the original five carried
- * only a name, so the bound is no longer the shape of the payload alone. It is
- * `assertSkillPath` at the boundary and a `realpath` containment check in
- * `resolveInSkill` behind it, and the second is not optional: a bundle holding
- * `escape -> /etc` satisfies every string rule.
- *
- * `pathToken` is the eighth and takes no path at all in either direction. It
- * accepts a `File` and answers an opaque id, which is what keeps `fileDrop`
- * from being a read-anywhere primitive: the renderer never holds a path, so it
- * cannot name one it was not handed.
- *
- * ## `import`, the fourteenth
- *
- * Takes nothing and names nothing. Main opens the picker, and the skill it
- * creates is named by the imported SKILL.md's frontmatter under the same
- * `SKILL_NAME_PATTERN` every other verb is bound by, refusing a name already
- * taken — so it cannot reach or replace anything `write` could not.
- */
-export const BRIDGE_SKILLS_KEYS = [
-  'list',
-  'read',
-  'write',
-  'remove',
-  'rename',
-  'pathToken',
-  'fileRead',
-  'fileWrite',
-  'fileMkdir',
-  'fileRemove',
-  'fileMove',
-  'fileImport',
-  'fileDrop',
-  'import',
-] as const;
-
-/**
- * The exact key set of `window.hive.agents` (HIVE-114).
- *
- * Five verbs matching {@link BRIDGE_SKILLS_KEYS} one for one, and the same
- * security story: two readers and three writers, all bounded to one directory
- * by the shape of what they accept rather than by a check they perform.
- * `assertAgentName` is what makes that true, and it refuses the reserved names
- * as well as any name that could be a path.
- *
- * The sixth is `onChanged`, and it widens nothing — it is a *listener*, not a
- * verb. It carries no payload at all (the renderer re-`list`s on being poked),
- * so it cannot leak the contents of a definition the renderer could not
- * already have asked for. It exists because main became a second writer the
- * moment the folder was declared hand-editable; see `CH.agentsChanged`.
- *
- * HIVE-115 appends `run`, HIVE-117 `pause`/`resume`. Each of those is a change
- * to what the renderer may make the machine *do*, rather than to what it may
- * read or write, and should be argued for here before it is written. HIVE-126
- * widens no key but changes what one of them may *carry*, which the same rule
- * covers and which is argued for below.
- *
- * ## The argument for `run` (HIVE-115)
- *
- * This is the first key in the namespace that starts a **process**, so it is
- * the first that has to answer a question the five above never faced: what can
- * a compromised renderer make this machine execute?
- *
- * The answer is *nothing it could not already write to disk*, and the reason is
- * that the payload is {@link AgentRunRequest} — one name, through
- * `assertAgentName`, the identical guard `read` and `remove` pass. No path, no
- * argv, no flag, no environment, and no trigger string: main writes `manual`
- * itself, because a person pressing a button is the only trigger this channel
- * could honestly report. Main then reads the definition off a folder it chose,
- * resolves `claudeCommand` from *its own* config, and builds the argv as an
- * array handed straight to `spawn`. There is no shell anywhere on that path —
- * `claude-path.ts` refuses a command carrying arguments rather than splitting
- * one — so there is no quoting to get wrong and no alias to inherit.
- *
- * What `run` therefore widens is **timing, not reach**. A renderer that can
- * call it can already call `write`, and `write` is the verb that decides what
- * an agent *is*; `run` only decides when the definition the user already
- * approved gets its turn. A page that could write an agent and not run it
- * would be a page that has to wait for HIVE-121's timer to fire — the same
- * process, a few minutes later.
- *
- * ## The argument for `extra` on `run` (HIVE-126)
- *
- * `run` shipped with one name and nothing else, and that omission was doing two
- * jobs at once: keeping the renderer from naming a **trigger**, and keeping it
- * from naming a **command line**. Only the first was ever load-bearing, and it
- * is untouched — `trigger` is still refused outright, and main still writes
- * `manual` itself.
- *
- * The paragraph above says "no argv", and `extra` is now the exception, so it
- * has to be stated exactly. `wakeCommand` interpolates it into the single
- * positional `-p` prompt — the last element of an array handed straight to
- * `spawn`. It becomes prose *inside* one argument, never an argument of its
- * own: it cannot introduce a flag, a path, or a variable, and there is still no
- * shell on the path to quote it wrong. `assertText` bounds what that prose may
- * be, the same way it bounds `spawn.task`, which is the closest thing already
- * in this contract — free text from the console that ends up in a process.
- *
- * So the reach is unchanged and the *expressiveness* is not: a page can now say
- * why a person pressed the button. The cost of it not being able to was a verb
- * that lied. `run pr-reviewer review PR 1234` parsed, reported success, and
- * woke an agent that had never heard of the PR. The alternative considered and
- * rejected was routing a task through the ledger instead — which works, and is
- * what `ask` is for, but makes `run` and `ask` two spellings of one act.
- *
- * ## The argument for `kill`
- *
- * Narrower than `run` by construction: it takes the same validated name and
- * can only ever reach a process **this app started and is still tracking** —
- * the tracker holds the child handle, and an unknown name answers `false`
- * rather than signalling anything. It cannot name a pid.
- *
- * It has to exist. One run per agent at a time (§5) means a run that has
- * stopped making progress blocks every future wake of that agent, and the only
- * other way out is quitting the app — which takes the other twelve sessions
- * with it.
- *
- * ## The argument for `pause` and `resume` (HIVE-117)
- *
- * The narrowest pair in the namespace, and the first that make the machine do
- * *less*. Neither starts a process, stops one, or reads a file. Each takes the
- * same validated {@link AgentNameRequest} the four verbs above take and writes
- * a single field — `status` — to `agents.json`, a file main already owns and
- * rewrites on every run.
- *
- * Against the question `run` had to answer — what can a compromised renderer
- * make this machine execute? — the answer here is *strictly less than before*.
- * `pause` can only subtract: a paused agent refuses every trigger, including
- * the ones no renderer can reach (HIVE-120's ledger wakes, HIVE-121's timer).
- * `resume` can only restore an agent to the state it was in before someone
- * paused it — it cannot create an agent, change what one is, or wake one, and
- * a renderer that wanted a run still has to call `run` and be refused or
- * obeyed on `run`'s own terms.
- *
- * The one widening worth naming is availability: a renderer that can call
- * `pause` can stop an agent the user is relying on. That is the same reach
- * `kill` already has, on a verb that recovers with a single `resume`, where
- * `kill` costs a turn. It is also, unlike `kill`, plainly visible — the row
- * says `paused` until someone changes it.
- *
- * Why the refusal lives in `RunTracker.run` rather than on the `agents:run`
- * channel: the channel is only today's caller. Guarding there would leave a
- * paused agent woken by a clock the moment HIVE-121 lands, and the bug would
- * look like the timer's.
- *
- * ## The argument for `rotate` (HIVE-122)
- *
- * Narrower than `run`, which it is otherwise a copy of. Both take a name and
- * nothing else, both build their argv in main from a definition read off disk,
- * and both go through `RunTracker.run` — so a paused agent refuses a rotate for
- * the same reason it refuses a run. The one thing this verb can do that `run`
- * cannot is set `forceRotate`, and the consequence of that field is bounded by
- * what `rotate-after` already does unattended: the agent is asked to summarise
- * itself, and its session is replaced by a fresh one carrying that summary.
- *
- * A renderer that called it in a loop would cost the user turns — the same
- * reach `run` has, and bounded by the same one-run-per-agent rule.
- *
- * Why not a second field on `AgentRunRequest`: because a rotation is a *kind*
- * of run rather than a reason for one, and a field naming the kind is exactly
- * what that guard's closed key set exists to refuse. A separate channel keeps
- * that argument intact and costs one constant.
- *
- * This sentence used to read that the key set "is only closed while nothing has
- * needed to open it", and HIVE-126 is what needed to: `extra` carries a
- * *reason*, which is prose, and it went on the payload. The line the two sit on
- * opposite sides of is kind versus reason — not one more field.
- *
- * ## `onStatus` and `onLines` widen nothing
- *
- * Listeners, like `onChanged`, and the same test applies: can either carry
- * something `list` would not already hand over? `onStatus` carries a subset of
- * what `agents:list` returns for that agent — including, since HIVE-122,
- * `sessionUuid`, which this comment used to name as the one field it withheld.
- * A rotation moves that uuid mid-life, on an agent the user may well be
- * watching, and nothing emits `agents:changed` on a run to carry it. It is
- * still a subset — `agents:list` has always returned it — so the answer to the
- * question above is unchanged. `onLines` carries the agent's own stdout, which
- * is the one genuinely new fact, and it is the fact the feature exists to show:
- * a run nobody can read is a run nobody can trust.
- */
-export const BRIDGE_AGENTS_KEYS = [
-  'list',
-  'read',
-  'write',
-  'remove',
-  'rename',
-  'onChanged',
-  'run',
-  'kill',
-  'pause',
-  'resume',
-  'rotate',
-  'onStatus',
-  'onLines',
-] as const;
-
-/** The exact key set of `window.hive.session`. */
-export const BRIDGE_SESSION_KEYS = [
-  'onStatus',
-  'onName',
-  'onCleared',
-  /**
-   * HIVE-93's, and a listener like its neighbours: main → renderer, carrying
-   * an entity id and main's own answer to whether that conversation can be
-   * resumed — nothing the page can act on beyond drawing it. It sits beside
-   * `onCleared`
-   * because the two are the same kind of announcement — a session boundary the
-   * renderer answers structurally — and reviewing one should mean looking at
-   * the other.
-   */
-  'onFinished',
-  /**
-   * HIVE-101's, and the narrowest listener on this list: main → renderer,
-   * carrying an entity id and **nothing else**, because the fact that Claude
-   * started is the whole message.
-   *
-   * Worth naming here anyway rather than waved through as "another listener".
-   * What it exposes to the page is a timing fact about a session the page
-   * already has the id of. What it deliberately does *not* carry is the thing
-   * its source has and this bridge has never passed: the `SessionStart` hook
-   * knows Claude's own session uuid, and that stays in main, where the
-   * session history is the only thing that reads it.
-   */
-  'onReady',
-  /**
-   * HIVE-78's two. These were listeners, and at the time so was everything in
-   * this list — HIVE-87 added the first two verbs, at the bottom.
-   * `onTicketIntent` is the one to keep an eye on: its source is the user's
-   * prompt, and it carries only a matched issue key out. See `security.spec.ts`
-   * for the full argument.
-   */
-  'onBranch',
-  'onTicketIntent',
-  /**
-   * HIVE-79's, and still a listener: main → renderer, nothing the page can
-   * call. What it newly exposes to a renderer is the active session's usage
-   * percentages and two reset timestamps — no prompt text, no transcript, and
-   * no token value.
-   */
-  'onMetrics',
-  'onForeground',
-  'onTerminalEnded',
-  /**
-   * HIVE-87's two, and the "listeners only" claim above stops being true here.
-   *
-   * These are the first verbs in this namespace the page can call. What they
-   * widen the bridge by is bounded and worth stating: `history` returns the
-   * app's own record of its own rows — ids, project ids, branch names, model
-   * and effort, and the uuid it pinned as `--session-id`. No prompt text, no
-   * transcript, and nothing read out of `~/.claude`. `note` accepts one issue
-   * key for one entity, both `assertText`-guarded, and can do nothing else.
-   */
-  'history',
-  'note',
-  /**
-   * The third verb, and the same shape of claim as `note`.
-   *
-   * `pr` accepts one entity id and one `{number, repo, url}` for it, guarded by
-   * `parseSessionPrRequest` — the id by `assertId`, the repository by
-   * `assertText`, and the URL as an absolute **https** URL, because it is the
-   * one field on this bridge that later becomes an `href`. It can do nothing
-   * else: main refuses a note for an entity it has no record of, so a sweep
-   * cannot invent fleet rows out of GitHub's answer.
-   *
-   * What it newly exposes to the renderer is nothing — this is renderer → main.
-   * What it lets the renderer *store* is a pull request number the renderer
-   * already read from GitHub with the user's own `gh` credentials.
-   */
-  'pr',
-] as const;
-
-/** The exact key set of `window.hive.integrations`. */
-export const BRIDGE_INTEGRATIONS_KEYS = ['loginEnv', 'status'] as const;
-
-/**
- * The exact key set of `window.hive.fs`.
- *
- * Six, and the shape of the list is the point: **five of them take a
- * `projectId` and a relative path, and none of them takes a path.** A seventh
- * verb that accepted an absolute path would break that sentence, and this list
- * is where a reviewer would see it happen.
- */
-export const BRIDGE_FS_KEYS = [
-  'readDir',
-  /*
-    A read, and the only verb here that answers with a path. It grants nothing
-    — the renderer already holds the project's path and the session's cwd — and
-    what it adds is main's *verdict* on which root a read resolves under, which
-    the renderer was previously inferring and getting wrong.
-  */
-  'root',
-  /*
-    The only verb here that takes path-shaped text, and it is a read: it
-    answers which of those strings main would serve and `null` for the rest.
-    Containment decides, exactly as it does for a `relPath` — see
-    `fs-contract.ts` -> `ResolveRequest`.
-  */
-  'resolve',
-  'readFile',
-  'writeFile',
-  /*
-    The recursing one, and the only verb here that reads more than
-    it was pointed at. It still takes no path — a `projectId`, a query and a
-    mode — so the sentence above holds; what it adds is a *walk*, which is why
-    every bound it obeys is declared in `fs-contract.ts` rather than chosen at
-    the call site.
-  */
-  'search',
-  'watch',
-  'unwatch',
-  'onChanged',
-] as const;
-
-/**
- * The exact key set of `window.hive.github`.
- *
- * Two. The rule this list enforces is unchanged: **a verb that took a
- * repository name** would turn a bounded read of the user's own configured
- * projects into a general-purpose GitHub client driven by the renderer, and
- * adding one must never be quiet.
- *
- * `searchPrs` is not that verb, which is why it is here rather than refused. It
- * names a *project* — an id main looks up in its own config — and every
- * repository the search reaches is still one the config maps. The widest it
- * goes is all of the user's projects.
- */
-export const BRIDGE_GITHUB_KEYS = ['prs', 'searchPrs'] as const;
-
-/**
- * The exact key set of `window.hive.jira` (HIVE-67).
- *
- * Four. A fifth that read the token back would be the one addition this list
- * exists to make impossible to add quietly.
- */
-export const BRIDGE_JIRA_KEYS = [
-  'status',
-  'setToken',
-  'clearToken',
-  'test',
-  // HIVE-68. Two reads. Both return mapped fields only, and neither can name a
-  // host — the site still comes from the config, in main.
-  'search',
-  'issue',
-  /**
-   * HIVE-70. `transitions` is another read; `applyTransition` is the **first
-   * verb anywhere in this bridge that writes to something outside this
-   * machine**, and it is the one on this list a reviewer should look hardest
-   * at. It cannot name a host, cannot name an arbitrary endpoint, and cannot be
-   * retried into applying twice.
-   */
-  'transitions',
-  'applyTransition',
-  /**
-   * HIVE-71. Two reads and one write. `addComment` carries the only free text
-   * that reaches Jira from this app — bounded and control-character-free at the
-   * guard, converted in main, and validated against ADF's rules before a
-   * request is made.
-   */
-  'comments',
-  'links',
-  'addComment',
-] as const;
-
-/**
- * The exact key set of `window.hive.slack` (HIVE-123, HIVE-124).
- *
- * The count was the security story while there was no credential in this app to
- * return at all. HIVE-124 gives the app two of its own, so the story is now the
- * *shape* of the five it added: two writes, one no-argument test, one
- * presence-and-status read, one subscription — and **still no verb that returns
- * a token**. That is what this list exists to make impossible to change quietly.
- */
-export const BRIDGE_SLACK_KEYS = [
-  'status',
-  'signIn',
-  'signOut',
-  'test',
-  // HIVE-124. Write and clear; the token *values* have no channel, on purpose.
-  'setTokens',
-  'clearTokens',
-  'socketTest',
-  // Presence and the last status — what a pane needs on mount, and no more.
-  'socketState',
-  'onSocketStatus',
-] as const;
-
 /** The exact key set of `window.hive.notifications`. */
 /**
  * What {@link CH.notificationsRead} carries. `null` means "all of them".
@@ -3366,227 +3116,3 @@ export interface NotificationDeliveryStatus {
   refused: string | null;
 }
 
-export const BRIDGE_NOTIFICATIONS_KEYS = [
-  'onActivate',
-  'onRead',
-  // HIVE-75. `list` and `markRead` are invokes rather than subscriptions: the
-  // hub's buffer is the source of truth for read-state, so the renderer asks
-  // for it and writes back to it rather than keeping a second copy.
-  'onNew',
-  'list',
-  'markRead',
-  // HIVE-93. Deliberately alongside `markRead` rather than folded into it: read
-  // and dismissed are different facts about a notification, and only one of them
-  // takes the row out of `list`.
-  'dismiss',
-  // The Inbox's Clear all. A separate verb from `dismiss` rather than
-  // `dismiss(null)`, so the id guard that stops a lost argument from emptying
-  // the inbox keeps meaning what it says — see `CH.notificationsClear`.
-  'clear',
-  // HIVE-81. The mirror of `onRead`: main can dismiss on its own — a clicked
-  // desktop toast — and the renderer has to be told.
-  'onDismissed',
-  // The one verb the settings pane may ask on a timer — see
-  // `CH.notificationsDelivery` for why it is not a field on integrations status.
-  'delivery',
-  // The router for everything a row cannot carry out itself — see
-  // `CH.notificationsAct`.
-  'act',
-  // HIVE-159. This window's unread count, for this machine's dock — see
-  // `CH.notificationsBadge`.
-  'badge',
-] as const;
-
-/** The exact key set of `window.hive.ledger` (HIVE-111). */
-export const BRIDGE_LEDGER_KEYS = [
-  // Hydration on mount, and any filtered view. `to` is added by main, never
-  // by this call — see the contract.
-  'list',
-  /**
-   * The overmind writes; the two verbs worth watching here. Neither takes a
-   * `from` — widening either signature to accept one would be the change this
-   * list exists to catch, because it would let a compromised page speak as
-   * any party rather than only as the overmind.
-   */
-  'post',
-  'answer',
-  // One entry landed, from any party — see `CH.ledgerChanged`.
-  'onChanged',
-] as const;
-
-/**
- * The exact key set of `window.hive.plans` (HIVE-179). Two reads and no
- * write: main owns every rule about a plan, so a verb that set one from the
- * page would be the change this list exists to catch.
- */
-export const BRIDGE_PLANS_KEYS = [
-  // Every live plan. Boot and reattach hydration.
-  'list',
-  // One session's plan changed, or went — see `CH.planChanged`.
-  'onChanged',
-] as const;
-
-/** The exact key set of `window.hive.updates`. */
-export const BRIDGE_UPDATES_KEYS = ['status', 'check'] as const;
-
-/** The exact key set of `window.hive.ui` (HIVE-81). */
-export const BRIDGE_UI_KEYS = ['reportForeground', 'reportSessionName'] as const;
-
-/** The exact key set of `window.hive.config`. */
-export const BRIDGE_CONFIG_KEYS = [
-  'get',
-  'reload',
-  'chooseDirectory',
-  // HIVE-146.
-  'browseDirectory',
-  'addProject',
-  'removeProject',
-  // Story 103.
-  'renameProject',
-  'repointProject',
-  'reorderProjects',
-  // HIVE-94.
-  'setProjectKey',
-  // HIVE-166.
-  'setProjectAutoMerge',
-  // HIVE-176.
-  'setSessionPlugin',
-  // Story 102.
-  'startClone',
-  'cancelClone',
-  'onCloneDone',
-  // Retro B.
-  'onConfigChanged',
-  // Story 104.
-  'setRuntime',
-  'setProjectRuntime',
-  'diagnoseCommand',
-  // Story 108.
-  'diagnoseEnv',
-  // Story 106.
-  'setNotifications',
-  /**
-   * Story 107. Two verbs, and what makes widening the surface here acceptable
-   * is that **neither takes an argument**: `revealConfig` shows main's own
-   * `configPath()` in the file manager, and `resetConfig` rewrites that same
-   * file through the one guarded write path. Nothing arrives from the renderer,
-   * so there is nothing to guard and no way to aim either at a file main did
-   * not choose.
-   */
-  'revealConfig',
-  'resetConfig',
-  /**
-   * HIVE-67. The Jira site and account email — ordinary settings, written
-   * through the same guarded path as every other. The token is not here; it has
-   * its own namespace because it is not config.
-   */
-  'setJira',
-  /**
-   * HIVE-124. The socket-mode switch and the commander allow-list — ordinary
-   * settings, written through the same guarded path. The two tokens are not
-   * here; they have their own namespace because they are not config.
-   */
-  'setSlack',
-  /**
-   * HIVE-131. The container host alias — and it **does name a network
-   * destination**, the first verb here that does.
-   *
-   * From HIVE-132 onward this hostname is the host in `HIVE_RECEIVER_URL` for a
-   * containerised session, and a session is handed `HIVE_HOOK_TOKEN` alongside
-   * it, so the alias decides where authenticated hook traffic is addressed.
-   * `assertHostAlias` bounds it to a hostname — per-label allowlist, shared with
-   * the file reader, no scheme, port, path, credentials or delimiter — and it
-   * names no *file*, the one file the bridge can write still chosen by main.
-   *
-   * HIVE-134 added `bind` to this same payload, and it is a larger claim than
-   * the alias: it **does** change the listening surface, which nothing on this
-   * bridge could do before, taking effect at next launch because a listening
-   * socket cannot be moved. What bounds it: the same `isHostAlias` predicate,
-   * the next-launch delay that keeps the change from being silent, and the
-   * header chip, which is sourced from the receiver's *running* bind
-   * (`AppInfo.receiverBoundHost`) rather than this config's snapshot of it — so it
-   * still says the receiver is exposed for exactly as long as it is, even
-   * across the gap between toggling this switch off and the relaunch that
-   * would actually close the wider socket (HIVE-134). `reject`'s
-   * `timingSafeEqual` token compare and the `Origin`/`Host` checks on all
-   * eight routes hold at every bind, which is why widening it is not a cliff.
-   * See the fuller justification beside `'setReceiver'` in
-   * `tests/e2e/electron/security.spec.ts`.
-   */
-  'setReceiver',
-  /**
-   * HIVE-142. Whether server mode is on, and where it listens — an ordinary
-   * settings write, exactly like `setReceiver` above, and with no credential
-   * in the payload: `parseSetServerRequest` refuses one. Minting and
-   * revoking a device credential is the `server` namespace's job, below.
-   */
-  'setServer',
-  /**
-   * HIVE-144. Whether this window is a client and where it attaches —
-   * `setServer`'s mirror, and with the identical no-credential rule:
-   * `parseSetRemoteRequest` refuses one. Storing and forgetting the
-   * credential this device was handed is the `remote` namespace's job below,
-   * a distinct namespace from `server` — see the comment above
-   * {@link BRIDGE_REMOTE_KEYS}.
-   */
-  'setRemote',
-  /**
-   * HIVE-149. `setRemote`'s read half, and the narrowest kind of addition this
-   * list takes: **no argument**, and a return of the same three fields
-   * `setRemote` above already writes. It names no path, no destination and no
-   * credential — `RemoteConfig` holds none — so there is nothing here to guard
-   * that `setRemote` does not already guard on the way in.
-   *
-   * What it grants is being able to *read* the address this window would dial,
-   * which the renderer could otherwise only take from `get` — answered by the
-   * server while attached, and therefore describing the wrong machine.
-   */
-  'getRemote',
-] as const;
-
-/**
- * The exact key set of `window.hive.server` (HIVE-142).
- *
- * Two verbs, and neither is an ordinary settings write: `pair` mints a
- * credential and answers its plaintext once; `revoke` destroys one. Both go
- * through `pairDevice`/`revokeDevice` in `server/devices.ts`, the same
- * implementation the CLI's `--pair`/`--revoke` and the server-mode tray call.
- */
-export const BRIDGE_SERVER_KEYS = ['pair', 'revoke'] as const;
-
-/**
- * The exact key set of `window.hive.remote` (HIVE-144).
- *
- * **Not** {@link BRIDGE_SERVER_KEYS} renamed, despite sharing a verb name:
- * `server.pair`/`.revoke` mint or destroy a credential this machine hands out
- * to a device *it* admits; `remote.pair`/`.forget` store or discard a
- * credential *this* machine was handed, for attaching outward as a client to
- * someone else's server. A device holding this credential can reach the
- * entire IPC surface of the server it attaches to — the same register
- * `server.pair`'s own doc comment states — which is exactly why the two
- * verbs must not be confused for one feature pointing one direction.
- *
- * `onLinkStatus` (HIVE-150) is the third, and it is the one verb here that
- * touches no credential at all: a read-only subscription to what the socket
- * this credential opened is currently doing. Grouped here rather than in its
- * own namespace because it is the same subject seen from the other end — the
- * credential, the attachment it buys, and the state of that attachment.
- */
-export const BRIDGE_REMOTE_KEYS = ['pair', 'forget', 'onLinkStatus'] as const;
-
-/** The exact key set of `window.hive.pty`. */
-export const BRIDGE_PTY_KEYS = [
-  'ack',
-  'spawn',
-  'spawnTerminal',
-  'write',
-  'resize',
-  'kill',
-  'onData',
-  'onExit',
-  'onLost',
-  'restart',
-  // HIVE-135. What the surface can see in the backend's input box, reported
-  // as a fire-and-forget send — the same shape as `ack`.
-  'prompt',
-] as const;

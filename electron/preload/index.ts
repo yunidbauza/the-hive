@@ -454,7 +454,7 @@ const bridge: HiveBridge = {
     `resolveInSkill`'s `realpath` containment behind it), except `fileDrop`,
     whose `sources` are absolute — and the only reason that is safe is
     `pathToken` below, which is the one verb here that never touches IPC at
-    all. See `skills-contract.ts` and `BRIDGE_SKILLS_KEYS` for the full
+    all. See `skills-contract.ts` and `HiveBridge['skills']` for the full
     argument. There is no `onChanged` here on purpose: the pane is the only
     writer, and every mutating verb answers with the fresh snapshot.
   */
@@ -566,7 +566,7 @@ const bridge: HiveBridge = {
       person pressed it. Still no flags, no environment and no argv the page
       composed: `extra` is interpolated into the single positional prompt
       argument, so the whole of what the page can express here is which agent
-      and what to tell it. `BRIDGE_AGENTS_KEYS` carries the argument;
+      and what to tell it. `HiveBridge['agents']` carries the argument;
       `parseAgentRunRequest` is what refuses a payload that tries to say more —
       a `trigger` above all.
     */
@@ -589,7 +589,7 @@ const bridge: HiveBridge = {
       `AgentRunResult` because it *is* a run — one field armed first, then the
       ordinary path — and it takes an `AgentNameRequest` rather than a widened
       `AgentRunRequest`, so the closed key set that refuses a renderer-chosen
-      trigger stays closed. `BRIDGE_AGENTS_KEYS` carries the argument.
+      trigger stays closed. `HiveBridge['agents']` carries the argument.
     */
     rotate: (request: AgentNameRequest): Promise<AgentRotateResult> =>
       ipcRenderer.invoke(CH.agentsRotate, request),

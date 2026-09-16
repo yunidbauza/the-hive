@@ -288,7 +288,8 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     'integrations',
     'jira',
     /*
-      HIVE-111 added the ledger namespace to `BRIDGE_KEYS` and to the preload,
+      HIVE-111 added the ledger namespace to the bridge key list in
+      `tests/support/bridge-keys.ts` and to the preload,
       but not to this list, so this assertion has been failing on `main` since
       that story merged — there is no PR CI here to have caught it. Recorded
       rather than merely corrected: the page may now read the log and write as

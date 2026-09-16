@@ -20,6 +20,8 @@ import {
   BRIDGE_SKILLS_KEYS,
   BRIDGE_SLACK_KEYS,
   BRIDGE_UI_KEYS,
+} from '../../support/bridge-keys';
+import {
   CH,
   EVENT_CHANNELS,
 } from '../../../electron/shared/ipc-contract';
