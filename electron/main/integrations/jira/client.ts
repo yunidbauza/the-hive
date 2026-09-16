@@ -1,3 +1,5 @@
+import { setTimeout as sleepFor } from 'node:timers/promises';
+
 import {
   JIRA_MAX_DETAILS,
   JIRA_MAX_DETAIL_LENGTH,
@@ -76,10 +78,7 @@ export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
  */
 export type Sleep = (ms: number) => Promise<void>;
 
-const realSleep: Sleep = (ms) =>
-  new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
+const realSleep: Sleep = (ms) => sleepFor(ms);
 
 interface JiraCredential {
   email: string;
