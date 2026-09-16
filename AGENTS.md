@@ -171,7 +171,7 @@ silently becomes importable from everywhere.
 **The single most important invariant in the codebase.**
 
 `src/components/terminal/` speaks only `TerminalTransport`. It may not import from
-`features/`, `data/`, or `stores/` — and cannot, because the lint zone fails the build.
+`features/` or `stores/` — and cannot, because the lint zone fails the build.
 
 In this phase the transport is a static/scripted fake; later it becomes IPC to a
 local PTY daemon **with no changes to the component tree**. That is the whole
