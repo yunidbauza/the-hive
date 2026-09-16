@@ -4,7 +4,6 @@ import { ADVERTISED_VERBS } from '@/types/command';
 
 import { parseCommand } from '@features/orchestrator/utils/parse-command';
 import { effectiveSelId } from '@features/orchestrator/utils/selection';
-import { useAutoGrow } from '@hooks/use-auto-grow';
 import {
   useNavOrder,
   openOrResume,
@@ -47,7 +46,6 @@ export function ConsoleInput() {
   const [value, setValue] = useState('');
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  useAutoGrow(inputRef, value);
 
   const runOrchCommand = useRunOrchCommand();
   const navOrder = useNavOrder();
@@ -202,12 +200,12 @@ export function ConsoleInput() {
           spellCheck={false}
           aria-label="Overmind command"
           /*
-           * `resize-none` because the height is ours to decide (`useAutoGrow`),
-           * and a drag handle in the corner of a terminal prompt would fight it.
-           * `leading-normal` so the computed line height the hook measures is a
-           * real number rather than the `normal` keyword.
+           * The browser sizes the row to its content (`field-sizing: content`)
+           * and `10lh` caps it at ten rows of the computed line height; past
+           * the cap the row scrolls. `resize-none` because a drag handle in the
+           * corner of a terminal prompt would fight that.
            */
-          className="min-w-0 flex-1 resize-none overflow-hidden border-none bg-transparent font-mono text-[12.5px] leading-normal text-ink caret-green outline-none placeholder:text-subtle"
+          className="min-w-0 flex-1 resize-none field-sizing-content max-h-[10lh] overflow-y-auto border-none bg-transparent font-mono text-[12.5px] leading-normal text-ink caret-green outline-none placeholder:text-subtle"
         />
         <span className="shrink-0 pt-px font-mono text-[10.5px] whitespace-nowrap text-subtle">
           {KEY_HINT}

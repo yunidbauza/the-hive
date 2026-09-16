@@ -191,18 +191,17 @@ describe('NotificationCard', () => {
   });
 
   /**
-   * The exit animation is wired, and hands the keyframes a **measured** height.
+   * The exit animation is wired.
    *
    * jsdom runs no animations, so this pins the wiring rather than the result:
-   * the class that carries `--animate-ccslideout`, and the inline
-   * `--cc-card-h` the keyframes collapse from. `max-height` cannot animate from
-   * `auto`, and a hard-coded start value would either clip a two-line body or
-   * collapse a taller card from a height it never had.
+   * the class that carries `--animate-ccslideout`. Where the collapse starts is
+   * the keyframes' business now — `max-content`, interpolated by the browser —
+   * so there is no inline height left to assert.
    *
    * The visual result itself is not asserted anywhere: producing a real
    * notification needs a real hub event, which the e2e suite has no way to raise.
    */
-  it('arms the slide-out with the card’s own height', async () => {
+  it('arms the slide-out', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     useHiveStore.getState().hydrateNotifs([notif({ id: 'a' })]);
@@ -214,7 +213,6 @@ describe('NotificationCard', () => {
     expect(card).toHaveClass('animate-ccslideout');
     // Also inert while it leaves, so a second click cannot act twice.
     expect(card).toHaveClass('pointer-events-none');
-    expect(card.style.getPropertyValue('--cc-card-h')).toMatch(/^\d+px$/);
   });
 
   /**
@@ -635,8 +633,6 @@ describe('naming the session a row is about', () => {
      * It shipped on the button: the anchor below it and the wrapper's own list
      * margin stayed at full height while the button collapsed, so the card came
      * apart on its way out and the list jumped when what was left unmounted.
-     * The measured `--cc-card-h` has to come off the same element, or the
-     * keyframes collapse from a height the row never had.
      */
     it('collapses the wrapper, link and margin included, rather than the button alone', async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -668,7 +664,6 @@ describe('naming the session a row is about', () => {
       expect(wrapper).toHaveClass('overflow-hidden');
       expect(wrapper).toHaveClass('pointer-events-none');
       expect(button).not.toHaveClass('animate-ccslideout');
-      expect(wrapper?.style.getPropertyValue('--cc-card-h')).toMatch(/^\d+px$/);
     });
 
     /** …while a card with no link is still its own root, exactly as before. */
@@ -684,7 +679,6 @@ describe('naming the session a row is about', () => {
 
       expect(button).toHaveClass('animate-ccslideout');
       expect(button).toHaveClass('mb-[var(--cc-list-gap-sm)]');
-      expect(button.style.getPropertyValue('--cc-card-h')).toMatch(/^\d+px$/);
     });
   });
 });
