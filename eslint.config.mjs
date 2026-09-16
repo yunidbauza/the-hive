@@ -103,17 +103,6 @@ export default tseslint.config(
       // covers them — tsconfig.json includes `tests`.
       'tests/**',
       /**
-       * Vendored third-party bundles (HIVE-71).
-       *
-       * `marked` is copied verbatim so the ADF pipeline needs no runtime
-       * dependency — the same property the epic was protecting when it rejected
-       * the bash client. Linting somebody else's minified-ish bundle reports
-       * their style choices as our errors, and reformatting it would destroy
-       * the one thing that makes a vendored copy auditable: that it is
-       * byte-identical to upstream.
-       */
-      'electron/main/integrations/jira/adf/vendor/**',
-      /**
        * Git worktrees live under the repo now that the app sits at the root.
        * Each one is a whole second checkout — linting them re-lints the app
        * once per branch and walks their `node_modules`, which is what turned
