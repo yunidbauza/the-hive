@@ -37,7 +37,6 @@ import {
   describeWake,
   runsToday,
 } from '@lib/agents';
-import { reset as resetClock } from '@lib/fake-clock';
 import { readPullRequests, searchPullRequests } from '@lib/github';
 import { readJiraStatus, searchJiraIssues } from '@lib/jira';
 import { buildTicketSearchJql } from '@lib/jira-search';
@@ -5585,14 +5584,6 @@ export const useHiveStore = create<HiveState>()((set, get) => ({
     // answer cannot install itself into the fresh state.
     prSearchTicket += 1;
     ticketSearchTicket += 1;
-    /**
-     * Nothing in this store stamps through the clock any more — the activity
-     * feed was its only caller and the project explorer replaced it. The rewind
-     * stays because the clock itself stays: it is documented infrastructure for
-     * the simulation story, which will be its first consumer, and a store that
-     * quietly stopped resetting a global would be a trap for whoever writes it.
-     */
-    resetClock();
     set({
       ...emptySeeds(),
       notifs: [],

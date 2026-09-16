@@ -531,7 +531,7 @@ export function createDemoFleet(): DemoFleet {
  * Put the sample fleet into the store.
  *
  * Call it *after* `reset()`, not instead of it: `reset()` also clears the spawn
- * counter and the fake clock, which this does not touch.
+ * counter, which this does not touch.
  *
  * `setState` merges by default, so the one slice the app still seeds
  * (`notifs`) survives untouched.

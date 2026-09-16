@@ -18,7 +18,7 @@
 **On this page:** [Stores](#stores) ·
 [What persists](#what-persists-and-where) ·
 [Selector hooks](#selector-hooks) · [Caps](#caps) ·
-[The fake clock](#the-fake-clock) ·
+[Simulation](#simulation-not-built-yet) ·
 [What the store seeds](#what-the-store-seeds-and-what-it-no-longer-does) ·
 [The console grammar](#the-console-grammar)
 
@@ -279,38 +279,19 @@ end:
 Panels render whatever they are handed; neither adds a second cap, because a
 second place to get the number right is a second place to get it wrong.
 
-## The fake clock
-
-It lives in `src/lib/fake-clock.ts`.
-
-`stamp()` starts at **14:38** and advances one minute per call. Two reasons it
-is not `new Date()`: a demo recorded at 03:11 should not say so, and a wall
-clock makes a store's tests unassertable.
-
-**It currently has no producer.** The activity feed was its only one, and the
-project explorer replaced that panel. The module stays because a scripted demo
-(HIVE-30, below) would stamp through it rather than introduce a second clock —
-deleting a documented seam because it is briefly unused is how the second clock
-gets written.
-
-- **It lives in `lib/`, not in a feature slice.** `stores/` is what will stamp,
-  and the import zone forbids `stores/ → features/`. `lib/` is leaf-level,
-  which is what a clock should be.
-- **`reset()` exists for test isolation** and is still called by the
-  hive-store's own `reset()`, so the next consumer inherits a store that
-  rewinds it.
-- `peek()` reads the current time without advancing it.
-
-### Simulation (not built yet)
+## Simulation (not built yet)
 
 Scripted event replay (HIVE-30) is not built. Its empty placeholder slice and
-the `?sim=1` flag nothing read were removed in HIVE-192; the story recreates
-both if it lands. The seams it would use are still in place:
+the `?sim=1` flag nothing read were removed in HIVE-192, and the fake clock it
+would have stamped through — `src/lib/fake-clock.ts`, with no producer since the
+project explorer replaced the activity feed — went with the rest of the unused
+surface. The story recreates what it needs if it lands. The seams it would use
+are still in place:
 
 - `appendEntityLines(id, lines, status?)` is the intended write path for replayed
   events: it appends transcript and optionally moves a session's status in one
-  step. `pushNotif` is the inbox's, and both should stamp through the fake clock
-  above.
+  step. `pushNotif` is the inbox's. Neither stamps a time, so a scripted run
+  brings its own clock.
 - The browser-target `sendToEntity` path returns its acknowledgement timer as
   `{ kind: 'demo', timer }` (see [Where a message actually goes](#where-a-message-actually-goes)),
   so a scripted run can cancel it rather than race a real wait.

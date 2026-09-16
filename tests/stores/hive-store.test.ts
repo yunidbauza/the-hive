@@ -21,7 +21,6 @@ import type {
 import type { RemoteLinkStatus } from '@shared/ipc-contract';
 import { LEDGER_MEMORY_CAP, type LedgerEntry } from '@shared/ledger-contract';
 import { isDesktop } from '@config/runtime';
-import { peek, stamp } from '@lib/fake-clock';
 import {
   projectConfigSnapshot,
   resetProjectConfig,
@@ -2727,25 +2726,6 @@ describe('hive-store', () => {
         .appendEntityLines('nope', [{ text: 'x', color: 'ink' }]);
 
       expect(useHiveStore.getState().entities).toEqual(before);
-    });
-  });
-
-  /**
-   * The store no longer stamps anything through the clock — the activity feed
-   * was its only producer, and the project explorer replaced it. `reset()`
-   * still rewinds it, which is what this covers: the simulation story is the
-   * clock's next consumer and inherits a store that resets it.
-   */
-  describe('the fake clock', () => {
-    it('rewinds on reset', () => {
-      stamp();
-      stamp();
-      expect(peek()).toBe('14:40');
-
-      useHiveStore.getState().reset();
-      seedDemoFleet();
-
-      expect(peek()).toBe('14:38');
     });
   });
 
