@@ -56,11 +56,6 @@ interface SupervisorOptions {
   fork: () => HostChild;
   /** Injected clock for the crash-loop window. */
   now?: () => number;
-  heartbeatIntervalMs?: number;
-  missedBeatLimit?: number;
-  shutdownTimeoutMs?: number;
-  crashWindowMs?: number;
-  crashLimit?: number;
 }
 
 /** Why a session stopped being live. */
@@ -125,11 +120,6 @@ export function createPtyHostSupervisor(
   const {
     fork,
     now = Date.now,
-    heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS,
-    missedBeatLimit = MISSED_BEAT_LIMIT,
-    shutdownTimeoutMs = SHUTDOWN_TIMEOUT_MS,
-    crashWindowMs = CRASH_WINDOW_MS,
-    crashLimit = CRASH_LIMIT,
   } = options;
 
   const data = emitter<DataMessage>();
@@ -182,7 +172,7 @@ export function createPtyHostSupervisor(
   function startHeartbeat(): void {
     stopHeartbeat();
     heartbeat = setInterval(() => {
-      if (unanswered >= missedBeatLimit) {
+      if (unanswered >= MISSED_BEAT_LIMIT) {
         // A host can hang without exiting, and a hang is indistinguishable
         // from a dead terminal to the user unless something is watching.
         // Killing it converts an ambiguous hang into an unambiguous crash.
@@ -199,7 +189,7 @@ export function createPtyHostSupervisor(
       // Deliberately not `post` — a queued ping would answer itself late and
       // mask exactly the condition being measured.
       if (child && ready) child.postMessage({ type: 'ping', seq: pingSeq });
-    }, heartbeatIntervalMs);
+    }, HEARTBEAT_INTERVAL_MS);
   }
 
   function handleCrash(): void {
@@ -211,7 +201,7 @@ export function createPtyHostSupervisor(
     crashes.push(now());
     // Only crashes inside the window count; an app that has been up for days
     // must not trip the guard on its fourth unrelated crash.
-    const cutoff = now() - crashWindowMs;
+    const cutoff = now() - CRASH_WINDOW_MS;
     while (crashes.length > 0 && crashes[0]! < cutoff) crashes.shift();
 
     /**
@@ -227,12 +217,12 @@ export function createPtyHostSupervisor(
     }
     sessions.clear();
 
-    if (crashes.length >= crashLimit) {
+    if (crashes.length >= CRASH_LIMIT) {
       blocked = true;
       errors.emit({
         type: 'error',
         message: `pty host crashed ${crashes.length} times in ${Math.round(
-          crashWindowMs / 1000,
+          CRASH_WINDOW_MS / 1000,
         )}s — not restarting. Restart The Hive once the cause is fixed.`,
       });
     }
@@ -420,7 +410,7 @@ export function createPtyHostSupervisor(
           // Graceful exit did not happen. The app must still quit.
           instance.kill();
           finish();
-        }, shutdownTimeoutMs);
+        }, SHUTDOWN_TIMEOUT_MS);
 
         onExited = finish;
         if (ready) instance.postMessage({ type: 'shutdown' });

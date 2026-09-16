@@ -63,11 +63,6 @@ export interface PtyIpcOptions {
   supervisor: PtyHostSupervisor;
   /** Push an event to the renderer. Injected — no `BrowserWindow` in here. */
   send: (channel: string, payload: unknown) => void;
-  batchIntervalMs?: number;
-  batchFlushBytes?: number;
-  highWaterBytes?: number;
-  lowWaterBytes?: number;
-  resizeThrottleMs?: number;
   replayBytes?: number;
   /**
    * Who is watching, right now (HIVE-145).
@@ -309,12 +304,7 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
   const {
     supervisor,
     send,
-    batchIntervalMs = BATCH_INTERVAL_MS,
-    batchFlushBytes = BATCH_FLUSH_BYTES,
-    highWaterBytes = HIGH_WATER_BYTES,
-    lowWaterBytes = LOW_WATER_BYTES,
     liveSurfaces = () => [SOLE_CONSUMER],
-    resizeThrottleMs = RESIZE_THROTTLE_MS,
     replayBytes = REPLAY_BYTES,
   } = options;
 
@@ -394,7 +384,7 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
 
     // Below the low-water mark, let the producer run again. The gap between
     // the marks is what stops pause/resume oscillating on every batch.
-    if (channel.paused && channel.unacked < lowWaterBytes) {
+    if (channel.paused && channel.unacked < LOW_WATER_BYTES) {
       channel.paused = false;
       supervisor.resume(sessionId);
     }
@@ -455,7 +445,7 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
        * consumer in a shell — rather than a queue growing somewhere the user
        * cannot see.
        */
-      if (!channel.paused && channel.unacked > highWaterBytes) {
+      if (!channel.paused && channel.unacked > HIGH_WATER_BYTES) {
         channel.paused = true;
         channel.pauses += 1;
         supervisor.pause(sessionId);
@@ -506,7 +496,7 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
 
     // The size cap keeps a firehose from building a large string before the
     // timer fires.
-    if (channel.pendingBytes >= batchFlushBytes) {
+    if (channel.pendingBytes >= BATCH_FLUSH_BYTES) {
       flush(sessionId, channel);
       return;
     }
@@ -519,7 +509,7 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
       channel.timer = setTimeout(() => {
         channel.timer = null;
         flush(sessionId, channel);
-      }, batchIntervalMs);
+      }, BATCH_INTERVAL_MS);
     }
   }
 
@@ -659,8 +649,8 @@ export function createPtyIpc(options: PtyIpcOptions): PtyIpc {
             return;
           }
           supervisor.resize(sessionId, trailing.cols, trailing.rows);
-          channel.resizeTimer = setTimeout(tick, resizeThrottleMs);
-        }, resizeThrottleMs);
+          channel.resizeTimer = setTimeout(tick, RESIZE_THROTTLE_MS);
+        }, RESIZE_THROTTLE_MS);
         return;
       }
 

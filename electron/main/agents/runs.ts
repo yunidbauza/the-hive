@@ -209,8 +209,6 @@ export interface RunTrackerDeps {
   onRunClosed?: (name: string) => void;
   now: () => number;
   newRunId: () => string;
-  killGraceMs?: number;
-  stallGraceMs?: number;
   /**
    * The receiver's per-run grants registry (HIVE-137), for `approve` over
    * HTTP. Registered before the spawn with the same list the child gets in
@@ -402,8 +400,8 @@ const parseGrants = (raw: string | undefined): readonly string[] => {
 };
 
 export function createRunTracker(deps: RunTrackerDeps): RunTracker {
-  const grace = deps.killGraceMs ?? AGENT_KILL_GRACE_MS;
-  const stallGrace = deps.stallGraceMs ?? AGENT_STALL_GRACE_MS;
+  const grace = AGENT_KILL_GRACE_MS;
+  const stallGrace = AGENT_STALL_GRACE_MS;
   /**
    * Several runs per name since HIVE-128 — one standing, plus task runs up to
    * the definition's cap. A name with nothing in flight is deleted rather than
