@@ -1,3 +1,5 @@
+import { SkeletonBar } from '@features/shared/components/skeleton-bar';
+
 /**
  * The WORK panel while the Jira read is in flight.
  *
@@ -24,9 +26,6 @@
  * `aria-hidden` on the blocks with a single live region above them: a screen
  * reader should hear "Loading tickets" once, not nine anonymous boxes.
  */
-function SkeletonBar({ className }: { className: string }) {
-  return <span className={`block h-2.5 rounded-full bg-chip ${className}`} />;
-}
 
 /**
  * One placeholder card, matching `TicketCard`'s box exactly.

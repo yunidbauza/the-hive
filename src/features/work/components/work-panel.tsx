@@ -1,4 +1,3 @@
-import { ArrowClockwise } from '@phosphor-icons/react';
 import { type ReactNode } from 'react';
 
 import { usePrRefresh } from '@/hooks/use-pr-refresh';
@@ -8,6 +7,7 @@ import { useTicketRefresh } from '@/hooks/use-ticket-refresh';
 import { EmptyState } from '@components/ui/empty-state';
 import { PullIndicator } from '@components/ui/pull-indicator';
 import { SwarmLine } from '@components/ui/swarm-line';
+import { SourceProblem } from '@features/shared/components/source-problem';
 import { TicketCard } from '@features/work/components/ticket-card';
 import { TicketListSkeleton } from '@features/work/components/ticket-card-skeleton';
 import { WorkSearchRow } from '@features/work/components/work-search-row';
@@ -79,24 +79,15 @@ function SourceNotice({
   }
 
   if (source.kind === 'failed') {
-    return (
-      <div className="flex flex-col items-start gap-1 px-1 pb-1">
-        <p className="text-[11.5px] leading-[1.45] text-amber">
-          {source.message}
-        </p>
-        <RetryButton onRetry={onRetry} />
-      </div>
-    );
+    return <SourceProblem message={source.message} onRetry={onRetry} />;
   }
 
   if (source.stale) {
     return (
-      <div className="flex flex-col items-start gap-1 px-1 pb-1">
-        <p className="text-[11.5px] leading-[1.45] text-amber">
-          Could not reach Jira. These may be out of date.
-        </p>
-        <RetryButton onRetry={onRetry} />
-      </div>
+      <SourceProblem
+        message="Could not reach Jira. These may be out of date."
+        onRetry={onRetry}
+      />
     );
   }
 
@@ -149,19 +140,6 @@ function WorkLayout({
         </div>
       </div>
     </div>
-  );
-}
-
-function RetryButton({ onRetry }: { onRetry: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onRetry}
-      className="flex items-center gap-1 rounded-[5px] border border-border px-1.5 py-0.5 text-[11px] text-muted hover:bg-hover hover:text-ink"
-    >
-      <ArrowClockwise size={11} />
-      Try again
-    </button>
   );
 }
 

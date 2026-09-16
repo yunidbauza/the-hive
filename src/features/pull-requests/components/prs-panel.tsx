@@ -1,4 +1,3 @@
-import { ArrowClockwise } from '@phosphor-icons/react';
 import type { ReactNode } from 'react';
 
 import { usePrRefresh } from '@/hooks/use-pr-refresh';
@@ -10,6 +9,7 @@ import { PullIndicator } from '@components/ui/pull-indicator';
 import { PrCard } from '@features/pull-requests/components/pr-card';
 import { PrListSkeleton } from '@features/pull-requests/components/pr-card-skeleton';
 import { PrSearchRow } from '@features/pull-requests/components/pr-search-row';
+import { SourceProblem } from '@features/shared/components/source-problem';
 import {
   useActiveEntity,
   usePrs,
@@ -77,41 +77,19 @@ function SourceNotice({
   }
 
   if (source.kind === 'failed') {
-    return (
-      <div className="flex flex-col items-start gap-1 px-1 pb-1">
-        <p className="text-[11.5px] leading-[1.45] text-amber">
-          {source.message}
-        </p>
-        <RetryButton onRetry={onRetry} />
-      </div>
-    );
+    return <SourceProblem message={source.message} onRetry={onRetry} />;
   }
 
   if (source.stale) {
     return (
-      <div className="flex flex-col items-start gap-1 px-1 pb-1">
-        <p className="text-[11.5px] leading-[1.45] text-amber">
-          Could not reach GitHub. These may be out of date.
-        </p>
-        <RetryButton onRetry={onRetry} />
-      </div>
+      <SourceProblem
+        message="Could not reach GitHub. These may be out of date."
+        onRetry={onRetry}
+      />
     );
   }
 
   return null;
-}
-
-function RetryButton({ onRetry }: { onRetry: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onRetry}
-      className="flex items-center gap-1 rounded-[5px] border border-border px-1.5 py-0.5 text-[11px] text-muted hover:bg-hover hover:text-ink"
-    >
-      <ArrowClockwise size={11} />
-      Try again
-    </button>
-  );
 }
 
 /**

@@ -1,3 +1,5 @@
+import { SkeletonBar } from '@features/shared/components/skeleton-bar';
+
 /**
  * The PRs panel while the first sweep is in flight.
  *
@@ -15,9 +17,6 @@
  * keeps them: replacing content the user is reading with placeholders every
  * sixty seconds would be a far worse flicker than the one this fixed.
  */
-function SkeletonBar({ className }: { className: string }) {
-  return <span className={`block h-2.5 rounded-full bg-chip ${className}`} />;
-}
 
 /**
  * One placeholder card, matching `PrCard`'s box.
