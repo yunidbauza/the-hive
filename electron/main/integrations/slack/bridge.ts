@@ -104,9 +104,6 @@ interface SlackBridgeDeps {
   onWake: (name: string, entry: PendingWakeEntry, opts: { job: boolean }) => void;
   onStatus: (status: SlackSocketStatus) => void;
   now: () => number;
-  /** Injected by the unit test, as in `scheduler.ts`. */
-  setTimeoutFn?: typeof setTimeout;
-  clearTimeoutFn?: typeof clearTimeout;
 }
 
 const NO_BOT_TOKEN =
@@ -154,9 +151,6 @@ const bodyOf = (arg: unknown): unknown =>
 const channelKey = (name: string): string => `#${name.toLowerCase()}`;
 
 export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
-  const setTimeoutFn = deps.setTimeoutFn ?? setTimeout;
-  const clearTimeoutFn = deps.clearTimeoutFn ?? clearTimeout;
-
   let stopped = false;
   let socket: SlackSocket | null = null;
   /** True between the decision to connect and the socket being live or failed. */
@@ -299,7 +293,7 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
   const cancelRetry = (): void => {
     if (retryTimer === null) return;
 
-    clearTimeoutFn(retryTimer);
+    clearTimeout(retryTimer);
     retryTimer = null;
   };
 
@@ -319,7 +313,7 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
     if (delay === undefined) return;
 
     retryAttempt += 1;
-    retryTimer = setTimeoutFn(() => {
+    retryTimer = setTimeout(() => {
       retryTimer = null;
       sync();
     }, delay);
@@ -380,7 +374,7 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
     if (timers.has(key)) return;
     timers.set(
       key,
-      setTimeoutFn(() => {
+      setTimeout(() => {
         timers.delete(key);
         flush(name, channel);
       }, delay),
@@ -723,7 +717,7 @@ export function createSlackBridge(deps: SlackBridgeDeps): SlackBridge {
     nameToId = null;
     idToName = new Map();
 
-    for (const timer of timers.values()) clearTimeoutFn(timer);
+    for (const timer of timers.values()) clearTimeout(timer);
     timers.clear();
     buffers.clear();
 

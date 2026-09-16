@@ -460,8 +460,6 @@ interface BootstrapOptions {
   onComplete?: (entityId: string) => void;
   debounceMs?: number;
   fallbackMs?: number;
-  /** How long after a stage's text to send its submitting `\r` (HIVE-63). */
-  submitDelayMs?: number;
 }
 
 export interface Bootstrap {
@@ -497,7 +495,6 @@ export function createBootstrap(options: BootstrapOptions): Bootstrap {
     onComplete,
     debounceMs = BOOTSTRAP_DEBOUNCE_MS,
     fallbackMs = BOOTSTRAP_FALLBACK_MS,
-    submitDelayMs = SUBMIT_DELAY_MS,
   } = options;
 
   const pending = new Map<string, Pending>();
@@ -555,7 +552,7 @@ export function createBootstrap(options: BootstrapOptions): Bootstrap {
          * this one, and the rule reduces to: submit, then release.
          */
         onComplete?.(entityId);
-      }, submitDelayMs),
+      }, SUBMIT_DELAY_MS),
     );
   }
 

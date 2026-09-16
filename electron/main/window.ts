@@ -113,22 +113,17 @@ interface CreateWindowOptions {
    * creates a window at all.
    */
   withSplash?: boolean;
-  /** Injected by the unit test. */
-  createSplash?: typeof createSplashWindow;
-  setTimeoutFn?: typeof setTimeout;
 }
 
 export function createWindow({
   withSplash = false,
-  createSplash = createSplashWindow,
-  setTimeoutFn = setTimeout,
 }: CreateWindowOptions = {}): BrowserWindow {
   /**
    * Before the main window, so the chamber is on screen while the renderer
    * boots rather than after it — which is the entire point.
    */
   const splash: SplashController | null =
-    withSplash && splashEnabled() ? createSplash() : null;
+    withSplash && splashEnabled() ? createSplashWindow() : null;
 
   const statePath = windowStatePath();
   const saved = readWindowState(statePath);
@@ -198,7 +193,7 @@ export function createWindow({
       win.show();
       return;
     }
-    setTimeoutFn(() => {
+    setTimeout(() => {
       win.show();
       void splash.dismiss();
     }, splash.remaining());

@@ -40,7 +40,6 @@ import type { SessionOperations } from './sessions';
 interface SessionManagerOptions {
   maxSessions?: number;
   scrollbackBytes?: number;
-  killGraceMs?: number;
   /** The environment sessions inherit from. Injected so tests are hermetic. */
   baseEnv?: NodeJS.ProcessEnv;
   /**
@@ -173,7 +172,6 @@ export function createSessionManager(
   const {
     maxSessions = MAX_SESSIONS,
     scrollbackBytes = SCROLLBACK_BYTES,
-    killGraceMs = KILL_GRACE_MS,
     baseEnv = process.env,
     control = processControl,
     spawn = spawnPty,
@@ -318,7 +316,7 @@ export function createSessionManager(
     // The grace is whichever is shorter: the usual one, or what is left of the
     // budget once the sweep has been reserved its settle.
     const grace = Math.min(
-      killGraceMs,
+      KILL_GRACE_MS,
       Math.max(0, remaining(deadline) - SWEEP_SETTLE_MS),
     );
 

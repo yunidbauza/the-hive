@@ -39,7 +39,6 @@ import { ACTIVITY_IDLE_MS, type DerivedStatus } from '@shared/session-contract';
 interface ActivityOptions {
   /** Called only when the derived status actually changes. */
   onStatus: (entityId: string, status: DerivedStatus) => void;
-  idleAfterMs?: number;
 }
 
 export interface ActivityTracker {
@@ -61,7 +60,7 @@ interface Entry {
 }
 
 export function createActivityTracker(options: ActivityOptions): ActivityTracker {
-  const { onStatus, idleAfterMs = ACTIVITY_IDLE_MS } = options;
+  const { onStatus } = options;
   const entries = new Map<string, Entry>();
 
   function clearTimer(entry: Entry): void {
@@ -99,7 +98,7 @@ export function createActivityTracker(options: ActivityOptions): ActivityTracker
       entry.timer = setTimeout(() => {
         entry.timer = null;
         set(entityId, entry, 'idle');
-      }, idleAfterMs);
+      }, ACTIVITY_IDLE_MS);
     },
 
     exited(entityId) {

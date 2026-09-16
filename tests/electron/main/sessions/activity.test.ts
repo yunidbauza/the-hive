@@ -13,10 +13,9 @@ import { createActivityTracker } from '../../../../electron/main/sessions/activi
 
 let seen: { entityId: string; status: string }[];
 
-function tracker(idleAfterMs?: number) {
+function tracker() {
   return createActivityTracker({
     onStatus: (entityId, status) => seen.push({ entityId, status }),
-    ...(idleAfterMs === undefined ? {} : { idleAfterMs }),
   });
 }
 

@@ -999,7 +999,7 @@ describe('status and teardown', () => {
     /*
       The timer count, not only the absence of a wake: `flush` returns early on
       `stopped`, so "no wake arrived" passes even if `teardown` never cleared a
-      thing. This is the assertion that holds the `clearTimeoutFn` loop.
+      thing. This is the assertion that holds the timer loop.
     */
     expect(vi.getTimerCount()).toBe(0);
 
