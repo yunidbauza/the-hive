@@ -6493,6 +6493,24 @@ interface AgentPr {
 }
 
 /**
+ * The PR number a `done` entry carries, or `null`.
+ *
+ * A number, or a string that is one: main writes `meta` from whatever the agent
+ * handed `ledger_post`, so this is model-authored input in every sense that
+ * matters — `#12` and `"12"` are both things it will write, and neither may put
+ * `NaN` in the table.
+ */
+const donePrNumber = (entry: LedgerEntry): number | null => {
+  const written = entry.meta?.['pr'];
+  if (written === undefined) return null;
+
+  const n =
+    typeof written === 'number' ? written : Number(String(written).replace(/^#/, ''));
+
+  return Number.isInteger(n) && n > 0 ? n : null;
+};
+
+/**
  * The pull request this agent last finished, if it named one (HIVE-117).
  *
  * Read from the **ledger**, not from `runs`: a `RunSummary` records what a wake
@@ -6509,41 +6527,33 @@ export const useAgentPr = (name: string): AgentPr | null => {
   const prs = useHiveStore((state) => state.prs);
 
   return useMemo(() => {
-    for (let i = ledger.length - 1; i >= 0; i -= 1) {
-      const entry = ledger[i];
-      if (entry === undefined || entry.from !== name || entry.kind !== 'done') {
-        continue;
-      }
-      const written = entry.meta?.['pr'];
-      /*
-        A number, or a string that is one. Main writes `meta` from whatever the
-        agent handed `ledger_post`, so this is model-authored input in every
-        sense that matters — `#12` and `"12"` are both things it will write, and
-        neither should put `NaN` in the table.
-      */
-      const n =
-        typeof written === 'number'
-          ? written
-          : Number(String(written).replace(/^#/, ''));
+    /*
+      The newest `done` from this agent **that carries a usable number**: one
+      without is skipped rather than taken as the answer, which is why the
+      number check is in the predicate rather than after the search.
+    */
+    const entry = ledger.findLast(
+      (candidate) =>
+        candidate.from === name &&
+        candidate.kind === 'done' &&
+        donePrNumber(candidate) !== null,
+    );
+    const n = entry === undefined ? null : donePrNumber(entry);
+    if (n === null) return null;
 
-      if (!Number.isInteger(n) || n <= 0) continue;
+    /*
+      The URL comes from the **sweep**, not from the number.
 
-      /*
-        The URL comes from the **sweep**, not from the number.
+      A `done` entry records that an agent opened a pull request; it does not
+      say which repository, and there is no honest URL to build from an integer
+      alone. A GitHub-wide search for "42" is a worse answer than no link — it
+      looks like a destination and lands on thousands of unrelated results. So
+      the number renders as plain text until the PR list happens to hold it,
+      which is the same standing a session's *remembered* PR has.
+    */
+    const known = prs.find((pr) => pr.number === n);
 
-        A `done` entry records that an agent opened a pull request; it does not
-        say which repository, and there is no honest URL to build from an
-        integer alone. A GitHub-wide search for "42" is a worse answer than no
-        link — it looks like a destination and lands on thousands of unrelated
-        results. So the number renders as plain text until the PR list happens
-        to hold it, which is the same standing a session's *remembered* PR has.
-      */
-      const known = prs.find((pr) => pr.number === n);
-
-      return { n, ...(known === undefined ? {} : { url: known.url }) };
-    }
-
-    return null;
+    return { n, ...(known === undefined ? {} : { url: known.url }) };
   }, [ledger, prs, name]);
 };
 

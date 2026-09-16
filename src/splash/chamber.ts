@@ -92,7 +92,7 @@ export function scheduleCopy(root: ParentNode): void {
   root.querySelectorAll<HTMLElement>('.log li').forEach((line, i) => {
     // A line past the end of the schedule holds with the last one rather than
     // animating at 0s and appearing before everything above it.
-    line.style.animationDelay = `${LOG_SCHEDULE[i] ?? LOG_SCHEDULE[LOG_SCHEDULE.length - 1]}s`;
+    line.style.animationDelay = `${LOG_SCHEDULE[i] ?? LOG_SCHEDULE.at(-1)}s`;
   });
 }
 

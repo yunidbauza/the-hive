@@ -110,5 +110,5 @@ export function rootDisplay(
   if (target === root) return { suffix: '', full: null };
 
   const segments = target.split(SEP);
-  return { suffix: segments[segments.length - 1] ?? '', full: target };
+  return { suffix: segments.at(-1) ?? '', full: target };
 }

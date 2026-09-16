@@ -270,10 +270,8 @@ export function AgentRunLog({ name }: AgentRunLogProps) {
     Reversing is the same answer without the machinery: the newest row is at
     `scrollTop: 0`, which is where a scroll box already opens, and the reader
     who scrolls away is not fighting an effect that wants to pull them back.
-
-    `slice()` first, because `reverse` mutates and `runs` is the store's array.
   */
-  const receipts = runs.slice().reverse();
+  const receipts = runs.toReversed();
   const groups = groupsOf(lines, inFlight, receipts);
 
   /*
@@ -291,7 +289,7 @@ export function AgentRunLog({ name }: AgentRunLogProps) {
     talking. Group 0 stays the fallback for a tag no group carries — the
     untagged bucket, whose lines predate the tag.
   */
-  const lastRun = lines[lines.length - 1]?.run ?? '';
+  const lastRun = lines.at(-1)?.run ?? '';
   const talking = groups.findIndex((group) => group.key === lastRun);
   const anchored = talking === -1 ? 0 : talking;
 

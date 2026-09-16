@@ -229,7 +229,7 @@ export function SegmentedControl<T extends string>({
                   break;
                 case 'End':
                   event.preventDefault();
-                  jump(selectable[selectable.length - 1]);
+                  jump(selectable.at(-1));
                   break;
                 default:
                   break;

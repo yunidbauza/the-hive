@@ -228,7 +228,7 @@ function endColumn(columns: number[], index: number): number {
     const next = columns[i] ?? at;
     if (next > at) return next;
   }
-  return Math.max(columns[columns.length - 1] ?? at + 1, at + 1);
+  return Math.max(columns.at(-1) ?? at + 1, at + 1);
 }
 
 export function createFileLinkProvider(
