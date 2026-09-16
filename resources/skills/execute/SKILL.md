@@ -15,8 +15,10 @@ once it ships, or by the person until then).
 
 ## Setup
 
-1. Read the plan and its spec once. One todo per task. Read the plan
-   critically first: a gap that stops you is raised now, not at task six.
+1. Read the plan and its spec once. One todo per task, marked completed when
+   its commit lands, or when its Done-when prints for a task with no commit;
+   the Hive's plan panel ticks only what you mark. Read the plan critically
+   first: a gap that stops you is raised now, not at task six.
 2. `ledger_claim <ticket or plan slug>`, unless the caller already holds it
    (the builder claims before it invokes this skill). Progress lines go to
    `<repo>/.hive/sdd/<plan-basename>/progress.md`, one line per task and one

@@ -50,6 +50,10 @@ Architecture: <two or three sentences>
 
 Every task's requirements include the global constraints.
 
+Setup is the caller's. The builder, inline `work-on` and `goal-on` cut the
+worktree and branch before `execute` runs, so never write a branch or worktree
+task: Task 1 is the first change.
+
 ## Task block (required shape)
 
 ````markdown
@@ -97,6 +101,8 @@ without showing how, a type or function no task defines.
 1. Spec coverage: every requirement points at a task. Add the missing ones.
 2. Placeholder scan, against the list above.
 3. Type consistency: names and signatures in later tasks match earlier ones.
+4. Spec consistency: two requirements that conflict get a ruling in the plan
+   header, and the spec is amended to match, so the builder never finds it.
 
 Fix in place. No re-review.
 
