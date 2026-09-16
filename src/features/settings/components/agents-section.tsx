@@ -14,8 +14,8 @@ import {
 import { Icon } from '@components/ui/icon';
 import { SwarmCreature } from '@components/ui/swarm-creature';
 import { AgentEditor } from '@features/settings/components/agent-editor';
+import { InlineConfirm } from '@features/settings/components/inline-confirm';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
-import { SkillDiscardConfirm } from '@features/settings/components/skill-discard-confirm';
 import { useAgents } from '@hooks/use-agents';
 import {
   AGENT_NAME_PATTERN,
@@ -519,16 +519,21 @@ export function AgentsSection() {
             />
 
             {pending === null ? null : (
-              <SkillDiscardConfirm
-                question={pending.question}
-                detail={pending.detail}
+              <InlineConfirm
+                label={pending.question}
+                title={pending.question}
                 confirmLabel={pending.confirmLabel}
+                className="rounded-[6px] border border-border-soft"
+                cancelLabel="Keep editing"
+                escape="document"
                 onConfirm={() => {
                   pending.act();
                   setPending(null);
                 }}
                 onCancel={() => setPending(null)}
-              />
+              >
+                {pending.detail}
+              </InlineConfirm>
             )}
           </div>
         )}

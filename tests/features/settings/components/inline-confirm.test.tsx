@@ -69,4 +69,51 @@ describe('InlineConfirm', () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(outside).not.toHaveBeenCalled();
   });
+
+  it('labels the safe button as the caller asks', () => {
+    render(
+      <InlineConfirm
+        label="Discard?"
+        title="Discard?"
+        confirmLabel="Discard"
+        className=""
+        cancelLabel="Keep editing"
+        onConfirm={() => {}}
+        onCancel={() => {}}
+      >
+        body
+      </InlineConfirm>,
+    );
+
+    expect(screen.getByRole('button', { name: 'Keep editing' })).toHaveFocus();
+  });
+
+  /*
+    The case the skill panes need: the caret is in the editor beside the
+    confirm, so no button ever sees the key. Capture on the document is what
+    makes Escape mean "back out" there rather than nothing at all.
+  */
+  it('with escape="document", Escape anywhere cancels before anything else sees it', async () => {
+    const onCancel = vi.fn();
+    document.addEventListener('keydown', outside);
+    render(
+      <InlineConfirm
+        label="Discard?"
+        title="Discard?"
+        confirmLabel="Discard"
+        className=""
+        escape="document"
+        onConfirm={() => {}}
+        onCancel={onCancel}
+      >
+        body
+      </InlineConfirm>,
+    );
+    document.body.focus();
+
+    await userEvent.keyboard('{Escape}');
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(outside).not.toHaveBeenCalled();
+  });
 });

@@ -7,7 +7,7 @@ import { TextField } from '@components/ui/text-field';
  *
  * New file, new folder, rename — three questions with one shape, because they
  * differ only in the verb and what they start from. Written here rather than
- * reaching for a native prompt for the reason `skill-discard-confirm.tsx` gives
+ * reaching for a native prompt for the reason `inline-confirm.tsx` gives
  * about its own question: a native dialog steals the window, cannot be styled,
  * and cannot show the rule it is enforcing beside the box.
  *
@@ -49,7 +49,8 @@ export function SkillPathPrompt({
   /**
    * Escape backs out, on the document, in the capture phase.
    *
-   * The same arrangement `skill-discard-confirm.tsx` documents at length, and
+   * The same arrangement `InlineConfirm`'s `escape="document"` documents at
+   * length, and
    * for the same reason: this question appears **beside a live editor** and the
    * caret usually stays in it, so a listener on the buttons would never see the
    * key — while `data-escape-scope` above has already told the overlay to
@@ -75,7 +76,7 @@ export function SkillPathPrompt({
       aria-label={question}
       // Read by `settings-overlay.tsx` on a document-capture listener, so
       // Escape cancels this question rather than closing the whole overlay
-      // behind it. Same contract as `skill-discard-confirm.tsx`.
+      // behind it. Same contract as `inline-confirm.tsx`.
       data-escape-scope="skill-path-prompt"
       className="flex flex-col gap-1.5 rounded-[7px] border border-border bg-panel px-2.5 py-2"
     >

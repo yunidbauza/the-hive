@@ -11,6 +11,26 @@ interface InlineConfirmProps {
   confirmLabel: string;
   /** The border, which differs between a group and a list row. */
   className: string;
+  /** The safe button's text. `Keep editing` where cancelling returns to a draft. */
+  cancelLabel?: string;
+  /**
+   * Where Escape is caught.
+   *
+   * `bubble` (the default): on the two buttons, stopped before ancestors. Sound
+   * where the confirm replaces the row it was launched from, because focus is
+   * then always one of those two buttons.
+   *
+   * `document`: a capture-phase listener, for a confirm that sits **beside a
+   * live editor** — the user was typing when they clicked another row, so the
+   * caret is in CodeMirror and Escape reaches neither button. Before this
+   * existed the key did nothing at all in that case: `data-escape-scope` had
+   * already told the settings overlay to decline (`escapeIsClaimed` falls back
+   * to a document query, so any target counts), and no button saw the key. The
+   * listener captures, so it runs before CodeMirror; it preventDefaults and
+   * stops propagation so the keystroke ends there rather than reaching Radix
+   * and closing the whole overlay behind the question.
+   */
+  escape?: 'bubble' | 'document';
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -28,6 +48,8 @@ export function InlineConfirm({
   children,
   confirmLabel,
   className,
+  cancelLabel = 'Cancel',
+  escape = 'bubble',
   onConfirm,
   onCancel,
 }: InlineConfirmProps) {
@@ -45,6 +67,20 @@ export function InlineConfirm({
     */
     cancel.current?.focus();
   }, []);
+
+  useEffect(() => {
+    if (escape !== 'document') return;
+
+    const escapes = (event: globalThis.KeyboardEvent): void => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      onCancel();
+    };
+
+    document.addEventListener('keydown', escapes, true);
+    return () => document.removeEventListener('keydown', escapes, true);
+  }, [escape, onCancel]);
 
   const escapes = (event: KeyboardEvent) => {
     if (event.key !== 'Escape') return;
@@ -75,7 +111,7 @@ export function InlineConfirm({
           onKeyDown={escapes}
           className="rounded-md border border-border px-2.5 py-1 text-[12px] text-muted hover:bg-hover hover:text-ink"
         >
-          Cancel
+          {cancelLabel}
         </button>
         <button
           type="button"

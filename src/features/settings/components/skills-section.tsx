@@ -21,10 +21,10 @@ import {
 
 import { SwarmCreature } from '@components/ui/swarm-creature';
 import { REMOTE_DISABLED_REASON } from '@config/runtime';
+import { InlineConfirm } from '@features/settings/components/inline-confirm';
 import { SessionPluginsRow } from '@features/settings/components/session-plugins-row';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
 import { SkillBundle } from '@features/settings/components/skill-bundle';
-import { SkillDiscardConfirm } from '@features/settings/components/skill-discard-confirm';
 import { SkillEditor } from '@features/settings/components/skill-editor';
 import { SkillPathPrompt } from '@features/settings/components/skill-path-prompt';
 import { useRemoteCapabilities } from '@hooks/use-project-config';
@@ -1031,16 +1031,21 @@ export function SkillsSection() {
           )}
 
           {pending === null ? null : (
-            <SkillDiscardConfirm
-              question={pending.question}
-              detail={pending.detail}
+            <InlineConfirm
+              label={pending.question}
+              title={pending.question}
               confirmLabel={pending.confirmLabel}
+              className="rounded-[6px] border border-border-soft"
+              cancelLabel="Keep editing"
+              escape="document"
               onConfirm={() => {
                 pending.act();
                 setPending(null);
               }}
               onCancel={() => setPending(null)}
-            />
+            >
+              {pending.detail}
+            </InlineConfirm>
           )}
         </div>
       </div>
