@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 
 import { KeyHint } from '@components/ui/key-hint';
 import { DEMO_PLACEHOLDER, isDesktop } from '@config/runtime';
-import { useAutoGrow } from '@hooks/use-auto-grow';
 import { isBareBack } from '@lib/terminal/keymap';
 import { useSendToEntity } from '@stores/hive-store';
 import { useBackToOrch } from '@stores/ui-store';
@@ -50,7 +49,6 @@ export function MessageInput({ entityId, inputRef }: MessageInputProps) {
   const fallbackRef = useRef<HTMLTextAreaElement>(null);
   const ref = inputRef ?? fallbackRef;
 
-  useAutoGrow(ref, value);
 
   const sendToEntity = useSendToEntity();
   const backToOrch = useBackToOrch();
@@ -134,8 +132,13 @@ export function MessageInput({ entityId, inputRef }: MessageInputProps) {
         placeholder={isDesktop() ? PLACEHOLDER : DEMO_PLACEHOLDER}
         spellCheck={false}
         aria-label={`Message ${entityId}`}
-        /* See the console row: the height is `useAutoGrow`'s to decide. */
-        className="min-w-0 flex-1 resize-none overflow-hidden border-none bg-transparent font-mono text-[12.5px] leading-normal text-ink caret-green outline-none placeholder:text-subtle"
+        /*
+         * The browser sizes the row to its content (`field-sizing: content`)
+         * and `10lh` caps it at ten rows of the computed line height; past the
+         * cap the row scrolls. `resize-none` because a drag handle in the
+         * corner of a terminal prompt would fight that.
+         */
+        className="min-w-0 flex-1 resize-none field-sizing-content max-h-[10lh] overflow-y-auto border-none bg-transparent font-mono text-[12.5px] leading-normal text-ink caret-green outline-none placeholder:text-subtle"
       />
       <KeyHint hints={HINTS} />
     </div>

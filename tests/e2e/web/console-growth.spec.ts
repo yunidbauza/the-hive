@@ -3,11 +3,10 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 /**
  * The overmind prompt grows as it fills, and stops.
  *
- * A browser-only claim, and unavoidably so: `useAutoGrow` measures
- * `scrollHeight` and a computed line height, and happy-dom performs no layout,
- * so under a unit test every one of those numbers is `0` or `NaN`. The unit
- * suite can prove the hook is wired up and that it never writes a nonsense
- * height; only a real layout engine can prove the row actually changes size.
+ * A browser-only claim, and unavoidably so: the sizing is CSS —
+ * `field-sizing: content`, capped at `10lh` — and happy-dom performs no
+ * layout, so under a unit test the row has no height to read at all. Only a
+ * real layout engine can prove the row actually changes size.
  *
  * Which makes this the half of the story the user can see. "The textarea should
  * increase in size" is a claim about pixels, and pixels are measured here.
@@ -72,10 +71,11 @@ test('a narrowed row re-measures instead of clipping in silence', async ({ page 
   /**
    * Height depends on content **and** width, but only the content is a React
    * `value`. Narrow the window after the row has been sized and the same text
-   * needs more height than it has — and because the hook pins `overflow-y`, the
-   * failure is not a scrollbar but *silent clipping*: the element keeps its old
-   * height with the overflow hidden, and most of a draft becomes unreachable
-   * with nothing on screen to say so.
+   * needs more height than it has — and if the row pinned `overflow-y` to
+   * hidden, the failure would not be a scrollbar but *silent clipping*: the
+   * element keeping its old height while most of a draft becomes unreachable
+   * with nothing on screen to say so. `overflow-y-auto` is what rules that
+   * out, and this is the assertion that holds it.
    *
    * Reproduced by resizing rather than typing, because typing would change
    * `value` and mask the bug behind the dependency that already works.
@@ -89,8 +89,8 @@ test('a narrowed row re-measures instead of clipping in silence', async ({ page 
 
   await page.setViewportSize({ width: 900, height: 800 });
 
-  // The assertion the old code failed: content taller than the box, with the
-  // overflow hidden, is text the user cannot reach by any means.
+  // The assertion the measuring hook once failed: content taller than the box,
+  // with the overflow hidden, is text the user cannot reach by any means.
   const clipped = await field.evaluate((el) => ({
     scroll: el.scrollHeight,
     client: el.clientHeight,
