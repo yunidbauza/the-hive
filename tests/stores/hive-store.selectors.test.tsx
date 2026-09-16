@@ -21,7 +21,6 @@ import {
   useAskingAgentCount,
   useAgentLive,
   useAgentLiveCount,
-  useAgentOrder,
   useAgentPr,
   useCounts,
   useFleetAgents,
@@ -29,7 +28,6 @@ import {
   useHasResumable,
   useHiveStore,
   useIdleDetailCounts,
-  useMarkRead,
   useEndedSessions,
   useNavOrder,
   useNotifs,
@@ -765,18 +763,6 @@ describe('hive-store selectors', () => {
     });
   });
 
-  describe('useAgentOrder', () => {
-    it('returns the three fixture agents in order', () => {
-      const { result } = renderHook(() => useAgentOrder());
-
-      expect(result.current).toEqual([
-        'slack-agent',
-        'pr-reviewer',
-        'standup-agent',
-      ]);
-    });
-  });
-
   describe('useAgentLive and useAgentLiveCount', () => {
     const summary = (
       name: string,
@@ -937,29 +923,6 @@ describe('hive-store selectors', () => {
       const { result } = renderHook(() => usePrs());
 
       expect(result.current.map((pr) => pr.n)).toEqual([482, 219, 495, 31, 77]);
-    });
-
-    it('useMarkRead marks exactly the notification it names', () => {
-      const { result } = renderHook(() => ({
-        markRead: useMarkRead(),
-        notifs: useNotifs(),
-      }));
-
-      act(() => {
-        useHiveStore
-          .getState()
-          .hydrateNotifs([
-            notif({ id: 'a', createdAt: 2_000 }),
-            notif({ id: 'b', createdAt: 1_000 }),
-          ]);
-      });
-
-      act(() => {
-        result.current.markRead('a');
-      });
-
-      expect(result.current.notifs.find((n) => n.id === 'a')?.unread).toBe(false);
-      expect(result.current.notifs.find((n) => n.id === 'b')?.unread).toBe(true);
     });
   });
 

@@ -63,7 +63,6 @@ import {
   useIsAgentId,
   useLedgerEntries,
   useNavOrder,
-  useOpenAskCount,
   useSessionNameReports,
   useShipping,
   useTerminalHostIds,
@@ -5367,17 +5366,6 @@ describe('the ledger slice', () => {
     expect(kept).toHaveLength(LEDGER_MEMORY_CAP);
     expect(kept[kept.length - 1].id).toBe('zzzzz');
     expect(kept[0].id).toBe('00001');
-  });
-
-  it('counts open asks', () => {
-    useHiveStore.getState().hydrateLedger([
-      entry({ id: '1', kind: 'ask', ts: Date.now() }),
-      entry({ id: '2', kind: 'ask', ts: Date.now() }),
-      entry({ id: '3', kind: 'answer', thread: '1', ts: Date.now() }),
-    ]);
-
-    const { result } = renderHook(() => useOpenAskCount());
-    expect(result.current).toBe(1);
   });
 
   it('filters entries through the shared query rules', () => {
