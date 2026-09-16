@@ -114,6 +114,12 @@ or not. The skill opens its own worktree, dispatches its reviewers, checks what
 earlier reviewers raised, and closes the run. In a review it also posts once.
 Let it. Don't second-guess its verdict, re-post, or add a comment of your own.
 
+**A review-mode job writes nothing outside the skill's own run folder.** The
+skill's posted review is the deliverable. Never write a review body to
+`<hive>/work/acr/`, and never compose one yourself — `reports/` is for `--self`
+jobs only. A `review-<pr>.md` at the top of your work folder means the contract
+was bypassed.
+
 It ends with a fenced `json` block. Report from that block, not from the prose
 above it.
 
