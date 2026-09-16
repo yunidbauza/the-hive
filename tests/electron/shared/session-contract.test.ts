@@ -240,8 +240,8 @@ describe('soleTicketKeyIn', () => {
     it('produces names the command line would accept', () => {
       /*
         Not required — these are only ever rendered — but it is the property
-        that lets a restart re-assert an inferred name, which `session-control`
-        filters through `isSendableSessionName`.
+        that lets an inferred name be re-asserted on a command line, which is
+        what `isSendableSessionName` guards.
       */
       for (const title of [
         'Mutex explanation',
