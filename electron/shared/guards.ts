@@ -153,7 +153,20 @@ const fail = (message: string): never => {
  * attacker's properties. Rejecting the key outright is cheaper and more
  * obvious than sanitising after the fact.
  */
-const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+export const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/**
+ * C0 (which includes CR, LF and ESC), DEL and the C1 block: exactly Unicode's
+ * `Cc` category. A property escape rather than a `\x00`-style class so this
+ * file holds no control bytes and `no-control-regex` never needs disabling.
+ */
+const CONTROL = /\p{Cc}/u;
+export const hasControlCharacters = (text: string): boolean => CONTROL.test(text);
+
+/** The same rule with tab, LF and CR allowed: a comment body's own whitespace. */
+const CONTROL_OUTSIDE_WHITESPACE = /(?![\t\n\r])\p{Cc}/u;
+export const hasControlCharactersOutsideWhitespace = (text: string): boolean =>
+  CONTROL_OUTSIDE_WHITESPACE.test(text);
 
 /** A plain object with an exact key set and no prototype-polluting keys. */
 function assertShape(
@@ -262,8 +275,10 @@ function assertDimension(value: unknown, label: string): number {
  * was wrong; stripping would silently send something other than what was asked
  * for, which is the worse failure for a routing layer.
  *
- * The range is tested by code point rather than a regex literal, so this file
- * stays free of control bytes and `no-control-regex` never has to be disabled.
+ * The rule itself lives in {@link hasControlCharacters}, written as the
+ * Unicode property escape `\p{Cc}` — which is the same set as C0, DEL and C1,
+ * and keeps this file free of control bytes, so `no-control-regex` never has
+ * to be disabled.
  */
 const MAX_TEXT = 4096;
 
@@ -287,12 +302,8 @@ export function assertText(value: unknown, label: string): string {
   const text = assertString(value, label);
   if (text.length === 0) return fail(`${label}: must not be empty`);
   if (text.length > MAX_TEXT) return fail(`${label}: too long`);
-  for (const char of text) {
-    const code = char.codePointAt(0) ?? 0;
-    // C0 (which includes CR, LF and ESC), DEL, and the C1 block.
-    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) {
-      return fail(`${label}: control characters are not allowed`);
-    }
+  if (hasControlCharacters(text)) {
+    return fail(`${label}: control characters are not allowed`);
   }
   return text;
 }
@@ -865,10 +876,10 @@ export function parseCloneRequest(input: unknown): CloneRequest {
 }
 
 /** POSIX-portable environment variable name. */
-const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+export const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /** The most variables one project may declare. */
-const MAX_ENV_ENTRIES = 200;
+export const MAX_ENV_ENTRIES = 200;
 
 /**
  * An environment map arriving from the renderer.
@@ -909,11 +920,8 @@ function assertEnv(value: unknown, label: string): Record<string, string> {
 
     const text = assertString(raw, `${label}.${key}`);
     if (text.length > MAX_TEXT) return fail(`${label}.${key}: too long`);
-    for (const char of text) {
-      const code = char.codePointAt(0) ?? 0;
-      if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) {
-        return fail(`${label}.${key}: control characters are not allowed`);
-      }
+    if (hasControlCharacters(text)) {
+      return fail(`${label}.${key}: control characters are not allowed`);
     }
     env[key] = text;
   }
@@ -1907,14 +1915,10 @@ export function parseAddJiraCommentRequest(
   if (markdown.length > MAX_COMMENT) {
     return fail('addJiraComment.markdown: too long');
   }
-  for (const char of markdown) {
-    const code = char.codePointAt(0) ?? 0;
-    // Tab, newline and carriage return are prose; everything else in C0, DEL
-    // and C1 is not.
-    if (code === 0x09 || code === 0x0a || code === 0x0d) continue;
-    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) {
-      return fail('addJiraComment.markdown: control characters are not allowed');
-    }
+  // Tab, newline and carriage return are prose; everything else in C0, DEL
+  // and C1 is not.
+  if (hasControlCharactersOutsideWhitespace(markdown)) {
+    return fail('addJiraComment.markdown: control characters are not allowed');
   }
 
   return {
@@ -1943,11 +1947,8 @@ function assertStatusName(value: unknown, label: string): string {
   const status = assertString(value, label).trim();
   if (status === '') return fail(`${label}: must not be empty`);
   if (status.length > MAX_STATUS_NAME) return fail(`${label}: too long`);
-  for (const char of status) {
-    const code = char.codePointAt(0) ?? 0;
-    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) {
-      return fail(`${label}: control characters are not allowed`);
-    }
+  if (hasControlCharacters(status)) {
+    return fail(`${label}: control characters are not allowed`);
   }
   return status;
 }
@@ -2280,18 +2281,15 @@ export function parseResolveRequest(input: unknown): ResolveRequest {
       const candidate = assertString(value, label);
       if (candidate === '') return fail(`${label}: empty`);
       if (candidate.length > MAX_REL_PATH) return fail(`${label}: too long`);
-      for (const char of candidate) {
-        const code = char.codePointAt(0) ?? 0;
-        /*
-          C0 and C1 both, the wider of this file's two sweeps. These candidates
-          come out of terminal output, where an escape sequence is the ordinary
-          content rather than the exotic case, and U+009B is the 8-bit CSI
-          introducer — the one control character a terminal is most likely to
-          put in front of a path.
-        */
-        if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) {
-          return fail(`${label}: control characters are not allowed`);
-        }
+      /*
+        C0 and C1 both, the wider of this file's two sweeps. These candidates
+        come out of terminal output, where an escape sequence is the ordinary
+        content rather than the exotic case, and U+009B is the 8-bit CSI
+        introducer — the one control character a terminal is most likely to
+        put in front of a path.
+      */
+      if (hasControlCharacters(candidate)) {
+        return fail(`${label}: control characters are not allowed`);
       }
       return candidate;
     },

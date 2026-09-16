@@ -33,7 +33,13 @@ import {
   SESSION_PLUGIN_NAME,
 } from '@shared/config-contract';
 import { PROJECT_KEY_HINT, isProjectKey } from '@shared/config-contract';
-import { assertId } from '@shared/guards';
+import {
+  assertId,
+  ENV_NAME,
+  FORBIDDEN_KEYS,
+  hasControlCharacters,
+  MAX_ENV_ENTRIES,
+} from '@shared/guards';
 import {
   LEGACY_NOTIFICATION_KEYS,
   NOTIFICATION_DELIVERIES,
@@ -231,7 +237,6 @@ export interface ParsedConfig {
  * usual path to pollution, but rejecting the key outright is cheaper than
  * reasoning about every future caller.
  */
-const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 const TOP_LEVEL_KEYS = [
   'version',
@@ -299,27 +304,15 @@ const PROJECT_KEYS = [
   'autoMerge',
 ];
 
-/** POSIX-portable environment variable name. */
-const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
 /**
- * The same limits the IPC guard applies (`guards.ts`).
+ * The same rules the IPC guard applies, imported from it rather than restated.
  *
  * Hand-editing the config file is an explicitly supported workflow, so this
  * reader is a real entry point and not a formality — a rule enforced on only
- * one of the two paths is a rule with a documented bypass.
+ * one of the two paths is a rule with a documented bypass, and two copies of
+ * one rule is how the two paths drift apart in the first place.
  */
-const MAX_ENV_ENTRIES = 200;
 const MAX_ENV_VALUE = 4096;
-
-/** C0 (including CR, LF and ESC), DEL, and the C1 block. */
-function hasControlCharacters(text: string): boolean {
-  for (const char of text) {
-    const code = char.codePointAt(0) ?? 0;
-    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) return true;
-  }
-  return false;
-}
 
 /**
  * Read an entry's `env` map, rejecting the whole map on any bad member.
