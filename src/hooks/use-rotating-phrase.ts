@@ -31,10 +31,7 @@ export const PHRASE_ROTATION_MS = 4_000;
  * outright rather than slowing it. The user still gets a phrase — the first one
  * — for the same reason the creature still appears and simply holds still.
  */
-export function useRotatingPhrase(
-  key: PhraseKey,
-  intervalMs: number = PHRASE_ROTATION_MS,
-): string {
+export function useRotatingPhrase(key: PhraseKey): string {
   const reduced = useReducedMotion();
   const [phrase, setPhrase] = useState(() => pickPhrase(key));
 
@@ -56,10 +53,10 @@ export function useRotatingPhrase(
         }
         return current;
       });
-    }, intervalMs);
+    }, PHRASE_ROTATION_MS);
 
     return () => clearInterval(timer);
-  }, [key, intervalMs, reduced]);
+  }, [key, reduced]);
 
   return phrase;
 }

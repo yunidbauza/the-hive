@@ -183,7 +183,6 @@ const CREDENTIAL_HEADROOM = 512;
  */
 export function composeResumeFrom(
   tracker: ResumeTracker,
-  budgetBytes: number = ATTACH_FRAME_MAX_BYTES,
 ): Readonly<Record<string, ResumePoint>> | undefined {
   const candidates = tracker.points();
   if (candidates.length === 0) return undefined;
@@ -211,7 +210,7 @@ export function composeResumeFrom(
     const weight = frameBytes(
       JSON.stringify(attachRequest(placeholder, placeholder, fitted)),
     );
-    if (weight > budgetBytes) {
+    if (weight > ATTACH_FRAME_MAX_BYTES) {
       delete fitted[sessionId];
       break;
     }
