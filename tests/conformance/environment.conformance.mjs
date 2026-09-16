@@ -156,7 +156,7 @@ describe('environment', () => {
      * spawns — the pty-host itself has no notion of two layers, it is handed
      * one already-merged map. So this does not re-prove the merge (that's
      * `runtime.test.ts`'s job, against fakes); it proves the merged map
-     * *survives the trip* through `buildEnv` and a real spawn unchanged: a
+     * *survives the trip* through `buildSessionEnv` and a real spawn unchanged: a
      * workspace-only variable, and a variable both layers set, arriving with
      * the value the project layer chose.
      *

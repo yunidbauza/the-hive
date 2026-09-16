@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 
-import { buildEnv, COLORTERM, TERM } from '../../../electron/pty-host/env';
+import { buildSessionEnv, COLORTERM, TERM } from '../../../electron/shared/config-contract';
 
 /**
  * Environment sanitisation for spawned shells (story 092, HIVE-64).
@@ -11,9 +11,9 @@ import { buildEnv, COLORTERM, TERM } from '../../../electron/pty-host/env';
  * behaves strangely, and nothing was pinning the deny list.
  */
 
-describe('buildEnv', () => {
+describe('buildSessionEnv', () => {
   it('passes ordinary variables through', () => {
-    const env = buildEnv({ PATH: '/usr/bin', HOME: '/Users/dev' }, '/repo');
+    const env = buildSessionEnv({ PATH: '/usr/bin', HOME: '/Users/dev' }, '/repo');
 
     expect(env.PATH).toBe('/usr/bin');
     expect(env.HOME).toBe('/Users/dev');
@@ -21,7 +21,7 @@ describe('buildEnv', () => {
 
   it('forces the terminal’s own identity last', () => {
     // An injected TERM is far likelier to be a mistake than an intention.
-    const env = buildEnv({ TERM: 'dumb' }, '/repo', { COLORTERM: 'nope' });
+    const env = buildSessionEnv({ TERM: 'dumb' }, '/repo', { COLORTERM: 'nope' });
 
     expect(env.TERM).toBe(TERM);
     expect(env.COLORTERM).toBe(COLORTERM);
@@ -31,14 +31,14 @@ describe('buildEnv', () => {
   it.each(['ELECTRON_RUN_AS_NODE', 'NODE_OPTIONS', 'NODE_PATH'])(
     'strips %s, which silently changes how child processes run',
     (key) => {
-      expect(buildEnv({ [key]: 'x' }, '/repo')).not.toHaveProperty(key);
+      expect(buildSessionEnv({ [key]: 'x' }, '/repo')).not.toHaveProperty(key);
     },
   );
 
   it.each(['ELECTRON_FOO', 'GDK_PIXBUF_MODULE_FILE', 'CHROME_DESKTOP'])(
     'strips %s by prefix',
     (key) => {
-      expect(buildEnv({ [key]: 'x' }, '/repo')).not.toHaveProperty(key);
+      expect(buildSessionEnv({ [key]: 'x' }, '/repo')).not.toHaveProperty(key);
     },
   );
 
@@ -62,11 +62,11 @@ describe('buildEnv', () => {
     };
 
     it.each(Object.keys(LEAKED))('strips %s', (key) => {
-      expect(buildEnv(LEAKED, '/repo')).not.toHaveProperty(key);
+      expect(buildSessionEnv(LEAKED, '/repo')).not.toHaveProperty(key);
     });
 
     it('leaves nothing Claude-related behind at all', () => {
-      const env = buildEnv({ ...LEAKED, PATH: '/usr/bin' }, '/repo');
+      const env = buildSessionEnv({ ...LEAKED, PATH: '/usr/bin' }, '/repo');
 
       expect(Object.keys(env).filter((key) => key.toUpperCase().startsWith('CLAUDE'))).toEqual(
         [],
@@ -81,7 +81,7 @@ describe('buildEnv', () => {
        * project cannot opt back into joining the launcher's session, by
        * accident or otherwise.
        */
-      const env = buildEnv({}, '/repo', { CLAUDE_CODE_SESSION_ID: 'someone-elses' });
+      const env = buildSessionEnv({}, '/repo', { CLAUDE_CODE_SESSION_ID: 'someone-elses' });
 
       expect(env).not.toHaveProperty('CLAUDE_CODE_SESSION_ID');
     });
@@ -89,7 +89,7 @@ describe('buildEnv', () => {
     it('does not strip merely Claude-adjacent names', () => {
       // The prefix is `CLAUDE_`; an unrelated variable that starts with the
       // letters must survive, or a user's own tooling breaks silently.
-      const env = buildEnv({ CLAUDIA_HOME: '/opt/claudia' }, '/repo');
+      const env = buildSessionEnv({ CLAUDIA_HOME: '/opt/claudia' }, '/repo');
 
       expect(env.CLAUDIA_HOME).toBe('/opt/claudia');
     });
@@ -106,9 +106,9 @@ describe('buildEnv', () => {
  * uses it today, and it is a billing decision rather than a correctness fix —
  * which is exactly why it is a parameter and not a constant in here.
  */
-describe('buildEnv stripEnv', () => {
+describe('buildSessionEnv stripEnv', () => {
   it('drops the names it is given', () => {
-    const env = buildEnv(
+    const env = buildSessionEnv(
       { ANTHROPIC_API_KEY: 'sk-ant-x', PATH: '/usr/bin' },
       '/repo',
       {},
@@ -120,7 +120,7 @@ describe('buildEnv stripEnv', () => {
   });
 
   it('keeps them when the list is empty — the pre-HIVE-79 environment exactly', () => {
-    const env = buildEnv({ ANTHROPIC_API_KEY: 'sk-ant-x' }, '/repo');
+    const env = buildSessionEnv({ ANTHROPIC_API_KEY: 'sk-ant-x' }, '/repo');
 
     expect(env.ANTHROPIC_API_KEY).toBe('sk-ant-x');
   });
@@ -131,7 +131,7 @@ describe('buildEnv stripEnv', () => {
    * project happened to be open.
    */
   it('applies to injected variables as well as inherited ones', () => {
-    const env = buildEnv(
+    const env = buildSessionEnv(
       {},
       '/repo',
       { ANTHROPIC_API_KEY: 'sk-ant-from-project' },
@@ -142,10 +142,10 @@ describe('buildEnv stripEnv', () => {
   });
 
   it('still forces the terminal identity', () => {
-    const env = buildEnv({ PATH: '/usr/bin' }, '/repo', {}, ['PATH']);
+    const env = buildSessionEnv({ PATH: '/usr/bin' }, '/repo', {}, ['PATH']);
 
     // Stripping PATH is a bad idea, but it must not break the invariants the
-    // last three lines of buildEnv exist to guarantee.
+    // last three lines of buildSessionEnv exist to guarantee.
     expect(env.TERM).toBe(TERM);
     expect(env.PWD).toBe('/repo');
   });

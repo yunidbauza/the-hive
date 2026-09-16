@@ -93,8 +93,8 @@ export interface ProjectConfig {
   /**
    * Extra environment for every session in this project.
    *
-   * Merged by the pty-host on top of the inherited environment
-   * (`pty-host/env.ts`), which then forces `TERM`, `COLORTERM` and `PWD` — so
+   * Merged by the pty-host on top of the inherited environment (see
+   * {@link buildSessionEnv}), which then forces `TERM`, `COLORTERM` and `PWD` — so
    * those three are rejected at the guard rather than accepted and silently
    * overwritten.
    */
@@ -1489,7 +1489,7 @@ export const UNSAFE_ENV_KEYS: readonly string[] = [
 /**
  * Variables the pty-host sets for itself, after merging anything injected.
  *
- * Accepting one would store a setting that `buildEnv` then overwrites — a
+ * Accepting one would store a setting that `buildSessionEnv` then overwrites — a
  * setting that does nothing is worse than a setting that is refused.
  */
 export const RESERVED_ENV_KEYS: readonly string[] = ['TERM', 'COLORTERM', 'PWD'];
@@ -1503,8 +1503,8 @@ export const RESERVED_ENV_KEYS: readonly string[] = ['TERM', 'COLORTERM', 'PWD']
  * launching session instead of starting its own — every new session opening
  * under somebody else's name, and renaming one renaming all of them.
  *
- * `pty-host/env.ts` strips these from the inherited environment, and **imports
- * these constants rather than restating them**. Two lists that must agree is
+ * {@link buildSessionEnv} strips these from the inherited environment, and
+ * **reads these constants rather than restating them**. Two lists that must agree is
  * exactly how the message row and the terminal drifted apart in HIVE-65; one
  * definition with two consumers cannot.
  *
@@ -1602,8 +1602,8 @@ export const SESSION_PLUGIN_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
  * The one definition of "what a spawned session's environment looks like"
  * (story 092, extended by story 108's fix round).
  *
- * Originally lived only in `electron/pty-host/env.ts`, which is fine for the
- * pty-host itself but was wrong for the env diagnostic
+ * Originally lived only in the pty-host's own `env.ts`, which was fine for the
+ * pty-host itself but wrong for the env diagnostic
  * (`electron/main/config/env-diagnostic.ts`): main may not import
  * `electron/pty-host/**` (the process-boundary zone in `eslint.config.mjs`
  * only grants it `electron/shared/**`), so the diagnostic had been building
@@ -1618,7 +1618,7 @@ export const SESSION_PLUGIN_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
  * powerlevel10k both do — would take a different branch under the probe than
  * under a real session, and the diagnostic would report a variable as "kept"
  * that a real session would actually see overridden. Living here and being
- * called by both `buildEnv` (pty-host) and `diagnoseEnv` (main) is what
+ * called by both the session manager (pty-host) and `diagnoseEnv` (main) is what
  * makes that impossible: there is exactly one place this logic can drift.
  */
 export const TERM = 'xterm-256color';
@@ -1713,6 +1713,15 @@ export function isSessionEnvDenied(key: string): boolean {
  * Build the environment a spawned session ends up with — and, since story
  * 108's fix round, the environment the env diagnostic probes, so the two can
  * never quietly diverge again.
+ *
+ * **The non-obvious part of making a terminal real.** A child must not inherit
+ * the app's process environment verbatim: Electron sets variables that break or
+ * confuse child processes, and a shell spawned from a `utilityProcess` inherits
+ * several that make no sense for it. It is the bug class that produces "it works
+ * in my terminal but not in the app", invisible until something downstream
+ * behaves strangely — a `node` that silently runs with different options, an
+ * `electron` invocation that turns itself into a Node process. It gets a
+ * dedicated conformance assertion in story 098.
  *
  * Start from a copy of the base environment, delete the deny-list, apply
  * whatever was injected explicitly, then force `TERM`, `COLORTERM` and `PWD`.

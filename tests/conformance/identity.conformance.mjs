@@ -44,7 +44,7 @@ describe('identity', () => {
     /**
      * How every program in the terminal decides what it may emit. Get it wrong
      * and colours silently vanish, or garbage appears where a capability was
-     * assumed. Deliberately forced by `buildEnv`, last, so an injected override
+     * assumed. Deliberately forced by `buildSessionEnv`, last, so an injected override
      * cannot win — it is far more likely a mistake than an intention.
      */
     session.send('echo "TERM=[$TERM]"');

@@ -86,7 +86,7 @@ describe('EnvEditor', () => {
   /**
    * The user-facing half of HIVE-64.
    *
-   * `buildEnv` strips `CLAUDE_*` from `injected` as well as from the ambient
+   * `buildSessionEnv` strips `CLAUDE_*` from `injected` as well as from the ambient
    * environment, so without a refusal here the variable would save, render as
    * set, and then be dropped on every spawn. The pane saying so is what makes
    * the strip honest rather than silent.

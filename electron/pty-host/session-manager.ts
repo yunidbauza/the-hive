@@ -3,6 +3,7 @@ import { StringDecoder } from 'node:string_decoder';
 
 import { spawn as spawnPty, type IPty } from 'node-pty';
 
+import { buildSessionEnv, TERM } from '@shared/config-contract';
 import {
   FOREGROUND_POLL_MS,
   KILL_GRACE_MS,
@@ -13,7 +14,6 @@ import {
   type SpawnCommand,
 } from '@shared/pty-host-protocol';
 
-import { TERM, buildEnv } from './env';
 import {
   processControl,
   type Descendant,
@@ -534,11 +534,11 @@ export function createSessionManager(
       let pty: IPty;
       try {
         pty = spawn(shell, args, {
-          // `TERM` in the child. See `env.ts` — the single most consequential
-          // option here.
+          // `TERM` in the child. See `buildSessionEnv` — the single most
+          // consequential option here.
           name: TERM,
           cwd,
-          env: buildEnv(baseEnv, cwd, command.env, command.stripEnv),
+          env: buildSessionEnv(baseEnv, cwd, command.env, command.stripEnv),
           cols: Math.max(1, cols),
           rows: Math.max(1, rows),
           /**

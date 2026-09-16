@@ -8,12 +8,12 @@ import {
   spawnCalls,
   ptyInstances,
 } from '../../../__mocks__/node-pty';
-import { TERM } from '../../../electron/pty-host/env';
 import type { Descendant } from '../../../electron/pty-host/process-tree';
 import {
   createSessionManager,
   type SessionManager,
 } from '../../../electron/pty-host/session-manager';
+import { TERM } from '../../../electron/shared/config-contract';
 import {
   TRUNCATION_NOTICE,
   type HostMessage,

@@ -2077,7 +2077,7 @@ export function createSessions(options: SessionsOptions): Sessions {
        * tooling behave the way they do outside this app.
        *
        * Story 104 adds one thing on top: the project's own variables. They are
-       * *merged* by `buildEnv` in the host, which then forces `TERM`,
+       * *merged* by `buildSessionEnv` in the host, which then forces `TERM`,
        * `COLORTERM` and `PWD` — which is why those three are refused at the
        * guard rather than accepted and silently overwritten.
        */

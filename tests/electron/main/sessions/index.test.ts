@@ -1758,7 +1758,7 @@ describe('openCommand', () => {
 /**
  * Which credentials a session inherits (HIVE-79).
  *
- * The removal itself happens in the pty host's `buildEnv`; what is asserted
+ * The removal itself happens in the shared `buildSessionEnv`; what is asserted
  * here is the **decision** — that main reads the config and tells the host
  * which names to drop. The two halves are tested apart because only this one
  * knows about a config file and only that one knows about an environment.

@@ -168,7 +168,7 @@ describe('parseSetProjectRuntimeRequest', () => {
 
   it('refuses the variables the terminal sets for itself', () => {
     for (const reserved of ['TERM', 'COLORTERM', 'PWD']) {
-      // Accepting these would store a setting that `buildEnv` then silently
+      // Accepting these would store a setting that `buildSessionEnv` then silently
       // overwrites — worse than refusing it.
       expect(() =>
         parseSetProjectRuntimeRequest({ id: 'a', env: { [reserved]: 'x' } }),
@@ -179,7 +179,7 @@ describe('parseSetProjectRuntimeRequest', () => {
   /**
    * The same rule, applied to the names HIVE-64 added to the pty-host deny-list.
    *
-   * `buildEnv` filters `injected` as well as the ambient copy, so without this
+   * `buildSessionEnv` filters `injected` as well as the ambient copy, so without this
    * guard a `CLAUDE_*` entry would save, render as set in the runtime pane, and
    * then be dropped on every spawn — the user watching `claude` ignore a setting
    * the UI insists is applied. Stripped there, refused here, one list shared.
@@ -208,7 +208,7 @@ describe('parseSetProjectRuntimeRequest', () => {
   /**
    * The finding that mattered most in review.
    *
-   * Per-project env is the first user-reachable path into `buildEnv`'s
+   * Per-project env is the first user-reachable path into `buildSessionEnv`'s
    * `injected` argument — before story 104 it was always `{}`. These variables
    * make the OS load arbitrary shared libraries into every process the spawned
    * shell forks, which is native code execution. Story 082's posture is that
