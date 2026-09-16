@@ -10,13 +10,8 @@ import {
 import { isSession } from '@/types/entity';
 
 import { GaugeRing, gaugeTone } from '@components/ui/gauge-ring';
+import { TONE_TEXT } from '@components/ui/tag';
 import { useActiveEntity, useSessionMetrics } from '@stores/hive-store';
-
-const TONE_TEXT = {
-  brand: 'text-brand',
-  amber: 'text-amber',
-  red: 'text-red',
-} as const;
 
 interface StatProps {
   pct: number;

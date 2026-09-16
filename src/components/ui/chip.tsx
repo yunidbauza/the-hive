@@ -3,12 +3,7 @@ import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import type { Tone } from '@/types/notification';
 
-const TONE_TEXT: Record<Tone, string> = {
-  brand: 'text-brand',
-  green: 'text-green',
-  amber: 'text-amber',
-  red: 'text-red',
-};
+import { TONE_TEXT } from '@components/ui/tag';
 
 interface ChipProps {
   children: ReactNode;

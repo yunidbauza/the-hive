@@ -4,7 +4,8 @@ import { cn } from '@/lib/utils';
 
 export type TagTone = 'brand' | 'green' | 'amber' | 'red' | 'subtle';
 
-const TONE_TEXT: Record<TagTone, string> = {
+/** Text colour per tone. The superset; every other tone map in the app is a subset of this one. */
+export const TONE_TEXT: Record<TagTone, string> = {
   brand: 'text-brand',
   green: 'text-green',
   amber: 'text-amber',

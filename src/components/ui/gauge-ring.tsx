@@ -1,5 +1,7 @@
 import { cn } from '@/lib/utils';
 
+import { TONE_TEXT } from '@components/ui/tag';
+
 /** Where the arc changes colour. Below the first is calm; at or above the second is urgent. */
 export const GAUGE_WARN_PCT = 60;
 export const GAUGE_CRITICAL_PCT = 85;
@@ -10,12 +12,6 @@ export function gaugeTone(pct: number): 'brand' | 'amber' | 'red' {
   if (pct >= GAUGE_WARN_PCT) return 'amber';
   return 'brand';
 }
-
-const TONE_TEXT = {
-  brand: 'text-brand',
-  amber: 'text-amber',
-  red: 'text-red',
-} as const;
 
 interface GaugeRingProps {
   /** 0–100. A ring is only ever drawn for a number somebody reported. */

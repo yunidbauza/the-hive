@@ -4,10 +4,10 @@ import { cn } from '@/lib/utils';
 import {
   NOTIFICATION_KIND_SPECS,
   type HiveNotification,
-  type Tone,
 } from '@/types/notification';
 
 import { Icon } from '@components/ui/icon';
+import { TONE_TEXT } from '@components/ui/tag';
 import { AskCard } from '@features/inbox/components/ask-card';
 import { useReducedMotion } from '@hooks/use-reduced-motion';
 import { useRelativeTime } from '@hooks/use-relative-time';
@@ -27,13 +27,6 @@ import {
  * the component waits for, rather than a second guess.
  */
 export const CARD_EXIT_MS = 220;
-
-const TONE_TEXT: Record<Tone, string> = {
-  amber: 'text-amber',
-  green: 'text-green',
-  brand: 'text-brand',
-  red: 'text-red',
-};
 
 interface NotificationCardProps {
   notif: HiveNotification;
