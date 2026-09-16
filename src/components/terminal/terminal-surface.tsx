@@ -26,6 +26,7 @@ import {
   type TerminalChordDetail,
 } from '@lib/terminal/keymap';
 import { createTerminalLinkHandler, handleWebLink } from '@lib/terminal/open-link';
+import { decodeOsc52Write } from '@lib/terminal/osc52';
 import type { PromptInput, TerminalTransport } from '@lib/terminal/terminal-transport';
 import type { ResolvedLink } from '@shared/fs-contract';
 
@@ -473,6 +474,16 @@ export function TerminalSurface({
       fontSize,
       lineHeight: LINE_HEIGHT,
       /**
+       * Option+drag selects even while a program holds mouse tracking (#288).
+       *
+       * Claude Code turns tracking on at start, and xterm disables selection
+       * for as long as it is on; on macOS Option is the only override and it
+       * defaults off. Without it no drag makes a selection, so `Cmd+C` has
+       * nothing to copy. Option+click stops reaching the program, as in iTerm2
+       * and VS Code.
+       */
+      macOptionClickForcesSelection: true,
+      /**
        * OSC 8 hyperlinks — the `⧉ artifact` chip Claude Code emits, and any
        * program that marks up its own links rather than printing a bare URL.
        *
@@ -537,6 +548,22 @@ export function TerminalSurface({
     terminal.loadAddon(new WebLinksAddon(handleWebLink));
 
     const isMac = isMacPlatform();
+
+    /**
+     * OSC 52 writes, the program's own copy (#288). xterm implements none, so
+     * without this a "Copied to clipboard" from a session with no `pbcopy` — a
+     * container — went nowhere. `true` either way: a refused query is consumed,
+     * not passed on. See `lib/terminal/osc52.ts` for why the query is refused.
+     */
+    const osc52 = terminal.parser.registerOscHandler(52, (data) => {
+      const text = decodeOsc52Write(data);
+      if (text !== null) {
+        void navigator.clipboard
+          ?.writeText(text)
+          .catch((reason: unknown) => reportClipboardFailure('copy', reason));
+      }
+      return true;
+    });
 
     /*
       Paths, as distinct from URLs: `⌘`-click (Ctrl elsewhere) opens the file
@@ -750,6 +777,7 @@ export function TerminalSurface({
     return () => {
       resizeObserver.disconnect();
       fileLinks.dispose();
+      osc52.dispose();
       terminal.dispose();
       setInstance(null);
     };
