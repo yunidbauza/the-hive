@@ -9,13 +9,21 @@ function Probe() {
 
 type Listener = (event: MediaQueryListEvent) => void;
 
+/*
+  A stub that remembers the change, the way a real `MediaQueryList` does: the
+  hook re-reads the source rather than trusting the event it was handed, so a
+  `matches` frozen at `initial` would describe a browser that does not exist.
+*/
 function stubMatchMedia(initial: boolean) {
   const listeners = new Set<Listener>();
+  let current = initial;
 
   vi.stubGlobal(
     'matchMedia',
     vi.fn(() => ({
-      matches: initial,
+      get matches() {
+        return current;
+      },
       media: '(prefers-reduced-motion: reduce)',
       addEventListener: (_: string, fn: Listener) => listeners.add(fn),
       removeEventListener: (_: string, fn: Listener) => listeners.delete(fn),
@@ -24,6 +32,7 @@ function stubMatchMedia(initial: boolean) {
 
   return {
     change(matches: boolean) {
+      current = matches;
       for (const fn of listeners) fn({ matches } as MediaQueryListEvent);
     },
     get size() {

@@ -1,6 +1,20 @@
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 
 const QUERY = '(prefers-reduced-motion: reduce)';
+
+const list = (): MediaQueryList | null =>
+  typeof window === 'undefined' || typeof window.matchMedia !== 'function'
+    ? null
+    : window.matchMedia(QUERY);
+
+const subscribe = (onChange: () => void): (() => void) => {
+  const media = list();
+  if (media === null) return () => {};
+  media.addEventListener('change', onChange);
+  return () => media.removeEventListener('change', onChange);
+};
+
+const read = (): boolean => list()?.matches ?? false;
 
 /**
  * Whether the user has asked for less motion.
@@ -24,33 +38,5 @@ const QUERY = '(prefers-reduced-motion: reduce)';
  * at somebody who just asked it to stop.
  */
 export function useReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(() => {
-    /**
-     * `matchMedia` is missing in a non-DOM environment and, more relevantly
-     * here, in happy-dom depending on the version. Treating absence as "no
-     * preference" keeps the animated path as the default rather than making a
-     * test environment silently assert the fallback.
-     */
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
-      return false;
-    }
-
-    return window.matchMedia(QUERY).matches;
-  });
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
-      return;
-    }
-
-    const list = window.matchMedia(QUERY);
-    const onChange = (event: MediaQueryListEvent): void => setReduced(event.matches);
-
-    setReduced(list.matches);
-    list.addEventListener('change', onChange);
-
-    return () => list.removeEventListener('change', onChange);
-  }, []);
-
-  return reduced;
+  return useSyncExternalStore(subscribe, read, () => false);
 }
