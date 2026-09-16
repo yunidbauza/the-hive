@@ -74,6 +74,8 @@
  * than half-built.
  */
 
+import { fileUrlToCandidate } from '@lib/terminal/file-links';
+
 /** Open `uri` in the user's browser. Main decides whether it may be opened. */
 export function openTerminalLink(uri: string): void {
   window.open(uri, '_blank', 'noopener,noreferrer');
@@ -99,9 +101,41 @@ export function handleWebLink(_event: MouseEvent, uri: string): void {
  * Shaped as an object literal rather than typed against `ILinkHandler` so this
  * module stays free of an xterm import; the surface passes it straight into the
  * `Terminal` options, where the real type is checked.
+ *
+ * ## The scheme split
+ *
+ * `file://` takes the road a *printed* path takes — the resolver, then the
+ * editor — and never `window.open`. That is not a new policy so much as the
+ * first one that works: main's allowlist is `http:` and `https:`, so a
+ * `file://` hyperlink was detected, underlined, and dead on click, the same
+ * shape as the bare-URL bug this module was written for.
+ *
+ * A `file://` link naming another host is dropped in silence rather than
+ * handed to the browser. It is not a file any root here can contain, and
+ * opening a web page instead would be a different action than the one the
+ * link offered.
+ *
+ * No modifier, unlike a printed path: an explicit hyperlink is a thing the
+ * program marked up *as* a link, so a plain click activates it, exactly as it
+ * always did and as the `⧉ artifact` chip still does.
  */
-export const terminalLinkHandler = {
-  activate: (_event: MouseEvent, text: string): void => {
-    openTerminalLink(text);
-  },
-};
+export function createTerminalLinkHandler(
+  openFile: (candidate: string) => void,
+): { activate: (event: MouseEvent, text: string) => void } {
+  return {
+    activate: (_event: MouseEvent, text: string): void => {
+      if (text.startsWith('file:')) {
+        const candidate = fileUrlToCandidate(text);
+        if (candidate !== null) openFile(candidate);
+        return;
+      }
+      openTerminalLink(text);
+    },
+  };
+}
+
+/**
+ * The handler with no file opener — the browser target, and every caller that
+ * predates file links.
+ */
+export const terminalLinkHandler = createTerminalLinkHandler(() => undefined);

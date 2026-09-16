@@ -123,6 +123,37 @@ export function splitPosition(text: string): {
   return { path, line, ...(col !== undefined && col >= 1 ? { col } : {}) };
 }
 
+/**
+ * An OSC 8 `file://` hyperlink as a candidate for the same resolver, or `null`.
+ *
+ * Only a local file is a candidate — an empty host or `localhost`. A
+ * UNC-style host names another machine, and no root here can contain it, so it
+ * is dropped rather than guessed at. The fragment goes too: nothing this app
+ * prints puts a position there, and `#L12` is a GitHub convention rather than
+ * a filesystem one.
+ */
+export function fileUrlToCandidate(uri: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(uri);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== 'file:') return null;
+  if (url.hostname !== '' && url.hostname !== 'localhost') return null;
+  // `new URL('file:')` parses, with `/` for a pathname. The filesystem root
+  // names no file, so it is refused here rather than sent on a round trip.
+  if (url.pathname === '' || url.pathname === '/') return null;
+
+  try {
+    return decodeURIComponent(url.pathname);
+  } catch {
+    // A malformed percent-escape. Not a path, and not worth a guess.
+    return null;
+  }
+}
+
 /** xterm's `IBufferRange`: 1-based columns and rows, `end` inclusive. */
 export interface LinkRange {
   start: { x: number; y: number };
@@ -184,7 +215,13 @@ export interface FileLinkProviderOptions {
   open: (target: FileLinkTarget) => void;
   /** Whether this click carries the platform's open modifier. */
   isModified: (event: MouseEvent) => boolean;
-  hover?: (text: string) => void;
+  /**
+   * The event rides along because the pointer is the only thing that knows
+   * where the link is on screen: the WebGL renderer paints the row into a
+   * canvas and exposes no public cell metrics, so a tooltip cannot be placed
+   * from the range alone.
+   */
+  hover?: (text: string, event: MouseEvent) => void;
   leave?: () => void;
 }
 
@@ -305,7 +342,7 @@ export function createFileLinkProvider(
               activate: (event) => {
                 if (options.isModified(event)) options.open(target);
               },
-              hover: () => options.hover?.(candidate.text),
+              hover: (event) => options.hover?.(candidate.text, event),
               leave: () => options.leave?.(),
             },
           ];

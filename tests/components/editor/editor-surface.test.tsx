@@ -245,4 +245,72 @@ describe('EditorSurface', () => {
     unmount();
     expect(container.querySelector('.cm-editor')).toBeNull();
   });
+
+  /**
+   * The caret a `⌘`-clicked `path:12:7` asks for.
+   *
+   * A real `EditorView`, so the assertion is the actual selection offset
+   * rather than a dispatched effect. What stays in Playwright is the *scroll* —
+   * `scrollIntoView` is honoured on the view's next measure, and happy-dom
+   * performs none.
+   */
+  describe('cursor', () => {
+    const three = 'alpha\nbeta gamma\ndelta\n';
+    const head = (container: HTMLElement) => {
+      const dom = container.querySelector('.cm-editor');
+      const view = EditorView.findFromDOM(dom as HTMLElement);
+      return view?.state.selection.main.head;
+    };
+
+    it('moves the caret to the line and column and reports it applied', () => {
+      const onCursorApplied = vi.fn();
+      const { container } = render(
+        <EditorSurface
+          {...baseProps}
+          value={three}
+          cursor={{ line: 2, col: 6 }}
+          onCursorApplied={onCursorApplied}
+        />,
+      );
+
+      // Line 2 starts at offset 6 ("alpha\n"); column 6 is the "g" of gamma.
+      expect(head(container)).toBe(11);
+      expect(onCursorApplied).toHaveBeenCalledTimes(1);
+    });
+
+    it('clamps a line past the end and a column past the line', () => {
+      const { container } = render(
+        <EditorSurface {...baseProps} value={three} cursor={{ line: 99, col: 99 }} />,
+      );
+
+      // The last line is the empty one after the trailing newline.
+      expect(head(container)).toBe(three.length);
+    });
+
+    it('does nothing for a null cursor, and applies one that arrives later', () => {
+      const onCursorApplied = vi.fn();
+      const { container, rerender } = render(
+        <EditorSurface
+          {...baseProps}
+          value={three}
+          cursor={null}
+          onCursorApplied={onCursorApplied}
+        />,
+      );
+      expect(onCursorApplied).not.toHaveBeenCalled();
+
+      rerender(
+        <EditorSurface
+          {...baseProps}
+          value={three}
+          cursor={{ line: 3, col: 1 }}
+          onCursorApplied={onCursorApplied}
+        />,
+      );
+
+      expect(head(container)).toBe(17);
+      expect(onCursorApplied).toHaveBeenCalledTimes(1);
+    });
+  });
+
 });

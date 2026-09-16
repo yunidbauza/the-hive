@@ -989,6 +989,34 @@ describe('CenterStage — Show plan panel (HIVE-182)', () => {
       );
     });
 
+    it('carries the line and column into the buffer', async () => {
+      render(<CenterStage />);
+      act(() => useUiStore.getState().openTab('hero-refresh'));
+      const instance = terminalInstances.at(-1);
+      expect(instance).toBeDefined();
+      instance!.bufferLines = ['src/a.ts:4:2'];
+
+      open((await links(1))?.[0]);
+
+      const file = useEditorStore
+        .getState()
+        .openFiles.find((entry) => entry.key === fileKey('nova-web', 'src/a.ts'));
+      expect(file?.pendingCursor).toEqual({ line: 4, col: 2 });
+    });
+
+    it('opens at the top when the path named no line', async () => {
+      render(<CenterStage />);
+      act(() => useUiStore.getState().openTab('hero-refresh'));
+      terminalInstances.at(-1)!.bufferLines = ['src/a.ts'];
+
+      open((await links(1))?.[0]);
+
+      const file = useEditorStore
+        .getState()
+        .openFiles.find((entry) => entry.key === fileKey('nova-web', 'src/a.ts'));
+      expect(file?.pendingCursor).toBeNull();
+    });
+
     it('closes what was open first in single-file mode', async () => {
       act(() => useAppearanceStore.getState().setEditorNav('single'));
       render(<CenterStage />);

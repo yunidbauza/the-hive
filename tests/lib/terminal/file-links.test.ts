@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { findCandidates, splitPosition } from '@lib/terminal/file-links';
+import {
+  fileUrlToCandidate,
+  findCandidates,
+  splitPosition,
+} from '@lib/terminal/file-links';
 
 /**
  * What in a line of terminal output *might* be a file.
@@ -56,5 +60,26 @@ describe('splitPosition', () => {
     ['src/a.ts:12:0', { path: 'src/a.ts', line: 12 }],
   ])('%s', (text, expected) => {
     expect(splitPosition(text)).toEqual(expected);
+  });
+});
+
+/**
+ * OSC 8 `file://` hyperlinks — a program marking up its own path rather than
+ * printing a bare one.
+ */
+describe('fileUrlToCandidate', () => {
+  it.each([
+    ['file:///Users/me/repo/src/a.ts', '/Users/me/repo/src/a.ts'],
+    ['file://localhost/Users/me/a%20b.ts', '/Users/me/a b.ts'],
+    ['file:///Users/me/a.ts#L12', '/Users/me/a.ts'],
+    // Another machine: no root here can contain it.
+    ['file://server/share/a.ts', null],
+    ['https://example.com/a.ts', null],
+    ['file:', null],
+    ['not a url', null],
+    // A malformed escape would throw out of decodeURIComponent.
+    ['file:///Users/me/%E0%A4%A.ts', null],
+  ])('%s', (uri, expected) => {
+    expect(fileUrlToCandidate(uri)).toBe(expected);
   });
 });

@@ -372,4 +372,26 @@ describe('EditorPane — single-file mode', () => {
 
     expect(screen.getByText('unsaved changes')).toBeInTheDocument();
   });
+
+  /**
+   * The buffer's pending cursor reaches the surface and is cleared.
+   *
+   * Asserted through the store rather than the DOM: that the *caret lands* is
+   * `editor-surface.test.tsx`'s claim against a real `EditorView`, and what
+   * this pane owns is the wiring — that it hands the position down and reports
+   * the application back, so the request is served exactly once.
+   */
+  it('hands the pending cursor to the surface and consumes it', async () => {
+    await act(async () => {
+      store().openFile('demo', 'src/app.ts', undefined, '', { line: 1, col: 2 });
+    });
+    expect(store().openFiles[0]?.pendingCursor).toEqual({ line: 1, col: 2 });
+
+    render(<EditorPane />);
+
+    await vi.waitFor(() => {
+      expect(store().openFiles[0]?.pendingCursor).toBeNull();
+    });
+  });
+
 });

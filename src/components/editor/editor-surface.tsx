@@ -90,6 +90,16 @@ interface EditorSurfaceProps {
    * such heading has to name itself. Settings' agent Source tab passes it.
    */
   ariaLabel?: string;
+  /**
+   * A caret position to apply **once**, or `null`. 1-based, clamped to the
+   * document.
+   *
+   * The parent clears it through {@link EditorSurfaceProps.onCursorApplied},
+   * which is what keeps a re-render from dragging the caret back: the position
+   * is a request from whoever opened the file, not a property of it.
+   */
+  cursor?: { line: number; col: number } | null;
+  onCursorApplied?: () => void;
 }
 
 /** The compartment the lazily-loaded grammar lands in. */
@@ -129,6 +139,8 @@ export function EditorSurface({
   onChange,
   onSave,
   ariaLabel,
+  cursor,
+  onCursorApplied,
 }: EditorSurfaceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -385,6 +397,35 @@ export function EditorSurface({
       cancelled = true;
     };
   }, [languageLoad, fileKey]);
+
+  /**
+   * Put the caret where the open asked for it, once.
+   *
+   * Declared after the document and language effects so it runs after them:
+   * the state for `fileKey` has been swapped in by then, so `view.state.doc`
+   * is the document this position was meant for rather than the one that was
+   * on screen a moment ago.
+   *
+   * `scrollIntoView` is an effect the view honours on its next measure, which
+   * is why the unit tests assert the selection and Playwright owns the scroll.
+   */
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !cursor) return;
+
+    const { doc } = view.state;
+    const line = doc.line(Math.min(Math.max(cursor.line, 1), doc.lines));
+    // `line.to` is the end of the line's text, so a column past it lands on
+    // the last character rather than wrapping onto the next line.
+    const anchor = Math.min(line.from + Math.max(cursor.col, 1) - 1, line.to);
+
+    view.dispatch({
+      selection: { anchor },
+      effects: EditorView.scrollIntoView(anchor, { y: 'center' }),
+    });
+    view.focus();
+    onCursorApplied?.();
+  }, [cursor, onCursorApplied, fileKey]);
 
   return <div ref={hostRef} className="min-h-0 flex-1 overflow-hidden" />;
 }

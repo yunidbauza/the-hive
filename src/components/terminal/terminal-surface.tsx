@@ -25,7 +25,7 @@ import {
   type CursorContext,
   type TerminalChordDetail,
 } from '@lib/terminal/keymap';
-import { handleWebLink, terminalLinkHandler } from '@lib/terminal/open-link';
+import { createTerminalLinkHandler, handleWebLink } from '@lib/terminal/open-link';
 import type { PromptInput, TerminalTransport } from '@lib/terminal/terminal-transport';
 import type { ResolvedLink } from '@shared/fs-contract';
 
@@ -440,6 +440,16 @@ export function TerminalSurface({
   const lastPromptRef = useRef<PromptInput | null>(null);
 
   /**
+   * Where the pointer was when it entered a file link, or `null`.
+   *
+   * Anchored to the pointer rather than to the cell, which is not a choice so
+   * much as what is available: the WebGL renderer owns the row's pixels and
+   * publishes no cell metrics. The pointer is on the link by definition, which
+   * is good enough for a one-line hint and costs nothing to be right about.
+   */
+  const [linkTipAt, setLinkTipAt] = useState<{ x: number; y: number } | null>(null);
+
+  /**
    * Same reason as {@link transportRef}: the link provider is installed once,
    * in the mount effect, and this surface is kept alive across every tab
    * switch. A resolver captured at construction would go on answering for the
@@ -475,7 +485,19 @@ export function TerminalSurface({
        * Both paths land on one handler so the two kinds of link cannot behave
        * differently, and the scheme check stays where it belongs — in main.
        */
-      linkHandler: terminalLinkHandler,
+      linkHandler: createTerminalLinkHandler((candidate) => {
+        /*
+          A `file://` hyperlink takes the same road a printed path takes: main
+          decides whether it names a file here, and the stage opens it. Without
+          this it reached `window.open`, whose allowlist is http(s) — so it was
+          detected, underlined, and dead on click.
+        */
+        void fileLinksRef.current
+          .resolveFileLinks?.([candidate])
+          .then(([hit]) => {
+            if (hit) fileLinksRef.current.onOpenFile?.(hit);
+          });
+      }),
       scrollback,
       /**
        * The floor that makes the surface slots safe (HIVE-82).
@@ -533,6 +555,8 @@ export function TerminalSurface({
           Promise.resolve(paths.map(() => null)),
         open: (target) => fileLinksRef.current.onOpenFile?.(target),
         isModified: (event) => (isMac ? event.metaKey : event.ctrlKey),
+        hover: (_text, event) => setLinkTipAt({ x: event.clientX, y: event.clientY }),
+        leave: () => setLinkTipAt(null),
       }),
     );
 
@@ -1067,6 +1091,21 @@ export function TerminalSurface({
       data-terminal-id={id}
     >
       <div ref={setContainer} className="h-full w-full" />
+
+      {linkTipAt ? (
+        /*
+          `pointer-events-none` so the tip never sits between the mouse and the
+          link it describes — xterm would see the pointer leave, clear the
+          link, and the tip would flicker itself out of existence.
+        */
+        <div
+          data-testid="terminal-link-tip"
+          className="pointer-events-none fixed z-50 rounded border border-border bg-panel px-2 py-1 text-[11px] text-ink shadow-md"
+          style={{ left: linkTipAt.x + 12, top: linkTipAt.y - 28 }}
+        >
+          {`Open in editor (${isMacPlatform() ? '⌘' : 'Ctrl'} + click)`}
+        </div>
+      ) : null}
     </div>
   );
 }

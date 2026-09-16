@@ -596,3 +596,62 @@ describe('the root dimension', () => {
     expect(readFile).toHaveBeenCalledWith('demo', 'src/app.ts', 'sess-b');
   });
 });
+
+/**
+ * A caret position carried in from the open that named it (terminal file
+ * links), and consumed once.
+ *
+ * Once is the whole design. A position is a *request* made by whoever opened
+ * the file, not a property of the file — so it has to survive the read that
+ * follows the open, and then stop existing. Left in place it would drag the
+ * caret back to line 12 on the next unrelated re-render, while the user was
+ * reading line 400.
+ */
+describe('pendingCursor', () => {
+  it('is null for a file opened without a position', () => {
+    store().openFile('demo', 'src/app.ts');
+    expect(fileAt(KEY)?.pendingCursor).toBeNull();
+  });
+
+  it('records the position on open, defaulting the column to 1', () => {
+    store().openFile('demo', 'src/app.ts', undefined, '', { line: 12 });
+    expect(fileAt(KEY)?.pendingCursor).toEqual({ line: 12, col: 1 });
+  });
+
+  it('survives the read that follows the open', async () => {
+    store().openFile('demo', 'src/app.ts', undefined, '', { line: 12, col: 3 });
+    await vi.waitFor(() => {
+      expect(fileAt(KEY)?.loading).toBe(false);
+    });
+    expect(fileAt(KEY)?.text).toBe('export {};\n');
+    expect(fileAt(KEY)?.pendingCursor).toEqual({ line: 12, col: 3 });
+  });
+
+  it('re-opening an existing buffer with a position sets it without re-reading', async () => {
+    store().openFile('demo', 'src/app.ts');
+    await vi.waitFor(() => {
+      expect(fileAt(KEY)?.loading).toBe(false);
+    });
+    readFile.mockClear();
+
+    store().openFile('demo', 'src/app.ts', undefined, '', { line: 3, col: 4 });
+    expect(fileAt(KEY)?.pendingCursor).toEqual({ line: 3, col: 4 });
+    expect(store().activeKey).toBe(KEY);
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it('re-opening without a position leaves an unconsumed one alone', () => {
+    store().openFile('demo', 'src/app.ts', undefined, '', { line: 3 });
+    store().openFile('demo', 'src/app.ts');
+    expect(fileAt(KEY)?.pendingCursor).toEqual({ line: 3, col: 1 });
+  });
+
+  it('consumeCursor clears it, and is a no-op for an unknown key', () => {
+    store().openFile('demo', 'src/app.ts', undefined, '', { line: 3 });
+    store().consumeCursor(KEY);
+    expect(fileAt(KEY)?.pendingCursor).toBeNull();
+    expect(() => {
+      store().consumeCursor('demo::nope');
+    }).not.toThrow();
+  });
+});

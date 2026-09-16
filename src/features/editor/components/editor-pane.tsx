@@ -41,7 +41,7 @@ export function EditorPane() {
   const file = useActiveFile();
   const appearance = useEditorAppearance();
   const { nav } = useEditorLayout();
-  const { edit, save, reload, closeFile } = useEditorActions();
+  const { edit, save, reload, closeFile, consumeCursor } = useEditorActions();
   const emptyPhrase = useSwarmPhrase('empty.editor');
   const readingPhrase = useSwarmPhrase('loading.file');
   /** Escape belongs to whichever overlay is up, not to this pane. */
@@ -72,6 +72,15 @@ export function EditorPane() {
     },
     [key, edit],
   );
+
+  /*
+    Reports the request served, so the store can clear it. Keyed on the file,
+    like `onChange` above: a new identity per render would make the surface's
+    apply-once effect run again on every render of this pane.
+  */
+  const onCursorApplied = useCallback(() => {
+    if (key) consumeCursor(key);
+  }, [key, consumeCursor]);
 
   const onSave = useCallback(() => {
     if (key && appearance.editable) void save(key);
@@ -263,6 +272,8 @@ export function EditorPane() {
           tabWidth={appearance.tabWidth}
           onChange={onChange}
           onSave={onSave}
+          cursor={file.pendingCursor}
+          onCursorApplied={onCursorApplied}
         />
       ) : null}
     </div>

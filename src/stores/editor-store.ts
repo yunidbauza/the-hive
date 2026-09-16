@@ -112,6 +112,20 @@ interface OpenFile {
    * `reconcile`.
    */
   selfWriteMtimeMs: number | null;
+  /**
+   * Where to put the caret once this buffer is on screen, or `null`.
+   *
+   * Set by an open that named a line — a `⌘`-clicked `path:12:7` in terminal
+   * output — and consumed by the surface the one time it applies it.
+   *
+   * Consumed rather than kept, because a position is a *request* from whoever
+   * opened the file and not a property of the file. It has to outlive the read
+   * the open starts, since the document does not exist yet when the request
+   * arrives; and it has to stop existing immediately afterwards, or the next
+   * unrelated re-render would drag the caret back to line 12 while the user was
+   * reading line 400.
+   */
+  pendingCursor: { line: number; col: number } | null;
 }
 
 interface EditorState {
@@ -125,9 +139,13 @@ interface EditorState {
     sessionId?: string,
     /** Which tree `relPath` is relative to. `''` is the project root. */
     rootKey?: string,
+    /** 1-based. `col` defaults to 1. See {@link OpenFile.pendingCursor}. */
+    position?: { line: number; col?: number },
   ) => void;
   closeFile: (key: string) => void;
   closeAll: () => void;
+  /** The surface reporting it has applied {@link OpenFile.pendingCursor}. */
+  consumeCursor: (key: string) => void;
   /** Show the terminal without closing anything. */
   showTerminal: () => void;
   setActive: (key: string) => void;
@@ -201,6 +219,7 @@ const blank = (
   conflict: false,
   saving: false,
   selfWriteMtimeMs: null,
+  pendingCursor: null,
 });
 
 const initialEditorState = {
@@ -282,12 +301,31 @@ export const useEditorStore = create<EditorState>()((set, get) => {
      * scroll position to fetch bytes it already has — and, if the buffer were
      * dirty, their edits.
      */
-    openFile: (projectId, relPath, sessionId, rootKey = '') => {
+    openFile: (projectId, relPath, sessionId, rootKey = '', position) => {
       const key = fileKey(projectId, relPath, rootKey);
+      const pendingCursor =
+        position === undefined
+          ? null
+          : { line: position.line, col: position.col ?? 1 };
       const existing = get().openFiles.find((file) => file.key === key);
 
       if (existing) {
-        set({ activeKey: key });
+        /*
+          A re-open *with* a position still moves the caret — clicking a second
+          frame of the same stack trace is a request to go to that line, and
+          the tab is already open. Without one, an unconsumed position is left
+          alone rather than cleared: the buffer may still be loading, and the
+          request that arrived with the first click has not been served yet.
+        */
+        set((state) => ({
+          activeKey: key,
+          openFiles:
+            pendingCursor === null
+              ? state.openFiles
+              : state.openFiles.map((file) =>
+                  file.key === key ? { ...file, pendingCursor } : file,
+                ),
+        }));
         return;
       }
 
@@ -303,13 +341,28 @@ export const useEditorStore = create<EditorState>()((set, get) => {
          */
         openFiles: [
           ...state.openFiles,
-          blank(projectId, relPath, sessionId, rootKey),
+          { ...blank(projectId, relPath, sessionId, rootKey), pendingCursor },
         ],
         activeKey: key,
       }));
 
       void load(projectId, relPath, sessionId, rootKey);
     },
+
+    /*
+      Guarded on the buffer already holding one, so a surface reporting twice
+      cannot replace the list — and so a key that is not open is a no-op rather
+      than a throw. The surface applies a cursor in an effect; effects run
+      again for reasons this store cannot see.
+    */
+    consumeCursor: (key) =>
+      set((state) => ({
+        openFiles: state.openFiles.map((file) =>
+          file.key === key && file.pendingCursor !== null
+            ? { ...file, pendingCursor: null }
+            : file,
+        ),
+      })),
 
     closeFile: (key) => {
       set((state) => {
@@ -509,6 +562,7 @@ const editorActionsSelector = (state: EditorState) => ({
   openFile: state.openFile,
   closeFile: state.closeFile,
   closeAll: state.closeAll,
+  consumeCursor: state.consumeCursor,
   showTerminal: state.showTerminal,
   setActive: state.setActive,
   edit: state.edit,

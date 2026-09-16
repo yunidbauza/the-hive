@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  createTerminalLinkHandler,
   handleWebLink,
   openTerminalLink,
   terminalLinkHandler,
@@ -94,5 +95,66 @@ describe('openTerminalLink', () => {
       '_blank',
       'noopener,noreferrer',
     );
+  });
+});
+
+/**
+ * The scheme split.
+ *
+ * `file://` is a path the emitting program chose to mark up explicitly, so it
+ * takes the road a printed path takes — the resolver, then the editor — and
+ * never `window.open`, which main would refuse anyway: its allowlist is
+ * `http:`/`https:`, so a `file://` link was previously detected, underlined,
+ * and dead on click exactly as the bare-URL bug above.
+ */
+describe('createTerminalLinkHandler', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const spy = () =>
+    vi.spyOn(window, 'open').mockReturnValue(null as unknown as Window);
+
+  it('hands a file:// link to the file opener and never to the browser', () => {
+    const open = spy();
+    const openFile = vi.fn();
+
+    createTerminalLinkHandler(openFile).activate(
+      new MouseEvent('click'),
+      'file:///Users/me/a.ts',
+    );
+
+    expect(openFile).toHaveBeenCalledWith('/Users/me/a.ts');
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('hands everything else to the browser, as before', () => {
+    const open = spy();
+    const openFile = vi.fn();
+
+    createTerminalLinkHandler(openFile).activate(
+      new MouseEvent('click'),
+      'https://claude.ai/x',
+    );
+
+    expect(open).toHaveBeenCalledWith(
+      'https://claude.ai/x',
+      '_blank',
+      'noopener,noreferrer',
+    );
+    expect(openFile).not.toHaveBeenCalled();
+  });
+
+  it('a file:// link naming another host opens nothing at all', () => {
+    const open = spy();
+    const openFile = vi.fn();
+
+    createTerminalLinkHandler(openFile).activate(
+      new MouseEvent('click'),
+      'file://server/a.ts',
+    );
+
+    expect(open).not.toHaveBeenCalled();
+    expect(openFile).not.toHaveBeenCalled();
   });
 });

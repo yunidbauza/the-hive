@@ -150,6 +150,9 @@ export function CenterStage() {
         target.relPath,
         linkSessionId ?? undefined,
         target.rootKey,
+        target.line === undefined
+          ? undefined
+          : { line: target.line, col: target.col ?? 1 },
       );
       // Opening a file is a request to look at it, so an overlay steps aside.
       revealStage();

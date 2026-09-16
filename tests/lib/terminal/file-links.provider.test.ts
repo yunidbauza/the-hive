@@ -116,7 +116,9 @@ describe('createFileLinkProvider', () => {
 
     link?.hover?.(new MouseEvent('mousemove'), link.text);
     link?.leave?.(new MouseEvent('mousemove'), link.text);
-    expect(hover).toHaveBeenCalledWith('src/a.ts:12:7');
+    // The event rides along from HIVE's tooltip: the pointer is the only
+    // thing that knows where the link is on screen.
+    expect(hover).toHaveBeenCalledWith('src/a.ts:12:7', expect.any(MouseEvent));
     expect(leave).toHaveBeenCalled();
   });
 });
