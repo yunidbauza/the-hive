@@ -1,3 +1,4 @@
+import { isRecord } from '../../../shared/guards';
 import {
   SLACK_CHANNEL_KIND,
   SLACK_EVENT_TEXT_MAX,
@@ -21,9 +22,6 @@ import {
  * a message in the channel it watches, and without this drop the first reply it
  * writes wakes it again to read its own words.
  */
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null;
 
 const str = (value: unknown): string | null =>
   typeof value === 'string' && value !== '' ? value : null;

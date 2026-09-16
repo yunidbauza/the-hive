@@ -4,6 +4,7 @@ import {
   type GhPrState,
   type PrRecord,
 } from '../../../shared/github-contract';
+import { isRecord } from '../../../shared/guards';
 
 /**
  * GitHub's GraphQL JSON to named fields.
@@ -36,10 +37,6 @@ import {
  */
 
 /** A plain object, and not an array. `typeof null` is the usual trap. */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 /** A non-empty string, or `null`. Whitespace-only counts as absent. */
 function text(value: unknown): string | null {
   return typeof value === 'string' && value.trim() !== '' ? value : null;

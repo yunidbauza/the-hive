@@ -5,6 +5,7 @@ import { CLONE_ENTITY_ID } from '../../../electron/shared/config-contract';
 
 import {
   IpcValidationError,
+  isRecord,
   parseAddProjectRequest,
   parseBrowseDirRequest,
   parseCloneRequest,
@@ -1931,5 +1932,16 @@ describe('parseSetSessionPluginRequest (HIVE-176)', () => {
     ]) {
       expect(() => parseSetSessionPluginRequest(bad)).toThrow(/setSessionPlugin/);
     }
+  });
+});
+
+describe('isRecord', () => {
+  it('is true for a plain object and false for null, arrays and primitives', () => {
+    expect(isRecord({})).toBe(true);
+    expect(isRecord({ a: 1 })).toBe(true);
+    expect(isRecord(null)).toBe(false);
+    expect(isRecord([])).toBe(false);
+    expect(isRecord('x')).toBe(false);
+    expect(isRecord(undefined)).toBe(false);
   });
 });

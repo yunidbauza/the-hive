@@ -1,3 +1,4 @@
+import { isRecord } from '../../../shared/guards';
 import type {
   JiraComment,
   JiraIssue,
@@ -35,10 +36,6 @@ import { adfToBlocks } from './adf/adf-to-blocks';
  */
 
 /** A plain object, and not an array. `typeof null` is the usual trap. */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 /** A non-empty string, or `null`. Whitespace-only counts as absent. */
 function text(value: unknown): string | null {
   return typeof value === 'string' && value.trim() !== '' ? value : null;

@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 
 import { SESSION_ID_PREFIX_PATTERN } from '@shared/agent-contract';
+import { isRecord } from '@shared/guards';
 import {
   hiveNameFromTitle,
   type SessionNameOrigin,
@@ -144,9 +145,6 @@ export interface SessionHistory {
   dispose(): void;
 }
 
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null;
-
 const text = (value: unknown): string | undefined =>
   typeof value === 'string' ? value : undefined;
 
@@ -193,7 +191,7 @@ const cleanName = (value: unknown): string | undefined => {
  * CSP before it becomes an `href`.
  */
 const prRecord = (value: unknown): SessionRecord['pr'] => {
-  if (!isObject(value)) return undefined;
+  if (!isRecord(value)) return undefined;
   const number = finite(value.number);
   const repo = text(value.repo);
   const url = text(value.url);
@@ -215,7 +213,7 @@ const prRecord = (value: unknown): SessionRecord['pr'] => {
  * exists to avoid.
  */
 function reviveRecord(raw: unknown): SessionRecord | undefined {
-  if (!isObject(raw)) return undefined;
+  if (!isRecord(raw)) return undefined;
 
   const id = text(raw.id);
   const project = text(raw.project);

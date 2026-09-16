@@ -2689,6 +2689,10 @@ export function parseDiagnoseEnvRequest(input: unknown): DiagnoseEnvRequest {
  * unbounded caller-supplied map on every write would be cost without a threat
  * behind it.
  */
+/** The non-throwing twin of {@link asRecord}: a plain object, not `null`, not an array. */
+export const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
 const asRecord = (input: unknown, label: string): Record<string, unknown> => {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {
     throw new TypeError(`${label} must be an object`);
