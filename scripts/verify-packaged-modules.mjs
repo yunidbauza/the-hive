@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import posix from 'node:path/posix';
+import { fileURLToPath } from 'node:url';
 
 import { extractFile, listPackage } from '@electron/asar';
 
@@ -130,7 +131,7 @@ export default async function verifyPackagedModules(context) {
 
 // Also runnable on its own: `pnpm verify:bundle [path to .app or .asar]`, which
 // is how a shipped release can be checked without rebuilding it.
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   try {
     run(process.argv[2] ?? DEFAULT_APP);
   } catch (error) {

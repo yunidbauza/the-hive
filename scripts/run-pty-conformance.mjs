@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { parseArgs as parseNodeArgs } from 'node:util';
 
 /**
  * The PTY conformance runner (story 098).
@@ -42,21 +43,15 @@ const DIM = '[2m';
 const RESET = '[0m';
 
 function parseArgs(argv) {
-  const filter = [];
-  for (let i = 0; i < argv.length; i += 1) {
-    if (argv[i] === '--filter') {
-      const value = argv[i + 1];
-      if (!value) {
-        console.error('--filter needs a value');
-        process.exit(2);
-      }
-      filter.push(value);
-      i += 1;
-    } else if (argv[i].startsWith('--filter=')) {
-      filter.push(argv[i].slice('--filter='.length));
-    }
-  }
-  return { filter };
+  // `strict` makes a bare `--filter` exit with Node's own "argument missing"
+  // error, which is what the hand-rolled version did by hand.
+  const { values } = parseNodeArgs({
+    args: argv,
+    options: { filter: { type: 'string', multiple: true } },
+    strict: true,
+  });
+
+  return { filter: values.filter ?? [] };
 }
 
 /**
