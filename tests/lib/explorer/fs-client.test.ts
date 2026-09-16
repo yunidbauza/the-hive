@@ -8,6 +8,7 @@ import {
   parentPath,
   readDir,
   readFile,
+  resolvePaths,
   unwatchProject,
   watchProject,
   writeFile,
@@ -25,6 +26,7 @@ import {
 const fs = {
   readDir: vi.fn(),
   readFile: vi.fn(),
+  resolve: vi.fn(),
   writeFile: vi.fn(),
   watch: vi.fn(),
   unwatch: vi.fn(),
@@ -170,5 +172,52 @@ describe('path helpers', () => {
   it('takes the directory part, empty at the root', () => {
     expect(parentPath('src/app.ts')).toBe('src');
     expect(parentPath('README.md')).toBe('');
+  });
+});
+
+/**
+ * The one verb whose refusal is flattened rather than rendered.
+ *
+ * Every other caller here has a panel to show a reason in. A link provider has
+ * nowhere to put one: to it "main refused the project" and "that string is not
+ * a file" are the same outcome, which is that the text does not underline. So
+ * a failed call answers `null` per candidate instead of an error arm nobody
+ * could act on.
+ */
+describe('resolvePaths', () => {
+  it('answers null for every candidate without a bridge', async () => {
+    delete window.hive;
+    await expect(resolvePaths('demo', undefined, ['a.ts', 'b.ts'])).resolves.toEqual(
+      [null, null],
+    );
+  });
+
+  it('skips the round trip for an empty list', async () => {
+    await expect(resolvePaths('demo', 'sess', [])).resolves.toEqual([]);
+    expect(fs.resolve).not.toHaveBeenCalled();
+  });
+
+  it('passes the request through and unwraps the verdicts', async () => {
+    fs.resolve.mockResolvedValue({
+      ok: true,
+      value: { resolved: [{ relPath: 'src/a.ts', rootKey: '' }, null] },
+    });
+    await expect(resolvePaths('demo', 'sess', ['src/a.ts', 'x'])).resolves.toEqual([
+      { relPath: 'src/a.ts', rootKey: '' },
+      null,
+    ]);
+    expect(fs.resolve).toHaveBeenCalledWith({
+      projectId: 'demo',
+      sessionId: 'sess',
+      candidates: ['src/a.ts', 'x'],
+    });
+  });
+
+  it('answers all-null when main refuses the project', async () => {
+    fs.resolve.mockResolvedValue({
+      ok: false,
+      error: { code: 'EPROJECT', message: 'x' },
+    });
+    await expect(resolvePaths('demo', undefined, ['a.ts'])).resolves.toEqual([null]);
   });
 });

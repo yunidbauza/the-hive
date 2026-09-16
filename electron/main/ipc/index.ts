@@ -45,6 +45,7 @@ import type {
   FsChangedEvent,
   FsRefusal,
   FsResult,
+  ResolveResult,
   RootInfo,
   SearchResults,
   WriteFileResult,
@@ -63,6 +64,7 @@ import {
   parseDiagnoseCommandRequest,
   parseReadDirRequest,
   parseReadFileRequest,
+  parseResolveRequest,
   parseRootRequest,
   parseSearchRequest,
   parseWatchRequest,
@@ -231,6 +233,7 @@ import {
   readDirectory,
   readFileContent,
   readRoot,
+  resolvePaths,
   setSessionCwdLookup,
   searchProject,
   writeFileContent,
@@ -4430,6 +4433,12 @@ export function registerIpcHandlers(
     CH.fsRoot,
     (_event, payload): Promise<FsResult<RootInfo>> =>
       readRoot(parseRootRequest(payload)),
+  );
+
+  handle(
+    CH.fsResolve,
+    (_event, payload): Promise<FsResult<ResolveResult>> =>
+      resolvePaths(parseResolveRequest(payload)),
   );
 
   handle(

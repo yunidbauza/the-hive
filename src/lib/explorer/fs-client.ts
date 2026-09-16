@@ -5,6 +5,7 @@ import type {
   FsRefusal,
   FsResult,
   FsSearchMode,
+  ResolvedLink,
   RootInfo,
   SearchResults,
   WriteFileResult,
@@ -68,6 +69,31 @@ export async function readRoot(
   const bridge = window.hive?.fs;
   if (!bridge) return NO_BRIDGE;
   return bridge.root({ projectId, sessionId });
+}
+
+/**
+ * Which of these printed strings name a file under this pairing's root.
+ *
+ * Index-aligned with `candidates`, `null` where main would not serve the file.
+ * A refusal of the *whole* call — no bridge, an unusable project — is
+ * flattened to all-`null` on purpose: the only caller is a link provider, to
+ * which every negative answer means the same thing, that the text does not
+ * underline. There is no panel here to render a reason in, and inventing one
+ * would put an error in front of a user who merely moved the mouse.
+ */
+export async function resolvePaths(
+  projectId: string,
+  sessionId: string | undefined,
+  candidates: string[],
+): Promise<Array<ResolvedLink | null>> {
+  const none = candidates.map(() => null);
+  if (candidates.length === 0) return none;
+
+  const bridge = window.hive?.fs;
+  if (!bridge) return none;
+
+  const result = await bridge.resolve({ projectId, sessionId, candidates });
+  return result.ok ? result.value.resolved : none;
 }
 
 export async function readDir(

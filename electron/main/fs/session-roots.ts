@@ -81,6 +81,23 @@ export function setSessionCwdLookup(next: SessionCwdLookup | null): void {
 }
 
 /**
+ * The working directory main observed for a session, unresolved, or
+ * `undefined`.
+ *
+ * Exposed for `resolve.ts`, which needs the directory itself rather than the
+ * widened root {@link sessionRoot} derives from it. The two answer different
+ * questions: `sessionRoot` asks *which tree may this session read*, and a
+ * relative path a program printed is relative to *where that program ran* —
+ * usually somewhere under that tree rather than at its top.
+ */
+export function observedSessionCwd(
+  sessionId: string | undefined,
+): string | undefined {
+  if (!sessionId || !lookup) return undefined;
+  return lookup(sessionId);
+}
+
+/**
  * What git said about one directory, keyed by the directory.
  *
  * **The promise is cached, not the value**, and that is the load-bearing part.

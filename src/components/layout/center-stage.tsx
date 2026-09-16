@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { useDeclinedBack } from '@/hooks/use-declined-back';
 import { isTerminalView, resolveView } from '@/lib/resolve-view';
@@ -27,7 +27,9 @@ import { SessionBootCover } from '@features/sessions/components/session-boot-cov
 import { TerminalEndedCover } from '@features/sessions/components/terminal-ended-cover';
 import { useSessionBoot } from '@features/sessions/hooks/use-session-boot';
 import { SettingsOverlay } from '@features/settings/components/settings-overlay';
+import { resolvePaths } from '@lib/explorer/fs-client';
 import { isMacPlatform } from '@lib/platform';
+import type { FileLinkTarget } from '@lib/terminal/file-links';
 import {
   TERMINAL_CHORD_EVENT,
   backChordLabel,
@@ -44,7 +46,11 @@ import {
   useShowPlanPanel,
   useTerminalAppearance,
 } from '@stores/appearance-store';
-import { useActiveFileKey, useHasOpenFiles } from '@stores/editor-store';
+import {
+  useActiveFileKey,
+  useEditorActions,
+  useHasOpenFiles,
+} from '@stores/editor-store';
 import {
   terminalIdFor,
   useActiveEntity,
@@ -55,6 +61,7 @@ import {
   useActiveTab,
   useBackToOrch,
   usePickerState,
+  useRevealStage,
   useSettingsOpen,
 } from '@stores/ui-store';
 
@@ -104,6 +111,51 @@ export function CenterStage() {
   const hasOpenFiles = useHasOpenFiles();
   const { placement, splitAxis, splitRatio, nav } = useEditorLayout();
   const setSplitRatio = useSetEditorSplitRatio();
+
+  /**
+   * Who a printed path is resolved *for* (terminal file links).
+   *
+   * The project and session on screen, or nobody. The overmind and an agent
+   * view have no project, and a link rooted in a project nothing on screen is
+   * working in is exactly the untruth `use-explorer-project.ts` removed from
+   * the explorer: an invitation to open files from a repository the user is
+   * not looking at. Showing no link is not a worse answer than the wrong one.
+   */
+  const linkProjectId =
+    entity && (isSession(entity) || isTerminal(entity)) ? entity.project : null;
+  const linkSessionId = linkProjectId === null ? null : (entity?.id ?? null);
+
+  const resolveFileLinks = useCallback(
+    (paths: string[]) =>
+      linkProjectId === null
+        ? Promise.resolve(paths.map(() => null))
+        : resolvePaths(linkProjectId, linkSessionId ?? undefined, paths),
+    [linkProjectId, linkSessionId],
+  );
+
+  const { openFile, closeAll } = useEditorActions();
+  const revealStage = useRevealStage();
+
+  const onOpenFile = useCallback(
+    (target: FileLinkTarget) => {
+      if (linkProjectId === null) return;
+      /*
+        Single-file mode is applied here, not in the store, for the reason
+        `explorer-panel.tsx` gives: no store subscribes to another, so the
+        policy lives where the setting is read.
+      */
+      if (nav === 'single') closeAll();
+      openFile(
+        linkProjectId,
+        target.relPath,
+        linkSessionId ?? undefined,
+        target.rootKey,
+      );
+      // Opening a file is a request to look at it, so an overlay steps aside.
+      revealStage();
+    },
+    [linkProjectId, linkSessionId, nav, closeAll, openFile, revealStage],
+  );
 
   const editorOpen = activeFileKey !== null;
   const editorFull = editorOpen && placement === 'full';
@@ -492,6 +544,8 @@ export function CenterStage() {
             fontFamily={terminalAppearance.fontFamily}
             fontSize={terminalAppearance.fontSize}
             scrollback={terminalAppearance.scrollback}
+            resolveFileLinks={resolveFileLinks}
+            onOpenFile={onOpenFile}
           />
 
           {/*

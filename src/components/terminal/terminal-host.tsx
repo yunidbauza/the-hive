@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 
 import { TerminalSurface } from '@components/terminal/terminal-surface';
 import type { TermPalette } from '@lib/terminal/ansi';
+import type { FileLinkTarget } from '@lib/terminal/file-links';
 import type { TerminalTransport } from '@lib/terminal/terminal-transport';
+import type { ResolvedLink } from '@shared/fs-contract';
 
 export interface TerminalHostEntry {
   /** Entity id, or `'orch'` for the console. Opaque to this component. */
@@ -45,6 +47,13 @@ interface TerminalHostProps {
   fontFamily?: string;
   fontSize?: number;
   scrollback?: number;
+  /**
+   * File links (terminal file links). Forwarded verbatim, and as opaque here
+   * as in the surface — this component is a registry of live terminals and has
+   * no more business interpreting a path than it has interpreting a colour.
+   */
+  resolveFileLinks?: (paths: string[]) => Promise<Array<ResolvedLink | null>>;
+  onOpenFile?: (target: FileLinkTarget) => void;
 }
 
 /**
@@ -68,6 +77,8 @@ export function TerminalHost({
   fontFamily,
   fontSize,
   scrollback,
+  resolveFileLinks,
+  onOpenFile,
 }: TerminalHostProps) {
   const [visited, setVisited] = useState<string[]>([]);
 
@@ -135,6 +146,8 @@ export function TerminalHost({
           readOnly={entry.readOnly}
           visible={entry.id === activeId}
           ended={entry.id === endedId}
+          resolveFileLinks={resolveFileLinks}
+          onOpenFile={onOpenFile}
         />
       ))}
     </>

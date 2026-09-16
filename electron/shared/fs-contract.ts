@@ -200,6 +200,52 @@ export interface RootInfo {
   widened: boolean;
 }
 
+/** Upper bound on candidates per `fs:resolve` call: one terminal line holds far fewer. */
+export const MAX_RESOLVE_CANDIDATES = 32;
+
+/**
+ * `fs:resolve` — which of these path-shaped strings name a file this pairing
+ * may read.
+ *
+ * The one verb here that **takes** strings that look like paths, and the
+ * deliberate exception to property 1 at the top of this file. A candidate is
+ * not a path the renderer chose to read; it is text a program printed into a
+ * terminal — `/Users/me/repo/src/a.ts` from tsc, `../lib/b.ts` from a test
+ * runner — and the whole point of the verb is to ask main whether that text
+ * names a file it would serve. Main resolves each one under the session's
+ * observed working directory and then the root, `realpath`s it, and refuses
+ * anything landing outside, so a candidate grants nothing a `relPath` would
+ * not. The renderer still cannot *name* a directory; it can only ask about a
+ * string it was shown, and be told no.
+ */
+export interface ResolveRequest {
+  projectId: string;
+  /** See {@link ReadDirRequest.sessionId}. */
+  sessionId?: string;
+  /** Absolute, `~/`-prefixed or relative. At most {@link MAX_RESOLVE_CANDIDATES}. */
+  candidates: string[];
+}
+
+/** A candidate main accepted, in the shape the editor's `openFile` takes. */
+export interface ResolvedLink {
+  /** Relative to the root {@link ResolvedLink.rootKey} names; `/`-separated. */
+  relPath: string;
+  /** `''` for the project root; the widened root's absolute path otherwise — {@link RootInfo}. */
+  rootKey: string;
+}
+
+/**
+ * Index-aligned with {@link ResolveRequest.candidates}; `null` where main
+ * would not serve that file.
+ *
+ * Aligned by position rather than keyed by the candidate, because two
+ * candidates on one line can be the same string and a map would silently
+ * collapse them — and because the caller already holds the array it sent.
+ */
+export interface ResolveResult {
+  resolved: Array<ResolvedLink | null>;
+}
+
 /**
  * `fs:watch`. One watcher exists at a time; this replaces it.
  *

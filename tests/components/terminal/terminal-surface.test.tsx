@@ -18,9 +18,11 @@ import {
   MockTerminal,
   resetTerminalInstances,
   terminalInstances,
+  type MockLink,
 } from '../../../__mocks__/@xterm/xterm';
 
 import { TerminalSurface } from '@components/terminal/terminal-surface';
+import { isMacPlatform } from '@lib/platform';
 import { TERM, TERM_LIGHT } from '@lib/terminal/ansi';
 import type {
   TerminalDataHandler,
@@ -1657,4 +1659,134 @@ describe('TerminalSurface input-box report', () => {
       vi.advanceTimersByTime(16);
     }).not.toThrow();
   });
+
+  /**
+   * File links (terminal file links).
+   *
+   * Plumbing only, as everything here is: that a provider is installed, that it
+   * reads the buffer and the *current* props, and that the modifier decides.
+   * Whether a rendered path underlines is Playwright's, for the reason the
+   * WebGL note gives — the row is painted into a canvas.
+   */
+  describe('file links', () => {
+    const links = (y: number): Promise<MockLink[] | undefined> =>
+      new Promise((done) => {
+        terminal().linkProviders[0]?.provideLinks(y, done);
+      });
+
+    const modifier = isMacPlatform() ? { metaKey: true } : { ctrlKey: true };
+
+    it('registers one provider and disposes it with the terminal', () => {
+      const { unmount } = render(
+        <TerminalSurface transport={fakeTransport().transport} palette={TERM} />,
+      );
+      expect(terminal().linkProviders).toHaveLength(1);
+
+      unmount();
+      expect(terminal().disposed).toBe(true);
+      expect(terminal().linkProviders).toHaveLength(0);
+    });
+
+    it('offers no links when nobody resolves them', async () => {
+      render(<TerminalSurface transport={fakeTransport().transport} palette={TERM} />);
+      terminal().bufferLines = ['see src/a.ts'];
+
+      expect(await links(1)).toBeUndefined();
+    });
+
+    it('reads the row, resolves, and opens on the platform modifier', async () => {
+      const resolveFileLinks = vi.fn(async (paths: string[]) =>
+        paths.map((path) =>
+          path === 'src/a.ts' ? { relPath: 'src/a.ts', rootKey: '' } : null,
+        ),
+      );
+      const onOpenFile = vi.fn();
+      render(
+        <TerminalSurface
+          transport={fakeTransport().transport}
+          palette={TERM}
+          resolveFileLinks={resolveFileLinks}
+          onOpenFile={onOpenFile}
+        />,
+      );
+      terminal().bufferLines = ['', ' ❯ src/a.ts:3:1'];
+
+      const [link] = (await links(2)) ?? [];
+      expect(link?.text).toBe('src/a.ts:3:1');
+
+      link?.activate(new MouseEvent('click'), link.text);
+      expect(onOpenFile).not.toHaveBeenCalled();
+
+      link?.activate(new MouseEvent('click', modifier), link.text);
+      expect(onOpenFile).toHaveBeenCalledWith({
+        relPath: 'src/a.ts',
+        rootKey: '',
+        line: 3,
+        col: 1,
+      });
+    });
+
+    /**
+     * The seam the wide-character fix actually lives at.
+     *
+     * `provideLinks` reads the row through the surface's own cell walk, so
+     * this is the assertion that the columns handed to xterm come from
+     * xterm's widths rather than from JS string offsets. `名` is drawn in two
+     * columns, so the path starts at column 3 while its string index is 2 —
+     * off by one, and off by one more for every wide character before it.
+     */
+    it('measures the link range in columns, not string offsets', async () => {
+      render(
+        <TerminalSurface
+          transport={fakeTransport().transport}
+          palette={TERM}
+          resolveFileLinks={async (paths) =>
+            paths.map(() => ({ relPath: 'src/a.ts', rootKey: '' }))
+          }
+          onOpenFile={vi.fn()}
+        />,
+      );
+      terminal().bufferLines = ['名 src/a.ts'];
+      terminal().bufferWide = ['w'];
+
+      const [link] = (await links(1)) ?? [];
+      expect(link?.text).toBe('src/a.ts');
+      expect(link?.range).toEqual({ start: { x: 4, y: 1 }, end: { x: 11, y: 1 } });
+    });
+
+    /**
+     * The provider is installed once per terminal and the surface is kept
+     * alive across every tab switch, so a resolver captured at construction
+     * would outlive the session it named — and answer for the wrong project.
+     */
+    it('reads the latest props, not the ones the terminal was built with', async () => {
+      const first = vi.fn(async (paths: string[]) => paths.map(() => null));
+      const second = vi.fn(async (paths: string[]) =>
+        paths.map(() => ({ relPath: 'b.ts', rootKey: '' })),
+      );
+      const { transport } = fakeTransport();
+      const { rerender } = render(
+        <TerminalSurface
+          transport={transport}
+          palette={TERM}
+          resolveFileLinks={first}
+          onOpenFile={vi.fn()}
+        />,
+      );
+      rerender(
+        <TerminalSurface
+          transport={transport}
+          palette={TERM}
+          resolveFileLinks={second}
+          onOpenFile={vi.fn()}
+        />,
+      );
+      terminal().bufferLines = ['b.ts'];
+
+      expect((await links(1))?.[0]?.text).toBe('b.ts');
+      expect(first).not.toHaveBeenCalled();
+      expect(terminal().linkProviders).toHaveLength(1);
+    });
+  });
+
 });

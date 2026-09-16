@@ -75,6 +75,7 @@ repositories.
 | Channel | Kind | Payload → result |
 | --- | --- | --- |
 | `fs:read-dir` | invoke | `{projectId, relPath}` → `DirEntry[]` |
+| `fs:resolve` | invoke | `{projectId, sessionId?, candidates[]}` → `ResolveResult` |
 | `fs:read-file` | invoke | → `FileContent` \| `FsRefusal` |
 | `fs:write-file` | invoke | `{…, text, baseMtimeMs}` → written, conflict, or error |
 | `fs:search` | invoke | `{projectId, query, mode}` → `SearchResults` |
@@ -84,6 +85,27 @@ repositories.
 `DirEntry` carries **no path** — the renderer composes paths from the tree it
 already holds, and a path in the reply is a second answer that can disagree with
 the first.
+
+### The one verb that takes path-shaped text
+
+`fs:resolve` is the deliberate exception, and it is worth being precise about
+what it does and does not concede. It exists for terminal file links: a program
+printed `src/a.ts:12` or `/Users/me/repo/src/a.ts` into a terminal, and
+something has to decide whether that text names a file the app will open.
+
+The renderer must not be that something — turning printed text into a `relPath`
+*is* naming a directory, which is what the rule above forbids. So main decides,
+on the evidence it already uses: the same root, `realpath` before containment,
+and `stat().isFile()` on top, since a directory is a fine thing to `readDir`
+and a useless thing to open. Every candidate that lands outside comes back
+`null`, indistinguishable from one that does not exist.
+
+So the property holds in the form that matters: the renderer still cannot name
+a file main would not otherwise serve. It can only ask about a string it was
+shown, and be told no. The string guard (`parseResolveRequest`) is
+correspondingly *narrower* than `assertRelPath` — it admits absolute paths and
+`..`, because refusing those would refuse the output every compiler prints
+while granting nothing that containment does not refuse a moment later.
 
 ### Why search is a channel and not a filter
 

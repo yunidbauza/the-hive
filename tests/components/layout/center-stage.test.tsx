@@ -8,17 +8,25 @@ import { resetWebLinksAddonInstances } from '../../../__mocks__/@xterm/addon-web
 import {
   resetTerminalInstances,
   terminalInstances,
+  type MockLink,
 } from '../../../__mocks__/@xterm/xterm';
 
 import { CenterStage } from '@components/layout/center-stage';
 import { SessionRow } from '@features/projects/components/session-row';
 import { useAppearanceStore } from '@stores/appearance-store';
-import { useEditorStore } from '@stores/editor-store';
+import { fileKey, useEditorStore } from '@stores/editor-store';
 import { useHiveStore } from '@stores/hive-store';
 import { DECLINED_BACK_MS } from '@/hooks/use-declined-back';
 import { TERMINAL_CHORD_EVENT } from '@lib/terminal/keymap';
 import { useUiStore } from '@stores/ui-store';
 import { seedDemoFleet } from '@tests/support/demo-fleet';
+
+const { resolvePaths } = vi.hoisted(() => ({ resolvePaths: vi.fn() }));
+
+vi.mock('@lib/explorer/fs-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@lib/explorer/fs-client')>()),
+  resolvePaths,
+}));
 
 vi.mock('@xterm/xterm');
 vi.mock('@xterm/addon-fit');
@@ -929,4 +937,92 @@ describe('CenterStage — Show plan panel (HIVE-182)', () => {
 
     expect(screen.getByRole('region', { name: 'Plan' })).toBeInTheDocument();
   });
+
+  /**
+   * The composition root's half of terminal file links: *who* a printed path
+   * is resolved for, and what opening one does to the stage.
+   */
+  describe('file links', () => {
+    const provider = () => terminalInstances.at(-1)?.linkProviders[0];
+    const links = (y: number): Promise<MockLink[] | undefined> =>
+      new Promise((done) => {
+        const found = provider();
+        if (!found) {
+          done(undefined);
+          return;
+        }
+        found.provideLinks(y, done);
+      });
+    /** Both, so the assertion holds on either platform. */
+    const open = (link: MockLink | undefined) =>
+      act(() =>
+        link?.activate(
+          new MouseEvent('click', { metaKey: true, ctrlKey: true }),
+          link.text,
+        ),
+      );
+
+    beforeEach(() => {
+      useEditorStore.getState().reset();
+      resolvePaths.mockClear();
+      resolvePaths.mockImplementation(
+        async (_projectId: string, _sessionId: string | undefined, paths: string[]) =>
+          paths.map((path) =>
+            path === 'src/a.ts' ? { relPath: 'src/a.ts', rootKey: '' } : null,
+          ),
+      );
+    });
+
+    it('resolves under the session on screen and opens the file on the stage', async () => {
+      render(<CenterStage />);
+      act(() => useUiStore.getState().openTab('hero-refresh'));
+      terminalInstances.at(-1)!.bufferLines = ['● Edit src/a.ts:4:2'];
+
+      const [link] = (await links(1)) ?? [];
+      expect(resolvePaths).toHaveBeenCalledWith('nova-web', 'hero-refresh', [
+        'src/a.ts',
+      ]);
+
+      open(link);
+      expect(useEditorStore.getState().activeKey).toBe(
+        fileKey('nova-web', 'src/a.ts'),
+      );
+    });
+
+    it('closes what was open first in single-file mode', async () => {
+      act(() => useAppearanceStore.getState().setEditorNav('single'));
+      render(<CenterStage />);
+      act(() => useUiStore.getState().openTab('hero-refresh'));
+      const instance = terminalInstances.at(-1);
+      expect(instance).toBeDefined();
+      instance!.bufferLines = ['src/a.ts'];
+
+      /*
+        Opened *after* the terminal has mounted. A file open at first render
+        puts the editor on the stage, so the host is handed `activeId={null}`,
+        mounts nothing, and there is no provider to drive. The kept-alive
+        instance survives the editor taking the stage, which is the point.
+      */
+      act(() => useEditorStore.getState().openFile('nova-web', 'src/old.ts'));
+
+      open((await links(1))?.[0]);
+      expect(
+        useEditorStore.getState().openFiles.map((file) => file.relPath),
+      ).toEqual(['src/a.ts']);
+    });
+
+    /**
+     * The overmind has no project, and a tree — or a link — rooted in a
+     * project nothing on screen is working in is the untruth
+     * `use-explorer-project` removed from the explorer. Same rule here.
+     */
+    it('resolves nothing on the orchestrator, which has no project', async () => {
+      render(<CenterStage />);
+      terminalInstances[0]!.bufferLines = ['src/a.ts'];
+
+      expect(await links(1)).toBeUndefined();
+      expect(resolvePaths).not.toHaveBeenCalled();
+    });
+  });
+
 });
