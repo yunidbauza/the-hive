@@ -1,12 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
+import { marked } from 'marked';
+
 import type { AdfDoc, AdfMark, AdfNode } from '../../../../shared/jira-contract';
 
-import {
-  marked,
-  type MarkedListItem,
-  type MarkedToken,
-} from './vendor/marked/marked.esm.mjs';
 
 /**
  * Markdown to Atlassian Document Format (HIVE-71).
@@ -25,10 +22,10 @@ import {
  * 2. **No CLI.** Upstream is a script with a `main()`; this is a library. The
  *    argv handling and the file I/O went with the port.
  *
- * `marked` is **vendored** rather than added as a dependency, in
- * `./vendor/marked/`, with its licence and version alongside. That keeps the
- * property the epic was protecting when it rejected the bash client: no new
- * runtime dependency, nothing to resolve at install time.
+ * `marked` is a pinned, exact dependency (13.0.3) rather than a vendored
+ * bundle. What the epic was protecting when it rejected the bash client is
+ * kept by the exact pin plus the lockfile's integrity hash, and
+ * `pnpm verify:bundle` proves a packaged build carries it.
  *
  * ## Why markdown at all
  *
@@ -36,6 +33,46 @@ import {
  * a comment with literal `**` in it — which is the entire reason this file
  * exists rather than the app sending what the user typed.
  */
+
+/**
+ * The token surface this converter reads. Every field is optional on purpose:
+ * this is a description of someone else's runtime output, and a missing field
+ * is treated as absent rather than trusted. Upstream's `Token` is a
+ * discriminated union that would force a narrowing rewrite of `tokenToAdf`
+ * for nothing.
+ */
+interface MarkedToken {
+  type: string;
+  /** Present on most leaf tokens. */
+  text?: string;
+  /** Nested inline or block tokens. */
+  tokens?: MarkedToken[];
+  /** `heading`. */
+  depth?: number;
+  /** `link`. */
+  href?: string;
+  /** `code`. */
+  lang?: string;
+  /** `list`. */
+  ordered?: boolean;
+  items?: MarkedListItem[];
+  /** `table`. */
+  header?: MarkedTableCell[];
+  rows?: MarkedTableCell[][];
+}
+
+interface MarkedListItem {
+  task?: boolean;
+  checked?: boolean;
+  tokens?: MarkedToken[];
+}
+
+interface MarkedTableCell {
+  tokens?: MarkedToken[];
+}
+
+/** The lexer's output, as the surface above. */
+const lex = (markdown: string): MarkedToken[] => marked.lexer(markdown) as MarkedToken[];
 
 const HTML_ENTITIES: Record<string, string> = {
   '&lt;': '<',
@@ -305,6 +342,6 @@ export function convertMarkdown(markdown: string): AdfDoc {
   return {
     type: 'doc',
     version: 1,
-    content: blocksFromTokens(marked.lexer(markdown)),
+    content: blocksFromTokens(lex(markdown)),
   };
 }
