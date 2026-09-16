@@ -87,8 +87,9 @@ import {
  * lookup table beats scattering `<SlackLogo />` imports through feature slices
  * that only ever learn the name at runtime.
  *
- * Every name here appears in `src/data/fixtures.ts`. Adding a fixture icon means
- * adding it here, or it renders as the fallback.
+ * Every name here is one a caller passes at runtime (`file-icon.ts`,
+ * `tree-node.tsx`, `agent-form.tsx` and the settings sections). An unknown name
+ * renders as the fallback.
  */
 const GLYPHS: Record<string, PhosphorIcon> = {
   // Disclosure — the projects panel's caret (031).

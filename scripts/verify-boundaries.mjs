@@ -101,15 +101,6 @@ const CASES = [
     },
   },
   {
-    name: 'zone: THE SEAM — components/terminal/ may not import data/',
-    rule: 'import/no-restricted-paths',
-    files: {
-      'src/data/probe-target.ts': 'export const fixture = 1;\n',
-      'src/components/terminal/probe.ts':
-        "import { fixture } from '@/data/probe-target';\nexport const probe = fixture;\n",
-    },
-  },
-  {
     name: 'zone: THE SEAM — components/terminal/ may not import stores/',
     rule: 'import/no-restricted-paths',
     files: {
@@ -484,15 +475,6 @@ const CASES = [
       'src/features/work/probe-target.ts': 'export const work = 1;\n',
       'src/components/layout/probe.ts':
         "import { work } from '@features/work/probe-target';\nexport const probe = work;\n",
-    },
-  },
-  {
-    name: 'ALLOWED: stores/ may import data/',
-    rule: null,
-    files: {
-      'src/data/probe-target.ts': 'export const fixture = 1;\n',
-      'src/stores/probe.ts':
-        "import { fixture } from '@/data/probe-target';\nexport const probe = fixture;\n",
     },
   },
   {

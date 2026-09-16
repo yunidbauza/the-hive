@@ -126,12 +126,11 @@ one still fires.
 | --- | --- |
 | `src/features/<slice>/**` | any other slice (except `src/features/shared/**`) |
 | `src/components/**` (except `layout/`) | `src/features/**` |
-| **`src/components/terminal/**`** | `src/features/**`, `src/data/**`, `src/stores/**` |
-| **`src/components/editor/**`** | `src/features/**`, `src/data/**`, `src/stores/**` |
+| **`src/components/terminal/**`** | `src/features/**`, `src/stores/**` |
+| **`src/components/editor/**`** | `src/features/**`, `src/stores/**` |
 | `src/lib/**` | `src/features/**`, `src/components/**` |
 | `src/hooks/**` | `src/features/**` |
 | `src/stores/**` | `src/features/**`, `src/components/**` |
-| everything except `src/stores/**` | `src/data/**` |
 | `src/**`, `electron/**` | `tests/**` (test scaffolding never ships) |
 | `electron/main/**` | `src/**` |
 | `electron/preload/**` | `src/**`, `electron/main/**` |
@@ -212,8 +211,7 @@ status change from re-rendering the whole shell.
 Derived values are computed **in selectors, never stored** — one truth per number
 on screen. Cross-store effects call the other store's action; none subscribes.
 
-Fixtures (`src/data/`) are **store-only**, seed only `notifs`, and never gain a
-slice back; boot data is last run's ended sessions. Tests: `tests/support/`.
+Fixtures live in `tests/support/`; nothing under `src/` seeds the stores.
 
 ## Styling
 

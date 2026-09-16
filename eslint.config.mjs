@@ -184,9 +184,9 @@ export default tseslint.config(
              */
             {
               target: './src/components/terminal/**/*',
-              from: ['./src/features/**/*', './src/data/**/*', './src/stores/**/*'],
+              from: ['./src/features/**/*', './src/stores/**/*'],
               message:
-                'components/terminal/ speaks only TerminalTransport. It may not import features/, data/, or stores/.',
+                'components/terminal/ speaks only TerminalTransport. It may not import features/ or stores/.',
             },
 
             /**
@@ -197,9 +197,9 @@ export default tseslint.config(
              */
             {
               target: './src/components/editor/**/*',
-              from: ['./src/features/**/*', './src/data/**/*', './src/stores/**/*'],
+              from: ['./src/features/**/*', './src/stores/**/*'],
               message:
-                'components/editor/ knows only its props. It may not import features/, data/, or stores/.',
+                'components/editor/ knows only its props. It may not import features/ or stores/.',
             },
 
             /**
@@ -219,7 +219,6 @@ export default tseslint.config(
               from: [
                 './src/features/**/*',
                 './src/components/**/*',
-                './src/data/**/*',
                 './src/stores/**/*',
                 './src/hooks/**/*',
                 './src/lib/**/*',
@@ -250,7 +249,6 @@ export default tseslint.config(
               from: [
                 './src/features/**/*',
                 './src/components/**/*',
-                './src/data/**/*',
                 './src/stores/**/*',
                 './src/hooks/**/*',
               ],
