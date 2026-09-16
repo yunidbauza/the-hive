@@ -17,6 +17,11 @@ body,
   height: 100%;
 }
 
+:root {
+  /* Lets max-height animate from an intrinsic keyword (the card collapse). */
+  interpolate-size: allow-keywords;
+}
+
 body {
   margin: 0;
   /* The shell fills the viewport and never scrolls as a page — the left rail,
@@ -115,6 +120,11 @@ body {
  * (measuring every following card and transforming each) is far more machinery
  * for the same 220ms.
  *
+ * The collapse starts at `max-content` rather than a measured pixel: with
+ * `interpolate-size: allow-keywords` on `:root` the browser interpolates from
+ * the intrinsic keyword itself, so the card no longer reads its own
+ * `offsetHeight` at click time to tell the keyframes where to start.
+ *
  * Under `prefers-reduced-motion` this never runs: the card is unmounted straight
  * away instead. See `notification-card.tsx`.
  */
@@ -122,12 +132,12 @@ body {
   0% {
     opacity: 1;
     transform: translateX(0);
-    max-height: var(--cc-card-h, 200px);
+    max-height: max-content;
   }
   60% {
     opacity: 0;
     transform: translateX(60%);
-    max-height: var(--cc-card-h, 200px);
+    max-height: max-content;
   }
   100% {
     opacity: 0;

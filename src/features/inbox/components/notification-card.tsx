@@ -131,19 +131,6 @@ function NotificationButtonRow({ notif }: NotificationCardProps) {
     notif.subject === undefined ? notif.title : `${subjectName} ${notif.title}`;
 
   const [leaving, setLeaving] = useState(false);
-  /**
-   * The card's **root**, which is the button on its own or the wrapper that
-   * holds the button and the link (HIVE-123).
-   *
-   * Typed as `HTMLElement` and set through a ref callback because it is one or
-   * the other, and the exit has to own whichever it is. Measuring the button
-   * while collapsing the wrapper — or the reverse — clips the link away
-   * instantly and then animates a height the row never had.
-   */
-  const ref = useRef<HTMLElement | null>(null);
-  const holdRoot = (el: HTMLElement | null): void => {
-    ref.current = el;
-  };
   const exitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /**
@@ -235,18 +222,6 @@ function NotificationButtonRow({ notif }: NotificationCardProps) {
       return;
     }
 
-    /**
-     * The card's own height, measured and handed to the keyframes.
-     *
-     * `max-height` cannot animate from `auto`, and a hard-coded start value would
-     * either clip a two-line body or leave a taller card collapsing from a height
-     * it never had. One `offsetHeight` read at click time is exact, and it is the
-     * only layout read in the path.
-     */
-    const el = ref.current;
-    if (el !== null) {
-      el.style.setProperty('--cc-card-h', `${el.offsetHeight}px`);
-    }
     setLeaving(true);
     exitTimer.current = setTimeout(() => dismissNotif(notif.id), CARD_EXIT_MS);
   };
@@ -283,7 +258,6 @@ function NotificationButtonRow({ notif }: NotificationCardProps) {
 
   const card = (
     <button
-      ref={notif.link === undefined ? holdRoot : null}
       type="button"
       /*
         The card's identity in the DOM, the way `data-panel` and
@@ -325,7 +299,7 @@ function NotificationButtonRow({ notif }: NotificationCardProps) {
   if (notif.link === undefined) return card;
 
   return (
-    <div ref={holdRoot} className={exit}>
+    <div className={exit}>
       {card}
       <a
         href={notif.link.href}
