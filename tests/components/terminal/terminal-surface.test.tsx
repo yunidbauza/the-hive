@@ -301,6 +301,83 @@ describe('TerminalSurface', () => {
     });
   });
 
+  /**
+   * Copying out (#288). Claude Code's "Copied to clipboard" is an OSC 52 write
+   * the terminal must carry out, and inside a container it is the only route.
+   */
+  describe('the clipboard, from the program side', () => {
+    function osc52(data: string) {
+      const handler = terminal().oscHandlers.get(52);
+      if (!handler) throw new Error('no OSC 52 handler was registered');
+      return handler(data);
+    }
+
+    it('writes an OSC 52 payload to the clipboard and consumes it', async () => {
+      const writeText = vi.fn(() => Promise.resolve());
+      vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+      const { transport } = fakeTransport();
+      render(<TerminalSurface transport={transport} palette={TERM} readOnly={false} />);
+
+      expect(osc52(`c;${btoa('copied text')}`)).toBe(true);
+      expect(writeText).toHaveBeenCalledWith('copied text');
+
+      vi.unstubAllGlobals();
+    });
+
+    it('never answers the query form, and never writes', () => {
+      const writeText = vi.fn(() => Promise.resolve());
+      vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+      const { transport } = fakeTransport();
+      render(<TerminalSurface transport={transport} palette={TERM} readOnly={false} />);
+
+      expect(osc52('c;?')).toBe(true);
+      expect(writeText).not.toHaveBeenCalled();
+      expect(transport.write).not.toHaveBeenCalled();
+
+      vi.unstubAllGlobals();
+    });
+
+    it('warns when the clipboard rejects the write', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const denied = new Error('NotAllowedError');
+      vi.stubGlobal('navigator', {
+        ...navigator,
+        clipboard: { writeText: vi.fn(() => Promise.reject(denied)) },
+      });
+      const { transport } = fakeTransport();
+      render(<TerminalSurface transport={transport} palette={TERM} />);
+
+      osc52(`c;${btoa('x')}`);
+      await vi.waitFor(() =>
+        expect(warn).toHaveBeenCalledWith('terminal: clipboard copy failed', denied),
+      );
+
+      warn.mockRestore();
+      vi.unstubAllGlobals();
+    });
+
+    it('drops the handler with the terminal', () => {
+      const { transport } = fakeTransport();
+      const { unmount } = render(<TerminalSurface transport={transport} palette={TERM} />);
+
+      unmount();
+
+      expect(terminal().oscHandlers.has(52)).toBe(false);
+    });
+
+    /**
+     * Claude Code holds mouse tracking on, and xterm disables selection for as
+     * long as it does. On macOS Option is the only override, and it is off by
+     * default, so without this no drag ever makes a selection Cmd+C can copy.
+     */
+    it('lets Option+drag force a selection past mouse tracking', () => {
+      const { transport } = fakeTransport();
+      render(<TerminalSurface transport={transport} palette={TERM} />);
+
+      expect(terminal().options.macOptionClickForcesSelection).toBe(true);
+    });
+  });
+
   describe('read-only', () => {
     it('disables stdin and the cursor when read-only', () => {
       const { transport } = fakeTransport();

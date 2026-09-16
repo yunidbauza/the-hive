@@ -187,6 +187,19 @@ export class MockTerminal {
    * back. Real xterm would need a *rendered* row and a real mouse over it,
    * and the WebGL renderer paints the row into a canvas with no node to hover.
    */
+  /** OSC handlers the surface registered, by id, until disposed (#288). */
+  readonly oscHandlers = new Map<number, (data: string) => boolean | Promise<boolean>>();
+
+  readonly parser = {
+    registerOscHandler: (
+      ident: number,
+      handler: (data: string) => boolean | Promise<boolean>,
+    ) => {
+      this.oscHandlers.set(ident, handler);
+      return { dispose: () => this.oscHandlers.delete(ident) };
+    },
+  };
+
   readonly linkProviders: MockLinkProvider[] = [];
 
   registerLinkProvider(provider: MockLinkProvider) {
