@@ -17,6 +17,20 @@ export interface MockTerminalOptions {
   [key: string]: unknown;
 }
 
+/** Enough of xterm's `ILink` for a test to drive one. */
+export interface MockLink {
+  text: string;
+  range: { start: { x: number; y: number }; end: { x: number; y: number } };
+  activate(event: MouseEvent, text: string): void;
+  hover?(event: MouseEvent, text: string): void;
+  leave?(event: MouseEvent, text: string): void;
+}
+
+/** Enough of xterm's `ILinkProvider`. */
+export interface MockLinkProvider {
+  provideLinks(y: number, callback: (links: MockLink[] | undefined) => void): void;
+}
+
 /** Every instance constructed during a test, in construction order. */
 export const terminalInstances: MockTerminal[] = [];
 
@@ -47,6 +61,16 @@ export class MockTerminal {
    */
   bufferDim: string[] = [];
 
+  /**
+   * Which cells of {@link bufferLines} are double-width, as a per-row mask.
+   *
+   * One character per string index: `w` for a character xterm would draw in
+   * two columns — CJK, most emoji — anything else for a single-column one. A
+   * row with no entry is entirely narrow, which is what almost every test
+   * wants; only the ones about link ranges care.
+   */
+  bufferWide: string[] = [];
+
   readonly buffer = {
     active: {
       viewportY: 0,
@@ -72,8 +96,14 @@ export class MockTerminal {
         const text = this.bufferLines[row];
         if (text === undefined) return undefined;
         const faint = this.bufferDim[row] ?? '';
+        const wide = this.bufferWide[row] ?? '';
+        const width = [...text].reduce(
+          (total, _char, i) => total + (wide[i] === 'w' ? 2 : 1),
+          0,
+        );
         return {
-          length: text.length,
+          // Real xterm reports a row's length in **columns**, not characters.
+          length: width,
           translateToString: (trimRight?: boolean, start?: number, end?: number) => {
             const slice = text.slice(start ?? 0, end);
             return trimRight === true ? slice.replace(/\s+$/u, '') : slice;
@@ -86,13 +116,34 @@ export class MockTerminal {
            * is the whole reason the surface reads cells rather than calling
            * `translateToString`.
            */
+          /**
+           * Indexed by **column**, as real xterm is — so a row holding a
+           * double-width character has more columns than string characters,
+           * and the spacer cell after one reports no chars and width 0.
+           */
           getCell: (column: number) => {
-            if (column < 0 || column >= text.length) return undefined;
-            return {
-              getChars: () => text[column] ?? '',
-              getWidth: () => 1,
-              isDim: () => (faint[column] === 'd' ? 1 : 0),
-            };
+            let at = 0;
+            for (let i = 0; i < text.length; i += 1) {
+              const width = wide[i] === 'w' ? 2 : 1;
+              if (column === at) {
+                return {
+                  getChars: () => text[i] ?? '',
+                  getWidth: () => width,
+                  isDim: () => (faint[i] === 'd' ? 1 : 0),
+                };
+              }
+              // The spacer half of a wide character: real xterm reports it
+              // with no chars and width 0.
+              if (width === 2 && column === at + 1) {
+                return {
+                  getChars: () => '',
+                  getWidth: () => 0,
+                  isDim: () => (faint[i] === 'd' ? 1 : 0),
+                };
+              }
+              at += width;
+            }
+            return undefined;
           },
 
         };
@@ -126,6 +177,27 @@ export class MockTerminal {
    */
   keyEventHandler: ((event: KeyboardEvent) => boolean) | null = null;
   selection = '';
+
+  /**
+   * Link providers the surface registers (terminal file links).
+   *
+   * Recorded rather than invoked, for the same reason as the key handler
+   * above: `provideLinks` is a decision over a line of text, so a test drives
+   * it directly against staged {@link bufferLines} and asserts what comes
+   * back. Real xterm would need a *rendered* row and a real mouse over it,
+   * and the WebGL renderer paints the row into a canvas with no node to hover.
+   */
+  readonly linkProviders: MockLinkProvider[] = [];
+
+  registerLinkProvider(provider: MockLinkProvider) {
+    this.linkProviders.push(provider);
+    return {
+      dispose: () => {
+        const at = this.linkProviders.indexOf(provider);
+        if (at >= 0) this.linkProviders.splice(at, 1);
+      },
+    };
+  }
 
   private readonly dataListeners = new Set<(data: string) => void>();
 

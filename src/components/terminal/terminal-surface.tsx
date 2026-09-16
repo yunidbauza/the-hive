@@ -8,6 +8,11 @@ import { isMacPlatform } from '@lib/platform';
 import { xtermThemeFor, type TermPalette } from '@lib/terminal/ansi';
 import { shouldAutoScroll } from '@lib/terminal/auto-scroll';
 import {
+  createFileLinkProvider,
+  type FileLinkTarget,
+  type TerminalLine,
+} from '@lib/terminal/file-links';
+import {
   FRAME_SCAN,
   isBareBack,
   isEmptyClaudePrompt,
@@ -22,8 +27,59 @@ import {
 } from '@lib/terminal/keymap';
 import { handleWebLink, terminalLinkHandler } from '@lib/terminal/open-link';
 import type { PromptInput, TerminalTransport } from '@lib/terminal/terminal-transport';
+import type { ResolvedLink } from '@shared/fs-contract';
 
 import '@xterm/xterm/css/xterm.css';
+
+/**
+ * A buffer row as both text and columns (HIVE terminal file links).
+ *
+ * `translateToString` alone will not do. It returns a double-width character —
+ * CJK, most emoji, some box-drawing glyphs — as *one* JS character, while
+ * xterm draws it in *two* columns, so every string index after the first one
+ * on a line undercounts the real column. A link range built from those offsets
+ * drifts left of the path it underlines, and the user gets a link they can see
+ * and cannot click.
+ *
+ * So the row is walked cell by cell and the widths are taken from xterm
+ * itself. A width table in this app would be a second opinion about what was
+ * already painted, and the painter is the one that gets to be right.
+ *
+ * A cell reporting width 0 is the spacer half of the wide character before it:
+ * it holds no characters of its own and only advances the column, which the
+ * loop does by reading each cell's own width rather than by counting cells.
+ */
+function readTerminalLine(line: IBufferLine | undefined): TerminalLine | undefined {
+  if (!line) return undefined;
+
+  let text = '';
+  const columns: number[] = [];
+  let column = 0;
+
+  for (let cell = 0; cell < line.length; cell += 1) {
+    const at = line.getCell(cell);
+    if (!at) break;
+
+    const width = at.getWidth();
+    if (width === 0) continue;
+
+    // One cell can carry several JS characters — a combining accent, or an
+    // emoji built from several code units — and they all sit in this column.
+    const chars = at.getChars() || ' ';
+    for (const char of chars) {
+      text += char;
+      columns.push(column);
+    }
+    column += width;
+  }
+
+  columns.push(column);
+
+  // `translateToString(true)` trims the right; trailing blanks cannot hold a
+  // candidate, and dropping them keeps the memo keyed on what was printed.
+  const trimmed = text.replace(/\s+$/u, '');
+  return { text: trimmed, columns: columns.slice(0, trimmed.length + 1) };
+}
 
 /** xterm's line-height is a multiple of the font size, not a CSS length. */
 const LINE_HEIGHT = 1.4;
@@ -90,6 +146,22 @@ interface TerminalSurfaceProps {
    * including the one the user presses to leave.
    */
   ended?: boolean;
+  /**
+   * File links: which printed strings are files, and what to do about one.
+   *
+   * Both opaque, exactly as {@link TerminalSurfaceProps.palette} is. This
+   * component learns that some strings can be resolved and that a resolved one
+   * can be opened; which project, which session and which editor is the
+   * composition root's business, and has to stay there — `components/terminal/`
+   * may not import `stores/`, and a path is only a *file* relative to a
+   * session this component has never heard of.
+   *
+   * Absent either one, no provider is registered and paths never underline:
+   * the orchestrator console, the browser target, and the clone view all take
+   * that branch.
+   */
+  resolveFileLinks?: (paths: string[]) => Promise<Array<ResolvedLink | null>>;
+  onOpenFile?: (target: FileLinkTarget) => void;
 }
 
 /** What the mount effect builds, held together so dependents can re-run. */
@@ -282,6 +354,8 @@ export function TerminalSurface({
   readOnly = false,
   visible = true,
   ended = false,
+  resolveFileLinks,
+  onOpenFile,
 }: TerminalSurfaceProps) {
   /**
    * Container and instance both live in state behind callback refs rather than
@@ -365,6 +439,19 @@ export function TerminalSurface({
    */
   const lastPromptRef = useRef<PromptInput | null>(null);
 
+  /**
+   * Same reason as {@link transportRef}: the link provider is installed once,
+   * in the mount effect, and this surface is kept alive across every tab
+   * switch. A resolver captured at construction would go on answering for the
+   * session that was on screen when the terminal was built — so a path would
+   * resolve against the wrong project and open the wrong file, silently,
+   * because both answers have the same shape.
+   */
+  const fileLinksRef = useRef({ resolveFileLinks, onOpenFile });
+  useEffect(() => {
+    fileLinksRef.current = { resolveFileLinks, onOpenFile };
+  }, [resolveFileLinks, onOpenFile]);
+
   useEffect(() => {
     if (!container) return;
 
@@ -427,6 +514,28 @@ export function TerminalSurface({
     */
     terminal.loadAddon(new WebLinksAddon(handleWebLink));
 
+    const isMac = isMacPlatform();
+
+    /*
+      Paths, as distinct from URLs: `⌘`-click (Ctrl elsewhere) opens the file
+      on the stage. The decision of what is path-shaped and what a click means
+      is `lib/terminal/file-links.ts`'s, so it can be tested against a table of
+      real compiler output; what this layer adds is the two things only it has,
+      a buffer to read the row from and the platform. `decideTerminalKey`
+      already treats that modifier as "the app's" for keystrokes, and a click
+      follows the same rule.
+    */
+    const fileLinks = terminal.registerLinkProvider(
+      createFileLinkProvider({
+        readLine: (y) => readTerminalLine(terminal.buffer.active.getLine(y - 1)),
+        resolve: (paths) =>
+          fileLinksRef.current.resolveFileLinks?.(paths) ??
+          Promise.resolve(paths.map(() => null)),
+        open: (target) => fileLinksRef.current.onOpenFile?.(target),
+        isModified: (event) => (isMac ? event.metaKey : event.ctrlKey),
+      }),
+    );
+
     /**
      * Who owns a keystroke (story 095). Read-only surfaces skip it entirely —
      * they send nothing to a pty, so there is no conflict to arbitrate, and
@@ -434,7 +543,6 @@ export function TerminalSurface({
      * the console's own test exists to catch.
      */
     if (!readOnly) {
-      const isMac = isMacPlatform();
       terminal.attachCustomKeyEventHandler((event) => {
         // `keypress`/`keyup` arrive here too. Deciding on anything but keydown
         // would run the copy twice and fight the pty for the same chord.
@@ -617,6 +725,7 @@ export function TerminalSurface({
 
     return () => {
       resizeObserver.disconnect();
+      fileLinks.dispose();
       terminal.dispose();
       setInstance(null);
     };

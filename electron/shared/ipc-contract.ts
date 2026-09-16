@@ -80,6 +80,8 @@ import type {
   FsResult,
   ReadDirRequest,
   ReadFileRequest,
+  ResolveRequest,
+  ResolveResult,
   RootInfo,
   RootRequest,
   SearchRequest,
@@ -944,6 +946,16 @@ export const CH = {
    * for the three things that were guessing without it.
    */
   fsRoot: 'fs:root',
+  /**
+   * Which of some path-shaped strings name a file under this pairing's root.
+   *
+   * Takes candidates, not paths: text a program printed into a terminal, which
+   * main verifies exactly as it verifies every read — resolved, `realpath`'d,
+   * contained — and answers `null` for rather than serving. See
+   * `fs-contract.ts` -> `ResolveRequest` for why that is not a hole in the
+   * rule above.
+   */
+  fsResolve: 'fs:resolve',
   fsReadFile: 'fs:read-file',
   fsWriteFile: 'fs:write-file',
   /**
@@ -2166,6 +2178,11 @@ export interface HiveBridge {
     /** Which root this pairing resolves under. See {@link RootInfo}. */
     root(request: RootRequest): Promise<FsResult<RootInfo>>;
     /**
+     * Which of these printed strings name a file here. See
+     * {@link ResolveRequest} for why this one takes path-shaped text.
+     */
+    resolve(request: ResolveRequest): Promise<FsResult<ResolveResult>>;
+    /**
      * Read a file, or say why not.
      *
      * `FsRefusal` is a success at the transport level and a decline at the
@@ -3158,6 +3175,13 @@ export const BRIDGE_FS_KEYS = [
     the renderer was previously inferring and getting wrong.
   */
   'root',
+  /*
+    The only verb here that takes path-shaped text, and it is a read: it
+    answers which of those strings main would serve and `null` for the rest.
+    Containment decides, exactly as it does for a `relPath` — see
+    `fs-contract.ts` -> `ResolveRequest`.
+  */
+  'resolve',
   'readFile',
   'writeFile',
   /*

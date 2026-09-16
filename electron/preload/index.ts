@@ -62,6 +62,8 @@ import type {
   FsResult,
   ReadDirRequest,
   ReadFileRequest,
+  ResolveRequest,
+  ResolveResult,
   RootInfo,
   RootRequest,
   SearchRequest,
@@ -426,6 +428,8 @@ const bridge: HiveBridge = {
   fs: {
     root: (request: RootRequest): Promise<FsResult<RootInfo>> =>
       ipcRenderer.invoke(CH.fsRoot, request) as Promise<FsResult<RootInfo>>,
+    resolve: (request: ResolveRequest): Promise<FsResult<ResolveResult>> =>
+      ipcRenderer.invoke(CH.fsResolve, request) as Promise<FsResult<ResolveResult>>,
     readDir: (request: ReadDirRequest): Promise<FsResult<DirEntry[]>> =>
       ipcRenderer.invoke(CH.fsReadDir, request),
     readFile: (

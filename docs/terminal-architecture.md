@@ -76,6 +76,7 @@ import `features/`, `data/`, or `stores/` — the import zone in
 | `lib/terminal/ansi.ts` | both palettes | `TermColor` → indexed SGR; theme → xterm theme |
 | `lib/terminal/signals.ts` | nothing | signal number → name |
 | `lib/terminal/auto-scroll.ts` | nothing | the bottom-stick predicate |
+| `lib/terminal/file-links.ts` | nothing | path candidates in a line; the link provider |
 | `components/terminal/terminal-surface.tsx` | a transport | one live terminal |
 | `components/terminal/terminal-host.tsx` | opaque ids | kept-alive registry |
 
@@ -88,6 +89,31 @@ be tested against nothing but a stubbed bridge.
 **The rule that keeps it honest:** if a future change needs the terminal
 component to read the store, that change is wrong — the data belongs in a
 transport.
+
+### File links, and why they did not break the rule
+
+⌘-click (Ctrl elsewhere) on a path in terminal output opens it in the
+centre-stage editor. That needs three things the terminal cannot have: which
+project, which session, and an editor to open into. It gets none of them.
+
+The surface takes **two opaque props** — `resolveFileLinks(paths)` and
+`onOpenFile(target)` — in exactly the sense `palette` is opaque. It learns that
+some strings can be resolved and that a resolved one can be opened. The
+composition root binds the first to `fs:resolve` for the entity on screen and
+the second to `editor-store.openFile`; `terminal-host.tsx` forwards both
+verbatim. Absent either, no provider is registered and paths never underline —
+the console, the browser target and the clone view all take that branch.
+
+The decision of *what is path-shaped* and *what a click means* is
+`lib/terminal/file-links.ts`, on the `lib/` side of the fence, so it is tested
+against a table of real compiler output rather than a rendered terminal. What
+the surface adds is the two things only it has: a buffer to read the row from,
+and the platform's modifier.
+
+**Why a modifier at all**, when a URL in the same output opens on a plain
+click: terminal text is selected and copied constantly, so a plain click that
+opened a file would eat the click-drag that starts on a path. A URL has no such
+conflict. VS Code draws the same line in the same place.
 
 ### Did the seam hold?
 

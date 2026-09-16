@@ -463,11 +463,34 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
    *
    * A verb that took a path, or that walked without a bound, is what this list
    * exists to make impossible to add quietly.
+   *
+   * **`resolve` is the first verb here that takes path-shaped text**, and it is
+   * on this list precisely because that sentence is true — it had to be argued
+   * for rather than added. What keeps it inside the posture:
+   *
+   * - **It is a question, not a read.** It returns `{relPath, rootKey}` or
+   *   `null`; it opens nothing and discloses no file content. Acting on the
+   *   answer means calling `readFile`, which is on this list already and
+   *   enforces containment again on its own.
+   * - **The strings it takes are not paths it honours.** They are text a
+   *   program printed into a terminal, and main resolves each one under the
+   *   same root every read uses, `realpath`s it, and refuses anything landing
+   *   outside — so the renderer cannot name a file main would not otherwise
+   *   serve. The string guard is deliberately *narrower* than `assertRelPath`
+   *   (it admits absolute paths and `..`) because refusing those would refuse
+   *   the output every compiler prints while granting nothing containment does
+   *   not refuse a moment later. See `electron/main/fs/resolve.ts`.
+   * - **It does not walk.** At most `MAX_RESOLVE_CANDIDATES` (32) named
+   *   candidates per call, each one `stat`'d once — no recursion, so the
+   *   bounds `search` needed do not arise.
+   * - **A refusal says nothing.** "Outside the root" and "does not exist" are
+   *   both `null`, so the answer cannot be used to probe the filesystem.
    */
   expect(surface.fs).toEqual([
     'onChanged',
     'readDir',
     'readFile',
+    'resolve',
     'root',
     'search',
     'unwatch',

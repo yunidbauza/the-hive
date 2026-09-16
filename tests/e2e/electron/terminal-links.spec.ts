@@ -1,6 +1,15 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import type { ElectronApplication } from '@playwright/test';
 
-import { expect, test } from './fixtures/hive-app';
+import {
+  expect,
+  launchHive,
+  startSession,
+  test,
+  writeProjectConfig,
+} from './fixtures/hive-app';
 
 /**
  * Links in terminal output actually open the browser.
@@ -98,4 +107,67 @@ test('the call xterm ships by default reaches nothing — the bug', async ({
   // Nothing reached the OS, so `location.href` was never assigned and the user
   // saw nothing happen.
   expect(await opened(hive)).toEqual([]);
+});
+
+/**
+ * `fs:resolve` is registered, classified, and answers through the real bridge.
+ *
+ * The unit suite proves the verb's containment
+ * (`tests/electron/main/fs/resolve.test.ts`) and the renderer's wiring
+ * (`center-stage.test.tsx`) separately, and each of those is a claim about one
+ * side of a channel. What only the built app can show is that the channel
+ * exists at all: that `ipc/index.ts` really binds the handler and that the
+ * preload really exposes it — the two places a new channel is most often
+ * forgotten, and the two that no unit test can reach, because each side mocks
+ * the other.
+ *
+ * Hovering a painted row is deliberately not driven here, for the reason the
+ * tests above give: the WebGL renderer paints the transcript into a canvas, so
+ * there is no DOM node to hover and a pixel-coordinate click would be
+ * asserting xterm's hit-testing rather than this app's behaviour.
+ */
+test('fs:resolve answers through the bridge for the session on screen', async ({}, testInfo) => {
+  const repo = testInfo.outputPath('repo');
+  mkdirSync(join(repo, 'src'), { recursive: true });
+  writeFileSync(join(repo, 'src', 'a.ts'), 'export {};\n');
+
+  const configPath = testInfo.outputPath('hive-config.json');
+  writeProjectConfig(configPath, { id: 'demo', path: repo });
+
+  const app = await launchHive({
+    userDataDir: testInfo.outputPath('user-data'),
+    configPath,
+  });
+  const page = await app.firstWindow();
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForSelector('header');
+
+  try {
+    const sessionId = await startSession(page, 'demo');
+
+    const answer = await page.evaluate(
+      ({ sessionId }) =>
+        window.hive!.fs.resolve({
+          projectId: 'demo',
+          sessionId,
+          candidates: ['src/a.ts', 'src/missing.ts', '/etc/hosts'],
+        }),
+      { sessionId },
+    );
+
+    expect(answer).toEqual({
+      ok: true,
+      value: {
+        resolved: [
+          { relPath: 'src/a.ts', rootKey: '' },
+          // Not on disk, and outside the root: both are `null`, and the
+          // renderer is told nothing that tells them apart.
+          null,
+          null,
+        ],
+      },
+    });
+  } finally {
+    await app.close();
+  }
 });

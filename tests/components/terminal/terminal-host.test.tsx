@@ -6,6 +6,7 @@ import { resetWebLinksAddonInstances } from '../../../__mocks__/@xterm/addon-web
 import {
   resetTerminalInstances,
   terminalInstances,
+  type MockLink,
 } from '../../../__mocks__/@xterm/xterm';
 
 import {
@@ -225,4 +226,42 @@ describe('TerminalHost', () => {
       expect(terminalInstances).toHaveLength(before);
     });
   });
+
+  /**
+   * Forwarded verbatim, like the palette and the font fields. The host is a
+   * registry; it has no more business interpreting a file link than it has
+   * interpreting a colour.
+   */
+  it('forwards the file-link props to the surface it mounts', async () => {
+    const resolveFileLinks = vi.fn(async (paths: string[]) =>
+      paths.map(() => ({ relPath: 'a.ts', rootKey: '' })),
+    );
+    const onOpenFile = vi.fn();
+    render(
+      <TerminalHost
+        entries={entries}
+        activeId="orch"
+        palette={TERM}
+        resolveFileLinks={resolveFileLinks}
+        onOpenFile={onOpenFile}
+      />,
+    );
+
+    const instance = terminalInstances[0];
+    expect(instance).toBeDefined();
+    instance!.bufferLines = ['a.ts'];
+
+    const links = await new Promise<MockLink[] | undefined>((done) => {
+      instance!.linkProviders[0]?.provideLinks(1, done);
+    });
+    expect(resolveFileLinks).toHaveBeenCalledWith(['a.ts']);
+
+    // Both modifiers, so the assertion holds on either platform.
+    links?.[0]?.activate(
+      new MouseEvent('click', { metaKey: true, ctrlKey: true }),
+      'a.ts',
+    );
+    expect(onOpenFile).toHaveBeenCalledWith({ relPath: 'a.ts', rootKey: '' });
+  });
+
 });
