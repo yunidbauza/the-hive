@@ -15,7 +15,7 @@ import {
   isLoopbackHost,
   type ConfigSnapshot,
 } from '@shared/config-contract';
-import type { LocalRemoteState } from '@shared/ipc-contract';
+import type { AppInfo, LocalRemoteState } from '@shared/ipc-contract';
 import { useRemoteLink } from '@stores/hive-store';
 
 
@@ -134,6 +134,73 @@ export function useRemoteCapabilities(): RemoteCapabilities {
  */
 export const LATE_BIND_RETRY_MS = 2000;
 
+interface AppInfoRead<T> {
+  /** The field to read. Module-level, so its identity does not change per render. */
+  pick: (info: AppInfo) => T | undefined;
+  fallback: T;
+  /** Skipped while `false`. */
+  enabled: boolean;
+  /** Re-read when this changes. */
+  key: unknown;
+  /**
+   * Read once more after {@link LATE_BIND_RETRY_MS} when the first read lands
+   * `null`: a bound host is ambiguous between "nothing is listening" and
+   * "the bind has not resolved yet," and only a second read tells them apart.
+   */
+  retryWhileNull?: boolean;
+}
+
+/**
+ * One `readAppInfo` effect, shared by the four hooks below.
+ *
+ * They differed only in which field they picked, what they fall back to, what
+ * they key on, and whether they retry — so those are the arguments, and the
+ * cancellation, the timer cleanup and the ordering are written once. Each
+ * hook's own doc comment still carries why it keys and retries the way it does.
+ */
+function useAppInfoField<T>({
+  pick,
+  fallback,
+  enabled,
+  key,
+  retryWhileNull = false,
+}: AppInfoRead<T>): T {
+  const [value, setValue] = useState<T>(fallback);
+
+  useEffect(() => {
+    if (!enabled) return;
+
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const read = (): Promise<T> =>
+      readAppInfo().then((info) => (info === null ? fallback : (pick(info) ?? fallback)));
+
+    void read().then((first) => {
+      if (cancelled) return;
+      setValue(first);
+      if (retryWhileNull && first === null) {
+        retryTimer = setTimeout(() => {
+          void read().then((again) => {
+            if (!cancelled) setValue(again);
+          });
+        }, LATE_BIND_RETRY_MS);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      if (retryTimer !== undefined) clearTimeout(retryTimer);
+    };
+  }, [enabled, key, pick, fallback, retryWhileNull]);
+
+  return value;
+}
+
+const receiverHost = (info: AppInfo): string | null => info.receiverBoundHost ?? null;
+const serverHost = (info: AppInfo): string | null => info.serverBoundHost ?? null;
+const servingCount = (info: AppInfo): number => info.servingDeviceCount ?? 0;
+const serving = (info: AppInfo): boolean => info.serving ?? false;
+
 /**
  * The address the receiver is **actually** exposed on, or `null` while it is
  * not (HIVE-134).
@@ -182,41 +249,16 @@ export const LATE_BIND_RETRY_MS = 2000;
  * caller reach back for the value it actually wanted.
  */
 export function useReceiverExposure(): string | null {
-  const snapshot = useProjectConfig();
-  const hasSnapshot = snapshot !== null;
-  const [boundHost, setBoundHost] = useState<string | null>(null);
+  const hasSnapshot = useProjectConfig() !== null;
+  const host = useAppInfoField<string | null>({
+    pick: receiverHost,
+    fallback: null,
+    enabled: hasSnapshot,
+    key: hasSnapshot,
+    retryWhileNull: true,
+  });
 
-  useEffect(() => {
-    if (!hasSnapshot) return;
-
-    let cancelled = false;
-    let retryTimer: ReturnType<typeof setTimeout> | undefined;
-
-    void readAppInfo().then((info) => {
-      if (cancelled) return;
-      const host = info?.receiverBoundHost ?? null;
-      setBoundHost(host);
-
-      // See `LATE_BIND_RETRY_MS`'s own comment: a `null` here is ambiguous
-      // between "nothing is listening" and "the bind has not resolved yet,"
-      // and only a second read tells the two apart.
-      if (host === null) {
-        retryTimer = setTimeout(() => {
-          if (cancelled) return;
-          void readAppInfo().then((retryInfo) => {
-            if (!cancelled) setBoundHost(retryInfo?.receiverBoundHost ?? null);
-          });
-        }, LATE_BIND_RETRY_MS);
-      }
-    });
-
-    return () => {
-      cancelled = true;
-      if (retryTimer !== undefined) clearTimeout(retryTimer);
-    };
-  }, [hasSnapshot]);
-
-  return boundHost !== null && !isLoopbackHost(boundHost) ? boundHost : null;
+  return host !== null && !isLoopbackHost(host) ? host : null;
 }
 
 /**
@@ -245,41 +287,15 @@ export function useReceiverExposure(): string | null {
  * so any non-null address here is worth showing, loopback included.
  */
 export function useServerExposure(): string | null {
-  const snapshot = useProjectConfig();
-  const hasSnapshot = snapshot !== null;
-  const [boundHost, setBoundHost] = useState<string | null>(null);
+  const hasSnapshot = useProjectConfig() !== null;
 
-  useEffect(() => {
-    if (!hasSnapshot) return;
-
-    let cancelled = false;
-    let retryTimer: ReturnType<typeof setTimeout> | undefined;
-
-    void readAppInfo().then((info) => {
-      if (cancelled) return;
-      const host = info?.serverBoundHost ?? null;
-      setBoundHost(host);
-
-      // See `LATE_BIND_RETRY_MS`'s own comment: a `null` here is ambiguous
-      // between "nothing is listening" and "the bind has not resolved yet,"
-      // and only a second read tells the two apart.
-      if (host === null) {
-        retryTimer = setTimeout(() => {
-          if (cancelled) return;
-          void readAppInfo().then((retryInfo) => {
-            if (!cancelled) setBoundHost(retryInfo?.serverBoundHost ?? null);
-          });
-        }, LATE_BIND_RETRY_MS);
-      }
-    });
-
-    return () => {
-      cancelled = true;
-      if (retryTimer !== undefined) clearTimeout(retryTimer);
-    };
-  }, [hasSnapshot]);
-
-  return boundHost;
+  return useAppInfoField<string | null>({
+    pick: serverHost,
+    fallback: null,
+    enabled: hasSnapshot,
+    key: hasSnapshot,
+    retryWhileNull: true,
+  });
 }
 
 /**
@@ -320,22 +336,13 @@ export function useServerExposure(): string | null {
  */
 export function useServingDeviceCount(): number {
   const snapshot = useProjectConfig();
-  const [count, setCount] = useState(0);
 
-  useEffect(() => {
-    if (snapshot === null) return;
-
-    let cancelled = false;
-    void readAppInfo().then((info) => {
-      if (!cancelled) setCount(info?.servingDeviceCount ?? 0);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [snapshot]);
-
-  return count;
+  return useAppInfoField({
+    pick: servingCount,
+    fallback: 0,
+    enabled: snapshot !== null,
+    key: snapshot,
+  });
 }
 
 /**
@@ -394,24 +401,14 @@ export function useServingDeviceCount(): number {
  * switch `switchIpcMode` would refuse.
  */
 export function useServing(): boolean {
-  const snapshot = useProjectConfig();
-  const hasSnapshot = snapshot !== null;
-  const [serving, setServing] = useState(false);
+  const hasSnapshot = useProjectConfig() !== null;
 
-  useEffect(() => {
-    if (!hasSnapshot) return;
-
-    let cancelled = false;
-    void readAppInfo().then((info) => {
-      if (!cancelled) setServing(info?.serving ?? false);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [hasSnapshot]);
-
-  return serving;
+  return useAppInfoField({
+    pick: serving,
+    fallback: false,
+    enabled: hasSnapshot,
+    key: hasSnapshot,
+  });
 }
 
 export function useAttachedServer(): string | null {
