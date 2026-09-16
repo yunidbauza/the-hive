@@ -254,12 +254,13 @@ line into Stage 4: "Ticket `KEY` could not be read — scope not checked
    message. Pass `DIFF_PATH`, `REVIEW_DIR`, `FIX_COMMITS`, and `FEEDBACK_PATH` when
    `$RUN_DIR/feedback.json` exists. Each verifier reads the source behind every
    finding it holds and returns a score.
-2. **Drop anything below 75.** In self mode, keep 60–74 as **borderline**
-   instead. They take no severity and never mix with the findings; they come
-   back in a list of their own, each with its score and the verifier's
-   one-line reasoning. On your own branch a false alarm costs you a minute to
-   dismiss; a miss costs a review round later. Borderline findings still go
-   through steps 3 and 4.
+2. **Drop anything below 60.** Keep 60–74 as **borderline** in both modes. They
+   take no severity and never mix with the findings. In self mode they come back
+   in a list of their own, each with its score and the verifier's one-line
+   reasoning. In review mode they are posted inline as **Note**, with the score,
+   and never withhold an approval. A false alarm costs a minute to dismiss; a
+   miss on someone else's PR costs an incident, not a review round. Borderline
+   findings still go through steps 3 and 4.
 3. **Must-exclude.** Drop:
    - nitpicks with no realistic trigger
    - anything without an exact file, line and snippet
@@ -281,8 +282,12 @@ skips this stage and goes straight to Stage 4.
 
 ## Stage 4: Finish
 
-**Review mode:** follow `references/posting.md`. It decides the verdict, posts
-the review and closes the run. No person is asked anything.
+**Review mode:** open `references/posting.md` now and follow it. Do not compose a
+body from memory — the verdict has six conditions and the body has three parts,
+and both are in that file. Write `$RUN_DIR/review.json` with the `Write` tool and
+post it with `gh api`; the payload is the review. Nothing else is posted, and no
+file outside `$RUN_DIR` is written. It decides the verdict, posts the review and
+closes the run. No person is asked anything.
 
 **Self mode:** end with:
 

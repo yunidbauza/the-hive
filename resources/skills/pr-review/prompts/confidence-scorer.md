@@ -40,7 +40,7 @@ Score each finding on its own evidence. Two findings about the same area do not 
 **PR comment rules (check `PR_COMMENTS` before scoring):**
 - If an existing thread explicitly states this issue is intentional, a known tradeoff, or deferred to a future ticket — score 0. The author has already addressed it; surfacing it again adds noise.
 - If a root comment asks a question that this finding would answer — increase the score by 10 (ceiling: 100). The finding is directly relevant to a human question in flight.
-- If an existing thread already raised this exact issue, score 0. The prior-findings reviewer owns it and has reported it on its own if it still holds.
+- If an existing thread already raised this exact issue, score it **on its own evidence** and set `"duplicateOfThread": true`. The orchestrator decides whether it is carried as a prior finding or as a new one; a 0 here loses it entirely if the prior-findings reviewer did not return.
 - A thread covers the concern it names: not its file, not its function, and not the code written to fix it. Apply the rules above only when the thread is about this finding's exact problem.
 - **A finding about a fix is new.** When the finding is about code in `FIX_COMMITS` (a new state, early exit or swallowed error the fix introduced), the thread it answered does not cover it. Score it on its own evidence.
 
@@ -58,6 +58,6 @@ Return ONLY a JSON array, one entry per finding, in the order given:
 
 ```json
 [
-  { "id": 1, "score": <number 0-100>, "reasoning": "<one sentence explaining your score>" }
+  { "id": 1, "score": <number 0-100>, "duplicateOfThread": <true only when an existing thread already raised this exact issue; omit otherwise>, "reasoning": "<one sentence explaining your score>" }
 ]
 ```
