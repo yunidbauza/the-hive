@@ -99,6 +99,12 @@ export interface Jira {
   links(request: JiraConversationRequest): Promise<JiraResult<JiraLink[]>>;
   /** Post a comment written as markdown (HIVE-71). */
   addComment(request: AddJiraCommentRequest): Promise<JiraResult<JiraComment>>;
+  /**
+   * Assign the issue to whoever owns the token, then re-read it. The identity
+   * comes from `/myself`, never from the caller: a parameter naming who to
+   * assign is one a model can fill with someone else.
+   */
+  assignToMe(request: JiraIssueRequest): Promise<JiraResult<JiraIssue>>;
 }
 
 /**
@@ -274,6 +280,39 @@ export function createJira(deps: {
     return { ok: true, value: mapped };
   };
 
+  /** Who the token belongs to. Local for the reason `readIssue` is: `assignToMe` reads it too. */
+  const readMyself = async (): Promise<JiraResult<JiraIdentity>> => {
+    const connection = connect();
+    if (!connection.ok) return connection.error;
+
+    const result = await connection.client.get<{
+      displayName?: unknown;
+      accountId?: unknown;
+    }>(MYSELF);
+    if (!result.ok) return result;
+
+    /**
+     * Narrowed to two fields before it crosses IPC.
+     *
+     * `/myself` also returns an avatar map, a locale, a time zone and the
+     * account's email address. The epic's rule is that only mapped, named
+     * fields ever cross — forwarding the payload would hand the renderer
+     * personal data it has no use for, and would set the precedent that raw
+     * Jira JSON is allowed through.
+     */
+    const { displayName, accountId } = result.value;
+    if (typeof displayName !== 'string' || typeof accountId !== 'string') {
+      return {
+        ok: false,
+        error: {
+          kind: 'unknown',
+          message: 'Jira answered without an account name.',
+        },
+      };
+    }
+    return { ok: true, value: { displayName, accountId } };
+  };
+
   const readDetail = async (
     request: JiraIssueRequest,
   ): Promise<JiraResult<JiraIssueDetail>> => {
@@ -323,37 +362,7 @@ export function createJira(deps: {
       return status();
     },
 
-    async test() {
-      const connection = connect();
-      if (!connection.ok) return connection.error;
-
-      const result = await connection.client.get<{
-        displayName?: unknown;
-        accountId?: unknown;
-      }>(MYSELF);
-      if (!result.ok) return result;
-
-      /**
-       * Narrowed to two fields before it crosses IPC.
-       *
-       * `/myself` also returns an avatar map, a locale, a time zone and the
-       * account's email address. The epic's rule is that only mapped, named
-       * fields ever cross — forwarding the payload would hand the renderer
-       * personal data it has no use for, and would set the precedent that raw
-       * Jira JSON is allowed through.
-       */
-      const { displayName, accountId } = result.value;
-      if (typeof displayName !== 'string' || typeof accountId !== 'string') {
-        return {
-          ok: false,
-          error: {
-            kind: 'unknown',
-            message: 'Jira answered without an account name.',
-          },
-        };
-      }
-      return { ok: true, value: { displayName, accountId } };
-    },
+    test: readMyself,
 
     /**
      * Run a JQL query, paging to the cap (HIVE-68).
@@ -674,6 +683,22 @@ export function createJira(deps: {
         };
       }
       return { ok: true, value: mapped };
+    },
+
+    async assignToMe(request) {
+      const connection = connect();
+      if (!connection.ok) return connection.error;
+
+      const me = await readMyself();
+      if (!me.ok) return me;
+
+      // A write, like the transition POST: attempted once, then re-read.
+      const assigned = await connection.client.put<void>(
+        `${ISSUE}/${request.key}/assignee`,
+        { accountId: me.value.accountId },
+      );
+      if (!assigned.ok) return assigned;
+      return readIssue({ key: request.key });
     },
   };
 }

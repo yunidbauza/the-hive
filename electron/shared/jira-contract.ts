@@ -410,6 +410,8 @@ export interface JiraTransitionByName {
   status: string;
   /** When given, the move applies only from this status; anywhere else is a no-op that says so. */
   from?: string;
+  /** Also assign the issue to the token's owner when it has no assignee, whether or not it moved. */
+  assignToMe?: boolean;
 }
 
 /** `{ key, markdown }`: what `jira_comment` takes. Structurally `AddJiraCommentRequest`. */
@@ -455,6 +457,8 @@ export interface JiraToolTransitionReply {
   issue: JiraIssue;
   transition: JiraTransition | null;
   skipped?: string;
+  /** With `assignToMe`: one sentence on what happened to the assignee. */
+  assigned?: string;
 }
 
 /**

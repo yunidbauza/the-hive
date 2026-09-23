@@ -1232,13 +1232,20 @@ work. The text a model is handed renders the ADF as markdown-ish prose
 (`adfBlocksToText`) and is bounded by `JIRA_TEXT_MAX`; the record beside it is
 whole.
 
-`jira_transition { key, status, from? }` moves an issue by target status name:
+`jira_transition { key, status, from?, assignToMe? }` moves an issue by target status name:
 the transition whose `to.name` matches, applied by id, retried once when the
 workflow moved underneath it. Three no-ops, each said in `skipped`: the issue
 already stands there; it is not at `from` when the caller gave one (the
 skills' "if it is still To Do"); or the target's status category is below the
 current one, which is "never move a ticket backwards" enforced rather than
 promised. A status nothing reaches answers with the ones that do.
+
+`assignToMe: true` then fills an empty assignee with the token's owner, read
+from `/myself` rather than passed in, whether the move applied or was
+skipped: work-on and the builder pass it, because Jira's default assignee
+varies by project. An issue assigned to someone else is left alone. The
+outcome is one sentence in `assigned`; a failed assign lands there too,
+never as a failure of a move that already applied.
 
 `jira_comment { key, markdown }` is `addComment`, unchanged.
 

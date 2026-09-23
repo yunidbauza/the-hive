@@ -7,6 +7,7 @@ import {
   type JiraToolIssue,
   type JiraToolTransitionReply,
   type JiraTransition,
+  type JiraTransitionByName,
 } from '@shared/jira-contract';
 
 import type { Jira } from './index';
@@ -14,7 +15,7 @@ import type { Jira } from './index';
 /** The slice of the integration the tools read and write through. */
 export type JiraToolSource = Pick<
   Jira,
-  'issue' | 'detail' | 'transitions' | 'applyTransition' | 'comments' | 'links' | 'addComment'
+  'issue' | 'detail' | 'transitions' | 'applyTransition' | 'comments' | 'links' | 'addComment' | 'assignToMe'
 >;
 
 /** Forward is up this ladder; a move down it is refused (HIVE-174). */
@@ -39,6 +40,10 @@ const same = (a: string, b: string): boolean => a.trim().toLowerCase() === b.tri
  * is "never move a ticket backwards" enforced here rather than promised in
  * prose. Only `to.name` is matched: a transition *called* Done that lands on
  * Closed is not what was asked for.
+ *
+ * `assignToMe` runs after the move, applied or skipped, and only fills an
+ * empty assignee: someone else's ticket is never taken. A failed assign is
+ * reported in `assigned` rather than failing a move that already landed.
  */
 export function jiraToolsFor(jira: JiraToolSource): JiraToolHandlers {
   const apply = async (
@@ -55,6 +60,43 @@ export function jiraToolsFor(jira: JiraToolSource): JiraToolHandlers {
       return still === undefined ? applied : apply(key, still, false);
     }
     return applied;
+  };
+
+  /** The move alone: find the step by target status, and apply it or say why not. */
+  const move = async (request: JiraTransitionByName): Promise<JiraResult<JiraToolTransitionReply>> => {
+    const current = await jira.issue({ key: request.key });
+    if (!current.ok) return current;
+    const issue = current.value;
+    const skip = (skipped: string): JiraResult<JiraToolTransitionReply> => ({
+      ok: true,
+      value: { issue, transition: null, skipped },
+    });
+
+    if (same(issue.status, request.status)) return skip(`already ${issue.status}; nothing was changed`);
+    if (request.from !== undefined && !same(issue.status, request.from)) {
+      return skip(`stands at ${issue.status}, not ${request.from}; nothing was changed`);
+    }
+
+    const options = await jira.transitions({ key: request.key });
+    if (!options.ok) return options;
+    const match = options.value.find((transition) => same(transition.to.name, request.status));
+    if (match === undefined) {
+      const reachable = options.value.map((transition) => `"${transition.to.name}"`).join(', ');
+      return {
+        ok: false,
+        error: {
+          kind: 'bad-query',
+          message: `${request.key} is ${issue.status} and has no transition to "${request.status}"; from here it can go to ${reachable === '' ? 'nowhere' : reachable}.`,
+        },
+      };
+    }
+    if (RANK[match.to.statusCategory] < RANK[issue.statusCategory]) {
+      return skip(`moving from ${issue.status} to ${match.to.name} would be backwards; nothing was changed`);
+    }
+
+    const applied = await apply(request.key, match, true);
+    if (!applied.ok) return applied;
+    return { ok: true, value: { issue: applied.value, transition: match } };
   };
 
   return {
@@ -88,41 +130,23 @@ export function jiraToolsFor(jira: JiraToolSource): JiraToolHandlers {
     },
 
     async transition(request): Promise<JiraResult<JiraToolTransitionReply>> {
-      const current = await jira.issue({ key: request.key });
-      if (!current.ok) return current;
-      const issue = current.value;
-      const skip = (skipped: string): JiraResult<JiraToolTransitionReply> => ({
+      const moved = await move(request);
+      if (!moved.ok || request.assignToMe !== true) return moved;
+
+      const { issue } = moved.value;
+      if (issue.assignee !== null) {
+        return { ok: true, value: { ...moved.value, assigned: `Already assigned to ${issue.assignee}; left alone.` } };
+      }
+      const assigned = await jira.assignToMe({ key: request.key });
+      return {
         ok: true,
-        value: { issue, transition: null, skipped },
-      });
-
-      if (same(issue.status, request.status)) return skip(`already ${issue.status}; nothing was changed`);
-      if (request.from !== undefined && !same(issue.status, request.from)) {
-        return skip(`stands at ${issue.status}, not ${request.from}; nothing was changed`);
-      }
-
-      const options = await jira.transitions({ key: request.key });
-      if (!options.ok) return options;
-      const match = options.value.find((transition) => same(transition.to.name, request.status));
-      if (match === undefined) {
-        const reachable = options.value.map((transition) => `"${transition.to.name}"`).join(', ');
-        return {
-          ok: false,
-          error: {
-            kind: 'bad-query',
-            message: `${request.key} is ${issue.status} and has no transition to "${request.status}"; from here it can go to ${reachable === '' ? 'nowhere' : reachable}.`,
-          },
-        };
-      }
-      if (RANK[match.to.statusCategory] < RANK[issue.statusCategory]) {
-        return skip(`moving from ${issue.status} to ${match.to.name} would be backwards; nothing was changed`);
-      }
-
-      const applied = await apply(request.key, match, true);
-      if (!applied.ok) return applied;
-      return { ok: true, value: { issue: applied.value, transition: match } };
+        value: assigned.ok
+          ? { ...moved.value, issue: assigned.value, assigned: `Assigned to ${assigned.value.assignee ?? 'you'}.` }
+          : { ...moved.value, assigned: `Not assigned: ${assigned.error.message}` },
+      };
     },
 
     comment: (request) => jira.addComment(request),
   };
+
 }

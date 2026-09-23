@@ -921,6 +921,55 @@ describe('applyTransition (HIVE-70)', () => {
   });
 });
 
+describe('assignToMe (work-on self-assign)', () => {
+  it('reads the token owner, PUTs them as assignee, then re-reads the issue', async () => {
+    const seen: { url: string; method: string }[] = [];
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: replies(
+        [
+          [200, { displayName: 'Me', accountId: 'acc-1' }],
+          [204, undefined],
+          [
+            200,
+            {
+              key: 'HIVE-7',
+              fields: {
+                summary: 'Ship it',
+                status: { name: 'In Progress', statusCategory: { key: 'indeterminate' } },
+                issuetype: { name: 'Story' },
+                assignee: { displayName: 'Me' },
+                updated: '2026-09-23T00:00:00.000-0400',
+              },
+            },
+          ],
+        ],
+        seen,
+      ),
+    }).assignToMe({ key: 'HIVE-7' });
+
+    expect(seen.map((s) => [s.method, new URL(s.url).pathname])).toEqual([
+      ['GET', '/rest/api/3/myself'],
+      ['PUT', '/rest/api/3/issue/HIVE-7/assignee'],
+      ['GET', '/rest/api/3/issue/HIVE-7'],
+    ]);
+    expect(result.ok && result.value.assignee).toBe('Me');
+  });
+
+  it('stops at a failed identity read, writing nothing', async () => {
+    const seen: { url: string; method: string }[] = [];
+    const result = await build({
+      jira: CONFIGURED,
+      env: { JIRA_API_KEY: TOKEN },
+      fetch: replies([[200, { displayName: 'Me' }]], seen),
+    }).assignToMe({ key: 'HIVE-7' });
+
+    expect(result.ok).toBe(false);
+    expect(seen).toHaveLength(1);
+  });
+});
+
 describe('detail (HIVE-174)', () => {
   it('reads the description and the parent with their own field list, and maps them', async () => {
     const seen: string[] = [];

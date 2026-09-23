@@ -485,6 +485,28 @@ describe('post (HIVE-70)', () => {
   });
 });
 
+describe('put (work-on self-assign)', () => {
+  it('sends a PUT with the JSON body, and never retries it', async () => {
+    const seen: Seen[] = [];
+    const ok = await client(responder(new Response(null, { status: 204 }), seen)).put(
+      '/rest/api/3/issue/HIVE-7/assignee',
+      { accountId: 'abc' },
+    );
+    expect(ok.ok).toBe(true);
+    expect(seen[0]?.init.method).toBe('PUT');
+    expect(seen[0]?.init.body).toBe('{"accountId":"abc"}');
+
+    const urls: string[] = [];
+    const failed = await client(sequence([new Response('no', { status: 503 })], urls)).put(
+      '/rest/api/3/issue/HIVE-7/assignee',
+      {},
+    );
+    expect(failed.ok).toBe(false);
+    expect(urls).toHaveLength(1);
+    expect(waits).toEqual([]);
+  });
+});
+
 describe('400 details (HIVE-70)', () => {
   const badRequest = (body: unknown): Response =>
     new Response(JSON.stringify(body), {

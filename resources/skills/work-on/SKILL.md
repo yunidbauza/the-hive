@@ -135,12 +135,17 @@ back to the overmind.
 *Detached (`--detach`).* `reply-to: overmind`, then `/done` now.
 
 *Inline (`--inline`, no `builder` on this machine, or a plan of one task).*
-`hive:worktree` on `feat/<key>-<slug>`, Jira → In Progress
-(`mcp__hive__jira_transition { key, status: "In Progress", from: "To Do" }`,
-where `from` leaves a ticket already past To Do alone; without the Hive's tools, read the status with
-`jira-writer get_issue <KEY> status` and, if it is still To Do, take the In
-Progress id from `jira-writer get_transitions <KEY>` and call `jira-writer
-transition_issue <KEY> <id>`), `hive:execute`, `hive:verify`, then:
+`hive:worktree` on `feat/<key>-<slug>`, Jira → In Progress and assigned to
+you (`mcp__hive__jira_transition { key, status: "In Progress", from: "To Do",
+assignToMe: true }`, where `from` leaves a ticket already past To Do alone and
+`assignToMe` fills an empty assignee with the Jira token's owner, moved or not;
+someone else's ticket keeps its assignee and the answer names them. Without
+the Hive's tools, read the status and assignee with `jira-writer get_issue
+<KEY> status,assignee`; if it is still To Do, take the In Progress id from
+`jira-writer get_transitions <KEY>` and call `jira-writer transition_issue
+<KEY> <id>`; if it is unassigned, take your `accountId` from `jira-writer
+lookup_user "$JIRA_EMAIL"` and call `jira-writer update_issue <KEY>
+'{"assignee":{"accountId":"<id>"}}'`), `hive:execute`, `hive:verify`, then:
 
 1. The full gate on the exact tree you will push: lint, type-check, the unit
    suite, and e2e or a browser drive when the change has a UI surface.
@@ -169,6 +174,8 @@ because the key came from its own arguments. Never from a branch name.
 - Reconciling against the description while a comment already changed it.
 - Brainstorm questions one per turn.
 - Three mockup variants for a pattern the app already has.
+- A ticket In Progress with nobody on it. Pass `assignToMe`; Jira's default
+  assignee varies by project.
 - Opening the PR ready for review. Draft, always; the shipper marks it ready.
 - Ending the turn on "draft PR created". Ask the shipper in the same turn.
 - Answering a builder question the spec does not answer. That one is the

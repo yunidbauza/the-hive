@@ -53,9 +53,11 @@ rules are yours to keep, and every implementer you dispatch inherits them:
 3. `hive:worktree`, agent path: `<hive>/work/builder/<repo-name>-<slug>` on
    `<branch>` off the fetched default branch, where `<hive>` is what `pwd`
    answers minus `/work/builder`. When a ticket is named:
-   `mcp__hive__jira_transition { key, status: "In Progress", from: "To Do" }`;
-   `from` is what leaves a ticket already past To Do alone, and the tool
-   refuses a backwards move on its own. Never move a ticket backwards.
+   `mcp__hive__jira_transition { key, status: "In Progress", from: "To Do",
+   assignToMe: true }`; `from` is what leaves a ticket already past To Do
+   alone, and the tool refuses a backwards move on its own. Never move a
+   ticket backwards. `assignToMe` fills an empty assignee with the Jira
+   token's owner and never takes a ticket someone else holds.
 4. `hive:execute` on the plan, with its drift check after every task (the
    section the skill marks builder-only). At the start of each task, one
    `ledger_post` with `thread: <the ask's id>`, `meta: { ticket, stage:

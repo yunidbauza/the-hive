@@ -35,6 +35,7 @@ const source = (over: Partial<JiraToolSource> = {}): JiraToolSource => ({
   comments: vi.fn(async () => ok([])),
   links: vi.fn(async () => ok([])),
   addComment: vi.fn(async () => ok({ id: '1', author: 'me', created: 'now', body: [] })),
+  assignToMe: vi.fn(async () => ok(issue({ status: 'In Progress', assignee: 'Me' }))),
   ...over,
 });
 
@@ -130,6 +131,35 @@ describe('jiraToolsFor (HIVE-174)', () => {
     const twice = source({ applyTransition: vi.fn(async () => stale) });
     expect(await jiraToolsFor(twice).transition({ key: 'HIVE-7', status: 'In Review' })).toEqual(stale);
     expect(twice.applyTransition).toHaveBeenCalledTimes(2);
+  });
+
+  it('transition with assignToMe assigns an unassigned issue, even when the move is a no-op', async () => {
+    const moved = source();
+    expect(await jiraToolsFor(moved).transition({ key: 'HIVE-7', status: 'In Progress', assignToMe: true })).toEqual(
+      ok({ issue: issue({ status: 'In Progress', assignee: 'Me' }), transition: transitions[0], assigned: 'Assigned to Me.' }),
+    );
+    expect(moved.assignToMe).toHaveBeenCalledWith({ key: 'HIVE-7' });
+
+    const already = source({ issue: async () => ok(issue({ status: 'In Progress', statusCategory: 'in-progress' })) });
+    const result = await jiraToolsFor(already).transition({ key: 'HIVE-7', status: 'In Progress', from: 'To Do', assignToMe: true });
+    expect(already.applyTransition).not.toHaveBeenCalled();
+    expect(result.ok && result.value.assigned).toBe('Assigned to Me.');
+
+    const without = source();
+    await jiraToolsFor(without).transition({ key: 'HIVE-7', status: 'In Progress' });
+    expect(without.assignToMe).not.toHaveBeenCalled();
+  });
+
+  it('transition with assignToMe never takes a ticket from someone else, and a failed assign keeps the move', async () => {
+    const theirs = source({ issue: async () => ok(issue({ assignee: 'Ana' })) });
+    const kept = await jiraToolsFor(theirs).transition({ key: 'HIVE-7', status: 'To Do', assignToMe: true });
+    expect(theirs.assignToMe).not.toHaveBeenCalled();
+    expect(kept.ok && kept.value.assigned).toBe('Already assigned to Ana; left alone.');
+
+    const refusing = source({ assignToMe: async () => refused('no permission') });
+    const moved = await jiraToolsFor(refusing).transition({ key: 'HIVE-7', status: 'In Progress', assignToMe: true });
+    expect(moved.ok && moved.value.transition).toEqual(transitions[0]);
+    expect(moved.ok && moved.value.assigned).toBe('Not assigned: no permission');
   });
 
   it('get says when the comments read hit its cap', async () => {

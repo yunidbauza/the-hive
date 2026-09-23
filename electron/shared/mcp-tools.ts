@@ -309,15 +309,23 @@ export function createToolHandlers(
       key,
       status,
       ...(from === undefined ? {} : { from }),
+      ...(args['assignToMe'] === true ? { assignToMe: true } : {}),
     });
     if (!result.ok) return jiraFailed('jira_transition', result.error);
 
-    const { issue, transition, skipped } = result.value;
-    return ok(
+    const { issue, transition, skipped, assigned } = result.value;
+    const moved =
       transition === null
         ? `${issue.key}: ${skipped ?? 'nothing was changed'}.`
-        : `${issue.key} is now ${issue.status} (transition "${transition.name}").`,
-      { issue, transition, ...(skipped === undefined ? {} : { skipped }) },
+        : `${issue.key} is now ${issue.status} (transition "${transition.name}").`;
+    return ok(
+      assigned === undefined ? moved : `${moved} ${assigned}`,
+      {
+        issue,
+        transition,
+        ...(skipped === undefined ? {} : { skipped }),
+        ...(assigned === undefined ? {} : { assigned }),
+      },
     );
   };
 
