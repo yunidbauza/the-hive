@@ -413,6 +413,10 @@ export const JIRA_TRANSITION_TOOL: McpToolDefinition = {
         type: 'string',
         description: 'Optional. Apply only if the issue currently stands at this status; otherwise leave it alone and say so.',
       },
+      assignToMe: {
+        type: 'boolean',
+        description: 'Optional. Also assign the issue to the person whose Jira token The Hive holds, when it has no assignee. Runs whether or not the status moved; an issue assigned to someone else is left alone and the answer says so.',
+      },
     },
     required: ['key', 'status'],
   },

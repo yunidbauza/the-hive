@@ -1934,12 +1934,15 @@ const MAX_STATUS_NAME = 64;
  * name a person would read in Jira: short, printable, non-empty.
  */
 export function parseJiraTransitionByName(input: unknown): JiraTransitionByName {
-  const raw = assertShape(input, ['key', 'status'], 'jiraTransition', ['from']);
+  const raw = assertShape(input, ['key', 'status'], 'jiraTransition', ['from', 'assignToMe']);
   const status = assertStatusName(raw.status, 'jiraTransition.status');
   return {
     key: assertJiraIssueKey(raw.key, 'jiraTransition.key'),
     status,
     ...(raw.from === undefined ? {} : { from: assertStatusName(raw.from, 'jiraTransition.from') }),
+    ...(raw.assignToMe === undefined
+      ? {}
+      : { assignToMe: assertBoolean(raw.assignToMe, 'jiraTransition.assignToMe') }),
   };
 }
 

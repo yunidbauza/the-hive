@@ -145,7 +145,7 @@ call asks you, and no `tools:` entry can grant it:
 | `projects` | the config's projects: id, key, path, `autoMerge`, container workspace | standing |
 | `pr` | one pull request from the Hive's own GitHub sweep, with its unresolved-thread count | standing |
 | `jira_get` | the ticket: description, parent, comments and links, through the token the Work tab holds | standing |
-| `jira_transition` | a status move by name; never backwards | `tools:` entry or a card |
+| `jira_transition` | a status move by name; never backwards; `assignToMe` fills an empty assignee | `tools:` entry or a card |
 | `jira_comment` | a comment, from markdown | `tools:` entry or a card |
 | `project_auto_merge` | turns a project's auto-merge on or off; answers the projects list | a card or prompt, every call |
 | `approve` | the fence's own prompt tool; the CLI calls it, you never do | standing |

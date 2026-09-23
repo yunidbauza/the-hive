@@ -165,6 +165,8 @@ export interface JiraClient {
    * does.
    */
   post<T>(path: string, body: unknown): Promise<JiraResult<T>>;
+  /** A write, never retried, for the same reason as `post`. */
+  put<T>(path: string, body: unknown): Promise<JiraResult<T>>;
 }
 
 const error = (
@@ -284,7 +286,7 @@ export function createJiraClient(deps: {
    */
   async function attempt<T>(
     target: string,
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'PUT',
     body?: unknown,
   ): Promise<Attempt<T>> {
       let response: Response;
@@ -450,6 +452,10 @@ export function createJiraClient(deps: {
      */
     async post<T>(path: string, body: unknown): Promise<JiraResult<T>> {
       return (await attempt<T>(url(path), 'POST', body)).result;
+    },
+
+    async put<T>(path: string, body: unknown): Promise<JiraResult<T>> {
+      return (await attempt<T>(url(path), 'PUT', body)).result;
     },
   };
 }

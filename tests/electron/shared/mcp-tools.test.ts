@@ -867,6 +867,18 @@ describe('createToolHandlers — the Jira tools (HIVE-174)', () => {
     expect(jiraTransition).toHaveBeenCalledWith({ key: 'HIVE-7', status: 'In Progress', from: 'To Do' });
   });
 
+  it('passes assignToMe through, and says what happened to the assignee', async () => {
+    const jiraTransition = vi.fn(async () => ({
+      ok: true as const,
+      value: { issue, transition: null, skipped: 'already In Progress; nothing was changed', assigned: 'Assigned to Me.' },
+    }));
+    const handlers = createToolHandlers(stub({ jiraTransition }));
+    const text = textOf(await handlers.callTool('jira_transition', { key: 'HIVE-7', status: 'In Progress', assignToMe: true }));
+
+    expect(jiraTransition).toHaveBeenCalledWith({ key: 'HIVE-7', status: 'In Progress', assignToMe: true });
+    expect(text).toBe('HIVE-7: already In Progress; nothing was changed. Assigned to Me.');
+  });
+
   it('reports a comment as Jira recorded it', async () => {
     const jiraComment = vi.fn(async () => ({ ok: true as const, value: { id: '12', author: 'Yunid', created: '2026-09-11T10:00:00Z', body: [para('hi')] } }));
     const result = await createToolHandlers(stub({ jiraComment })).callTool('jira_comment', { key: 'HIVE-7', markdown: 'hi' });

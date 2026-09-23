@@ -1898,6 +1898,12 @@ describe('parseJiraTransitionByName (HIVE-174)', () => {
       from: 'To Do',
     });
     expect(() => parseJiraTransitionByName({ key: 'HIVE-7', status: 'Done', from: '' })).toThrow(/jiraTransition\.from/);
+    expect(parseJiraTransitionByName({ key: 'HIVE-7', status: 'In Progress', assignToMe: true })).toEqual({
+      key: 'HIVE-7',
+      status: 'In Progress',
+      assignToMe: true,
+    });
+    expect(() => parseJiraTransitionByName({ key: 'HIVE-7', status: 'Done', assignToMe: 'yes' })).toThrow(/jiraTransition\.assignToMe/);
 
     for (const bad of [
       {},
