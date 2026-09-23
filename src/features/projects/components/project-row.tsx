@@ -67,7 +67,7 @@ export function ProjectRow({ project }: ProjectRowProps) {
   const expanded = !collapsed;
 
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col gap-0.5">
       <button
         type="button"
         onClick={() => toggleProject(project.id)}
