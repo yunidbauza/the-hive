@@ -1,14 +1,14 @@
 ---
 name: review-pr-findings
-description: Use when a PR has feedback to work through: reviewer comments, bot findings, a red check, or the self review's findings. Assesses every finding adversarially, fixes the valid ones behind a test, replies to the rest, pushes once per round, and repeats until green with every thread resolved. Run by the fixer agent; also runs in a session on request.
+description: Use when a PR has feedback to work through: reviewer comments, a review's summary (an approval's included), bot findings, a red check, or the self review's findings. Assesses every finding adversarially, fixes the valid ones behind a test, replies to every finding, pushes once per round, and repeats until green with every thread resolved and every finding answered. Run by the fixer agent; also runs in a session on request.
 ---
 
 # Review PR findings
 
 A finding is a claim, not an instruction. Fix it when it is valid; when it is
-not, reply with the reason and resolve it. Bots and reviewers are wrong
-regularly, and fixing an invalid finding creates the next one. Loop until CI
-is green and no thread is open.
+not, say why. Either way the reviewer gets a reply. Bots and reviewers are
+wrong regularly, and fixing an invalid finding creates the next one. Loop
+until CI is green, no thread is open and every finding has a reply.
 
 This skill does not announce, watch or merge. That is `ship`.
 
@@ -53,6 +53,13 @@ Thread resolution is GraphQL only: `pullRequest.reviewThreads { isResolved }`
 to read, `resolveReviewThread` to resolve. Findings handed in the ask body
 count as this round's input too.
 
+**A review body is findings too, whatever its state.** "Approved, but fix
+these two" has no thread, and an unresolved-thread count never sees it. Split
+each review body and each PR-level comment into its separate points, one
+finding each, recording the author and the review or comment URL. A body that
+only says LGTM, or only summarises the reviewer's own inline comments, holds
+no finding. Neither do the PR author's own comments: those are your replies.
+
 ## Step 2: the ledger file
 
 `~/.hive/work/fixer/ledgers/<owner>-<repo>-pr<N>.md`, the same path from a
@@ -80,9 +87,15 @@ the PR and the finding; END TURN. The answer wakes you here.
 
 - **VALID:** fix it. A behaviour change goes through `hive:tdd`: the test
   first. Then only the tests covering the touched modules, never the bare full
-  suite.
-- **INVALID:** reply on the thread with the technical reason, short, no
-  softening into agreement, and resolve it.
+  suite. After the push, reply `Fixed in <short sha>: <what changed>` and
+  resolve the thread.
+- **INVALID:** reply with the technical reason, short, no softening into
+  agreement, and resolve the thread.
+- **A nit you choose not to take** is answered like INVALID: one line on why
+  it stays.
+
+Every finding gets its reply, the fixed ones included: one or two sentences,
+direct, no thanks and no restating the finding.
 
 ## Step 5: reply safely
 
@@ -94,13 +107,19 @@ no `--body-file`: write the reply to a file, then
 422 fall back to one top-level comment naming `file:line`. "One pending
 review per pull request": submit or delete the pending review first.
 
+A thread's finding is answered on its thread. Findings from a review body or a
+PR-level comment have no thread: answer them in **one top-level comment per
+review or comment**, opening with `@<author>`, one numbered line per point in
+the reviewer's order.
+
 ## Step 6: verify, push once, loop
 
 `hive:verify`: scoped lint, targeted tests, type-check, build only when the
 change makes build-only errors likely, and a real browser drive for any UI
-surface. Commit every fix of the round, then **one push**. Re-run Step 1. When
-CI is green and no thread is open, post one short summary comment (what was
-fixed, what was rejected and why) and report.
+surface. Commit every fix of the round, then **one push**, then the Step 5
+replies. Re-run Step 1. When CI is green, no thread is open and every ledger
+row has a reply, post one short summary comment (what was fixed, what was
+rejected and why) and report.
 
 ## Step 7: report
 
@@ -116,6 +135,8 @@ state again in the call before it merges.
 ## Red flags
 
 - A fix without a recorded verdict.
+- A finding with no reply, a fixed one included.
+- Skipping a review body because it approved, or because it has no thread.
 - Re-fixing a finding the ledger already holds.
 - "The bot is probably right."
 - The whole suite instead of the touched paths.
