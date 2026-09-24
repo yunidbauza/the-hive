@@ -152,6 +152,10 @@ export function baseOf(text: string): PartBase {
   return { keys, body: hashPart(parsed?.body ?? text) };
 }
 
+/** `record[key]` for an own key only, so a key named `constructor` reads as absent. */
+export const ownKey = (record: Record<string, string> | undefined, key: string): string | undefined =>
+  record !== undefined && Object.hasOwn(record, key) ? record[key] : undefined;
+
 /** A part's value without its key, for a person to read. */
 const valueOf = (part: string): string => part.trim().replace(/^[\w-]+:/, '').trim();
 
@@ -227,7 +231,7 @@ export function mergeParts(
 
   for (const [path, s] of ship.parts) {
     const c = mine.parts.get(path);
-    const b = base?.keys[path];
+    const b = ownKey(base?.keys, path);
     const hs = hashPart(s);
 
     if (c === undefined) {
@@ -262,7 +266,7 @@ export function mergeParts(
   for (const [path, c] of mine.parts) {
     if (ship.parts.has(path)) continue;
 
-    const b = base?.keys[path];
+    const b = ownKey(base?.keys, path);
 
     // Shipped once, untouched since, and the app no longer ships it.
     if (b === hashPart(c)) continue;

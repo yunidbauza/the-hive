@@ -277,7 +277,7 @@ export async function seedShipped(options: SeedOptions): Promise<SeedReport> {
       }
 
       if (existing === null) {
-        if (rel in manifest.files) {
+        if (rel in manifest.files || rel in manifest.parts) {
           // Seeded once, gone now. The user deleted it, and that is theirs.
           report.kept.push(rel);
           continue;
@@ -299,7 +299,6 @@ export async function seedShipped(options: SeedOptions): Promise<SeedReport> {
         continue;
       }
 
-
       if (manifest.files[rel] === existingHash) {
         await writeFile(to, bytes);
         await chmod(to, mode);
@@ -316,6 +315,14 @@ export async function seedShipped(options: SeedOptions): Promise<SeedReport> {
         history ??= options.history === undefined ? {} : await readHistory(options.history);
         const base =
           manifest.parts[rel] ?? legacyBase(rel, current, manifest.files[rel], history);
+
+        // No record and no shipped version to compare against: a file that
+        // was there before the app shipped one. Theirs, as it always was.
+        if (base === null) {
+          report.kept.push(rel);
+          continue;
+        }
+
         const result = mergeParts(current, text, base);
 
         parts[rel] = result.base;
@@ -325,6 +332,8 @@ export async function seedShipped(options: SeedOptions): Promise<SeedReport> {
           longer matches, so an older build reads it as the user's.
         */
         if (result.text === text) next[rel] = shippedHash;
+        // Recorded either way, so a deletion reads as one to an older build too.
+        next[rel] ??= shippedHash;
         if (result.text === current) {
           report.kept.push(rel);
           continue;

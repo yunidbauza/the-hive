@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
-import { hashPart, parseParts, type PartBase } from './merge';
+import { hashPart, ownKey, parseParts, type PartBase } from './merge';
 
 /**
  * Every version the app has shipped of each AGENT.md and SKILL.md, as part
@@ -16,7 +16,17 @@ export type History = Record<
   { file: string; keys: Record<string, string>; body: string }[]
 >;
 
-/** The index, or `{}` when it is missing or unreadable: no legacy bases. */
+type Version = History[string][number];
+
+const isVersion = (value: unknown): value is Version =>
+  typeof value === 'object' &&
+  value !== null &&
+  typeof (value as Version).file === 'string' &&
+  typeof (value as Version).body === 'string' &&
+  typeof (value as Version).keys === 'object' &&
+  (value as Version).keys !== null;
+
+/** The index, or `{}` when it is missing or unreadable: no legacy bases. A malformed version is dropped. */
 export async function readHistory(path: string): Promise<History> {
   try {
     const parsed: unknown = JSON.parse(await readFile(path, 'utf8'));
@@ -24,8 +34,11 @@ export async function readHistory(path: string): Promise<History> {
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
 
     return Object.fromEntries(
-      Object.entries(parsed).filter(([, versions]) => Array.isArray(versions)),
-    ) as History;
+      Object.entries(parsed).map(([rel, versions]) => [
+        rel,
+        Array.isArray(versions) ? versions.filter(isVersion) : [],
+      ]),
+    );
   } catch {
     return {};
   }
@@ -54,7 +67,7 @@ export function legacyBase(
   const hashes = new Map([...parsed.parts].map(([path, part]) => [path, hashPart(part)]));
   const body = hashPart(parsed.body);
   const score = (version: (typeof versions)[number]): number =>
-    [...hashes].filter(([path, hash]) => version.keys[path] === hash).length +
+    [...hashes].filter(([path, hash]) => ownKey(version.keys, path) === hash).length +
     (version.body === body ? 1 : 0);
 
   const named = versions.find((version) => version.file === v1Hash);
@@ -65,7 +78,7 @@ export function legacyBase(
   const base: PartBase = { keys: { ...picked.keys }, body: picked.body };
 
   for (const [path, hash] of hashes) {
-    if (versions.some((version) => version.keys[path] === hash)) base.keys[path] = hash;
+    if (versions.some((version) => ownKey(version.keys, path) === hash)) base.keys[path] = hash;
   }
   if (versions.some((version) => version.body === body)) base.body = body;
 

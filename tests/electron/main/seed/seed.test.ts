@@ -188,6 +188,45 @@ describe('seedShipped', () => {
     expect(await onDisk('agents/fixer/AGENT.md')).toBe('---\nname: fixer\nmodel: sonnet\nlane: thread\n---\nPrompt v2.\n');
   });
 
+  it('keeps a merged file deleted once the user deletes it', async () => {
+    const v1 = '---\nname: fixer\nmodel: opus\n---\nPrompt v1.\n';
+    await writeHistory({ 'agents/fixer/AGENT.md': [v1] });
+    await mkdir(join(target, 'agents/fixer'), { recursive: true });
+    await writeFile(join(target, 'agents/fixer/AGENT.md'), v1.replace('opus', 'sonnet'), 'utf8');
+    await ship('agents/fixer/AGENT.md', v1.replace('v1', 'v2'));
+    await seedWithHistory();
+
+    await rm(join(target, 'agents/fixer'), { recursive: true });
+    await seedWithHistory();
+
+    await expect(readFile(join(target, 'agents/fixer/AGENT.md'), 'utf8')).rejects.toThrow();
+  });
+
+  it('leaves a pre-existing file alone when the history has no base for it', async () => {
+    const theirs = '---\nname: fixer\nmodel: sonnet\n---\nTheirs.\n';
+    await mkdir(join(target, 'agents/fixer'), { recursive: true });
+    await writeFile(join(target, 'agents/fixer/AGENT.md'), theirs, 'utf8');
+    await ship('agents/fixer/AGENT.md', '---\nname: fixer\nmodel: opus\nlane: thread\n---\nShipped.\n');
+
+    const report = await seedWithHistory();
+
+    expect(report.kept).toEqual(['agents/fixer/AGENT.md']);
+    expect(await onDisk('agents/fixer/AGENT.md')).toBe(theirs);
+  });
+
+  it('survives a history entry that is not a version', async () => {
+    const v1 = '---\nname: fixer\nmodel: opus\n---\nPrompt v1.\n';
+    await writeFile(historyFile(), JSON.stringify({ 'agents/fixer/AGENT.md': [null, { file: 'x' }] }), 'utf8');
+    await mkdir(join(target, 'agents/fixer'), { recursive: true });
+    await writeFile(join(target, 'agents/fixer/AGENT.md'), v1, 'utf8');
+    await ship('agents/fixer/AGENT.md', v1.replace('v1', 'v2'));
+    await ship('skills/worktree/SKILL.md', skill('worktree'));
+
+    const report = await seedWithHistory();
+
+    expect(report.created).toEqual(['skills/worktree/SKILL.md']);
+  });
+
   it('treats a file that existed before the first seed as the user\'s', async () => {
     await mkdir(join(target, 'skills/worktree'), { recursive: true });
     await writeFile(join(target, 'skills/worktree/SKILL.md'), 'theirs\n', 'utf8');
