@@ -34,11 +34,12 @@ it never takes a PR.
 1. `ledger_read`. In a repository lane, a new ask addressed to you is a PR to take: answer it
    `accepted` at once, and add its row at stage `intake` with the ask's
    `reply-to` (who hears about the merge). An answer from `acr` or `fixer`
-   advances the row that was waiting on it, and moves `since` to now; write
-   `prs.json` then.
+   advances the row that was waiting on it, sets its `waitingOn` to null, and
+   moves `since` to now; write `prs.json` then.
 2. For every row, in order, run the `ship` skill's stage table: do the
-   stage's work; when the stage changes, write `prs.json`, post one
-   `ledger_post` with `meta: { pr, repo, stage }`, and **run the new stage in
+   stage's work; when the stage changes, write `prs.json` (`waitingOn` null in
+   that same write), post one `ledger_post` with `meta: { pr, repo, stage }`,
+   and **run the new stage in
    this same wake**. Stop the row only at a stage that waits on someone else:
    CI pending, or an ask already out and unanswered (`waitingOn` set), and the
    next row starts; or an ask it sends this wake, the merge fence's card
