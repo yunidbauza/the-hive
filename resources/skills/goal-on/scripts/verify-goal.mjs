@@ -18,6 +18,7 @@
  *
  * Mechanical, not semantic. It enforces the contract the brief already encodes:
  *   - every `## Outcome` item is ticked `- [x]`,
+ *   - every step in the plan file the header's `plan:` names is ticked,
  *   - `## Verification evidence` actually contains something, and
  *   - for `route: code`, a real PR exists on the header's `branch`.
  * It does NOT judge whether prose evidence is convincing. That difference is
@@ -386,7 +387,7 @@ export const bumpTurns = (md, next) => setHeaderField(md, 'turns_used', next);
  * real check passes `ghPrCheck`; `main()` always does.
  */
 export function decide(md, opts = {}) {
-  const { now = () => new Date().toISOString(), checkPr = () => 'unknown' } =
+  const { now = () => new Date().toISOString(), checkPr = () => 'unknown', readPlan = () => null } =
     typeof opts === 'function' ? { now: opts } : opts;
 
   const split = splitFrontmatter(md);
@@ -429,13 +430,20 @@ export function decide(md, opts = {}) {
   const { total, unchecked } = checkboxItems(outcome);
   const evidenceOk = hasEvidence(evidence);
 
+  // The plan file is what the Hive's plan panel draws. A goal once went DONE with
+  // its panel stuck at 0/3: the brief was ticked, the plan never was. The header's
+  // `plan:` names it; no header or an unreadable file adds no gate (fail open).
+  const planPath = headerValue(header, 'plan');
+  const planText = planPath ? readPlan(planPath) : null;
+  const planUnchecked = typeof planText === 'string' ? checkboxItems(planText).unchecked : [];
+
   // No Outcome section, or one with no checkbox items at all: there is nothing
   // mechanical to verify. Release the turn, but do NOT stamp DONE — claiming success
   // on an unverifiable brief is worse than not verifying at all. The liveness stamp
   // is not a success claim and rides along regardless.
   if (total === 0) return { action: 'allow', write: stamped };
 
-  if (unchecked.length === 0 && evidenceOk) {
+  if (unchecked.length === 0 && planUnchecked.length === 0 && evidenceOk) {
     // Ticking a box is a claim. On the code route one claim is checkable without
     // trusting anybody: the PR.
     if (headerValue(header, 'route') === 'code') {
@@ -462,6 +470,13 @@ export function decide(md, opts = {}) {
       `${unchecked.length} Outcome item(s) still unchecked: ` +
         unchecked.slice(0, 3).map((s) => `"${s.slice(0, 80)}"`).join('; ') +
         (unchecked.length > 3 ? ` (+${unchecked.length - 3} more)` : ''),
+    );
+  }
+  if (planUnchecked.length) {
+    reasons.push(
+      `${planUnchecked.length} plan step(s) still unchecked in ${planPath}: ` +
+        planUnchecked.slice(0, 3).map((s) => `"${s.slice(0, 80)}"`).join('; ') +
+        (planUnchecked.length > 3 ? ` (+${planUnchecked.length - 3} more)` : ''),
     );
   }
   if (!evidenceOk) {
@@ -539,6 +554,16 @@ function postReceipt(md, sessionId, previous, env = process.env) {
   }
 }
 
+/** The plan named by the brief, or null when it is relative or cannot be read. */
+function readPlanFile(path) {
+  if (!isAbsolute(path)) return null;
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
 /** Write via temp + rename so a crash mid-write cannot truncate the user's brief. */
 function writeAtomic(path, contents) {
   const tmp = `${path}.tmp-${process.pid}`;
@@ -562,7 +587,7 @@ function main() {
 
     const md = readFileSync(briefPath, 'utf8');
     const cwd = typeof payload.cwd === 'string' && payload.cwd ? payload.cwd : process.cwd();
-    const result = decide(md, { checkPr: (header) => ghPrCheck(header, cwd) });
+    const result = decide(md, { checkPr: (header) => ghPrCheck(header, cwd), readPlan: readPlanFile });
 
     if (result.write) {
       writeAtomic(briefPath, result.write);
