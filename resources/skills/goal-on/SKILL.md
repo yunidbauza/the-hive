@@ -33,9 +33,12 @@ hooks:
             1. Read session_id from $ARGUMENTS.
             2. Read ~/.hive/goals/<session_id>.md. Missing, denied or erroring:
                return ok:true and say which. The floor has the session covered.
-            3. Return ok:true unless status is ACTIVE or DONE. DONE is included
-               because the two hooks run concurrently and the decisive turn is
-               the one where the floor writes DONE while you are reading.
+            3. Return ok:true unless status is ACTIVE, or DONE with done_at
+               equal to last_verified: the turn the floor settled it (the two
+               hooks run concurrently, so you may be reading as it writes). A
+               DONE brief whose done_at is missing or differs from
+               last_verified was settled on an earlier turn: ok:true, judge
+               nothing.
             4. Read ## Outcome and ## Verification evidence. For each TICKED
                item ask the one question a script cannot: does the recorded
                evidence actually support it? Evidence showing a failure, a
@@ -84,6 +87,7 @@ turn_budget: 8
 created: 2026-09-11T14:30:00Z
 session: <session id>
 last_verified:             # written by the verifier, never by you
+done_at:                   # written by the verifier with DONE, never by you
 branch: goal/<slug>        # code route
 workspace: current         # code route: current | worktree
 repo: /abs/path            # code route, REQUIRED when the work is not in this cwd

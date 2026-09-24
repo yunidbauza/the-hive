@@ -411,7 +411,8 @@ export function decide(md, opts = {}) {
    * and keeps the signal true for the whole session rather than only until the
    * goal is settled.
    */
-  const stamped = setHeaderField(md, 'last_verified', now());
+  const at = now();
+  const stamped = setHeaderField(md, 'last_verified', at);
 
   const { header, body } = split;
   const status = headerValue(header, 'status');
@@ -461,7 +462,9 @@ export function decide(md, opts = {}) {
       // (failing open is mandatory) but never stamp DONE on a check we could not run.
       if (verdict !== 'match') return { action: 'allow', write: stamped };
     }
-    return { action: 'allow', write: setHeaderStatus(stamped, 'DONE') };
+    // done_at equal to last_verified is how the ceiling knows this is the settling
+    // turn; on every later turn the stamp moves on and the ceiling stands down.
+    return { action: 'allow', write: setHeaderField(setHeaderStatus(stamped, 'DONE'), 'done_at', at) };
   }
 
   const reasons = [];

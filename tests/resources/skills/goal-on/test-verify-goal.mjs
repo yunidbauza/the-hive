@@ -121,6 +121,23 @@ test('all checked plus real evidence releases and writes DONE', () => {
   assert.match(r.write, /^status: DONE$/m);
 });
 
+test('DONE records done_at with the same stamp as last_verified', () => {
+  // The ceiling judges a DONE brief only on the turn it settled: done_at equal to
+  // last_verified. Re-judging it every later turn blocked a finished session three
+  // times, each for a new reason.
+  const r = decide(brief({ outcome: '- [x] a\n' }), { now: () => '2026-09-24T13:00:00.000Z', checkPr: () => 'match' });
+  assert.match(r.write, /^status: DONE$/m);
+  assert.match(r.write, /^done_at: 2026-09-24T13:00:00\.000Z$/m);
+  assert.match(r.write, /^last_verified: 2026-09-24T13:00:00\.000Z$/m);
+});
+
+test('a later turn on a DONE brief moves last_verified past done_at', () => {
+  const md = brief({ status: 'DONE', extra: 'done_at: 2026-09-24T13:00:00.000Z\n' });
+  const r = decide(md, { now: () => '2026-09-24T14:00:00.000Z' });
+  assert.match(r.write, /^done_at: 2026-09-24T13:00:00\.000Z$/m);
+  assert.match(r.write, /^last_verified: 2026-09-24T14:00:00\.000Z$/m);
+});
+
 // --- the plan file -----------------------------------------------------------
 
 const planned = brief({ outcome: '- [x] a\n', extra: 'plan: /abs/.hive/plans/p.md\n' });
