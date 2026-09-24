@@ -19,6 +19,10 @@ import {
 import { emptySnapshot } from '@shared/config-contract';
 import type { SkillsSnapshot } from '@shared/skills-contract';
 
+import { resetShippedState } from '@/lib/shipped';
+
+import { shippedStatus } from '../../../support/shipped';
+
 const loadSkills = vi.fn();
 const readSkillFile = vi.fn();
 const saveSkill = vi.fn();
@@ -145,6 +149,8 @@ beforeEach(() => {
 
 afterEach(() => {
   resetSkills();
+  resetShippedState();
+  delete (window as unknown as { hive?: unknown }).hive;
   vi.clearAllMocks();
 });
 
@@ -1517,5 +1523,62 @@ describe('SkillsSection — attached to a remote server', () => {
     expect(button).toHaveAttribute('title', REMOTE_DISABLED_REASON.importSkill);
     await userEvent.click(button);
     expect(importNewSkill).not.toHaveBeenCalled();
+  });
+});
+
+describe('SkillsSection — shipped skills the user changed', () => {
+  const changed = shippedStatus({ kind: 'skills', name: 'tdd', bodyEdited: true, held: true, files: ['prompts/x.md'] });
+
+  const withShipped = () => {
+    const shipped = {
+      status: vi.fn(async () => [changed]),
+      reset: vi.fn(async () => []),
+      takePrompt: vi.fn(async () => []),
+      keepMine: vi.fn(async () => []),
+    };
+    (window as unknown as { hive?: unknown }).hive = { shipped };
+    setSkillsForTest(withSkills('deploy', 'tdd'));
+
+    return shipped;
+  };
+
+  it('marks only the changed skill, and shows the strip and banner once it is open', async () => {
+    withShipped();
+    render(<SkillsSection />);
+
+    await screen.findByLabelText('A newer shipped prompt is waiting');
+    expect(screen.getByRole('button', { name: '/deploy' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /^\/tdd/ }));
+
+    expect(await screen.findByText(/Edited files: prompts\/x\.md\./)).toBeInTheDocument();
+    expect(screen.getByText(/Update held\./)).toBeInTheDocument();
+  });
+
+  it('takes the shipped prompt, then reloads the skills and re-reads the open file', async () => {
+    const shipped = withShipped();
+    render(<SkillsSection />);
+    await screen.findByLabelText('A newer shipped prompt is waiting');
+    await userEvent.click(screen.getByRole('button', { name: /^\/tdd/ }));
+    const reads = readSkillFile.mock.calls.length;
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Take shipped prompt' }));
+
+    expect(shipped.takePrompt).toHaveBeenCalledWith({ kind: 'skills', name: 'tdd' });
+    await vi.waitFor(() => expect(readSkillFile.mock.calls.length).toBeGreaterThan(reads));
+    expect(readSkillFile).toHaveBeenLastCalledWith('tdd', 'SKILL.md');
+  });
+
+  it('shows main\'s refusal as the pane\'s error', async () => {
+    const shipped = withShipped();
+    shipped.reset.mockRejectedValueOnce(new Error('The Hive does not ship skills/tdd.'));
+    render(<SkillsSection />);
+    await screen.findByLabelText('A newer shipped prompt is waiting');
+    await userEvent.click(screen.getByRole('button', { name: /^\/tdd/ }));
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Reset to shipped' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Reset' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('does not ship skills/tdd');
   });
 });
