@@ -87,12 +87,14 @@ changes, write `prs.json`, post one `ledger_post` with
 `meta: { pr, repo, stage }`, and **fall through into the new stage in the same
 wake**: `intake` → `self-review`, `fix-self` → `ready` → `ci`, `findings` →
 `approval` → `merge` → `closed` never cost a wake between them. A row stops
-only at a stage that waits on someone else. CI pending, or a review wait
-already asked, stops that row and the next row starts. An ask the row sends,
-the merge fence's card included, ends the whole wake, and the rows after it
-advance on the next tick. Writing `prs.json` at every stage change is what
-lets a wake end at any call without losing a stage, `since` or `rounds`. A
-`sync` already run on a row this wake is not repeated.
+only at a stage that waits on someone else. CI pending, or an ask already
+out and unanswered (`waitingOn` names `acr`, `fixer` or `reply-to`), stops
+that row and the next row starts. An ask the row sends this wake, the merge
+fence's card included, ends the whole wake, and the rows after it advance on
+the next tick. Write `prs.json` whenever a row changes, its stage,
+`waitingOn`, `since` or `rounds`, answers moving `since` included: that is
+what lets a wake end at any call without losing any of them. A `sync`
+already run on a row this wake is not repeated.
 
 **Before any row's stage work**, except at `merge` and `closed`,
 `gh pr view <N> --repo <owner>/<repo> --json state`. Those two stages handle a
