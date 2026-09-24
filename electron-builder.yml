@@ -66,6 +66,10 @@ extraResources:
     to: skills
   - from: resources/agents
     to: agents
+  # Every past version of those files as part hashes, for a `~/.hive` seeded
+  # before the seed merged part by part (`pnpm seed:history`).
+  - from: resources/shipped-history.json
+    to: shipped-history.json
 
 mac:
   category: public.app-category.developer-tools
