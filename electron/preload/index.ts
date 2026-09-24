@@ -447,6 +447,15 @@ const bridge: HiveBridge = {
     onChanged: (callback: (event: FsChangedEvent) => void) =>
       subscribe<FsChangedEvent>(CH.fsChanged, callback),
   },
+  shipped: {
+    status: (): Promise<ShippedStatus[]> => ipcRenderer.invoke(CH.shippedStatus),
+    reset: (request: ShippedRequest): Promise<ShippedStatus[]> =>
+      ipcRenderer.invoke(CH.shippedReset, request),
+    takePrompt: (request: ShippedRequest): Promise<ShippedStatus[]> =>
+      ipcRenderer.invoke(CH.shippedTakePrompt, request),
+    keepMine: (request: ShippedRequest): Promise<ShippedStatus[]> =>
+      ipcRenderer.invoke(CH.shippedKeepMine, request),
+  },
   /*
     HIVE-96, HIVE-99's `rename`, and HIVE-148's eight bundle verbs. The
     original five still name only a skill, never a path — `rename` names two
@@ -459,15 +468,6 @@ const bridge: HiveBridge = {
     argument. There is no `onChanged` here on purpose: the pane is the only
     writer, and every mutating verb answers with the fresh snapshot.
   */
-  shipped: {
-    status: (): Promise<ShippedStatus[]> => ipcRenderer.invoke(CH.shippedStatus),
-    reset: (request: ShippedRequest): Promise<ShippedStatus[]> =>
-      ipcRenderer.invoke(CH.shippedReset, request),
-    takePrompt: (request: ShippedRequest): Promise<ShippedStatus[]> =>
-      ipcRenderer.invoke(CH.shippedTakePrompt, request),
-    keepMine: (request: ShippedRequest): Promise<ShippedStatus[]> =>
-      ipcRenderer.invoke(CH.shippedKeepMine, request),
-  },
   skills: {
     list: (): Promise<SkillsSnapshot> => ipcRenderer.invoke(CH.skillsList),
     read: (request: SkillNameRequest): Promise<SkillFile> =>

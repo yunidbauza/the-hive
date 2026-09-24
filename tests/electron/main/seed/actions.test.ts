@@ -93,6 +93,46 @@ describe('shippedStatus', () => {
     expect((await statusOf('tdd'))?.files).toEqual(['prompts/x.md']);
   });
 
+  it('leaves out a definition file that is itself a symlink, and never writes through it', async () => {
+    const elsewhere = join(base, 'elsewhere.md');
+    await writeFile(elsewhere, v1.replace('Prompt v1.', 'Mine.'), 'utf8');
+    await rm(join(target, AGENT));
+    await symlink(elsewhere, join(target, AGENT));
+    await ship(AGENT, v2);
+
+    expect(await shippedStatus(opts())).toEqual([]);
+    await takeShippedPrompt(opts(), { kind: 'agents', name: 'builder' });
+    expect(await readFile(elsewhere, 'utf8')).toContain('Mine.');
+  });
+
+  it('raises no flag for a file with no base, as the seed does not', async () => {
+    await rm(manifestFile);
+    await edit(AGENT, v1.replace('Prompt v1.', 'Mine.').replace('model: opus', 'model: haiku'));
+
+    const status = await statusOf();
+
+    expect(status?.held).toBe(false);
+    expect(status?.moved).toEqual([]);
+    expect(status?.bodyEdited).toBe(true);
+  });
+
+  it('runs two actions one after the other, so neither loses the other\'s manifest write', async () => {
+    await ship('agents/fixer/AGENT.md', v1.replace('builder', 'fixer'));
+    await seedShipped(opts());
+    await edit(AGENT, v1.replace('Prompt v1.', 'Mine.'));
+    await edit('agents/fixer/AGENT.md', v1.replace('builder', 'fixer').replace('Prompt v1.', 'Mine.'));
+    await ship(AGENT, v2);
+    await ship('agents/fixer/AGENT.md', v2.replace('builder', 'fixer'));
+    await seedShipped(opts());
+
+    await Promise.all([
+      keepMine(opts(), { kind: 'agents', name: 'builder' }),
+      keepMine(opts(), { kind: 'agents', name: 'fixer' }),
+    ]);
+
+    expect((await shippedStatus(opts())).filter((status) => status.held)).toEqual([]);
+  });
+
   it('leaves out an agent the user deleted, and one behind a symlink', async () => {
     await rm(join(target, 'agents/builder'), { recursive: true });
     await ship('agents/linked/AGENT.md', '---\nname: linked\n---\nx\n');

@@ -2313,6 +2313,13 @@ export interface HiveBridge {
     /** Returns its own unsubscribe. Callers MUST invoke it on unmount. */
     onChanged(callback: (event: FsChangedEvent) => void): () => void;
   };
+  /** The shipped agents and skills the user changed (`shipped-contract.ts`). */
+  shipped: {
+    status(): Promise<ShippedStatus[]>;
+    reset(request: ShippedRequest): Promise<ShippedStatus[]>;
+    takePrompt(request: ShippedRequest): Promise<ShippedStatus[]>;
+    keepMine(request: ShippedRequest): Promise<ShippedStatus[]>;
+  };
   /**
    * The custom skills The Hive injects into the sessions it starts (HIVE-96,
    * HIVE-148).
@@ -2379,13 +2386,6 @@ export interface HiveBridge {
    * `SKILL_NAME_PATTERN` every other verb is bound by, refusing a name already
    * taken — so it cannot reach or replace anything `write` could not.
    */
-  /** The shipped agents and skills the user changed (`shipped-contract.ts`). */
-  shipped: {
-    status(): Promise<ShippedStatus[]>;
-    reset(request: ShippedRequest): Promise<ShippedStatus[]>;
-    takePrompt(request: ShippedRequest): Promise<ShippedStatus[]>;
-    keepMine(request: ShippedRequest): Promise<ShippedStatus[]>;
-  };
   skills: {
     list(): Promise<SkillsSnapshot>;
     read(request: SkillNameRequest): Promise<SkillFile>;

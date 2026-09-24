@@ -67,6 +67,8 @@ async function locate(
   history: () => Promise<Parameters<typeof legacyBase>[3]>,
 ): Promise<Located | null> {
   if (await throughLink(options.target, folder)) return null;
+  // A linked definition file is one the seed keeps and never merges.
+  if (await throughLink(join(options.target, folder), definitionOf(folder))) return null;
 
   const rel = `${folder}/${definitionOf(folder)}`;
   const shipped = await readText(join(options.source, rel));
@@ -76,8 +78,19 @@ async function locate(
   if (parseParts(shipped) === null || parseParts(current) === null) return null;
 
   const base = manifest.parts[rel] ?? legacyBase(rel, current, manifest.files[rel], await history());
+  const merge = mergeParts(current, shipped, base);
 
-  return { rel, shipped, current, base, merge: mergeParts(current, shipped, base) };
+  /*
+    With no base the seed leaves the file alone as the user's and raises no
+    flag, so neither does the status: nothing is known to have moved.
+  */
+  return {
+    rel,
+    shipped,
+    current,
+    base,
+    merge: base === null ? { ...merge, moved: [], held: false } : merge,
+  };
 }
 
 const historyLoader = (options: SeedOptions) => {
@@ -132,6 +145,21 @@ export async function shippedStatus(options: SeedOptions): Promise<ShippedStatus
   return statuses;
 }
 
+/**
+ * One write at a time. Every action reads `.seed.json`, changes one entry and
+ * writes it back, so two at once (this window and a paired device) would
+ * each write a manifest missing the other's change.
+ */
+let queue: Promise<unknown> = Promise.resolve();
+
+function serial<T>(run: () => Promise<T>): Promise<T> {
+  const next = queue.then(run, run);
+
+  queue = next.catch(() => undefined);
+
+  return next;
+}
+
 /** The folder a request names, refused unless the app ships it and it is not a link. */
 async function shippedFolder(options: SeedOptions, request: ShippedRequest): Promise<string> {
   const folder = `${request.kind}/${request.name}`;
@@ -153,7 +181,7 @@ async function writeKeepingMode(from: string, to: string, text: string): Promise
 }
 
 /** Replace the folder's shipped files with the shipped copies; extra files stay. */
-export async function resetShipped(
+async function resetShippedNow(
   options: SeedOptions,
   request: ShippedRequest,
 ): Promise<ShippedStatus[]> {
@@ -183,7 +211,7 @@ export async function resetShipped(
 }
 
 /** Put the shipped body under the user's frontmatter. */
-export async function takeShippedPrompt(
+async function takeShippedPromptNow(
   options: SeedOptions,
   request: ShippedRequest,
 ): Promise<ShippedStatus[]> {
@@ -209,7 +237,7 @@ export async function takeShippedPrompt(
  * held body's base become the shipped value, so nothing is flagged until the
  * shipped value moves again. The file itself is not touched.
  */
-export async function keepMine(
+async function keepMineNow(
   options: SeedOptions,
   request: ShippedRequest,
 ): Promise<ShippedStatus[]> {
@@ -238,3 +266,12 @@ export async function keepMine(
 
   return shippedStatus(options);
 }
+
+export const resetShipped = (options: SeedOptions, request: ShippedRequest): Promise<ShippedStatus[]> =>
+  serial(() => resetShippedNow(options, request));
+
+export const takeShippedPrompt = (options: SeedOptions, request: ShippedRequest): Promise<ShippedStatus[]> =>
+  serial(() => takeShippedPromptNow(options, request));
+
+export const keepMine = (options: SeedOptions, request: ShippedRequest): Promise<ShippedStatus[]> =>
+  serial(() => keepMineNow(options, request));
