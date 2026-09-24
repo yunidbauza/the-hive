@@ -51,7 +51,7 @@ import { launchHive } from './fixtures/hive-app';
  */
 const STUB = `#!/bin/sh
 printf '%s\\n' '{"type":"system","subtype":"init","session_id":"stub","mcp_servers":[]}'
-printf '%s\\n' '{"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"working on it"}]}}'
+printf '%s\\n' '{"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"working on it${Array.from({ length: 80 }, (_, n) => `\\nstep ${String(n)}`).join('')}"}]}}'
 sleep 45
 printf '%s\\n' '{"type":"result","subtype":"success","num_turns":1,"total_cost_usd":0.001,"session_id":"stub"}'
 `;
@@ -182,6 +182,44 @@ test('draws two live task runs and counts them in the rail and the fleet', async
     // Both processes really ran: the output half holds each run's own line,
     // grouped by the run that wrote it.
     await expect(page.getByTestId('run-output')).toContainText('working on it');
+
+    /*
+      The kind glyph stands clear of the id: a margin, not a space character,
+      so the row's text stays `○#…` while the eye gets a gap before the `#`.
+    */
+    const alpha = receipts.locator('[data-live-run="task"]').filter({ hasText: 'say alpha' });
+    const glyph = alpha.locator('span[aria-hidden="true"]');
+
+    expect(
+      await glyph.evaluate((el) => parseFloat(getComputedStyle(el).marginRight)),
+    ).toBeGreaterThan(2);
+
+    /*
+      Clicking a row brings its run's output to the top of the pane. Beta is
+      the newer task, so its group is first and alpha's sits under eighty lines
+      of beta's — below the fold — until alpha's row is clicked.
+    */
+    const output = page.getByTestId('run-output');
+    const alphaGroup = output.locator('[data-run-group]').nth(1);
+
+    await expect(alphaGroup).toContainText('step 79');
+    await expect(alphaGroup).not.toBeInViewport();
+
+    await alpha.click();
+
+    await expect(alphaGroup).toBeInViewport();
+    await expect
+      .poll(async () => {
+        const [group, pane] = await Promise.all([alphaGroup.boundingBox(), output.boundingBox()]);
+
+        return Math.round((group?.y ?? 0) - (pane?.y ?? 0));
+      })
+      .toBe(0);
+
+    await testInfo.attach('run-log-after-jump', {
+      body: await page.locator('[data-region="run-log"]').screenshot(),
+      contentType: 'image/png',
+    });
   } finally {
     /*
       `close()` reaches `runShutdown`, which signals both children and finalizes

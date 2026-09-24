@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 
 import { laneLabel } from '@/lib/agents';
 import { cn } from '@/lib/utils';
@@ -109,6 +109,27 @@ const RUN_LOG_SPLIT_DEFAULT = 0.4;
  */
 const RECEIPT_GRID =
   'grid items-baseline gap-x-3 [grid-template-columns:minmax(11ch,11fr)_minmax(9ch,9fr)_minmax(9ch,9fr)_minmax(8ch,8fr)_minmax(5ch,5fr)_minmax(5ch,5fr)_minmax(7ch,7fr)]';
+
+/** A receipts row, live or finished: clickable, so it says so on hover and focus. */
+const ROW = 'cursor-pointer pb-0.5 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none';
+
+/**
+ * What makes a receipts row a button without making it a `<button>`, which may
+ * not hold the block grid inside it. Enter and Space, as a button would.
+ */
+function jumpProps(onJump: () => void) {
+  return {
+    role: 'button',
+    tabIndex: 0,
+    onClick: onJump,
+    onKeyDown: (event: KeyboardEvent) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+
+      event.preventDefault();
+      onJump();
+    },
+  };
+}
 
 interface AgentRunLogProps {
   name: string;
@@ -341,6 +362,21 @@ export function AgentRunLog({ name }: AgentRunLogProps) {
 
   const hasReceipts = receipts.length > 0 || live;
 
+  /*
+    A receipts row is a way into the output: it brings that run's group into
+    view. The groups are the output box's own children, found by their
+    `data-run-group` rather than by a selector, so a run id never has to be
+    escaped. A run with no group (evicted, or not written yet) scrolls nothing.
+    Following the live turn is left to `noteScroll`, which the scroll fires.
+  */
+  const jumpTo = (key: string) => {
+    const group = [...(output.current?.children ?? [])].find(
+      (child) => child instanceof HTMLElement && child.dataset.runGroup === key,
+    );
+
+    group?.scrollIntoView({ block: 'start' });
+  };
+
   return (
     <div
       className="flex min-h-0 flex-col rounded-lg bg-term-bg p-2.5"
@@ -426,6 +462,7 @@ export function AgentRunLog({ name }: AgentRunLogProps) {
               brand={palette.blue}
               green={palette.green}
               first={index === 0}
+              onJump={() => jumpTo(run.run)}
             />
           ))}
 
@@ -443,6 +480,7 @@ export function AgentRunLog({ name }: AgentRunLogProps) {
                 separator in the list is 1px.
               */
               first={index === 0 && inFlight.length === 0}
+              onJump={() => jumpTo(run.run)}
             />
           ))}
           </div>
@@ -528,6 +566,7 @@ export function AgentRunLog({ name }: AgentRunLogProps) {
               */
               key={group.key}
               className="pt-[18px] pb-2 first:pt-0"
+              data-run-group={group.key}
             >
               {/*
                 Which run is talking. Unlabelled for the untagged group, because
@@ -756,6 +795,7 @@ interface LiveRowProps {
   brand: string;
   green: string;
   first: boolean;
+  onJump: () => void;
 }
 
 /**
@@ -785,6 +825,7 @@ function LiveRow({
   brand,
   green,
   first,
+  onJump,
 }: LiveRowProps) {
   const at = new Date(run.startedAt).toLocaleTimeString([], {
     hour: '2-digit',
@@ -797,9 +838,10 @@ function LiveRow({
 
   return (
     <div
-      className={cn('pb-0.5', first ? 'pt-1' : 'border-t border-border-soft pt-1')}
+      className={cn(ROW, first ? 'pt-1' : 'border-t border-border-soft pt-1')}
       style={{ color: dim }}
       data-live-run={run.kind}
+      {...jumpProps(onJump)}
     >
       <div className={RECEIPT_GRID}>
         <span
@@ -807,7 +849,7 @@ function LiveRow({
           style={{ color: brand }}
           title={lane === null ? (standing ? 'standing run' : 'task run') : `${run.lane ?? lane} lane`}
         >
-          <span aria-hidden="true" style={{ color: green }}>
+          <span aria-hidden="true" className="mr-[0.5ch]" style={{ color: green }}>
             {standing ? '●' : '○'}
           </span>
           {`#${run.run.slice(0, 8)}`}
@@ -849,6 +891,7 @@ interface RunHeaderProps {
   brand: string;
   /** The row directly under the sticky header, which draws its own rule. */
   first: boolean;
+  onJump: () => void;
 }
 
 /**
@@ -872,7 +915,7 @@ interface RunHeaderProps {
  * {@link RECEIPT_GRID}. It rode in the outcome cell first, which clipped it at
  * every window size and font size the app can render.
  */
-function RunHeader({ run, dim, brand, first }: RunHeaderProps) {
+function RunHeader({ run, dim, brand, first, onJump }: RunHeaderProps) {
   const at = new Date(run.startedAt).toLocaleTimeString([], {
     hour: '2-digit',
     minute: '2-digit',
@@ -882,8 +925,9 @@ function RunHeader({ run, dim, brand, first }: RunHeaderProps) {
 
   return (
     <div
-      className={cn('pb-0.5', first ? 'pt-1' : 'border-t border-border-soft pt-1')}
+      className={cn(ROW, first ? 'pt-1' : 'border-t border-border-soft pt-1')}
       style={{ color: dim }}
+      {...jumpProps(onJump)}
     >
       <div className={RECEIPT_GRID}>
       {/*
