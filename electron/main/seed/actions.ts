@@ -10,6 +10,7 @@ import type {
 
 import { legacyBase, readHistory } from './history';
 import {
+  alignShapes,
   baseOf,
   hashPart,
   mergeParts,
@@ -247,19 +248,19 @@ async function keepMineNow(
 
   if (located === null) return shippedStatus(options);
 
-  const shipped = parseParts(located.shipped);
+  const shipped = alignShapes(located.current, located.shipped).ship;
   const next: PartBase = {
     keys: { ...located.merge.base.keys },
     body: located.merge.base.body,
   };
 
   for (const path of located.merge.moved) {
-    const part = shipped?.parts.get(path);
+    const part = shipped.parts.get(path);
 
     if (part === undefined) delete next.keys[path];
     else next.keys[path] = hashPart(part);
   }
-  if (located.merge.held) next.body = hashPart(shipped?.body ?? '');
+  if (located.merge.held) next.body = hashPart(shipped.body);
 
   manifest.parts[located.rel] = next;
   await writeManifest(options.manifestFile, manifest);

@@ -184,6 +184,21 @@ function collapse(parsed: Parsed, key: string): void {
   parsed.blocks.delete(key);
 }
 
+/**
+ * Both files parsed, with a key one side wrote as a block and the other as a
+ * single value folded to the single value on both. What the merge compares,
+ * and so what anything reading its `moved` paths must look them up in.
+ */
+export function alignShapes(current: string, shipped: string): { mine: Parsed; ship: Parsed } {
+  const mine = parseParts(current) as Parsed;
+  const ship = parseParts(shipped) as Parsed;
+
+  for (const key of ship.blocks) if (mine.parts.has(key)) collapse(ship, key);
+  for (const key of mine.blocks) if (ship.parts.has(key)) collapse(mine, key);
+
+  return { mine, ship };
+}
+
 const parentOf = (path: string, blocks: Set<string>): string | null => {
   const dot = path.indexOf('.');
 
@@ -217,11 +232,7 @@ export function mergeParts(
   shipped: string,
   base: PartBase | null,
 ): MergeResult {
-  const mine = parseParts(current) as Parsed;
-  const ship = parseParts(shipped) as Parsed;
-
-  for (const key of ship.blocks) if (mine.parts.has(key)) collapse(ship, key);
-  for (const key of mine.blocks) if (ship.parts.has(key)) collapse(mine, key);
+  const { mine, ship } = alignShapes(current, shipped);
 
   const keys: Record<string, string> = {};
   const customised: CustomisedPart[] = [];

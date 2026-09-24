@@ -11,7 +11,7 @@ import {
   readHistory,
   type History,
 } from '../../../../electron/main/seed/history';
-import { baseOf, hashPart } from '../../../../electron/main/seed/merge';
+import { baseOf, hashPart, mergeParts } from '../../../../electron/main/seed/merge';
 
 /**
  * A `~/.hive` seeded before the part manifest has no base for its files. The
@@ -45,6 +45,24 @@ describe('legacyBase', () => {
     expect(base?.keys.lane).toBeUndefined();
     // Deleted by the user, so it stays deleted.
     expect(base?.keys['limits.daily_usd']).toBe(hashPart('  daily_usd: 40'));
+  });
+
+  it('on a tie, does not read a key only the newest tied version has as deleted', () => {
+    // v1-era keys, an edited model and body: every version agrees on the same three parts.
+    const mine = file(['name: shipper', 'model: haiku', 'limits:', '  turns: 60', '  daily_usd: 40'], 'Mine.\n');
+    const base = legacyBase(REL, mine, undefined, history);
+
+    // `lane` arrived in v3; the file may simply predate it, so it arrives rather than stays deleted.
+    expect(base?.keys.lane).toBeUndefined();
+    expect(mergeParts(mine, v3, base).text).toContain('lane: repo');
+  });
+
+  it('on a tie, still reads a key every tied version has as deleted', () => {
+    const mine = file(['name: shipper', 'model: haiku', 'limits:', '  turns: 60'], 'Mine.\n');
+    const base = legacyBase(REL, mine, undefined, history);
+
+    expect(base?.keys['limits.daily_usd']).toBe(hashPart('  daily_usd: 40'));
+    expect(mergeParts(mine, v3, base).text).not.toContain('daily_usd');
   });
 
   it('counts a part matching any shipped version as untouched', () => {

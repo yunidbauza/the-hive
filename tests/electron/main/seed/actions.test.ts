@@ -195,6 +195,22 @@ describe('the actions', () => {
     expect((await statusOf())?.held).toBe(true);
   });
 
+  it('keepMine clears a moved key whose block the merge collapsed', async () => {
+    // The user wrote `limits` as one inline value; the shipped file writes it as a block.
+    const inline = v1.replace('limits:\n  parallel: 2', 'limits: { parallel: 5 }');
+
+    await edit(AGENT, inline);
+    await ship(AGENT, v2.replace('parallel: 2', 'parallel: 3'));
+    await seedShipped(opts());
+    expect((await statusOf())?.moved).toEqual(['limits']);
+
+    const kept = (await keepMine(opts(), { kind: 'agents', name: 'builder' })).find(
+      (status) => status.name === 'builder',
+    );
+
+    expect(kept?.moved).toEqual([]);
+  });
+
   it('refuses an agent the app does not ship, and one behind a symlink', async () => {
     await expect(resetShipped(opts(), { kind: 'agents', name: 'mine' })).rejects.toThrow(/does not ship/);
 

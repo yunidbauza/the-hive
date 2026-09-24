@@ -49,7 +49,7 @@ export async function readHistory(path: string): Promise<History> {
  *
  * The version the v1 manifest's whole-file hash names, when there is one;
  * otherwise the version agreeing with the file on the most parts, the latest
- * on a tie. Its keys are what makes a missing key read as *deleted* rather
+ * on a tie (a key the tied versions do not all ship is left out of its keys). Its keys are what makes a missing key read as *deleted* rather
  * than *new*. Then any part whose value matches some shipped version of that
  * part counts as untouched, since an old shipped value is not an edit.
  */
@@ -71,11 +71,24 @@ export function legacyBase(
     (version.body === body ? 1 : 0);
 
   const named = versions.find((version) => version.file === v1Hash);
-  const picked =
-    named ??
-    versions.reduce((best, version) => (score(version) >= score(best) ? version : best));
+  const best = named === undefined ? Math.max(...versions.map(score)) : 0;
+  const tied = versions.filter((version) => score(version) === best);
+  const picked = named ?? tied[tied.length - 1];
 
   const base: PartBase = { keys: { ...picked.keys }, body: picked.body };
+
+  /*
+    Versions the file agrees with equally well cannot say which one it came
+    from, so a key it lacks that only some of them ship may predate the key
+    rather than be deleted from it. Only a key every one of them ships is.
+  */
+  if (named === undefined) {
+    for (const path of Object.keys(base.keys)) {
+      if (!hashes.has(path) && !tied.every((version) => ownKey(version.keys, path) !== undefined)) {
+        delete base.keys[path];
+      }
+    }
+  }
 
   for (const [path, hash] of hashes) {
     if (versions.some((version) => ownKey(version.keys, path) === hash)) base.keys[path] = hash;
