@@ -13,6 +13,9 @@ import { dirname, join } from 'node:path';
 import { AGENT_FILE, AGENTS_DIR } from '@shared/agent-contract';
 import { RESERVED_SKILL_NAME } from '@shared/skills-contract';
 
+import { legacyBase, readHistory, type History } from './history';
+import { baseOf, mergeParts, parseParts, type PartBase } from './merge';
+
 /**
  * Seeding the skills and agents the app ships into `~/.hive` (HIVE-162).
  *
@@ -32,7 +35,16 @@ import { RESERVED_SKILL_NAME } from '@shared/skills-contract';
  * | absent | no entry | copies it |
  * | absent | has an entry | leaves it absent: the user deleted it |
  * | byte-identical to what the last seed wrote | | overwrites it with the new shipped content |
+ * | an edited `AGENT.md` or `SKILL.md` | | merges it part by part (`merge.ts`) |
  * | anything else | | leaves it alone |
+ *
+ * The merge row replaced "leaves it alone" for the two definition files: one
+ * edited key used to freeze an agent's whole prompt for good. Each
+ * frontmatter key and the body now merge on their own, from a base per part
+ * recorded under `parts` in the manifest. A file seeded before `parts`
+ * existed takes its base from the shipped history (`history.ts`). `files`
+ * keeps its meaning, so an older build reading this manifest still refuses
+ * to overwrite a file the user changed.
  *
  * "What the last seed wrote" is a hash per file in `~/.hive/.seed.json`. It
  * is what tells an untouched copy from an edited one, and a deleted copy from
@@ -71,27 +83,47 @@ export interface SeedReport {
   upgraded: string[];
   /** Files left as they were: edited by the user, or already current. */
   kept: string[];
+  /** Edited definition files the shipped copy was merged into. */
+  merged: string[];
   /** Folders skipped whole because the destination was a symlink. */
   skipped: string[];
 }
 
-interface Manifest {
+export interface Manifest {
+  /** Whole-file hash of what the seed last wrote, per file. */
   files: Record<string, string>;
+  /** Per-part bases for `AGENT.md` and `SKILL.md`. */
+  parts: Record<string, PartBase>;
 }
 
-interface SeedOptions {
+export interface SeedOptions {
   /** The shipped tree: `<source>/skills/<name>/…` and `<source>/agents/<name>/AGENT.md`. */
   source: string;
   /** `~/.hive`, the folder that holds `skills/` and `agents/`. */
   target: string;
   /** The manifest path, normally `<target>/.seed.json`. */
   manifestFile: string;
+  /** `shipped-history.json`, for files seeded before the part manifest. */
+  history?: string;
 }
+
+/** The files merged part by part rather than whole. */
+const MERGED = new RegExp(`^(?:${AGENTS_DIR}/[^/]+/${AGENT_FILE}|skills/[^/]+/SKILL\\.md)$`);
+
+export const isMerged = (rel: string): boolean => MERGED.test(rel);
 
 const sha256 = (bytes: Uint8Array): string =>
   createHash('sha256').update(bytes).digest('hex');
 
-async function readManifest(file: string): Promise<Manifest> {
+const isPartBase = (value: unknown): value is PartBase =>
+  typeof value === 'object' &&
+  value !== null &&
+  typeof (value as PartBase).body === 'string' &&
+  typeof (value as PartBase).keys === 'object' &&
+  (value as PartBase).keys !== null &&
+  Object.values((value as PartBase).keys).every((hash) => typeof hash === 'string');
+
+export async function readManifest(file: string): Promise<Manifest> {
   try {
     const parsed: unknown = JSON.parse(await readFile(file, 'utf8'));
     if (
@@ -104,18 +136,30 @@ async function readManifest(file: string): Promise<Manifest> {
       for (const [key, value] of Object.entries((parsed as Manifest).files)) {
         if (typeof value === 'string') files[key] = value;
       }
-      return { files };
+      const parts: Record<string, PartBase> = {};
+      const rawParts: unknown = (parsed as { parts?: unknown }).parts;
+      if (typeof rawParts === 'object' && rawParts !== null) {
+        for (const [key, value] of Object.entries(rawParts)) {
+          if (isPartBase(value)) parts[key] = value;
+        }
+      }
+      return { files, parts };
     }
   } catch {
     // Missing or malformed: the first seed on this machine, or a hand-edit.
     // Either way every existing file reads as the user's, which is the safe
     // reading.
   }
-  return { files: {} };
+  return { files: {}, parts: {} };
+}
+
+export async function writeManifest(file: string, manifest: Manifest): Promise<void> {
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(file, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
 }
 
 /** Every file under `dir`, as paths relative to it, in name order. */
-async function walk(dir: string, rel = ''): Promise<string[]> {
+export async function walk(dir: string, rel = ''): Promise<string[]> {
   let listing;
   try {
     listing = await readdir(dir, { withFileTypes: true });
@@ -153,7 +197,7 @@ const isSymlink = async (path: string): Promise<boolean> => {
  * folder inside a skill. Walking the components is what makes "never through
  * a link" true rather than one level deep.
  */
-async function throughLink(root: string, rel: string): Promise<boolean> {
+export async function throughLink(root: string, rel: string): Promise<boolean> {
   let path = root;
   for (const segment of rel.split('/')) {
     path = join(path, segment);
@@ -169,7 +213,7 @@ async function throughLink(root: string, rel: string): Promise<boolean> {
  * both as a folder: it is the folder that may be a symlink, and it is the
  * folder that a person recognises as "the thing I edited".
  */
-async function shippedFolders(source: string): Promise<string[]> {
+export async function shippedFolders(source: string): Promise<string[]> {
   const folders: string[] = [];
   for (const kind of ['skills', AGENTS_DIR]) {
     let names: string[];
@@ -190,9 +234,11 @@ async function shippedFolders(source: string): Promise<string[]> {
 }
 
 export async function seedShipped(options: SeedOptions): Promise<SeedReport> {
-  const report: SeedReport = { created: [], upgraded: [], kept: [], skipped: [] };
+  const report: SeedReport = { created: [], upgraded: [], kept: [], merged: [], skipped: [] };
   const manifest = await readManifest(options.manifestFile);
   const next: Record<string, string> = { ...manifest.files };
+  const parts: Record<string, PartBase> = { ...manifest.parts };
+  let history: History | null = null;
 
   for (const folder of await shippedFolders(options.source)) {
     const destinationDir = join(options.target, folder);
@@ -231,7 +277,7 @@ export async function seedShipped(options: SeedOptions): Promise<SeedReport> {
       }
 
       if (existing === null) {
-        if (rel in manifest.files) {
+        if (rel in manifest.files || rel in manifest.parts) {
           // Seeded once, gone now. The user deleted it, and that is theirs.
           report.kept.push(rel);
           continue;
@@ -240,6 +286,7 @@ export async function seedShipped(options: SeedOptions): Promise<SeedReport> {
         await writeFile(to, bytes);
         await chmod(to, mode);
         next[rel] = shippedHash;
+        if (isMerged(rel)) parts[rel] = baseOf(bytes.toString());
         report.created.push(rel);
         continue;
       }
@@ -247,6 +294,7 @@ export async function seedShipped(options: SeedOptions): Promise<SeedReport> {
       const existingHash = sha256(existing);
       if (existingHash === shippedHash) {
         next[rel] = shippedHash;
+        if (isMerged(rel)) parts[rel] = baseOf(bytes.toString());
         report.kept.push(rel);
         continue;
       }
@@ -255,7 +303,44 @@ export async function seedShipped(options: SeedOptions): Promise<SeedReport> {
         await writeFile(to, bytes);
         await chmod(to, mode);
         next[rel] = shippedHash;
+        if (isMerged(rel)) parts[rel] = baseOf(bytes.toString());
         report.upgraded.push(rel);
+        continue;
+      }
+
+      const current = Buffer.from(existing).toString();
+      const text = bytes.toString();
+
+      if (isMerged(rel) && parseParts(current) !== null && parseParts(text) !== null) {
+        history ??= options.history === undefined ? {} : await readHistory(options.history);
+        const base =
+          manifest.parts[rel] ?? legacyBase(rel, current, manifest.files[rel], history);
+
+        // No record and no shipped version to compare against: a file that
+        // was there before the app shipped one. Theirs, as it always was.
+        if (base === null) {
+          report.kept.push(rel);
+          continue;
+        }
+
+        const result = mergeParts(current, text, base);
+
+        parts[rel] = result.base;
+        /*
+          `files` only ever names shipped bytes. A merged file that is not
+          exactly the shipped one keeps whatever hash it had, which it no
+          longer matches, so an older build reads it as the user's.
+        */
+        if (result.text === text) next[rel] = shippedHash;
+        // Recorded either way, so a deletion reads as one to an older build too.
+        next[rel] ??= shippedHash;
+        if (result.text === current) {
+          report.kept.push(rel);
+          continue;
+        }
+        await writeFile(to, result.text);
+        await chmod(to, mode);
+        report.merged.push(rel);
         continue;
       }
 
@@ -266,12 +351,7 @@ export async function seedShipped(options: SeedOptions): Promise<SeedReport> {
     }
   }
 
-  await mkdir(dirname(options.manifestFile), { recursive: true });
-  await writeFile(
-    options.manifestFile,
-    `${JSON.stringify({ files: next }, null, 2)}\n`,
-    'utf8',
-  );
+  await writeManifest(options.manifestFile, { files: next, parts });
 
   return report;
 }

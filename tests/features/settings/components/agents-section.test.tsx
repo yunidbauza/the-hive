@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetAgents } from '@/lib/agents';
+import { resetShippedState } from '@/lib/shipped';
 
 import { AgentsSection } from '@features/settings/components/agents-section';
 import {
@@ -13,6 +14,8 @@ import {
 import { AGENT_NAME_POOL } from '@/lib/agents';
 
 import type { AgentSummary } from '@shared/agent-contract';
+
+import { shippedStatus } from '../../../support/shipped';
 
 const GOOD = `---
 name: slack-watcher
@@ -56,6 +59,7 @@ const row = (name: string) => screen.getByRole('button', { name: new RegExp(name
 beforeEach(() => {
   delete (window as unknown as { hive?: unknown }).hive;
   resetAgents();
+  resetShippedState();
   vi.restoreAllMocks();
 });
 
@@ -615,4 +619,81 @@ describe('AgentsSection', () => {
     });
   });
 
+});
+
+describe('AgentsSection — shipped agents the user changed', () => {
+  const changed = shippedStatus({
+    name: 'slack-watcher',
+    customised: [{ path: 'limits.parallel', yours: '5', shipped: '2' }],
+    bodyEdited: true,
+    held: true,
+  });
+
+  const withShipped = (over: Record<string, unknown> = {}) => {
+    const agents = stub([agent('slack-watcher'), agent('pr-patrol')]);
+    const shipped = {
+      status: vi.fn(async () => [changed]),
+      reset: vi.fn(async () => []),
+      takePrompt: vi.fn(async () => []),
+      keepMine: vi.fn(async () => []),
+      ...over,
+    };
+    (window as unknown as { hive: Record<string, unknown> }).hive.shipped = shipped;
+
+    return { agents, shipped };
+  };
+
+  it('marks only the changed agent in the list', async () => {
+    withShipped();
+    render(<AgentsSection />);
+
+    const dot = await screen.findByLabelText('A newer shipped prompt is waiting');
+
+    expect(within(row('slack-watcher')).getByLabelText('A newer shipped prompt is waiting')).toBe(dot);
+    expect(within(row('pr-patrol')).queryByRole('img')).toBeNull();
+  });
+
+  it('opens with the strip and the held banner, and resets after confirming, then re-reads the file', async () => {
+    const { agents, shipped } = withShipped();
+    render(<AgentsSection />);
+    await screen.findByLabelText('A newer shipped prompt is waiting');
+
+    await userEvent.click(row('slack-watcher'));
+    await screen.findByText(/1 setting differs from shipped: limits\.parallel\./);
+    expect(screen.getByText(/Update held\./)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reset to shipped' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Reset' }));
+
+    await waitFor(() => expect(shipped.reset).toHaveBeenCalledWith({ kind: 'agents', name: 'slack-watcher' }));
+    await waitFor(() => expect(agents.read).toHaveBeenCalledTimes(2));
+  });
+
+  it('takes the shipped prompt from the banner, and says so when main refuses', async () => {
+    const { shipped } = withShipped({
+      takePrompt: vi.fn(async () => {
+        throw new Error('slack-watcher is a symlink in ~/.hive');
+      }),
+    });
+    render(<AgentsSection />);
+    await screen.findByLabelText('A newer shipped prompt is waiting');
+    await userEvent.click(row('slack-watcher'));
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Take shipped prompt' }));
+
+    expect(shipped.takePrompt).toHaveBeenCalledWith({ kind: 'agents', name: 'slack-watcher' });
+    expect(await screen.findByText(/is a symlink/)).toBeInTheDocument();
+  });
+
+  it('keeps mine from the banner', async () => {
+    const { shipped } = withShipped();
+    render(<AgentsSection />);
+    await screen.findByLabelText('A newer shipped prompt is waiting');
+    await userEvent.click(row('slack-watcher'));
+
+    const banner = (await screen.findByText(/Update held\./)).closest('div') as HTMLElement;
+    await userEvent.click(within(banner).getByRole('button', { name: 'Keep mine' }));
+
+    expect(shipped.keepMine).toHaveBeenCalledWith({ kind: 'agents', name: 'slack-watcher' });
+  });
 });

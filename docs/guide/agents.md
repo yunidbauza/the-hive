@@ -27,8 +27,12 @@ Agents come with The Hive: the app's own `resources/agents/` is copied into
 Today that is **builder**, which builds an approved plan in its own worktree and opens
 the draft PR, **shipper**, the PR endgame, **acr**, the reviewer it asks (named after the
 review tool it runs, `acr`, which is a command on the machine, not this agent), and **fixer**,
-which works through a PR's findings on the PR branch. Your edits win: a definition you changed is left
-alone by updates, and one you deleted stays deleted.
+which works through a PR's findings on the PR branch. Your edits win, and updates still arrive
+around them: each setting and the prompt update on their own, so a `limits.parallel` you raised
+stays raised while a new prompt and new keys such as `lane:` still land. Settings › Agents marks
+an agent you changed with a blue dot and names what differs, with **Reset to shipped**. If you
+rewrote the prompt and a newer one ships, the dot turns amber and the new prompt is held until
+you choose **Compare**, **Take shipped prompt** or **Keep mine**. An agent you deleted stays deleted.
 
 ## Create an agent
 

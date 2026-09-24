@@ -10,13 +10,25 @@ import {
   renameAgent,
   saveAgent,
 } from '@/lib/agents';
+import {
+  keepShippedMine,
+  loadShipped,
+  resetShipped,
+  takeShippedPrompt,
+} from '@/lib/shipped';
 
 import { Icon } from '@components/ui/icon';
 import { SwarmCreature } from '@components/ui/swarm-creature';
 import { AgentEditor } from '@features/settings/components/agent-editor';
 import { InlineConfirm } from '@features/settings/components/inline-confirm';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
+import {
+  HeldBanner,
+  ShippedDot,
+  ShippedStrip,
+} from '@features/settings/components/shipped-marker';
 import { useAgents } from '@hooks/use-agents';
+import { useShipped } from '@hooks/use-shipped';
 import {
   AGENT_NAME_PATTERN,
   isReservedAgentName,
@@ -125,6 +137,16 @@ export function AgentsSection() {
   useEffect(() => {
     void loadAgents();
   }, []);
+
+  /*
+    What the user changed in the agents the app ships. Asked again whenever the
+    snapshot changes, which is every save and every edit made outside the app,
+    so the dot follows the file rather than the last launch.
+  */
+  const shipped = useShipped('agents');
+  useEffect(() => {
+    void loadShipped();
+  }, [snapshot]);
 
   const agents = snapshot?.agents ?? [];
   const dirty = buffer !== null && buffer !== saved;
@@ -317,6 +339,36 @@ export function AgentsSection() {
       });
   };
 
+  /**
+   * Reset, take the shipped prompt, or keep mine, then re-read the file: the
+   * first two rewrite it underneath the editor. Only offered while the buffer
+   * is clean, so there is nothing typed to lose.
+   */
+  const resolveShipped = (
+    verb: typeof resetShipped,
+  ): void => {
+    if (open === null) return;
+
+    const name = open;
+
+    setRunNotice(null);
+    void verb({ kind: 'agents', name }).then(async (refusal) => {
+      if (refusal !== null) {
+        setRunNotice(refusal);
+        return;
+      }
+
+      const source = await readAgent(name);
+
+      setOpen((current) => {
+        if (current !== name || source === null) return current;
+        setBuffer(source);
+        setSaved(source);
+        return current;
+      });
+    });
+  };
+
   const remove = (): void => {
     if (open === null) {
       // Never written, so there is nothing to delete — just close it.
@@ -451,6 +503,7 @@ export function AgentsSection() {
                   className="shrink-0 text-brand"
                 />
                 <span className="truncate font-mono">{agent.name}</span>
+                <ShippedDot status={shipped.get(agent.name)} />
                 {broken ? (
                   <span className="ml-auto shrink-0 text-[11px] text-amber">
                     invalid
@@ -491,6 +544,20 @@ export function AgentsSection() {
           </div>
         ) : (
           <div className="flex min-h-0 flex-col gap-2">
+            {open === null || dirty ? null : (
+              <>
+                <ShippedStrip
+                  status={shipped.get(open)}
+                  onReset={() => resolveShipped(resetShipped)}
+                  onKeepMine={() => resolveShipped(keepShippedMine)}
+                />
+                <HeldBanner
+                  status={shipped.get(open)}
+                  onTake={() => resolveShipped(takeShippedPrompt)}
+                  onKeep={() => resolveShipped(keepShippedMine)}
+                />
+              </>
+            )}
             {/*
               Keyed by the agent, so switching rows remounts the editor rather
               than re-rendering it with a different buffer. The form below it

@@ -54,8 +54,10 @@ import { isThisMachineAction } from './notification-contract';
 /**
  * 3 → 4 (HIVE-166): `CH` gained `config:set-project-auto-merge`.
  * 4 → 5 (HIVE-176): `CH` gained `config:set-session-plugin`.
+ * 5 → 6: `CH` gained `shipped:status`, `shipped:reset`, `shipped:take-prompt`
+ * and `shipped:keep-mine`.
  */
-export const REMOTE_PROTOCOL_VERSION = 5;
+export const REMOTE_PROTOCOL_VERSION = 6;
 
 /**
  * What a frame is for.
@@ -257,6 +259,10 @@ export const FRAME_KIND = {
   [CH.skillsFileImport]: 'call',
   [CH.skillsFileDrop]: 'call',
   [CH.skillsImport]: 'call',
+  [CH.shippedStatus]: 'call',
+  [CH.shippedReset]: 'call',
+  [CH.shippedTakePrompt]: 'call',
+  [CH.shippedKeepMine]: 'call',
   [CH.agentsList]: 'call',
   [CH.agentsRead]: 'call',
   [CH.agentsWrite]: 'call',
@@ -527,6 +533,11 @@ export const CHANNEL_AUTHORIZATION = {
   [CH.skillsFileImport]: 'execute',
   [CH.skillsFileDrop]: 'execute',
   [CH.skillsImport]: 'execute',
+  [CH.shippedStatus]: 'read',
+  // They rewrite an agent's definition or a skill, so `skills:write`'s grant.
+  [CH.shippedReset]: 'execute',
+  [CH.shippedTakePrompt]: 'execute',
+  [CH.shippedKeepMine]: 'execute',
   [CH.agentsList]: 'read',
   [CH.agentsRead]: 'read',
   [CH.agentsWrite]: 'execute',

@@ -2124,7 +2124,35 @@ edits win.** A file is copied when absent and never seeded before, left absent
 when the manifest says it was seeded once (a deletion is an edit), overwritten
 only when the copy on disk is byte-identical to what the last seed wrote
 (`~/.hive/.seed.json` holds that hash per file), and otherwise left alone. A
-shipped file that is later dropped from `resources/` is never deleted. Nothing
+shipped file that is later dropped from `resources/` is never deleted.
+
+`AGENT.md` and `SKILL.md` are the exception to "left alone": an edited one is
+**merged**, because one edited key used to freeze a whole agent, prompt and
+all. `seed/merge.ts` splits the file into parts: each top-level frontmatter
+key, each child of a flat block (`limits.parallel`, `wake.every`), any deeper
+block whole (`hooks:`), and the body. Each part merges three ways from the
+hash the manifest recorded for it under `parts` (the base), the file on disk,
+and what ships now:
+
+| The part | Result |
+| --- | --- |
+| untouched since the base | takes the shipped value; a key the app no longer ships is dropped |
+| the user changed it, shipped did not | the user's |
+| both changed, or no base | the user's, flagged *moved* (a body: *held*) |
+| the user deleted it | stays deleted |
+| new in this version | arrives |
+
+A flagged part keeps its old base, so it stays flagged until the user resolves
+it in Settings (`seed/actions.ts`, over `shipped:*`): **Reset to shipped**
+rewrites the folder's shipped files, **Take shipped prompt** swaps the body
+under the user's frontmatter, **Keep mine** moves the base to the shipped
+value without touching the file. A file seeded before `parts` existed takes
+its base from `resources/shipped-history.json`, every shipped version of every
+definition as part hashes, generated from git by `pnpm seed:history`: the
+version its old whole-file hash names, else the best-matching one, with any
+value matching some shipped version counted as untouched. A file with no base
+at all stays the user's. `files` in the manifest only ever names shipped
+bytes, so an older build still reads a merged file as the user's. Nothing
 is written through a symlink at any depth below `~/.hive`; a linked `skills/`,
 a linked skill folder or a linked folder inside one each stop the write. A
 file's mode travels with it.

@@ -2,6 +2,12 @@ import { useEffect, useState } from 'react';
 
 import { useSwarmPhrase } from '@/hooks/use-swarm-phrase';
 import {
+  keepShippedMine,
+  loadShipped,
+  resetShipped,
+  takeShippedPrompt,
+} from '@/lib/shipped';
+import {
   deleteSkill,
   dropIntoSkill,
   frontmatterName,
@@ -24,10 +30,16 @@ import { REMOTE_DISABLED_REASON } from '@config/runtime';
 import { InlineConfirm } from '@features/settings/components/inline-confirm';
 import { SessionPluginsRow } from '@features/settings/components/session-plugins-row';
 import { SettingsSectionHeader } from '@features/settings/components/settings-section-header';
+import {
+  HeldBanner,
+  ShippedDot,
+  ShippedStrip,
+} from '@features/settings/components/shipped-marker';
 import { SkillBundle } from '@features/settings/components/skill-bundle';
 import { SkillEditor } from '@features/settings/components/skill-editor';
 import { SkillPathPrompt } from '@features/settings/components/skill-path-prompt';
 import { useRemoteCapabilities } from '@hooks/use-project-config';
+import { useShipped } from '@hooks/use-shipped';
 import { useSkills } from '@hooks/use-skills';
 import type { FsRefusalReason } from '@shared/fs-contract';
 
@@ -179,6 +191,13 @@ export function SkillsSection() {
     void loadSkills();
   }, []);
 
+  // What the user changed in the skills the app ships; asked again on every
+  // snapshot, since every write answers with one (`agents-section.tsx`).
+  const shipped = useShipped('skills');
+  useEffect(() => {
+    void loadShipped();
+  }, [snapshot]);
+
   const skills = snapshot?.skills ?? [];
   const invalid = snapshot?.invalid ?? [];
   const dirty = buffer !== null && buffer !== saved;
@@ -270,6 +289,28 @@ export function SkillsSection() {
    * clicks in the skill list do, and whichever read resolves last would
    * otherwise land under the other row's header.
    */
+  /**
+   * Reset, take the shipped prompt, or keep mine for the drilled skill, then
+   * re-read the open file, which the first two may have rewritten. Offered
+   * only while the buffer is clean.
+   */
+  const resolveShipped = (verb: typeof resetShipped): void => {
+    if (drilled === null) return;
+
+    const name = drilled;
+    const path = openPath ?? 'SKILL.md';
+
+    setError(null);
+    void verb({ kind: 'skills', name }).then((refusal) => {
+      if (refusal !== null) {
+        setError(refusal);
+        return;
+      }
+      void loadSkills();
+      void openFile(name, path);
+    });
+  };
+
   const openFile = async (name: string, path: string): Promise<void> => {
     const file = await readSkillFile(name, path);
 
@@ -942,8 +983,12 @@ export function SkillsSection() {
                   active ? 'bg-active text-ink' : 'text-muted'
                 } ${broken ? 'cursor-default' : 'hover:bg-hover hover:text-ink'}`}
               >
-                <span className="truncate font-mono">
-                  {broken ? row.name : `/${row.name}`}
+                {/* Name and its dot as one group, so `justify-between` floats only the flags. */}
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate font-mono">
+                    {broken ? row.name : `/${row.name}`}
+                  </span>
+                  <ShippedDot status={shipped.get(row.name)} />
                 </span>
                 {broken ? (
                   <span className="shrink-0 text-[11px] text-amber">invalid</span>
@@ -980,6 +1025,20 @@ export function SkillsSection() {
           editor is showing, one grid cell, not inside either branch.
         */}
         <div className="flex min-h-0 flex-col gap-2">
+          {drilled === null || dirty ? null : (
+            <>
+              <ShippedStrip
+                status={shipped.get(drilled)}
+                onReset={() => resolveShipped(resetShipped)}
+                onKeepMine={() => resolveShipped(keepShippedMine)}
+              />
+              <HeldBanner
+                status={shipped.get(drilled)}
+                onTake={() => resolveShipped(takeShippedPrompt)}
+                onKeep={() => resolveShipped(keepShippedMine)}
+              />
+            </>
+          )}
           {buffer === null ? (
             <div className="flex flex-1 items-center justify-center rounded-[7px] border border-dashed border-border px-4 text-center text-[11.5px] text-subtle">
               {drilled === null
