@@ -98,14 +98,26 @@ then `gh pr checks <N> --repo <owner>/<repo>`, then `git -C <workspace> rev-pars
 `mergeStateStatus` other than `CLEAN` or `HAS_HOOKS` is a HOLD line
 (`BLOCKED`, `BEHIND`, `DIRTY`, `UNSTABLE`, `UNKNOWN`), `reviewDecision` of
 `CHANGES_REQUESTED` or `REVIEW_REQUIRED` is one, and the checks rows below
-apply. Unresolved review threads are not in this reading: the fixer's last
-`clean` answer, which `review-pr-findings` gives only with zero unresolved
-threads, stands for them, and `ship` never reaches this stage without it.
-The shipper also reads `mcp__hive__pr { repo, number }` in the same round.
-Its `findings` is the Hive's badge count: unresolved threads, outdated ones
-included, capped at a hundred. A non-zero count is not a HOLD on its own (a
-fixed thread nobody clicked Resolve on stays outdated, not resolved); it is
-the cue to look at the threads, and the fixer's `clean` still stands for them.
+apply. `gh pr view` cannot see review threads, so the shipper reads two more
+in the same round, and each is a HOLD:
+
+- `mcp__hive__pr { repo, number }`. Its `findings` is unresolved threads,
+  outdated ones included, capped at a hundred. Above zero is
+  `<n> unresolved review thread(s)`. Outdated counts: the fixer resolves
+  every thread it answers, so an unresolved outdated thread is one nobody
+  answered. A `clean` from an earlier round never stands in for this count;
+  a thread opened after that answer is exactly what it cannot see. The
+  count is served from a sweep up to ninety seconds old and the shipper has
+  no live thread read, so a HOLD that lands within that window of the
+  fixer's `clean` may be a thread already resolved: it goes back to
+  `findings` all the same, where the fixer reads the threads live and
+  answers at once. A thread opened in the last ninety seconds can read as
+  zero; the `findings` gather that `merge` runs in the same wake is the live
+  read that covers it.
+- `mcp__hive__ledger_read { limit: 0 }`. A holder of
+  `claims["<owner>/<repo>#<N> findings"]` is `fix in flight: <holder>`: the
+  fixer is landing a change on this PR, and merging now turns it into a
+  follow-up PR.
 
 **In a session.** One GraphQL reading of every blocker, raw, plus the
 workspace head read in the call right after. No `--jq` here: a jq program is
@@ -138,13 +150,15 @@ what makes it a gate rather than a collection of readings.
 | any `latestReviews.nodes[]` with `state: CHANGES_REQUESTED` | `CHANGES_REQUESTED standing from: <logins>` |
 | `mergeable` is `CONFLICTING` | `mergeable=CONFLICTING` |
 | `mergeable` is `UNKNOWN` | `mergeable=UNKNOWN: re-query` |
+| with the Hive's tools: `mcp__hive__ledger_read { limit: 0 }` shows `claims["<owner>/<repo>#<N> findings"]` held | `fix in flight: <holder>` |
 
 No line applies: CLEAR. Empty output from either command is a stop; empty is
 not a pass, and neither is a JSON you did not read to the end.
 
 | HOLD line | Action |
 | --- | --- |
-| unresolved thread(s) | stop; the findings belong to `review-pr-findings`; never resolve a thread to clear the gate |
+| unresolved thread(s) | stop; the findings belong to `review-pr-findings`; never resolve a thread to clear the gate. In a shipper wake: report the HOLD, and `ship` sends the row back to `findings` |
+| fix in flight | stop, no merge. In a shipper wake: end the row for this wake, no ask; the next tick re-runs `merge`, and the fixer's `clean` releases the claim |
 | checks still running, or a `[Bot]` reviewer pending | in a session: wait, then re-run the **whole** gate, bounded at about ten minutes. In a shipper wake: end the wake; the clock re-runs this stage, and nothing sleeps inside a turn |
 | a `[User]` reviewer pending, or CHANGES_REQUESTED | stop and report; nothing here approves for a person |
 | head moved | stop: a wrong repository, or a push mid-run |
@@ -285,6 +299,8 @@ Name the target in full; "merged PR 58" is unfalsifiable.
 - A bare `gh` or `git` after Step 0.
 - Merging on a reading taken before a wait, a push, or a question.
 - Resolving a thread to clear the gate.
+- Merging while `<owner>/<repo>#<N> findings` is claimed, or standing an old
+  `clean` in for today's thread count.
 - `--delete-branch`.
 - A checkout, merge or pull in a tree with uncommitted files or on another branch.
 - `--force` on a worktree whose leftovers are not all under `.hive/`, on an empty status, twice, or on the person's checkout.

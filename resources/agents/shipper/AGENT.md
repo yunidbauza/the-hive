@@ -34,15 +34,16 @@ it never takes a PR.
 1. `ledger_read`. In a repository lane, a new ask addressed to you is a PR to take: answer it
    `accepted` at once, and add its row at stage `intake` with the ask's
    `reply-to` (who hears about the merge). An answer from `acr` or `fixer`
-   advances the row that was waiting on it, sets its `waitingOn` to null, and
-   moves `since` to now; write `prs.json` then.
+   advances the row that was waiting on it and sets its `waitingOn` to null.
+   A fixer's `clean` also moves `since` to the `gathered` time it carries,
+   never to now (the ship skill says why). Write `prs.json` then.
 2. For every row, in order, run the `ship` skill's stage table: do the
    stage's work; when the stage changes, write `prs.json` (`waitingOn` null in
    that same write), post one `ledger_post` with `meta: { pr, repo, stage }`,
    and **run the new stage in
    this same wake**. Stop the row only at a stage that waits on someone else:
-   CI pending, or an ask already out and unanswered (`waitingOn` set), and the
-   next row starts; or an ask it sends this wake, the merge fence's card
+   CI pending, an ask already out and unanswered (`waitingOn` set), or a fix
+   in flight (the ship skill's pending-fix check), and the next row starts; or an ask it sends this wake, the merge fence's card
    included, which ends the whole wake (step 3). Moving a row to `approval` and
    ending the wake there wastes ten minutes: its check is yours to run now.
    You never sleep in a turn.
@@ -86,7 +87,9 @@ Neither `gh pr merge` nor `gh api` is among your granted tools, on purpose:
 the first is the merge, and the second reaches the same merge by REST or by a
 GraphQL mutation, so no glob over it could keep the consent narrow. Your
 gate reads through `gh pr view --json`, `gh pr checks` and `gh workflow`; the
-unresolved-thread check is the fixer's last `clean`. When a row reaches
+unresolved-thread check is `mcp__hive__pr`'s `findings` plus the `findings`
+claim, both read through `merge-pr`, and the fixer's `clean` is history that
+never stands in for them. When a row reaches
 `merge`, run `hive:merge-pr` anyway. For a project the person marked "Merge
 PRs unattended" the app grants that one call for that one repository on your
 wake, and it goes through. For every other project the call stops at the

@@ -132,14 +132,19 @@ fixed, what was rejected and why) and report.
 
 ## Step 7: report
 
-- **As the fixer:** `ledger_answer` the asker: `clean, <rounds> round(s)`, or
-  `blocked: <what waits on whom>`. Release the claim the fixer took on
+- **As the fixer:** `ledger_answer` the asker: `clean, <rounds> round(s),
+  gathered <ISO 8601>`, or `blocked: <what waits on whom>`. `gathered` is
+  when the Step 1 read that found nothing left ran, the last read before
+  this answer. The shipper gathers again from that instant, so a review
+  posted after it is read on its next wake and not lost to the answer's
+  own timestamp. Release the claim the fixer took on
   arrival; when clean, remove the ledger file and the worktree if it was the
   fixer's own.
 - **In a session:** the same two lines, in chat.
 
-"All resolved" describes the moment this skill finished. `merge-pr` reads the
-state again in the call before it merges.
+"All resolved" describes the moment this skill finished, nothing later. The
+shipper's merge gate holds on any unresolved thread and on this run's
+`findings` claim, so the claim is released only once the answer is sent.
 
 ## Red flags
 
