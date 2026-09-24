@@ -106,7 +106,14 @@ in the same round, and each is a HOLD:
   `<n> unresolved review thread(s)`. Outdated counts: the fixer resolves
   every thread it answers, so an unresolved outdated thread is one nobody
   answered. A `clean` from an earlier round never stands in for this count;
-  a thread opened after that answer is exactly what it cannot see.
+  a thread opened after that answer is exactly what it cannot see. The
+  count is served from a sweep up to ninety seconds old and the shipper has
+  no live thread read, so a HOLD that lands within that window of the
+  fixer's `clean` may be a thread already resolved: it goes back to
+  `findings` all the same, where the fixer reads the threads live and
+  answers at once. A thread opened in the last ninety seconds can read as
+  zero; the `findings` gather that `merge` runs in the same wake is the live
+  read that covers it.
 - `mcp__hive__ledger_read { limit: 0 }`. A holder of
   `claims["<owner>/<repo>#<N> findings"]` is `fix in flight: <holder>`: the
   fixer is landing a change on this PR, and merging now turns it into a

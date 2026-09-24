@@ -219,3 +219,36 @@ describe('the shipped agents in lanes, through the scheduler (HIVE-189)', () => 
     state.dispose();
   });
 });
+
+/**
+ * The shipper's merge gate reads the live thread count and the `findings`
+ * claim; an old fixer `clean` is history, and a bodyless review is a finding
+ * only when it can hold inline comments nobody answered.
+ */
+describe('the shipper merge gate', () => {
+  const read = (...path: string[]): string => readFileSync(join(resources, ...path), 'utf8');
+  const shipRow = (stage: string): string => {
+    const line = read('skills', 'ship', 'SKILL.md')
+      .split('\n')
+      .find((l) => l.startsWith(`| \`${stage}\` |`));
+    if (!line) throw new Error(`ship has no ${stage} row`);
+    return line;
+  };
+
+  it("the shipper's own merge section no longer names the fixer's clean as the thread check", () => {
+    const merge = read('agents', 'shipper', 'AGENT.md').split('## The merge')[1] ?? '';
+    expect(merge).not.toMatch(/unresolved-thread\s+check\s+is\s+the\s+fixer's\s+last\s+`clean`/);
+    expect(merge).toMatch(/`findings`/);
+    expect(merge).toMatch(/`clean`[^.]*history/);
+  });
+
+  it('findings hands over a bodyless review only when it can hold inline comments', () => {
+    const row = shipRow('findings');
+    expect(row).toMatch(/bodyless `APPROVED`[^.]*(left out|carries nothing)/);
+    expect(row).toMatch(/author[^.]*posted a `<!-- hive-fixer` comment/);
+  });
+
+  it('merge-pr says the thread count can be ninety seconds old and what a HOLD on it does', () => {
+    expect(read('skills', 'merge-pr', 'SKILL.md')).toMatch(/ninety\s+seconds/);
+  });
+});

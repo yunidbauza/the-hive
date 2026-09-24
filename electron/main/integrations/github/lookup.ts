@@ -10,8 +10,9 @@ import type { Github } from './index';
 /**
  * How old a sweep may be and still answer a lookup: the PRs panel's one-minute
  * poll plus slack. So a `findings` count can be up to this stale. That is fine
- * for the shipper, which wakes every ten minutes, and `merge-pr` re-reads every
- * blocker live before it merges.
+ * for the shipper, which wakes every ten minutes. `merge-pr` re-reads the other
+ * blockers live before it merges, and `ship`'s `findings` gather, run in the
+ * same wake, is the live read of new reviews and inline comments.
  */
 export const PR_LOOKUP_MAX_AGE_MS = 90_000;
 

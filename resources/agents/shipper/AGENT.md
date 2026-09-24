@@ -87,7 +87,9 @@ Neither `gh pr merge` nor `gh api` is among your granted tools, on purpose:
 the first is the merge, and the second reaches the same merge by REST or by a
 GraphQL mutation, so no glob over it could keep the consent narrow. Your
 gate reads through `gh pr view --json`, `gh pr checks` and `gh workflow`; the
-unresolved-thread check is the fixer's last `clean`. When a row reaches
+unresolved-thread check is `mcp__hive__pr`'s `findings` plus the `findings`
+claim, both read through `merge-pr`, and the fixer's `clean` is history that
+never stands in for them. When a row reaches
 `merge`, run `hive:merge-pr` anyway. For a project the person marked "Merge
 PRs unattended" the app grants that one call for that one repository on your
 wake, and it goes through. For every other project the call stops at the
