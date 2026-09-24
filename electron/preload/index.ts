@@ -137,6 +137,7 @@ import type {
   SessionNoteRequest,
   SessionPrRequest,
 } from '@shared/session-history-contract';
+import type { ShippedRequest, ShippedStatus } from '@shared/shipped-contract';
 import type {
   SkillDropRequest,
   SkillFile,
@@ -458,6 +459,15 @@ const bridge: HiveBridge = {
     argument. There is no `onChanged` here on purpose: the pane is the only
     writer, and every mutating verb answers with the fresh snapshot.
   */
+  shipped: {
+    status: (): Promise<ShippedStatus[]> => ipcRenderer.invoke(CH.shippedStatus),
+    reset: (request: ShippedRequest): Promise<ShippedStatus[]> =>
+      ipcRenderer.invoke(CH.shippedReset, request),
+    takePrompt: (request: ShippedRequest): Promise<ShippedStatus[]> =>
+      ipcRenderer.invoke(CH.shippedTakePrompt, request),
+    keepMine: (request: ShippedRequest): Promise<ShippedStatus[]> =>
+      ipcRenderer.invoke(CH.shippedKeepMine, request),
+  },
   skills: {
     list: (): Promise<SkillsSnapshot> => ipcRenderer.invoke(CH.skillsList),
     read: (request: SkillNameRequest): Promise<SkillFile> =>

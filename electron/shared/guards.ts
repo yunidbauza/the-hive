@@ -102,6 +102,8 @@ import type {
   SessionNoteRequest,
   SessionPrRequest,
 } from './session-history-contract';
+import { SHIPPED_KINDS } from './shipped-contract';
+import type { ShippedRequest } from './shipped-contract';
 import {
   MAX_BUNDLE_DEPTH,
   MAX_BUNDLE_FILES,
@@ -2838,4 +2840,22 @@ export function parsePrLookup(input: unknown): PrLookup {
     throw new TypeError('pr lookup.number must be a positive integer');
   }
   return { repo, number };
+}
+
+/**
+ * `shipped:*` — a kind and a name, never a path.
+ *
+ * The name goes through the same rule its kind's own channels use, since
+ * main joins it onto `~/.hive/<kind>/`; main then refuses any folder the app
+ * does not ship.
+ */
+export function parseShippedRequest(input: unknown): ShippedRequest {
+  const raw = assertShape(input, ['kind', 'name'], 'shipped');
+  const kind = assertOneOf(raw.kind, SHIPPED_KINDS, 'shipped.kind');
+  const name =
+    kind === 'agents'
+      ? assertAgentName(raw.name, 'shipped.name')
+      : assertSkillName(raw.name, 'shipped.name');
+
+  return { kind, name };
 }

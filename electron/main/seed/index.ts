@@ -4,8 +4,10 @@ import { app } from 'electron';
 
 import { configPath } from '../config/paths';
 
+export { keepMine, resetShipped, shippedStatus, takeShippedPrompt } from './actions';
+
 import { SEED_MANIFEST_FILE, SHIPPED_HISTORY_FILE, shippedRoot } from './paths';
-import { seedShipped, type SeedReport } from './seed';
+import { seedShipped, type SeedOptions, type SeedReport } from './seed';
 
 /**
  * Seed the shipped skills and agents into `~/.hive` (HIVE-162).
@@ -25,18 +27,26 @@ import { seedShipped, type SeedReport } from './seed';
  * app is about to complain about in its own words; a seed that failed costs
  * the shipped skills until the next launch, and says so on the console.
  */
+/** Where the shipped tree, `~/.hive`, the manifest and the history are. */
+export function shippedOptions(fromDir: string = import.meta.dirname): SeedOptions {
+  const target = dirname(configPath());
+  const source = shippedRoot(app.isPackaged, process.resourcesPath, fromDir);
+
+  return {
+    source,
+    target,
+    manifestFile: join(target, SEED_MANIFEST_FILE),
+    history: join(source, SHIPPED_HISTORY_FILE),
+  };
+}
+
 export async function seedShippedIntoHive(
   fromDir: string = import.meta.dirname,
 ): Promise<SeedReport | null> {
-  const target = dirname(configPath());
-  const source = shippedRoot(app.isPackaged, process.resourcesPath, fromDir);
+  const options = shippedOptions(fromDir);
+  const { target } = options;
   try {
-    const report = await seedShipped({
-      source,
-      target,
-      manifestFile: join(target, SEED_MANIFEST_FILE),
-      history: join(source, SHIPPED_HISTORY_FILE),
-    });
+    const report = await seedShipped(options);
     const changed = report.created.length + report.upgraded.length + report.merged.length;
     if (changed > 0 || report.skipped.length > 0) {
       console.info(
