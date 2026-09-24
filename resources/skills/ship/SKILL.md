@@ -82,10 +82,13 @@ Re-read the head SHA in the call that uses it; a push moves it.
 
 ## Stages
 
-One pass per row per wake, in this lane's `prs.json`, in row order. Do this wake's work for the stage,
-post one `ledger_post` with `meta: { pr, repo, stage }` when the stage
-changes, and move on to the next row. A stage that waits on someone else is
-left for the next wake.
+Rows go in this lane's `prs.json` order. Do the stage's work, post one
+`ledger_post` with `meta: { pr, repo, stage }` when the stage changes, and
+**fall through into the new stage in the same wake**: `intake` → `self-review`,
+`fix-self` → `ready` → `ci`, `findings` → `approval` → `merge` → `closed`
+never cost a wake between them. A row stops only at a stage that waits on
+someone else (an ask sent, CI pending, a review wait, the merge fence), and
+the next row starts. A `sync` already run on a row this wake is not repeated.
 
 **Before any row's stage work**, except at `merge` and `closed`,
 `gh pr view <N> --repo <owner>/<repo> --json state`. Those two stages handle a
