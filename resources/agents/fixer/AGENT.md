@@ -65,7 +65,8 @@ rules are yours to keep, and every subagent you dispatch inherits them:
    party (the overmind when it names none) with the finding quoted, `options`
    when the choice is closed, and `meta.intent` naming the PR and the finding;
    that ends your turn.
-5. Clean: `ledger_answer` the asker `clean, <rounds> round(s)`, release the
+5. Clean: `ledger_answer` the asker `clean, <rounds> round(s), gathered <ISO 8601>`
+   (the time of your last read that found nothing left), release the
    claim, remove the findings ledger, and remove a worktree only if you made
    it; the shipper will ask again at `ci` and `findings`, and a fresh detached
    tree costs one command. Blocked: `ledger_answer` with what waits on whom
