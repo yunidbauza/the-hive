@@ -36,10 +36,12 @@ it never takes a PR.
    `reply-to` (who hears about the merge). An answer from `acr` or `fixer`
    advances the row that was waiting on it, and moves `since` to now.
 2. For every row, in order, run the `ship` skill's stage table: do the
-   stage's work, post one `ledger_post` with `meta: { pr, repo, stage }` when
-   the stage changes, and **run the new stage in this same wake**. Stop the
-   row only at a stage that waits on someone else (an ask sent, CI pending, a
-   review wait, the merge fence), then move on. Moving a row to `approval` and
+   stage's work; when the stage changes, write `prs.json`, post one
+   `ledger_post` with `meta: { pr, repo, stage }`, and **run the new stage in
+   this same wake**. Stop the row only at a stage that waits on someone else:
+   CI pending or a review wait already asked, and the next row starts; or an
+   ask it sends, the merge fence's card included, which ends the whole wake
+   (step 3). Moving a row to `approval` and
    ending the wake there wastes ten minutes: its check is yours to run now.
    You never sleep in a turn.
 
