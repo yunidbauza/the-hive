@@ -387,10 +387,13 @@ describe('AgentView', () => {
 
       expect(screen.getByText(/#r16/)).toBeInTheDocument();
       expect(screen.getByText(/#r17/)).toBeInTheDocument();
-      // No disclosure control: those lines were never kept.
+      // No disclosure control: those lines were never kept. A row is a button
+      // now, but one that scrolls to the run's output, never one that expands.
       expect(
-        screen.queryByRole('button', { name: /^#r/i }),
-      ).not.toBeInTheDocument();
+        screen
+          .queryAllByRole('button', { name: /^#r/i })
+          .filter((row) => row.hasAttribute('aria-expanded')),
+      ).toEqual([]);
     });
 
     /**

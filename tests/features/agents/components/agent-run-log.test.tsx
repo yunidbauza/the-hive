@@ -603,6 +603,57 @@ describe('AgentRunLog', () => {
     });
 
     /*
+      A receipts row is a way into the output below it: clicking one, or Enter
+      on it, brings that run's group into view. A run with no output group
+      scrolls nothing.
+    */
+    it('scrolls the output to the run a receipts row names, by click or key', () => {
+      const scrollIntoView = vi.fn();
+
+      vi.spyOn(
+        window.HTMLElement.prototype,
+        'scrollIntoView',
+      ).mockImplementation(scrollIntoView);
+
+      try {
+        seed({ status: 'working', runs: [run(1), run(2), run(3)], live: [standing()] });
+        lines(['live line'], 'live-standing');
+        lines(['one', '● turn ended — success|'], 'r1');
+        lines(['two', '● turn ended — success|'], 'r2');
+
+        render(<AgentRunLog name="watcher" />);
+
+        const receipts = screen.getByTestId('run-receipts');
+        const rowOf = (text: string): HTMLElement =>
+          within(receipts).getByText(text).closest('[role="button"]') as HTMLElement;
+        const target = (): unknown => scrollIntoView.mock.contexts.at(-1);
+
+        scrollIntoView.mockClear();
+        fireEvent.click(rowOf('#r1'));
+
+        expect(target()).toBe(
+          screen.getByTestId('run-output').querySelector('[data-run-group="r1"]'),
+        );
+
+        fireEvent.keyDown(rowOf('#r2'), { key: 'Enter' });
+
+        expect((target() as HTMLElement).dataset.runGroup).toBe('r2');
+
+        fireEvent.click(rowOf('#live-sta'));
+
+        expect((target() as HTMLElement).dataset.runGroup).toBe('live-standing');
+
+        // r3 wrote nothing, so there is nowhere to go.
+        scrollIntoView.mockClear();
+        fireEvent.click(rowOf('#r3'));
+
+        expect(scrollIntoView).not.toHaveBeenCalled();
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    /*
       Nothing to follow once the run is over, so the effect must not fire at
       all — the anchor is not even mounted.
     */
