@@ -77,17 +77,19 @@ export function ShippedStrip({
 
   return (
     <div className="flex flex-col overflow-hidden rounded-[7px] border border-border-soft">
-      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 bg-brand/8 px-3 py-1.5 text-[11.5px] text-muted">
-        <span className="font-medium text-brand">● Customised</span>
-        <span className="min-w-0 flex-1">{summary.join(' ')}</span>
-        {moved.length > 0 ? (
-          <button type="button" onClick={onKeepMine} className={BUTTON}>
-            Keep mine
+      <div className="flex flex-col gap-1 bg-brand/8 px-3 py-1.5 text-[11.5px] text-muted">
+        <div className="flex items-center gap-1.5">
+          <span className="mr-auto font-medium text-brand">● Customised</span>
+          {moved.length > 0 ? (
+            <button type="button" onClick={onKeepMine} className={BUTTON}>
+              Keep mine
+            </button>
+          ) : null}
+          <button type="button" onClick={() => setConfirming(true)} className={BUTTON}>
+            Reset to shipped
           </button>
-        ) : null}
-        <button type="button" onClick={() => setConfirming(true)} className={BUTTON}>
-          Reset to shipped
-        </button>
+        </div>
+        <p>{summary.join(' ')}</p>
       </div>
       {confirming ? (
         <InlineConfirm
