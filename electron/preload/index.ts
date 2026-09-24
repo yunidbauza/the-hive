@@ -137,6 +137,7 @@ import type {
   SessionNoteRequest,
   SessionPrRequest,
 } from '@shared/session-history-contract';
+import type { ShippedRequest, ShippedStatus } from '@shared/shipped-contract';
 import type {
   SkillDropRequest,
   SkillFile,
@@ -445,6 +446,15 @@ const bridge: HiveBridge = {
     unwatch: (): Promise<void> => ipcRenderer.invoke(CH.fsUnwatch),
     onChanged: (callback: (event: FsChangedEvent) => void) =>
       subscribe<FsChangedEvent>(CH.fsChanged, callback),
+  },
+  shipped: {
+    status: (): Promise<ShippedStatus[]> => ipcRenderer.invoke(CH.shippedStatus),
+    reset: (request: ShippedRequest): Promise<ShippedStatus[]> =>
+      ipcRenderer.invoke(CH.shippedReset, request),
+    takePrompt: (request: ShippedRequest): Promise<ShippedStatus[]> =>
+      ipcRenderer.invoke(CH.shippedTakePrompt, request),
+    keepMine: (request: ShippedRequest): Promise<ShippedStatus[]> =>
+      ipcRenderer.invoke(CH.shippedKeepMine, request),
   },
   /*
     HIVE-96, HIVE-99's `rename`, and HIVE-148's eight bundle verbs. The

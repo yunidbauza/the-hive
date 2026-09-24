@@ -108,6 +108,7 @@ import {
   parseSkillFileWriteRequest,
   parseSkillImportRequest,
   parseSkillMoveRequest,
+  parseShippedRequest,
   parseSkillNameRequest,
   parseSkillPathRequest,
   parseSkillRenameRequest,
@@ -280,7 +281,14 @@ import {
 import { badgeDock, clearDockBadge } from '../notifications/dock-badge';
 import { createBuilderProgress, type BuilderProgress } from '../plans';
 import { registerPtyHost } from '../pty-host';
-import { seedShippedIntoHive } from '../seed';
+import {
+  keepMine,
+  resetShipped,
+  seedShippedIntoHive,
+  shippedOptions,
+  shippedStatus,
+  takeShippedPrompt,
+} from '../seed';
 import {
   pairDevice,
   pairOutcomeMessage,
@@ -4495,6 +4503,31 @@ export function registerIpcHandlers(
    * every `sessions?.` call in this file has it.
    */
   handle(CH.skillsList, () => skills?.list());
+
+  /*
+    What the user changed in the shipped agents and skills. Each waits for the
+    boot seed first: the seed and these all write `.seed.json`, and a reset
+    racing the seed would leave the manifest describing whichever wrote last.
+  */
+  handle(CH.shippedStatus, async () => {
+    await seeded;
+    return shippedStatus(shippedOptions());
+  });
+  handle(CH.shippedReset, async (_event, payload) => {
+    const request = parseShippedRequest(payload);
+    await seeded;
+    return resetShipped(shippedOptions(), request);
+  });
+  handle(CH.shippedTakePrompt, async (_event, payload) => {
+    const request = parseShippedRequest(payload);
+    await seeded;
+    return takeShippedPrompt(shippedOptions(), request);
+  });
+  handle(CH.shippedKeepMine, async (_event, payload) => {
+    const request = parseShippedRequest(payload);
+    await seeded;
+    return keepMine(shippedOptions(), request);
+  });
 
   handle(CH.skillsRead, (_event, payload) =>
     skills?.readOne(parseSkillNameRequest(payload).name),

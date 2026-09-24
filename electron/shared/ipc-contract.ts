@@ -133,6 +133,7 @@ import type {
   SessionNoteRequest,
   SessionPrRequest,
 } from './session-history-contract';
+import type { ShippedRequest, ShippedStatus } from './shipped-contract';
 import type {
   SkillFile,
   SkillFileRead,
@@ -1018,6 +1019,16 @@ export const CH = {
   skillsFileImport: 'skills:file:import',
   skillsFileDrop: 'skills:file:drop',
   skillsImport: 'skills:import',
+  /**
+   * What the user changed in the agents and skills the app ships, and the
+   * three ways to resolve it (`shipped-contract.ts`). Each request names a
+   * kind and an agent or skill name, never a path; main refuses anything the
+   * app does not ship. Every write answers with the fresh status list.
+   */
+  shippedStatus: 'shipped:status',
+  shippedReset: 'shipped:reset',
+  shippedTakePrompt: 'shipped:take-prompt',
+  shippedKeepMine: 'shipped:keep-mine',
   /**
    * Agent definitions — the same five verbs as `skills`, and one more thing
    * (HIVE-114).
@@ -2301,6 +2312,13 @@ export interface HiveBridge {
     unwatch(): Promise<void>;
     /** Returns its own unsubscribe. Callers MUST invoke it on unmount. */
     onChanged(callback: (event: FsChangedEvent) => void): () => void;
+  };
+  /** The shipped agents and skills the user changed (`shipped-contract.ts`). */
+  shipped: {
+    status(): Promise<ShippedStatus[]>;
+    reset(request: ShippedRequest): Promise<ShippedStatus[]>;
+    takePrompt(request: ShippedRequest): Promise<ShippedStatus[]>;
+    keepMine(request: ShippedRequest): Promise<ShippedStatus[]>;
   };
   /**
    * The custom skills The Hive injects into the sessions it starts (HIVE-96,

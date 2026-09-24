@@ -41,6 +41,20 @@ describe('seedShippedIntoHive', () => {
     expect(manifest).toContain('skills/worktree/SKILL.md');
   });
 
+  it('reads the shipped history, so a pre-manifest edit has a base', async () => {
+    const shipped = await readFile(new URL('../../../../resources/agents/builder/AGENT.md', import.meta.url), 'utf8');
+    await mkdir(join(base, 'hive', 'agents', 'builder'), { recursive: true });
+    await writeFile(join(base, 'hive', 'agents', 'builder', 'AGENT.md'), shipped.replace(/parallel: \d+/, 'parallel: 9'), 'utf8');
+
+    await seedShippedIntoHive(outMain);
+
+    const manifest = JSON.parse(await readFile(join(base, 'hive', '.seed.json'), 'utf8')) as {
+      parts: Record<string, { keys: Record<string, string> }>;
+    };
+    // With no history the edited key has no base; with it, the base is the shipped value.
+    expect(manifest.parts['agents/builder/AGENT.md']?.keys['limits.parallel']).toBeDefined();
+  });
+
   it('answers null rather than throwing when ~/.hive cannot be written', async () => {
     // A file where the folder should be: every mkdir under it fails.
     await mkdir(base, { recursive: true });

@@ -84,8 +84,13 @@ Some skills come with The Hive: the app's own `resources/skills/` is copied into
 `/goal-on` at the front, `/brainstorm`, `/plan`, `/execute`, `/tdd`, `/debug`, `/verify`
 and `/worktree` behind them, and the PR tail: `/ship`, `/review-pr-findings`, `/merge-pr`,
 `/spec-deviation` and `/pr-review`, the multi-agent review the reviewer agent runs. They are ordinary skills once they are there. Edit one in Settings and
-your version stays; an update changes only files you have not touched. Delete one and it
-stays deleted. A skill the app stops shipping is never removed from your folder.
+your edits stay, while an update still reaches what you did not touch: in `SKILL.md`, each
+frontmatter key and the body update on their own, so changing one key does not stop the
+body from updating. If you rewrote the body and a newer one ships, Settings marks the skill
+amber and holds the new body back until you choose to **Compare**, **Take shipped prompt** or
+**Keep mine**. A blue dot means you changed something, and **Reset to shipped** puts the
+shipped files back. Other files in a skill update only if you never edited them. Delete a
+skill and it stays deleted. A skill the app stops shipping is never removed from your folder.
 
 The record of what was seeded is `~/.hive/.seed.json`. To get a deleted shipped skill back,
 remove its lines from that file and relaunch.

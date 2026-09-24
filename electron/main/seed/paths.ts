@@ -31,3 +31,10 @@ export function shippedRoot(
  * shipped file they had left untouched would look hand-edited there.
  */
 export const SEED_MANIFEST_FILE = '.seed.json';
+
+/**
+ * `shipped-history.json` beside `skills/` and `agents/` under the shipped root:
+ * every past version of each shipped definition, for a `~/.hive` seeded
+ * before the manifest recorded parts (`history.ts`).
+ */
+export const SHIPPED_HISTORY_FILE = 'shipped-history.json';

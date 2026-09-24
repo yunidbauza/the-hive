@@ -17,6 +17,7 @@ import {
   BRIDGE_REMOTE_KEYS,
   BRIDGE_SERVER_KEYS,
   BRIDGE_SESSION_KEYS,
+  BRIDGE_SHIPPED_KEYS,
   BRIDGE_SKILLS_KEYS,
   BRIDGE_SLACK_KEYS,
   BRIDGE_UI_KEYS,
@@ -96,6 +97,8 @@ const fs = () =>
   exposed.fs as Record<string, (...args: unknown[]) => unknown>;
 const skills = () =>
   exposed.skills as Record<string, (...args: unknown[]) => unknown>;
+const shipped = () =>
+  exposed.shipped as Record<string, (...args: unknown[]) => unknown>;
 const updates = () =>
   exposed.updates as Record<string, (...args: unknown[]) => unknown>;
 const ui = () =>
@@ -139,6 +142,7 @@ describe('exposed surface', () => {
      * touches no credential, only reports what the socket one opened is doing.
      */
     expect(Object.keys(remote()).sort()).toEqual([...BRIDGE_REMOTE_KEYS].sort());
+    expect(Object.keys(shipped()).sort()).toEqual([...BRIDGE_SHIPPED_KEYS].sort());
     expect(Object.keys(integrations()).sort()).toEqual([
       ...BRIDGE_INTEGRATIONS_KEYS,
     ].sort());
@@ -798,6 +802,22 @@ describe('the skills bundle verbs (HIVE-148)', () => {
       dir: '',
       sources: ['/Users/yunid/Downloads/run.sh'],
     });
+  });
+});
+
+describe('the shipped verbs route to their channels', () => {
+  it('sends each request to its own channel', () => {
+    const request = { kind: 'agents', name: 'builder' };
+
+    void shipped().status();
+    void shipped().reset(request);
+    void shipped().takePrompt(request);
+    void shipped().keepMine(request);
+
+    expect(ipcRendererMock.invoke).toHaveBeenCalledWith(CH.shippedStatus);
+    expect(ipcRendererMock.invoke).toHaveBeenCalledWith(CH.shippedReset, request);
+    expect(ipcRendererMock.invoke).toHaveBeenCalledWith(CH.shippedTakePrompt, request);
+    expect(ipcRendererMock.invoke).toHaveBeenCalledWith(CH.shippedKeepMine, request);
   });
 });
 

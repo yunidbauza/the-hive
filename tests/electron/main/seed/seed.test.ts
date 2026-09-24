@@ -1,10 +1,12 @@
 // @vitest-environment node
+import { createHash } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { baseOf } from '../../../../electron/main/seed/merge';
 import { seedShipped, type SeedReport } from '../../../../electron/main/seed/seed';
 import { readUserSkills } from '../../../../electron/main/skills/read';
 
@@ -22,6 +24,26 @@ let target: string;
 let manifestFile: string;
 
 const seed = (): Promise<SeedReport> => seedShipped({ source, target, manifestFile });
+const historyFile = (): string => join(base, 'shipped-history.json');
+const seedWithHistory = (): Promise<SeedReport> =>
+  seedShipped({ source, target, manifestFile, history: historyFile() });
+
+const sha = (text: string): string => createHash('sha256').update(text).digest('hex');
+
+/** A shipped-history index holding these past versions of each file. */
+const writeHistory = (versions: Record<string, string[]>): Promise<void> =>
+  writeFile(
+    historyFile(),
+    JSON.stringify(
+      Object.fromEntries(
+        Object.entries(versions).map(([rel, texts]) => [
+          rel,
+          texts.map((text) => ({ file: sha(text), ...baseOf(text) })),
+        ]),
+      ),
+    ),
+    'utf8',
+  );
 
 const ship = async (rel: string, body: string): Promise<void> => {
   const path = join(source, rel);
@@ -89,7 +111,7 @@ describe('seedShipped', () => {
     expect(await onDisk('skills/worktree/SKILL.md')).toBe(skill('worktree', 'v2'));
   });
 
-  it('leaves a file the user edited alone, even when the shipped copy moved on', async () => {
+  it('merges a shipped file into an edited one: new frontmatter lands, the edited body is held', async () => {
     await ship('skills/worktree/SKILL.md', skill('worktree', 'v1'));
     await seed();
     const edited = `${skill('worktree', 'v1')}\nMy own paragraph.\n`;
@@ -98,9 +120,111 @@ describe('seedShipped', () => {
 
     const report = await seed();
 
-    expect(report.upgraded).toEqual([]);
-    expect(report.kept).toEqual(['skills/worktree/SKILL.md']);
-    expect(await onDisk('skills/worktree/SKILL.md')).toBe(edited);
+    expect(report.merged).toEqual(['skills/worktree/SKILL.md']);
+    expect(await onDisk('skills/worktree/SKILL.md')).toBe(
+      '---\nname: worktree\ndescription: does worktree (v2)\n---\nBody v1.\n\nMy own paragraph.\n',
+    );
+    // Still held on the next launch, not silently accepted.
+    await seed();
+    expect(await onDisk('skills/worktree/SKILL.md')).toContain('My own paragraph.');
+  });
+
+  it('keeps an edited agent key through an upgrade, and brings the new prompt and a new key', async () => {
+    const v1 = '---\nname: builder\nmodel: opus\nlimits:\n  parallel: 2\n---\nPrompt v1.\n';
+    const v2 = '---\nname: builder\nmodel: opus\nlane: thread\nlimits:\n  parallel: 2\n---\nPrompt v2.\n';
+    await ship('agents/builder/AGENT.md', v1);
+    await seed();
+    await writeFile(join(target, 'agents/builder/AGENT.md'), v1.replace('parallel: 2', 'parallel: 5'), 'utf8');
+    await ship('agents/builder/AGENT.md', v2);
+
+    await seed();
+
+    expect(await onDisk('agents/builder/AGENT.md')).toBe(v2.replace('parallel: 2', 'parallel: 5'));
+    const manifest = JSON.parse(await readFile(manifestFile, 'utf8')) as {
+      files: Record<string, string>;
+      parts: Record<string, { keys: Record<string, string> }>;
+    };
+    expect(manifest.parts['agents/builder/AGENT.md']?.keys.lane).toBeDefined();
+  });
+
+  it('never leaves an older app a whole-file hash that would overwrite a merged file', async () => {
+    const v1 = '---\nname: builder\nmodel: opus\n---\nPrompt v1.\n';
+    await ship('agents/builder/AGENT.md', v1);
+    await seed();
+    const before = (JSON.parse(await readFile(manifestFile, 'utf8')) as { files: Record<string, string> }).files;
+    await writeFile(join(target, 'agents/builder/AGENT.md'), v1.replace('opus', 'haiku'), 'utf8');
+    await ship('agents/builder/AGENT.md', v1.replace('v1', 'v2'));
+
+    await seed();
+
+    const after = (JSON.parse(await readFile(manifestFile, 'utf8')) as { files: Record<string, string> }).files;
+    expect(after['agents/builder/AGENT.md']).toBe(before['agents/builder/AGENT.md']);
+  });
+
+  it('merges a file a whole-file manifest recorded, through the shipped history', async () => {
+    const v1 = '---\nname: shipper\nmodel: opus\nlimits:\n  daily_usd: 40\n---\nPrompt v1.\n';
+    const v2 = '---\nname: shipper\nmodel: opus\nlimits:\n  daily_usd: 40\n---\nPrompt v2.\n';
+    await writeHistory({ 'agents/shipper/AGENT.md': [v1] });
+    await mkdir(join(target, 'agents/shipper'), { recursive: true });
+    // Edited: `daily_usd` deleted. The manifest is the old whole-file shape.
+    await writeFile(join(target, 'agents/shipper/AGENT.md'), '---\nname: shipper\nmodel: opus\n---\nPrompt v1.\n', 'utf8');
+    await writeFile(manifestFile, JSON.stringify({ files: { 'agents/shipper/AGENT.md': sha(v1) } }), 'utf8');
+    await ship('agents/shipper/AGENT.md', v2);
+
+    await seedWithHistory();
+
+    expect(await onDisk('agents/shipper/AGENT.md')).toBe('---\nname: shipper\nmodel: opus\n---\nPrompt v2.\n');
+  });
+
+  it('merges a file no manifest ever recorded, through the shipped history', async () => {
+    const v1 = '---\nname: fixer\nmodel: opus\n---\nPrompt v1.\n';
+    await writeHistory({ 'agents/fixer/AGENT.md': [v1] });
+    await mkdir(join(target, 'agents/fixer'), { recursive: true });
+    await writeFile(join(target, 'agents/fixer/AGENT.md'), v1.replace('opus', 'sonnet'), 'utf8');
+    await ship('agents/fixer/AGENT.md', '---\nname: fixer\nmodel: opus\nlane: thread\n---\nPrompt v2.\n');
+
+    await seedWithHistory();
+
+    expect(await onDisk('agents/fixer/AGENT.md')).toBe('---\nname: fixer\nmodel: sonnet\nlane: thread\n---\nPrompt v2.\n');
+  });
+
+  it('keeps a merged file deleted once the user deletes it', async () => {
+    const v1 = '---\nname: fixer\nmodel: opus\n---\nPrompt v1.\n';
+    await writeHistory({ 'agents/fixer/AGENT.md': [v1] });
+    await mkdir(join(target, 'agents/fixer'), { recursive: true });
+    await writeFile(join(target, 'agents/fixer/AGENT.md'), v1.replace('opus', 'sonnet'), 'utf8');
+    await ship('agents/fixer/AGENT.md', v1.replace('v1', 'v2'));
+    await seedWithHistory();
+
+    await rm(join(target, 'agents/fixer'), { recursive: true });
+    await seedWithHistory();
+
+    await expect(readFile(join(target, 'agents/fixer/AGENT.md'), 'utf8')).rejects.toThrow();
+  });
+
+  it('leaves a pre-existing file alone when the history has no base for it', async () => {
+    const theirs = '---\nname: fixer\nmodel: sonnet\n---\nTheirs.\n';
+    await mkdir(join(target, 'agents/fixer'), { recursive: true });
+    await writeFile(join(target, 'agents/fixer/AGENT.md'), theirs, 'utf8');
+    await ship('agents/fixer/AGENT.md', '---\nname: fixer\nmodel: opus\nlane: thread\n---\nShipped.\n');
+
+    const report = await seedWithHistory();
+
+    expect(report.kept).toEqual(['agents/fixer/AGENT.md']);
+    expect(await onDisk('agents/fixer/AGENT.md')).toBe(theirs);
+  });
+
+  it('survives a history entry that is not a version', async () => {
+    const v1 = '---\nname: fixer\nmodel: opus\n---\nPrompt v1.\n';
+    await writeFile(historyFile(), JSON.stringify({ 'agents/fixer/AGENT.md': [null, { file: 'x' }] }), 'utf8');
+    await mkdir(join(target, 'agents/fixer'), { recursive: true });
+    await writeFile(join(target, 'agents/fixer/AGENT.md'), v1, 'utf8');
+    await ship('agents/fixer/AGENT.md', v1.replace('v1', 'v2'));
+    await ship('skills/worktree/SKILL.md', skill('worktree'));
+
+    const report = await seedWithHistory();
+
+    expect(report.created).toEqual(['skills/worktree/SKILL.md']);
   });
 
   it('treats a file that existed before the first seed as the user\'s', async () => {
