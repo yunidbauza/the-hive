@@ -54,8 +54,10 @@ import { isThisMachineAction } from './notification-contract';
 /**
  * 3 → 4 (HIVE-166): `CH` gained `config:set-project-auto-merge`.
  * 4 → 5 (HIVE-176): `CH` gained `config:set-session-plugin`.
+ * 5 → 6: `CH` gained `shipped:status`, `shipped:reset`, `shipped:take-prompt`
+ * and `shipped:keep-mine`.
  */
-export const REMOTE_PROTOCOL_VERSION = 5;
+export const REMOTE_PROTOCOL_VERSION = 6;
 
 /**
  * What a frame is for.
