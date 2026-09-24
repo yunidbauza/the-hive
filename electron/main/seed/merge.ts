@@ -97,3 +97,206 @@ export function parseParts(text: string): Parsed | null {
 
   return { parts, blocks, preamble, body: lines.slice(close + 1).join('\n') };
 }
+
+/** What the seed recorded about a file it shipped: a hash per part, one for the body. */
+export interface PartBase {
+  keys: Record<string, string>;
+  body: string;
+}
+
+/** A part the user holds at a value other than the shipped one. */
+export interface CustomisedPart {
+  path: string;
+  yours: string;
+  /** `null` when the app does not ship this key. */
+  shipped: string | null;
+}
+
+export interface MergeResult {
+  /** What the file should hold. */
+  text: string;
+  /** What the manifest should record for it. */
+  base: PartBase;
+  customised: CustomisedPart[];
+  /** Customised parts whose shipped value moved since the base, or that have none. */
+  moved: string[];
+  /** Shipped parts the user deleted. They stay deleted. */
+  deleted: string[];
+  bodyEdited: boolean;
+  /** The body is the user's and a newer shipped one is waiting. */
+  held: boolean;
+}
+
+/** The base a file has when the seed writes exactly `text`. */
+export function baseOf(text: string): PartBase {
+  const parsed = parseParts(text);
+  const keys: Record<string, string> = {};
+
+  for (const [path, part] of parsed?.parts ?? []) keys[path] = hashPart(part);
+
+  return { keys, body: hashPart(parsed?.body ?? text) };
+}
+
+/** A part's value without its key, for a person to read. */
+const valueOf = (part: string): string => part.trim().replace(/^[\w-]+:/, '').trim();
+
+/**
+ * Fold a split block back into one part, where the other side wrote the same
+ * key as a single value (`limits: { turns: 5 }`). Otherwise the merge would
+ * emit both shapes of one key.
+ */
+function collapse(parsed: Parsed, key: string): void {
+  if (!parsed.blocks.has(key)) return;
+
+  const prefix = `${key}.`;
+  const parts = new Map<string, string>();
+  const children: string[] = [];
+
+  for (const [path, part] of parsed.parts) {
+    if (!path.startsWith(prefix)) {
+      parts.set(path, part);
+      continue;
+    }
+    if (children.length === 0) parts.set(key, '');
+    children.push(part);
+  }
+  parts.set(key, [`${key}:`, ...children].join('\n'));
+  parsed.parts = parts;
+  parsed.blocks.delete(key);
+}
+
+const parentOf = (path: string, blocks: Set<string>): string | null => {
+  const dot = path.indexOf('.');
+
+  if (dot === -1) return null;
+
+  const parent = path.slice(0, dot);
+
+  return blocks.has(parent) ? parent : null;
+};
+
+/**
+ * Merge the shipped file into the user's, part by part.
+ *
+ * | Part | Base | Result |
+ * | --- | --- | --- |
+ * | same on both sides | | kept, base moves to shipped |
+ * | user's equals base | | takes the shipped value (or is dropped) |
+ * | shipped equals base | | the user's, customised |
+ * | both moved, or no base | | the user's, customised and **moved**; base kept |
+ * | absent on disk, in base | | stays deleted |
+ * | absent on disk, not in base | | a new shipped key: arrives |
+ *
+ * The body follows the same table, with *held* for "both moved". A flagged
+ * part keeps its old base in the result, so the next seed flags it again
+ * until the user resolves it; `keepMine` resolves it by moving the base.
+ *
+ * `current` and `shipped` must both parse; the caller checks.
+ */
+export function mergeParts(
+  current: string,
+  shipped: string,
+  base: PartBase | null,
+): MergeResult {
+  const mine = parseParts(current) as Parsed;
+  const ship = parseParts(shipped) as Parsed;
+
+  for (const key of ship.blocks) if (mine.parts.has(key)) collapse(ship, key);
+  for (const key of mine.blocks) if (ship.parts.has(key)) collapse(mine, key);
+
+  const keys: Record<string, string> = {};
+  const customised: CustomisedPart[] = [];
+  const moved: string[] = [];
+  const deleted: string[] = [];
+  const out: { path: string; text: string }[] = [];
+
+  for (const [path, s] of ship.parts) {
+    const c = mine.parts.get(path);
+    const b = base?.keys[path];
+    const hs = hashPart(s);
+
+    if (c === undefined) {
+      if (b !== undefined) {
+        deleted.push(path);
+        keys[path] = b;
+      } else {
+        out.push({ path, text: s });
+        keys[path] = hs;
+      }
+      continue;
+    }
+
+    const hc = hashPart(c);
+
+    if (hc === hs || b === hc) {
+      out.push({ path, text: hc === hs ? c : s });
+      keys[path] = hs;
+      continue;
+    }
+
+    out.push({ path, text: c });
+    customised.push({ path, yours: valueOf(c), shipped: valueOf(s) });
+    if (b === hs) {
+      keys[path] = hs;
+    } else {
+      moved.push(path);
+      if (b !== undefined) keys[path] = b;
+    }
+  }
+
+  for (const [path, c] of mine.parts) {
+    if (ship.parts.has(path)) continue;
+
+    const b = base?.keys[path];
+
+    // Shipped once, untouched since, and the app no longer ships it.
+    if (b === hashPart(c)) continue;
+
+    customised.push({ path, yours: valueOf(c), shipped: null });
+    if (b !== undefined) {
+      moved.push(path);
+      keys[path] = b;
+    }
+
+    const parent = parentOf(path, mine.blocks);
+    const after =
+      parent === null
+        ? -1
+        : out.findLastIndex((entry) => entry.path.startsWith(`${parent}.`));
+
+    if (after === -1) out.push({ path, text: c });
+    else out.splice(after + 1, 0, { path, text: c });
+  }
+
+  const hb = base?.body;
+  const hcBody = hashPart(mine.body);
+  const hsBody = hashPart(ship.body);
+  const untouched = hcBody === hsBody || hb === hcBody;
+  const bodyEdited = !untouched;
+  const held = bodyEdited && hb !== hsBody;
+
+  const blocks = new Set([...ship.blocks, ...mine.blocks]);
+  const lines: string[] = [];
+  let open: string | null = null;
+
+  for (const entry of out) {
+    const parent = parentOf(entry.path, blocks);
+
+    if (parent !== null && parent !== open) lines.push(`${parent}:`);
+    open = parent;
+    lines.push(entry.text);
+  }
+
+  const preamble = mine.preamble.length > 0 ? mine.preamble : ship.preamble;
+  const body = untouched && hcBody !== hsBody ? ship.body : mine.body;
+
+  return {
+    text: `${[FENCE, ...preamble, ...lines, FENCE].join('\n')}\n${body}`,
+    base: { keys, body: held ? (hb ?? '') : hsBody },
+    customised,
+    moved,
+    deleted,
+    bodyEdited,
+    held,
+  };
+}
