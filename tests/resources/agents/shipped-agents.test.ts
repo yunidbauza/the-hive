@@ -72,6 +72,35 @@ describe('shipped agents', () => {
     expect(allows('git -C /w status --porcelain')).toBe(true);
     expect(allows('git -C /w branch --show-current')).toBe(true);
   });
+
+  it('gives the shipper a gather it can run: the ship skill names no gh api, no jq and no prefetch script', () => {
+    const source = readFileSync(join(resources, 'agents', 'shipper', 'AGENT.md'), 'utf8');
+    const result = parseAgent(source, {
+      folder: 'shipper',
+      skillNames: shippedSkills,
+      hiveSkillNames: shippedSkills,
+      integrations: ['slack'],
+    });
+    if (!('def' in result)) throw new Error('shipper does not parse');
+    const allows = (command: string) =>
+      result.def.tools.some((rule) => matches(rule, 'Bash', { command }));
+    const ship = readFileSync(join(resources, 'skills', 'ship', 'SKILL.md'), 'utf8');
+    const row = (stage: string) => {
+      const line = ship.split('\n').find((l) => l.startsWith(`| \`${stage}\` |`));
+      if (!line) throw new Error(`ship has no ${stage} row`);
+      return line;
+    };
+
+    // The gather is the shipper's own: a review body in any state, a PR-level
+    // comment and the checks, from the one call it holds.
+    expect(allows('gh pr view 1 --repo o/r --json reviews,comments,latestReviews,statusCheckRollup')).toBe(true);
+    expect(allows('gh api repos/o/r/pulls/1/reviews')).toBe(false);
+    expect(allows('jq .')).toBe(false);
+    for (const stage of ['findings', 'approval']) {
+      expect(row(stage)).not.toMatch(/gh api|\bjq\b|prefetch-feedback|repos\/<owner>/);
+    }
+    expect(row('findings')).toContain('--json reviews,comments,latestReviews,statusCheckRollup');
+  });
 });
 
 /**

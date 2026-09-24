@@ -56,9 +56,12 @@ count as this round's input too.
 **A review body is findings too, whatever its state.** "Approved, but fix
 these two" has no thread, and an unresolved-thread count never sees it. Split
 each review body and each PR-level comment into its separate points, one
-finding each, recording the author and the review or comment URL. A body that
+finding each, recording the author and the review or comment `id`. A body that
 only says LGTM, or only summarises the reviewer's own inline comments, holds
-no finding. Neither do the PR author's own comments: those are your replies.
+no finding. Neither does a comment that opens with `<!-- hive-fixer`: those are
+your replies, and each names the review or comment it answers (Step 5). A review
+or comment already named by a marker is answered; skip it, so a later round
+never replies twice.
 
 ## Step 2: the ledger file
 
@@ -94,8 +97,9 @@ the PR and the finding; END TURN. The answer wakes you here.
 - **A nit you choose not to take** is answered like INVALID: one line on why
   it stays.
 
-Every finding gets its reply, the fixed ones included: one or two sentences,
-direct, no thanks and no restating the finding.
+Every finding with a reply target gets its reply, the fixed ones included: one
+or two sentences, direct, no thanks and no restating the finding. A finding from
+the ask body or a red check has none: its answer is the `clean` report.
 
 ## Step 5: reply safely
 
@@ -110,7 +114,12 @@ review per pull request": submit or delete the pending review first.
 A thread's finding is answered on its thread. Findings from a review body or a
 PR-level comment have no thread: answer them in **one top-level comment per
 review or comment**, opening with `@<author>`, one numbered line per point in
-the reviewer's order.
+the reviewer's order. Open the comment with the marker
+`<!-- hive-fixer answers: <id> -->`, the `id` from `gh pr view --json
+reviews,comments`, on its own first line; the marker is what tells a reply from
+the reviewer's own words when the reviewer is the PR author, and what survives
+the ledger file. The end-of-round summary comment opens with
+`<!-- hive-fixer summary -->`.
 
 ## Step 6: verify, push once, loop
 
@@ -118,8 +127,8 @@ the reviewer's order.
 change makes build-only errors likely, and a real browser drive for any UI
 surface. Commit every fix of the round, then **one push**, then the Step 5
 replies. Re-run Step 1. When CI is green, no thread is open and every ledger
-row has a reply, post one short summary comment (what was fixed, what was
-rejected and why) and report.
+row that has a target has a reply, post one short summary comment (what was
+fixed, what was rejected and why) and report.
 
 ## Step 7: report
 
