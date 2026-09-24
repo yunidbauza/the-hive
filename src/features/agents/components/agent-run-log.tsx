@@ -110,8 +110,11 @@ const RUN_LOG_SPLIT_DEFAULT = 0.4;
 const RECEIPT_GRID =
   'grid items-baseline gap-x-3 [grid-template-columns:minmax(11ch,11fr)_minmax(9ch,9fr)_minmax(9ch,9fr)_minmax(8ch,8fr)_minmax(5ch,5fr)_minmax(5ch,5fr)_minmax(7ch,7fr)]';
 
-/** A receipts row, live or finished: clickable, so it says so on hover and focus. */
-const ROW = 'cursor-pointer pb-0.5 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none';
+/**
+ * A receipts row, live or finished: clickable, so it says so on hover and focus.
+ * The pointer cursor is not here — `global.css` gives every `[role='button']` one.
+ */
+const ROW = 'pb-0.5 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none';
 
 /**
  * What makes a receipts row a button without making it a `<button>`, which may
