@@ -26,7 +26,7 @@ hooks:
             You are the CEILING, not the floor. A command hook
             (scripts/verify-goal.mjs) has already run for this turn. It owns the
             brief's state: it stamped last_verified, spent turn budget, settled
-            DONE/FAILED, and checked FORM (every Outcome box ticked, evidence
+            DONE/FAILED, and checked FORM (every Outcome box and plan step ticked, evidence
             present, a real PR on the branch for the code route). You check
             MEANING, and you write NOTHING. Never edit the brief.
 
@@ -83,6 +83,7 @@ branch: goal/<slug>        # code route
 workspace: current         # code route: current | worktree
 repo: /abs/path            # code route, REQUIRED when the work is not in this cwd
 worktree: /abs/path        # code route, when workspace is worktree
+plan: /abs/path            # code route: the plan file; every step must be ticked for DONE
 ---
 
 ## Task
@@ -162,14 +163,17 @@ writes `DONE`.
    Outcome item with its `- [ ]` steps, and tick each step as it lands.
    Either way it goes in `.hive/plans/YYYY-MM-DD-goal-<slug>.md` under the
    directory you are working in (the worktree, when there is one): the Hive
-   reads a plan file only from under the session's own cwd.
+   reads a plan file only from under the session's own cwd. Record its
+   absolute path as the brief's `plan:`: the verifier holds `DONE` until
+   every step in it is ticked, so a finished goal never leaves the panel at 0/N.
 4. `hive:verify`: the repository's gates, a browser drive for any UI surface.
 5. Append the output. Push. `gh pr create --draft`. Record the PR URL in
-   the evidence and **tick the items now**: `ledger_ask` ends the turn, so
-   anything written after it waits for the next one, and the Stop hook
-   would block on the unticked boxes in between. **Do not write
-   `status: DONE` yourself.** The verifier writes it once the boxes, the
-   evidence and a real PR on `branch:` agree.
+   the evidence and **tick both files now**: the brief's Outcome items and
+   any plan step still open. `ledger_ask` ends the turn, so anything written
+   after it waits for the next one, and the Stop hook would block on the
+   unticked boxes in between. **Do not write `status: DONE` yourself.** The
+   verifier writes it once the boxes in both files, the evidence and a real
+   PR on `branch:` agree.
 6. `mcp__hive__agents` lists `shipper`: `ledger_ask to: shipper` with the
    intake shape from `ship`, `reply-to: $HIVE_SESSION_ID` (this session's
    `sess-…` party name, never the brief's `session:` UUID, which no party
@@ -211,6 +215,8 @@ terminal status, one cheap read per turn end. A new session starts clean.
 
 - `ACTIVE` before approval. A question in Phase 2. An Outcome nobody else
   could check. Done claimed without evidence appended. `DONE` written by hand.
+- The brief ticked and the plan not: the panel shows 0/N on finished work.
+  `plan:` omitted from the header is the same miss, with nothing to catch it.
 - `repo:` omitted on a code-route goal outside this cwd: the PR check runs in
   the wrong repository and blocks every turn until the budget is spent.
 - A brief under any other name than `<session-id>.md`.

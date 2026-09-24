@@ -38,13 +38,14 @@ const brief = ({
   budget = 8,
   outcome = '- [x] done thing\n',
   evidence = '$ npm test\nok\n',
+  extra = '',
 } = {}) => `---
 status: ${status}
 route: code
 turns_used: ${turns}
 turn_budget: ${budget}
 branch: goal/x
----
+${extra}---
 
 ## Task
 
@@ -118,6 +119,40 @@ test('all checked plus real evidence releases and writes DONE', () => {
   const r = decide(md, { checkPr: () => 'match' });
   assert.equal(r.action, 'allow');
   assert.match(r.write, /^status: DONE$/m);
+});
+
+// --- the plan file -----------------------------------------------------------
+
+const planned = brief({ outcome: '- [x] a\n', extra: 'plan: /abs/.hive/plans/p.md\n' });
+
+test('unticked plan steps block DONE even when the Outcome is met', () => {
+  // A goal once went DONE with its plan panel stuck at 0/3: the brief was ticked,
+  // the plan file never was.
+  const plan = '## Task 1: a\n- [x] one\n- [ ] two thing\n## Task 2: b\n- [ ] three\n';
+  const r = decide(planned, { checkPr: () => 'match', readPlan: () => plan });
+  assert.equal(r.action, 'block');
+  assert.match(r.reason, /2 plan step\(s\) still unchecked in \/abs\/\.hive\/plans\/p\.md/);
+  assert.match(r.reason, /two thing/);
+  assert.match(r.write, /^turns_used: 1$/m);
+  assert.doesNotMatch(r.write, /^status: DONE$/m);
+});
+
+test('a fully ticked plan lets DONE through', () => {
+  const r = decide(planned, { checkPr: () => 'match', readPlan: () => '- [x] one\n- [x] two\n' });
+  assert.equal(r.action, 'allow');
+  assert.match(r.write, /^status: DONE$/m);
+});
+
+test('the plan is read from the brief header path', () => {
+  let asked = null;
+  decide(planned, { checkPr: () => 'match', readPlan: (p) => ((asked = p), '') });
+  assert.equal(asked, '/abs/.hive/plans/p.md');
+});
+
+test('no plan header, or an unreadable plan, adds no gate', () => {
+  const read = () => assert.fail('no plan: header, nothing to read');
+  assert.match(decide(brief(), { checkPr: () => 'match', readPlan: read }).write, /^status: DONE$/m);
+  assert.match(decide(planned, { checkPr: () => 'match', readPlan: () => null }).write, /^status: DONE$/m);
 });
 
 // --- stop rule ---------------------------------------------------------------
