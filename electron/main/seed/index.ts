@@ -4,7 +4,7 @@ import { app } from 'electron';
 
 import { configPath } from '../config/paths';
 
-import { SEED_MANIFEST_FILE, shippedRoot } from './paths';
+import { SEED_MANIFEST_FILE, SHIPPED_HISTORY_FILE, shippedRoot } from './paths';
 import { seedShipped, type SeedReport } from './seed';
 
 /**
@@ -29,16 +29,18 @@ export async function seedShippedIntoHive(
   fromDir: string = import.meta.dirname,
 ): Promise<SeedReport | null> {
   const target = dirname(configPath());
+  const source = shippedRoot(app.isPackaged, process.resourcesPath, fromDir);
   try {
     const report = await seedShipped({
-      source: shippedRoot(app.isPackaged, process.resourcesPath, fromDir),
+      source,
       target,
       manifestFile: join(target, SEED_MANIFEST_FILE),
+      history: join(source, SHIPPED_HISTORY_FILE),
     });
-    const changed = report.created.length + report.upgraded.length;
+    const changed = report.created.length + report.upgraded.length + report.merged.length;
     if (changed > 0 || report.skipped.length > 0) {
       console.info(
-        `[hive] seeded ${report.created.length} new and ${report.upgraded.length} updated shipped file(s) into ${target}` +
+        `[hive] seeded ${report.created.length} new, ${report.upgraded.length} updated and ${report.merged.length} merged shipped file(s) into ${target}` +
           (report.skipped.length > 0
             ? `; left alone (symlinked): ${report.skipped.join(', ')}`
             : ''),

@@ -64,6 +64,21 @@ describe('parseParts', () => {
     expect(parseParts('---\n# mine\nname: a\n---\n')?.preamble).toEqual(['# mine']);
   });
 
+  it('keeps a key written twice as one whole part, both copies in it', () => {
+    const parsed = parseParts('---\nwake:   # mine\n  every: 5m\nname: a\nwake:\n  on: [ledger]\n---\n');
+
+    expect([...(parsed?.parts.keys() ?? [])]).toEqual(['wake', 'name']);
+    expect(parsed?.parts.get('wake')).toBe('wake:   # mine\n  every: 5m\nwake:\n  on: [ledger]');
+    expect(parsed?.blocks.size).toBe(0);
+  });
+
+  it('reads a CRLF file the way it reads an LF one', () => {
+    expect([...(parseParts('---\r\nname: a\r\nmodel: opus\r\n---\r\nbody\r\n')?.parts.keys() ?? [])]).toEqual([
+      'name',
+      'model',
+    ]);
+  });
+
   it('refuses a file without a closed frontmatter fence', () => {
     expect(parseParts('name: a\n')).toBeNull();
     expect(parseParts('---\nname: a\n')).toBeNull();
@@ -205,6 +220,51 @@ describe('mergeParts', () => {
 
     expect(result.text).toBe(mine);
     expect(result.customised.map((part) => part.path)).toEqual(['limits']);
+  });
+
+  it('keeps a key written twice whole, as the user\'s', () => {
+    const mine = file(['name: a', 'model: opus', 'limits:', '  turns: 60', 'limits:', '  parallel: 2']);
+
+    const result = mergeParts(mine, v1, baseOf(v1));
+
+    expect(result.text).toContain('  turns: 60\nlimits:\n  parallel: 2');
+    expect(result.customised.map((part) => part.path)).toEqual(['limits']);
+  });
+
+  it('folds the user\'s split block when the shipped file writes it inline', () => {
+    const inline = file(['name: a', 'model: opus', 'limits: { turns: 60 }']);
+
+    const result = mergeParts(v1, inline, baseOf(v1));
+
+    expect(result.text).toBe(v1);
+    expect(result.customised).toEqual([
+      { path: 'limits', yours: 'turns: 60\n  parallel: 2', shipped: '{ turns: 60 }' },
+    ]);
+  });
+
+  it('keeps and flags a key the user changed after the app stopped shipping it', () => {
+    const mine = file(['name: a', 'model: haiku', 'limits:', '  turns: 60', '  parallel: 2']);
+    const v2 = file(['name: a', 'limits:', '  turns: 60', '  parallel: 2']);
+
+    const result = mergeParts(mine, v2, baseOf(v1));
+
+    expect(result.text).toBe(file(['name: a', 'limits:', '  turns: 60', '  parallel: 2', 'model: haiku']));
+    expect(result.customised).toEqual([{ path: 'model', yours: 'haiku', shipped: null }]);
+    expect(result.moved).toEqual(['model']);
+    expect(result.base.keys.model).toBe(baseOf(v1).keys.model);
+  });
+
+  it('keeps the user\'s text when it differs from shipped only in trailing spaces', () => {
+    const mine = v1.replace('model: opus', 'model: opus  ');
+
+    expect(mergeParts(mine, v1, baseOf(v1)).text).toBe(mine);
+  });
+
+  it('holds a body with no base, and records no base for it', () => {
+    const result = mergeParts(file(['name: a'], 'Mine.\n'), file(['name: a']), null);
+
+    expect(result.held).toBe(true);
+    expect(result.base.body).toBe('');
   });
 
   it('keeps the user\'s preamble comment', () => {

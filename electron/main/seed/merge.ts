@@ -44,7 +44,7 @@ export function hashPart(text: string): string {
 
 /** The file split into parts and a body, or `null` without a closed fence. */
 export function parseParts(text: string): Parsed | null {
-  const lines = text.split('\n');
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
 
   if (lines[0]?.trim() !== FENCE) return null;
 
@@ -69,11 +69,26 @@ export function parseParts(text: string): Parsed | null {
 
   const parts = new Map<string, string>();
   const blocks = new Set<string>();
+  const seen = new Map<string, number>();
+
+  for (const unit of units) seen.set(unit.key, (seen.get(unit.key) ?? 0) + 1);
 
   for (const unit of units) {
     // A blank line after a key is spacing, not part of its value.
     while (unit.lines.length > 1 && (unit.lines.at(-1) as string).trim() === '') {
       unit.lines.pop();
+    }
+
+    /*
+      A key written twice (an old patcher opened a second `wake:`) is one
+      part: every occurrence, whole, in the order it appears. Splitting either
+      copy would let the merge drop the other.
+    */
+    if ((seen.get(unit.key) ?? 0) > 1) {
+      const whole = parts.get(unit.key);
+
+      parts.set(unit.key, whole === undefined ? unit.lines.join('\n') : `${whole}\n${unit.lines.join('\n')}`);
+      continue;
     }
 
     const children = unit.lines.slice(1);
