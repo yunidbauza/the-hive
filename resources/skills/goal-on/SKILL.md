@@ -43,6 +43,11 @@ hooks:
                unsupported. A ticked item with no evidence naming it is
                unsupported. Do not re-judge unticked items. Judge the brief,
                not the conversation.
+               A PR item is met by a PR the evidence shows was raised, whatever
+               happened to it since: the shipper marks it ready, merges it and
+               deletes its branch after DONE. "Draft PR open" is met by a
+               merged one. Never check live PR or branch state; the floor
+               already asked GitHub.
             5. Every ticked item supported: ok:true.
             6. Otherwise ok:false, naming the items whose evidence does not hold
                and the single next action. If the brief already says DONE, the
