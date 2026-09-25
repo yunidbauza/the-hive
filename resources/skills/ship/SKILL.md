@@ -52,7 +52,6 @@ moves only when the fixer answers `clean`, and only to the `gathered` time
 that answer carries, never to now: a review posted while the fixer worked is
 newer than its gather and older than its answer, and `since = now` dropped it
 unread. `rounds` counts those answers. Neither is written once.
-```
 
 ## Lanes
 
