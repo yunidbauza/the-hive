@@ -114,14 +114,25 @@ mac:
   #
   # It is what makes entitlements load-bearing: under the hardened runtime a
   # process may not allocate write-then-execute memory, load unsigned libraries,
-  # or be injected into unless it says so. electron-builder's default
-  # `entitlements.mac.plist` already grants the three this app needs —
-  # `allow-jit` and `allow-unsigned-executable-memory` for V8, and
-  # `disable-library-validation` for `node-pty`, whose `.node` binary and
-  # `spawn-helper` are loaded and executed out of `app.asar.unpacked`. No custom
-  # entitlements file is carried until one of them proves insufficient, because
-  # a hand-copied plist is a thing that silently rots against Electron upgrades.
+  # or be injected into unless it says so. electron-builder's default template
+  # grants three — `allow-jit` and `allow-unsigned-executable-memory` for V8,
+  # and `disable-library-validation` for `node-pty`, whose `.node` binary and
+  # `spawn-helper` are loaded and executed out of `app.asar.unpacked`.
   hardenedRuntime: true
+
+  # The template stopped being enough at the microphone (#307). A `claude` in a
+  # Hive pty asks for it as The Hive, the process macOS holds responsible, and
+  # the hardened runtime refuses a bundle without `device.audio-input` *silently*:
+  # no prompt, no row in Privacy › Microphone, Claude Code's voice mode just
+  # never hears anything. So the plist is carried now, the template's three
+  # verbatim plus that one. When an Electron upgrade changes the template, this
+  # copy does not follow; `tests/package-manifest.test.ts` pins all four.
+  #
+  # Both keys, because they sign different binaries: `entitlements` the app
+  # itself, `entitlementsInherit` every helper inside it, the pty host's utility
+  # process among them. Unset, the second falls back to the template.
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.plist
 
   # Gatekeeper's quarantine flag is set by whatever *downloads* a file, so a dmg
   # pulled from a browser is quarantined and an unsigned app inside it is
