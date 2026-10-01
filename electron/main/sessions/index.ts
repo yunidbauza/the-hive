@@ -243,8 +243,9 @@ export interface SessionsOptions {
    * a stall watchdog against a *different, healthy* run started after the one
    * the `Stop` belonged to. Absent when the payload did not carry one, which
    * the tracker reads as "cannot correlate" rather than as a match.
+   * `backgroundWork` is {@link HookAgentEvent.backgroundWork}, forwarded as is.
    */
-  onAgentTurnEnded?: (name: string, sessionUuid?: string) => void;
+  onAgentTurnEnded?: (name: string, sessionUuid?: string, backgroundWork?: boolean) => void;
 }
 
 interface OpenRequest {
@@ -1007,7 +1008,7 @@ export function createSessions(options: SessionsOptions): Sessions {
      */
     onAgentEvent: (event) => {
       if (event.event === 'Stop') {
-        onAgentTurnEnded?.(event.entityId, event.sessionUuid);
+        onAgentTurnEnded?.(event.entityId, event.sessionUuid, event.backgroundWork);
       }
     },
     /*

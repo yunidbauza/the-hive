@@ -258,8 +258,12 @@ export interface RunTracker {
    * whose conversation `sessionUuid` names — a stale Stop for a run that has
    * already ended must not touch whatever runs next, and with several runs
    * live the uuid is the only handle that picks one of them.
+   *
+   * `backgroundWork` true arms nothing: the turn left a workflow or subagent
+   * running, so `claude -p` stays alive and takes another turn when it lands,
+   * and that turn's `Stop` arms the watchdog instead.
    */
-  noteTurnEnded(name: string, sessionUuid?: string): void;
+  noteTurnEnded(name: string, sessionUuid?: string, backgroundWork?: boolean): void;
   /**
    * Signal every live run and leave it to close on its own `'close'` event.
    *
@@ -1226,7 +1230,11 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
       return true;
     },
 
-    noteTurnEnded(name, sessionUuid) {
+    noteTurnEnded(name, sessionUuid, backgroundWork) {
+      // ponytail: no wall-clock bound while background work runs; a workflow
+      // that never lands holds the run, like a tool call that never returns.
+      if (backgroundWork === true) return;
+
       const runs = liveOf(name);
       /*
         Matched by session (HIVE-128): a Stop hook names the conversation it

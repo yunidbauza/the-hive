@@ -793,6 +793,28 @@ describe('createRunTracker', () => {
   });
 
   /**
+   * A background Workflow or subagent keeps `claude -p` alive past its first
+   * `Stop`, and the process takes another turn when that work lands. Measured
+   * against 2.1.286: the first `Stop` lists the workflow `running`, the process
+   * lives on ~30 s, a second turn ends with `background_tasks: []`, and it exits
+   * 0. Arming on the first `Stop` killed acr's self reviews of
+   * incorpx-server#406 and #430 fifteen seconds into their reviewers.
+   */
+  it('does not arm the watchdog on a Stop that reports background work, and arms on the next', () => {
+    tracker.run('a', 'ledger');
+    tracker.noteTurnEnded('a', 'sess-1', true);
+
+    vi.advanceTimersByTime(AGENT_STALL_GRACE_MS * 4);
+
+    expect(childInstances[0]?.killSignals).toEqual([]);
+
+    tracker.noteTurnEnded('a', 'sess-1', false);
+    vi.advanceTimersByTime(AGENT_STALL_GRACE_MS);
+
+    expect(childInstances[0]?.killSignals).toContain('SIGTERM');
+  });
+
+  /**
    * The two graces are separate constants, and this is the assertion that
    * keeps them from quietly becoming one again. A healthy run gets longer
    * after `Stop` than a run that was told to die: it still has to emit

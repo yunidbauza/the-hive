@@ -2856,7 +2856,17 @@ describe('the agent id space (HIVE-115)', () => {
 
     h.agentEvent({ event: 'Stop', sessionUuid: UUID });
 
-    expect(h.turnsEnded).toHaveBeenCalledWith(AGENT, UUID);
+    expect(h.turnsEnded).toHaveBeenCalledWith(AGENT, UUID, undefined);
+
+    h.sessions.dispose();
+  });
+
+  it('forwards whether the Stop reported background work holding the run', () => {
+    const h = agentHarness();
+
+    h.agentEvent({ event: 'Stop', sessionUuid: UUID, backgroundWork: true });
+
+    expect(h.turnsEnded).toHaveBeenCalledWith(AGENT, UUID, true);
 
     h.sessions.dispose();
   });
@@ -2871,7 +2881,7 @@ describe('the agent id space (HIVE-115)', () => {
 
     h.agentEvent({ event: 'Stop' });
 
-    expect(h.turnsEnded).toHaveBeenCalledWith(AGENT, undefined);
+    expect(h.turnsEnded).toHaveBeenCalledWith(AGENT, undefined, undefined);
 
     h.sessions.dispose();
   });

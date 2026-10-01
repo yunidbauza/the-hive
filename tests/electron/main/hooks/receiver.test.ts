@@ -2651,6 +2651,27 @@ describe('the agent id space (HIVE-115)', () => {
     ]);
   });
 
+  /**
+   * Whether a `Stop` left work running that keeps `claude -p` alive. A
+   * workflow or a subagent does; a background shell does not (measured against
+   * 2.1.286: `-p` exits at once with a shell still running), so a shell alone
+   * reads false. Absent stays absent, for the same reason `backgroundShells`
+   * does: a body truncated before the list is not "nothing is running".
+   */
+  it.each([
+    ['a running workflow', [{ id: 'w1', type: 'workflow', status: 'running' }], true],
+    ['a running subagent', [{ id: 'a1', type: 'subagent', status: 'running' }], true],
+    ['only a running shell', [{ id: 'b1', type: 'shell', status: 'running' }], false],
+    ['a finished workflow', [{ id: 'w1', type: 'workflow', status: 'completed' }], false],
+    ['nothing', [], false],
+  ])('reads backgroundWork off a Stop with %s', async (_label, tasks, expected) => {
+    await postAs(AGENT, { hook_event_name: 'Stop', background_tasks: tasks });
+
+    expect(agentEvents).toEqual([
+      { entityId: AGENT, event: 'Stop', status: 'idle', backgroundWork: expected },
+    ]);
+  });
+
   it('omits the uuid rather than inventing one when the payload has none', async () => {
     await postAs(AGENT, { hook_event_name: 'Stop' });
 

@@ -543,6 +543,25 @@ function liveBackgroundShellIds(
 }
 
 /**
+ * Whether a payload's `background_tasks` lists work that keeps a headless
+ * `claude -p` alive past its turn: a running workflow or subagent, anything
+ * but a shell. Measured against 2.1.286, `-p` waits for a background workflow
+ * or subagent and takes another turn when it lands, but exits at once with only
+ * a shell still running. `undefined` when the key is absent, as for
+ * {@link liveBackgroundShellIds}.
+ */
+function holdsTheProcess(value: unknown): boolean | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.some(
+    (entry) =>
+      typeof entry === 'object' &&
+      entry !== null &&
+      (entry as { status?: unknown }).status === 'running' &&
+      (entry as { type?: unknown }).type !== 'shell',
+  );
+}
+
+/**
  * What a handler may answer with.
  *
  * Every route before HIVE-111 replied with a bare status and nothing else, so
@@ -1625,6 +1644,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
   ): number {
     let event: unknown;
     let sessionUuid: unknown;
+    let backgroundWork: boolean | undefined;
 
     if (truncated) {
       // The prefix is all there is; see EVENT_IN_PREFIX and SESSION_ID_IN_PREFIX.
@@ -1639,10 +1659,15 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       }
       const fields =
         typeof parsed === 'object' && parsed !== null
-          ? (parsed as { hook_event_name?: unknown; session_id?: unknown })
+          ? (parsed as {
+              hook_event_name?: unknown;
+              session_id?: unknown;
+              background_tasks?: unknown;
+            })
           : undefined;
       event = fields?.hook_event_name;
       sessionUuid = fields?.session_id;
+      backgroundWork = holdsTheProcess(fields?.background_tasks);
     }
 
     // An event outside the subscribed set is a success, not an error — the
@@ -1667,6 +1692,7 @@ export function createReceiver(options: ReceiverOptions): Receiver {
       ...(typeof sessionUuid === 'string' && sessionUuid !== ''
         ? { sessionUuid }
         : {}),
+      ...(backgroundWork === undefined ? {} : { backgroundWork }),
     });
     return 204;
   }

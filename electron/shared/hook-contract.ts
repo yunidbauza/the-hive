@@ -793,6 +793,12 @@ export interface HookAgentEvent extends HookStatusEvent {
    * with that; it is never inferred.
    */
   sessionUuid?: string;
+  /**
+   * The `Stop` reported a background workflow or subagent still running,
+   * which keeps `claude -p` alive for another turn. The stall watchdog must
+   * not arm on it. Absent when the payload carried no `background_tasks`.
+   */
+  backgroundWork?: boolean;
 }
 
 /**

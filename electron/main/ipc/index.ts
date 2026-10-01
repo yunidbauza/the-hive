@@ -3201,7 +3201,8 @@ export function registerIpcHandlers(
       whose uuid does not match the run it is holding, which is what keeps a
       late Stop from arming the watchdog on the next run under the same name.
     */
-    onAgentTurnEnded: (name, sessionUuid) => runs?.noteTurnEnded(name, sessionUuid),
+    onAgentTurnEnded: (name, sessionUuid, backgroundWork) =>
+      runs?.noteTurnEnded(name, sessionUuid, backgroundWork),
   });
 
   /*
