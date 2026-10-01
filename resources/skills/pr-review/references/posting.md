@@ -133,9 +133,11 @@ Three lines change shape:
   `One blocker and two should-fix, nothing minor. Details inline.`
   The ticket and feedback tallies become sentences the same way.
 - **The reviewed-by line** names what was looked at, not the tool that looked:
-  `Checked bugs, history and the repo's rules. Skipped UI, there's none in here.`
+  `Looked at bugs, history and the repo's rules. Skipped UI, there's none in here.`
   It still lists every reviewer that ran and every one that did not, with the
-  reason. Never name `pr-review`, `acr`, an agent or a bot.
+  reason. Never name `pr-review`, `acr`, an agent or a bot. The `ACR` reviewer
+  is "the extra code-review pass": `Skipped the extra code-review pass, it isn't
+  set up here.`
 - **An inline comment** opens with its severity as a plain word, then the
   problem and the fix as one person would write them, no bold labels and no
   reviewer names: `Should fix. This retries forever once the token expires.

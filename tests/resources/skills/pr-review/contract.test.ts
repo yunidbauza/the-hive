@@ -118,6 +118,11 @@ describe('pr-review voice', () => {
     expect(voice).toContain('Never name `pr-review`, `acr`, an agent or a bot.');
   });
 
+  it('names the ACR reviewer without naming acr, and does not narrate what it checked', () => {
+    expect(voice).toContain('The `ACR` reviewer\n  is "the extra code-review pass"');
+    expect(voice).not.toMatch(/`Checked /);
+  });
+
   it('lets the posting rules win over the voice on content', () => {
     expect(voice).toContain('this file\nwins');
   });
