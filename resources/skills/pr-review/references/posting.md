@@ -59,6 +59,7 @@ backticks and quotes that a shell mangles.
 gh api "repos/$SLUG/pulls/$PR/reviews" --method POST --input "$RUN_DIR/review.json" --jq .html_url
 ```
 
+- The URL it prints is the json block's `review_url`.
 - `line` is an integer.
 - A reopened comment opens with "Marked fixed in <thread url>, but …".
 - `commit_id` pins the review to the head that was read. If someone pushed during
@@ -112,6 +113,39 @@ The only prose the body may carry is a finding that could not anchor inline
 **Before posting, check `review.json` against this list. A body longer than 600
 characters with zero Block findings is wrong by construction: rewrite it, do not
 post it.**
+
+## Voice
+
+Only when the caller passed `VOICE`. Without it, everything above stands as
+written.
+
+The review is posted from the token owner's own account, so it reads as that
+person wrote it. Read the `VOICE` file before writing `review.json`, and write
+the body and every inline comment by it. **The content does not change, only
+the words.** Still three parts, every number still there, every rule in "Body"
+and its banned list still binding, the 600 character check still applied.
+`VOICE` changes how a thing is said. It never adds praise, reassurance or
+narration, and it never drops a count.
+
+Three lines change shape:
+
+- **The counts line** becomes a plain sentence carrying all three numbers:
+  `One blocker and two should-fix, nothing minor. Details inline.`
+  The ticket and feedback tallies become sentences the same way.
+- **The reviewed-by line** names what was looked at, not the tool that looked:
+  `Checked bugs, history and the repo's rules. Skipped UI, there's none in here.`
+  It still lists every reviewer that ran and every one that did not, with the
+  reason. Never name `pr-review`, `acr`, an agent or a bot.
+- **An inline comment** opens with its severity as a plain word, then the
+  problem and the fix as one person would write them, no bold labels and no
+  reviewer names: `Should fix. This retries forever once the token expires.
+  I'd cap it at three and surface the error.`
+
+A clean review in that voice is still one sentence on the change, the counts
+sentence and the checked line.
+
+Where `VOICE` and this file disagree on what goes in the review, this file
+wins. Where they disagree on how it sounds, `VOICE` wins.
 
 ## Clean up
 

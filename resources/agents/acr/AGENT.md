@@ -109,6 +109,10 @@ Invoke the `pr-review` skill with the line that matches the job:
     --self <pr url> REPO=<path> WORK_DIR=<hive>/work/acr       <project> <pr> --self
     --self REPO=<path> WORK_DIR=<hive>/work/acr                <project> --self
 
+A review is posted under the token's own account, so it should sound like that
+person. When `<hive>/voice.md` exists, add `VOICE=<hive>/voice.md` to a
+review-mode line. A self review posts nothing and never takes it.
+
 Somebody asked for this, so it gets reviewed whatever state the PR is in, draft
 or not. The skill opens its own worktree, dispatches its reviewers, checks what
 earlier reviewers raised, and closes the run. In a review it also posts once.
@@ -154,6 +158,8 @@ Put the verdict in `meta` as well as in the line. The line is for a person; the
       mode: "review" | "self",
       verdict: "approved" | "commented" | "findings" | "clean" | "empty" | "failed",
       pr: "<url or null>",
+      review_url: "<the json block's review_url; omitted for a self review>",
+      headline: "<the json block's headline, or null>",
       findings: <block + should_fix + note>,
       block: <block>,
       reopened: <prior.reopened>,
@@ -161,8 +167,11 @@ Put the verdict in `meta` as well as in the line. The line is for a person; the
       report: "<the report path, for a self review; omitted otherwise>"
     }
 
-The line is one short sentence, read on a card or relayed into Slack. Say what
-you found and what you did. For a review, always say whether you approved:
+The line is one short sentence, read on a card in the Hive. It is never written
+for Slack or anywhere else outside the Hive: whoever carries a verdict further
+writes their own words from `meta`, which is why `headline` and `review_url` are
+in it. Say what you found and what you did. For a review, always say whether
+you approved:
 
     No issues found. Approved.
     2 should-fix, nothing blocking. Approved.

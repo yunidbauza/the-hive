@@ -32,7 +32,9 @@ Code prints above this text when the skill loads.
 
 A caller may add `REPO=<abs path>` (the user's checkout of the repository) and
 `WORK_DIR=<abs path>` (where each run's folder is made). Without them, `REPO` is the cwd's git
-root and `WORK_DIR` is `$TMPDIR/pr-review`.
+root and `WORK_DIR` is `$TMPDIR/pr-review`. In review mode a caller may also add
+`VOICE=<abs path>`: a file describing how the token's owner writes, which the
+posted review follows (`references/posting.md`). Self mode ignores it.
 
 **When asked, review.** A draft, a closed or merged PR, your own PR, a PR
 reviewed ten times already: all of them get a review. How big a review depends
@@ -322,6 +324,8 @@ agent branches on it:
   "reviewers": ["bug scan", "instruction compliance", "..."],
   "skipped": [{ "reviewer": "ACR", "reason": "acr not installed" }],
   "outcome": "approved" | "commented" | "findings" | "clean" | "empty" | "failed",
+  "review_url": "<the posted review's html_url; null in self mode or when nothing posted>",
+  "headline": "<the most severe surviving finding in one plain sentence naming its file; null when there is none>",
   "ticket": { "status": "ok" | "no_ticket" | "fetch_failed", "key": "HIVE-123", "covered": 4, "partial": 1, "left": 1 },
   "counts": { "block": 0, "should_fix": 2, "note": 1, "borderline": 0 },
   "prior": { "fixed": 3, "still_open": 0, "reopened": 1 },
@@ -333,6 +337,10 @@ agent branches on it:
 right target: `head_sha` is the checkout's commit, and `files_changed` equals
 the PR's own `changedFiles`. `findings` and `clean` are self-mode outcomes; `approved` and `commented` are
 review-mode outcomes. `empty` means there was nothing to review, in either mode.
+
+`headline` is for a caller who tells a person what the review found: one
+sentence, no severity label, no reviewer name, no markdown. "The retry in
+sync.ts can loop forever when the token expires."
 
 `skipped` names every row of the Stage 2 table that did not run, with the
 condition that kept it out as the reason. "Never looked" must not read as

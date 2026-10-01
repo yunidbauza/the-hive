@@ -103,6 +103,34 @@ describe('pr-review body contract', () => {
   });
 });
 
+describe('pr-review voice', () => {
+  const voice = section(posting, 'Voice');
+
+  it('changes the words of a review and never its content', () => {
+    expect(voice).toContain('Without it, everything above stands as\nwritten.');
+    expect(voice).toContain('**The content does not change, only\nthe words.**');
+    expect(voice).toContain('the 600 character check still applied');
+    expect(voice).toContain('it never drops a count');
+  });
+
+  it('keeps what was and was not looked at without naming the tool', () => {
+    expect(voice).toContain('every one that did not, with the\n  reason');
+    expect(voice).toContain('Never name `pr-review`, `acr`, an agent or a bot.');
+  });
+
+  it('lets the posting rules win over the voice on content', () => {
+    expect(voice).toContain('this file\nwins');
+  });
+
+  it('is a review-mode argument, and gives callers a headline and the review url', () => {
+    expect(skillMd).toContain('`VOICE=<abs path>`');
+    expect(skillMd).toContain('Self mode ignores it.');
+    expect(skillMd).toContain('"review_url":');
+    expect(skillMd).toContain('"headline":');
+    expect(posting).toContain("The URL it prints is the json block's `review_url`.");
+  });
+});
+
 describe('pr-review SKILL.md', () => {
   it('sends Stage 4 to posting.md rather than trusting memory', () => {
     expect(skillMd).toContain('open `references/posting.md` now and follow it');
@@ -136,5 +164,13 @@ describe('acr agent', () => {
     expect(acr).toContain('A review-mode job writes nothing outside the skill');
     expect(acr).toContain('never compose one yourself');
     expect(acr).toContain('`review-<pr>.md` at the top of your work folder means the contract\nwas bypassed');
+  });
+
+  it('passes the voice to a review only, and never writes its line for Slack', () => {
+    expect(acr).toContain('add `VOICE=<hive>/voice.md` to a\nreview-mode line');
+    expect(acr).toContain('It is never written\nfor Slack');
+    expect(acr).not.toContain('relayed into Slack');
+    expect(acr).toContain('review_url:');
+    expect(acr).toContain('headline:');
   });
 });
