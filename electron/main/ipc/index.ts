@@ -2220,6 +2220,18 @@ export function registerIpcHandlers(
       over, exactly as `scheduler` is: both are armed later, once `agents`
       and `ledger` exist, not at the point this listener is wired.
     */
+    /*
+      A permission card raised by a run that works for a job is posted on
+      that job's thread too. A microtask, so the note is appended after this
+      entry has reached every consumer, not from inside its own append.
+    */
+    queueMicrotask(() => {
+      try {
+        permissions?.onAsk(entry);
+      } catch (cause) {
+        console.warn(`[ledger] could not note the wait on ${entry.id}:`, cause);
+      }
+    });
     const schedule = () => {
       try {
         scheduler?.onEntry(entry);

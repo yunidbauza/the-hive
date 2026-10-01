@@ -1,8 +1,8 @@
-import { STANDING_LANE, parseList, readFrontmatter } from '@shared/agent-contract';
+import { STANDING_LANE, parseList, readFrontmatter, threadLane } from '@shared/agent-contract';
 import type { AgentWriteResult } from '@shared/agent-contract';
 import { OVERMIND } from '@shared/ledger-contract';
 import type { LedgerEntry, LedgerPostRequest } from '@shared/ledger-contract';
-import { laneOfRun } from '@shared/ledger-derive';
+import { CLOSING_KINDS, laneOfRun } from '@shared/ledger-derive';
 import { isToolName, oneShotRuleFor, rungsFor } from '@shared/permission-rules';
 
 import { patchFrontmatter } from './patch';
@@ -84,6 +84,12 @@ export interface Permissions {
    * (HIVE-187). Absent means the standing lane.
    */
   grantsFor: (name: string, lane?: string) => string[];
+  /**
+   * A permission ask was appended. When the run that raised it works for a
+   * job (a thread lane), the wait is posted on that job's thread, so the party
+   * that gave the job reads "waiting on a card" and not a silent stall.
+   */
+  onAsk: (entry: LedgerEntry) => void;
   onAnswer: (entry: LedgerEntry) => Promise<void>;
   /**
    * Whether `entry` is an answer to a permission ask — the one case a caller
@@ -159,7 +165,58 @@ export function createPermissions(deps: PermissionDeps): Permissions {
     });
   };
 
+  /**
+   * The job thread the run behind `ask` works for, if it is on a thread lane.
+   */
+  const jobOf = (ask: LedgerEntry): string | undefined => {
+    const lane = laneOfRun(ask.from, ask.meta?.['run'], deps.entries());
+    const prefix = threadLane('');
+    return lane.startsWith(prefix) ? lane.slice(prefix.length) : undefined;
+  };
+
+  /**
+   * A note on the job thread. No `to`: an unaddressed entry wakes nobody
+   * (`scheduler.onEntry`) and nudges nobody, it is only there to be read.
+   */
+  const noteOnJob = (ask: LedgerEntry, body: string): void => {
+    const job = jobOf(ask);
+    if (job === undefined) return;
+    deps.append({ from: OVERMIND, kind: 'post', thread: job, body, meta: { permission: ask.id } });
+  };
+
+  const isOpen = (askId: string): boolean =>
+    !deps
+      .entries()
+      .some((entry) => entry.thread === askId && CLOSING_KINDS.has(entry.kind));
+
+  /**
+   * Answer every other open card of `name`'s that the rule just granted
+   * settles. Only a card whose own `rungId` rung is that exact rule: its
+   * `onAnswer` then finds the rule already in `tools:` and widens nothing.
+   * Each answer wakes its own lane through the ordinary path.
+   */
+  const answerDuplicates = (granted: LedgerEntry, rungId: string, rule: string): void => {
+    for (const other of deps.entries()) {
+      if (!isPermissionAsk(other) || other.from !== granted.from || other.id === granted.id) continue;
+      const tool = other.meta?.['tool'];
+      if (!isToolName(tool) || !isOpen(other.id)) continue;
+      const same = rungsFor(tool, record(other.meta?.['input']) ?? {}).find((r) => r.id === rungId);
+      if (same?.rule !== rule) continue;
+      deps.append({ from: OVERMIND, to: other.from, kind: 'answer', thread: other.id, body: rungId });
+    }
+  };
+
   return {
+    onAsk(entry) {
+      if (!isPermissionAsk(entry)) return;
+      const tool = entry.meta?.['tool'];
+      noteOnJob(
+        entry,
+        `${entry.from} is waiting on permission card ${entry.ref ?? entry.id}: Allow ${String(tool)}?\n` +
+          'The run ended asking on this card, addressed to the overmind. It resumes when the card is answered.',
+      );
+    },
+
     grantsFor(name, lane = STANDING_LANE) {
       const grants: string[] = [];
       const log = deps.entries();
@@ -293,6 +350,8 @@ export function createPermissions(deps: PermissionDeps): Permissions {
         return;
       }
 
+      noteOnJob(ask, `permission card ${ask.ref ?? ask.id} answered: ${entry.body}`);
+
       /*
         `deny` is not a rung at all — the approve tool always appends it to
         an ask's `meta.options` after the real rungs (`mcp-host/tools.ts`),
@@ -387,6 +446,7 @@ export function createPermissions(deps: PermissionDeps): Permissions {
           body: `granted ${rung.rule} to ${name}`,
           meta: { granted: ask.id, rule: rung.rule },
         });
+        answerDuplicates(ask, rung.id, rung.rule);
         return;
       }
 
@@ -443,6 +503,8 @@ export function createPermissions(deps: PermissionDeps): Permissions {
               reason: result.problems.map((p) => p.reason).join('; '),
             },
       });
+
+      if (result.ok) answerDuplicates(ask, rung.id, rung.rule);
     },
   };
 }

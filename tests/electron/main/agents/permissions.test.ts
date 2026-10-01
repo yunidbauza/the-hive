@@ -1,9 +1,14 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import type { LedgerPostRequest } from '@shared/ledger-contract';
 import { matches } from '@shared/permission-rules';
 
 import { createPermissions } from '../../../../electron/main/agents/permissions';
+import { createLedger } from '../../../../electron/main/ledger/index';
 
 /**
  * `input` is carried, not decorative: `onAnswer` recomputes the ladder with
@@ -598,5 +603,148 @@ describe('grantsFor, per lane (HIVE-187)', () => {
     const d = deps([begun('r0'), laneAsk('a1', 'r0'), answer('n1', 'a1', 'allow-once')]);
     expect(createPermissions(d).grantsFor('drone', 'thread:A')).toEqual([]);
     expect(createPermissions(d).grantsFor('drone')).toEqual(['literal:Bash:git push']);
+  });
+});
+
+/**
+ * A run that stops on a permission card ends `asking` with nothing new on the
+ * thread it works for, so whoever gave it the job reads a stall. INCORP-569
+ * (a226): the builder waited 12 minutes on `jira_comment`, the asking session
+ * saw no ask on its thread, nudged, and two evals ran twice.
+ */
+describe('a permission wait is visible on the job thread', () => {
+  const begun = (run: string, lane?: string) => ({
+    id: `s-${run}`, ts: 0, from: 'drone', kind: 'event' as const, body: 'run.started — ledger',
+    meta: { run, ...(lane === undefined ? {} : { lane }) },
+  });
+  const job = { id: 'J', ts: 0, from: 'sess-1', to: 'drone', kind: 'ask' as const, body: 'Build it', ref: 'a9' };
+  const cardOn = (id: string, run: string) => ({
+    ...ask(id, 'drone', RUNGS), ref: 'a226', meta: { ...ask(id, 'drone', RUNGS).meta, run },
+  });
+
+  it('posts the wait on the job thread, addressed to nobody so it wakes nobody', () => {
+    const card = cardOn('p1', 'rA');
+    const d = deps([job, begun('rA', 'thread:J'), card]);
+
+    createPermissions(d).onAsk(card);
+
+    expect(d.append).toHaveBeenCalledTimes(1);
+    const note = d.append.mock.calls[0]![0];
+    expect(note).toMatchObject({ from: 'overmind', kind: 'post', thread: 'J', meta: { permission: 'p1' } });
+    expect(note.to).toBeUndefined();
+    expect(note.body.split('\n')[0]).toBe('drone is waiting on permission card a226: Allow Bash?');
+  });
+
+  it('posts nothing for a run on the standing lane, or for an ordinary ask', () => {
+    const card = cardOn('p1', 'r0');
+    const d = deps([begun('r0'), card]);
+    const permissions = createPermissions(d);
+
+    permissions.onAsk(card);
+    permissions.onAsk({ ...job, id: 'q1', from: 'drone', to: 'sess-1' });
+
+    expect(d.append).not.toHaveBeenCalled();
+  });
+
+  it('posts the answer on the job thread once the card is answered', async () => {
+    const card = cardOn('p1', 'rA');
+    const d = deps([job, begun('rA', 'thread:J'), card, answer('n1', 'p1', 'deny')]);
+
+    await createPermissions(d).onAnswer(answer('n1', 'p1', 'deny'));
+
+    expect(d.append).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'post', thread: 'J', body: 'permission card a226 answered: deny' }),
+    );
+  });
+});
+
+/**
+ * One click for one decision. Parallel runs each raise the same card: on
+ * Sep 23 the builder raised 18 "Allow TaskCreate?" cards in 30 s. A standing
+ * grant answers every other open card that the same rule settles; each answer
+ * still wakes its own lane through the ordinary path.
+ */
+describe('a standing grant answers the duplicates it settles', () => {
+  const card = (id: string, command: string, from = 'drone') => ask(id, from, RUNGS, { command });
+  const answers = (d: ReturnType<typeof deps>) =>
+    d.append.mock.calls.map(([request]) => request).filter((request) => request.kind === 'answer');
+
+  it('answers another open card for the same tool on allow-tool', async () => {
+    const d = deps([card('p1', 'git push'), card('p2', 'npm test'), answer('n1', 'p1', 'allow-tool')]);
+
+    await createPermissions(d).onAnswer(answer('n1', 'p1', 'allow-tool'));
+
+    expect(answers(d)).toEqual([
+      expect.objectContaining({ from: 'overmind', to: 'drone', kind: 'answer', thread: 'p2', body: 'allow-tool' }),
+    ]);
+  });
+
+  it('answers only the cards whose own rung is the same rule on allow-family', async () => {
+    const d = deps([
+      card('p1', 'git push'), card('p2', 'npm test'), card('p3', 'git status'),
+      answer('n1', 'p1', 'allow-family'),
+    ]);
+
+    await createPermissions(d).onAnswer(answer('n1', 'p1', 'allow-family'));
+
+    expect(answers(d).map((request) => request.thread)).toEqual(['p3']);
+  });
+
+  it('leaves closed cards, other agents\' cards and one-shot answers alone', async () => {
+    const closed = card('p2', 'git status');
+    const d = deps([
+      card('p1', 'git push'), closed, answer('n0', 'p2', 'deny'), card('p3', 'git log', 'other'),
+      card('p4', 'git diff'), answer('n1', 'p1', 'allow-tool'),
+    ]);
+
+    await createPermissions(d).onAnswer(answer('n1', 'p1', 'allow-tool'));
+    expect(answers(d).map((request) => request.thread)).toEqual(['p4']);
+
+    const once = deps([card('p1', 'git push'), card('p4', 'git diff'), answer('n1', 'p1', 'allow-once')]);
+    await createPermissions(once).onAnswer(answer('n1', 'p1', 'allow-once'));
+    expect(answers(once)).toEqual([]);
+  });
+});
+
+/**
+ * The same two writes against the real `Ledger.append`, whose thread rules
+ * (open thread, party to it, known addressee) are what a stub cannot show.
+ */
+describe('against the real ledger', () => {
+  it('accepts the job-thread note and closes the duplicate card', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hive-permissions-'));
+    try {
+      const ledger = createLedger({ dir, knowsParty: () => true });
+      const entries = () => ledger.read({}).entries;
+      const permissions = createPermissions({
+        entries,
+        append: (request) => {
+          const written = ledger.append(request);
+          expect(written).toMatchObject({ ok: true });
+        },
+        read: vi.fn(async () => SOURCE),
+        write: vi.fn(async () => ({ ok: true as const })),
+      });
+      const job = ledger.append({ from: 'sess-1', to: 'drone', kind: 'ask', body: 'Build it' });
+      const jobId = (job as { id: string }).id;
+      ledger.append({ from: 'drone', kind: 'event', body: 'run.started — ledger', meta: { run: 'rA', lane: `thread:${jobId}` } });
+      const card = (command: string) =>
+        ledger.append({ from: 'drone', to: 'overmind', kind: 'ask', body: '', meta: { kind: 'permission', tool: 'Bash', input: { command }, run: 'rA' } });
+      const p1 = (card('git push') as { id: string }).id;
+      const p2 = (card('npm test') as { id: string }).id;
+
+      permissions.onAsk(entries().find((entry) => entry.id === p1)!);
+      const answered = ledger.answer({ thread: p1, body: 'allow-tool' }, 'overmind');
+      await permissions.onAnswer(entries().find((entry) => entry.id === (answered as { id: string }).id)!);
+
+      const onJob = entries().filter((entry) => entry.kind === 'post' && entry.thread === jobId);
+      expect(onJob.map((entry) => entry.body.split('\n')[0])).toEqual([
+        expect.stringMatching(/^drone is waiting on permission card a\d+: Allow Bash\?$/),
+        expect.stringMatching(/^permission card a\d+ answered: allow-tool$/),
+      ]);
+      expect(entries().some((entry) => entry.kind === 'answer' && entry.thread === p2)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
