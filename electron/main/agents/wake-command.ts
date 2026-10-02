@@ -24,6 +24,7 @@
  * matters most for the case the epic is built on: the user edits an AGENT.md in
  * their own editor and expects the next wake to obey it.
  */
+import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -163,6 +164,12 @@ type WakeInvocation = WakeCommand & {
   lastTurn: boolean;
   /** Which conversation this wake is (HIVE-128). Echoed from the request. */
   kind: RunKind;
+  /**
+   * The hash of the system prompt, only on a wake that starts a session: the
+   * close stores it beside the uuid. A resumed session keeps the prompt it
+   * started with, so a resumed wake has nothing new to record.
+   */
+  promptHash?: string;
 };
 
 type BuildWakeCommand = (
@@ -386,11 +393,21 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
     */
     const task = kind === 'task';
     const pending = previous.pendingSession;
+    const prompt = systemPromptFor(AGENT_PREAMBLE, def);
+    const promptHash = createHash('sha256').update(prompt).digest('hex');
+    /*
+      `claude --resume` ignores a changed `--append-system-prompt-file`: the
+      session keeps the prompt it started with. So an edited definition or an
+      updated preamble reaches a running conversation only through a rotation,
+      and a prompt that no longer matches the session's asks for one. A session
+      with no hash predates this check, and what it holds is unknown.
+    */
+    const stalePrompt = previous.promptHash !== promptHash;
     const lastTurn =
       !task &&
       pending === undefined &&
       previous.sessionUuid !== undefined &&
-      (forced || previous.runsSinceRotate >= def.limits.rotateAfter);
+      (forced || stalePrompt || previous.runsSinceRotate >= def.limits.rotateAfter);
     // A task run has always run in the agent's own directory; a lane runs in its own (HIVE-188).
     const workdir = deps.workdir(name, task ? STANDING_LANE : lane);
     const systemPrompt = deps.promptFile(name);
@@ -399,9 +416,9 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
     try {
       fs.mkdir(workdir);
       fs.mkdir(dirname(systemPrompt));
-      // Rewritten on every wake, so an app update to the preamble reaches every
-      // agent without anyone editing anything.
-      fs.write(systemPrompt, systemPromptFor(AGENT_PREAMBLE, def));
+      // Rewritten on every wake, but read only by a wake that starts a session:
+      // a resumed one keeps its own, which is what `stalePrompt` is for.
+      fs.write(systemPrompt, prompt);
 
       /*
         Only for an agent that names one. An agent with an empty `mcp:` keeps
@@ -493,6 +510,12 @@ export function createWakeCommand(deps: WakeCommandDeps): BuildWakeCommand {
 
     // Whichever of the two `wakeCommand` actually spelled — `--resume <uuid>`
     // or `--session-id <uuid>`. The tracker matches a Stop hook against it.
-    return { ...command, sessionUuid: resuming ?? minted, lastTurn, kind };
+    return {
+      ...command,
+      sessionUuid: resuming ?? minted,
+      lastTurn,
+      kind,
+      ...(resuming === undefined ? { promptHash } : {}),
+    };
   };
 }

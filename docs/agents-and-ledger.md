@@ -1975,6 +1975,14 @@ without leaving a note forgets the open threads it was the only one watching,
 and the first anyone learns of that is a reply that never comes. So the agent
 is a participant in its own rotation, across two wakes.
 
+**A changed system prompt rotates too.** `claude --resume` ignores a changed
+`--append-system-prompt-file`: the session keeps the prompt it started with
+(proved with a codeword swapped between a start and a resume). So the close
+stores `promptHash`, the sha256 of the prompt a session started with, beside
+its `sessionUuid`, and a wake whose prompt hashes otherwise is a last turn. A
+session with no hash predates the check and rotates once. Per lane, like the
+counter.
+
 **The crossing wake still resumes.** When `runsSinceRotate` reaches
 `rotate_after`, `wake-command.ts` builds the same `--resume <uuid>` it always
 did — a handoff written by an agent that has been made to forget everything

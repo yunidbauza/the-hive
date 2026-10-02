@@ -1077,6 +1077,12 @@ export interface LaneState {
   rotateFailures?: number;
   lastRunAt?: number;
   nextRunAt?: number;
+  /**
+   * sha256 of the system prompt `sessionUuid` started with. `claude --resume`
+   * keeps a session's original prompt, so a wake whose prompt hashes otherwise
+   * asks for a handoff: rotation is the only way new instructions land.
+   */
+  promptHash?: string;
   /** When a thread lane's ask closed. Pruned a day later (HIVE-188). */
   closedAt?: number;
 }
@@ -1084,6 +1090,8 @@ export interface LaneState {
 /** What `~/.hive/ledger/agents.json` holds per agent. */
 export interface AgentRunState {
   sessionUuid?: string;
+  /** The standing lane's {@link LaneState.promptHash}. */
+  promptHash?: string;
   status: AgentStatus;
   lastRunAt?: number;
   /** Stored and pushed here; computed by HIVE-121's scheduler. */

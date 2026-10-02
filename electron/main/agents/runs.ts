@@ -146,7 +146,12 @@ export interface RunTrackerDeps {
     extra?: string,
     options?: { kind?: RunKind; lane?: string },
   ) =>
-    | (WakeCommand & { sessionUuid: string; lastTurn: boolean; kind: RunKind })
+    | (WakeCommand & {
+        sessionUuid: string;
+        lastTurn: boolean;
+        kind: RunKind;
+        promptHash?: string;
+      })
     | { problem: string };
   /**
    * `limits.parallel` for this agent, read from the folder watcher's cache
@@ -331,6 +336,8 @@ interface LiveRun {
   /** False only for a run that never reached the model: a spawn failure. */
   reachedModel: boolean;
   lastTurn: boolean;
+  /** See {@link FinalizeInfo.promptHash}. */
+  promptHash?: string;
   escalation: NodeJS.Timeout | null;
   watchdog: NodeJS.Timeout | null;
   flush: NodeJS.Timeout | null;
@@ -382,6 +389,8 @@ interface FinalizeInfo {
    * the comment on the `sessionUuid` line in {@link finalizeRun}.
    */
   sessionUuid?: string;
+  /** The prompt a session-starting run started with; stored beside its uuid. */
+  promptHash?: string;
 }
 
 /**
@@ -694,6 +703,9 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
             : {}),
         ...(failures === null ? {} : { rotateFailures: failures }),
         ...(sessionUuid === undefined ? {} : { sessionUuid }),
+        ...(sessionUuid === undefined || info.promptHash === undefined
+          ? {}
+          : { promptHash: info.promptHash }),
       });
     }
 
@@ -1133,6 +1145,7 @@ export function createRunTracker(deps: RunTrackerDeps): RunTracker {
         reason: null,
         reachedModel: true,
         lastTurn: command.lastTurn,
+        ...(command.promptHash === undefined ? {} : { promptHash: command.promptHash }),
         escalation: null,
         watchdog: null,
         flush: null,

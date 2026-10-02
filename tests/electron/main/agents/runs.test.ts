@@ -47,6 +47,8 @@ describe('createRunTracker', () => {
   let lastTurn: boolean;
   /** What the run left behind as a handoff, if anything (HIVE-122). */
   let handoff: string | undefined;
+  /** The prompt hash a session-starting command carries. Set per test. */
+  let promptHash: string | undefined;
   let commandCalls: number;
   let commandArgs: {
     name: string;
@@ -75,6 +77,7 @@ describe('createRunTracker', () => {
     openAskAnywhere = false;
     lastTurn = false;
     handoff = undefined;
+    promptHash = undefined;
     commandCalls = 0;
     commandArgs = [];
     parallel = 1;
@@ -105,6 +108,7 @@ describe('createRunTracker', () => {
           sessionUuid: `sess-${commandCalls}`,
           lastTurn,
           kind: options?.kind ?? 'standing',
+          ...(promptHash === undefined ? {} : { promptHash }),
         };
       },
       parallelFor: () => parallel,
@@ -1042,6 +1046,32 @@ describe('createRunTracker', () => {
       expect(after.rotateFailures).toBe(0);
       // The uuid the agent is still on is untouched until that session runs.
       expect(after.sessionUuid).not.toBe('uuid-minted');
+    });
+
+    it('records the prompt a new session started with, beside its uuid', () => {
+      promptHash = 'hash-new';
+      state.patch('drone', { sessionUuid: 'old', promptHash: 'hash-old' });
+
+      runToClose('drone');
+
+      expect(state.read('drone').promptHash).toBe('hash-new');
+    });
+
+    it('leaves the stored prompt alone for a resumed run', () => {
+      state.patch('drone', { sessionUuid: 'old', promptHash: 'hash-old' });
+
+      runToClose('drone');
+
+      expect(state.read('drone').promptHash).toBe('hash-old');
+    });
+
+    it('records no prompt for a session that never reached the model', () => {
+      promptHash = 'hash-new';
+      state.patch('drone', { sessionUuid: 'old', promptHash: 'hash-old' });
+
+      runThatFailsToSpawn('drone');
+
+      expect(state.read('drone').promptHash).toBe('hash-old');
     });
 
     it('does not rotate when no handoff was posted, and takes a strike', () => {

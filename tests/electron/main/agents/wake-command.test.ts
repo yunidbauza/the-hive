@@ -135,6 +135,16 @@ const build = (over: Partial<WakeCommandDeps> = {}) =>
     ...over,
   });
 
+/** The hash a fresh session of the definition on disk would record. */
+const promptHashNow = (): string => {
+  const saved = stored;
+  stored = {};
+  const built = build()('slack-watcher', 'manual');
+  stored = saved;
+  if ('problem' in built || built.promptHash === undefined) throw new Error('expected a hash');
+  return built.promptHash;
+};
+
 beforeEach(() => {
   files = { '/home/u/.hive/agents/slack-watcher/AGENT.md': AGENT_MD };
   written = {};
@@ -189,6 +199,7 @@ describe('createWakeCommand', () => {
       runsSinceRotate: 2,
       runs: [],
       sessionUuid: 'earlier-uuid',
+      promptHash: promptHashNow(),
     };
 
     const built = build()('slack-watcher', 'manual');
@@ -892,7 +903,7 @@ describe('lanes (HIVE-185)', () => {
   it('never reads forceRotate from another lane — it is the standing lane\'s', () => {
     stored['slack-watcher'] = {
       status: 'sleeping', runsSinceRotate: 0, runs: [], sessionUuid: 's', forceRotate: true,
-      lanes: { 'thread:A': { sessionUuid: 'a', runsSinceRotate: 0 } },
+      lanes: { 'thread:A': { sessionUuid: 'a', runsSinceRotate: 0, promptHash: promptHashNow() } },
     };
 
     const built = build()('slack-watcher', 'ledger', undefined, { lane: 'thread:A' });
@@ -958,5 +969,77 @@ describe('grants per lane (HIVE-187)', () => {
       ['slack-watcher', 'standing'],
       ['slack-watcher', 'standing'],
     ]);
+  });
+});
+
+/**
+ * A resumed session keeps the system prompt it started with: `claude --resume`
+ * ignores a changed `--append-system-prompt-file`. So an edited definition, or
+ * an app update to the preamble, reaches a running conversation only through a
+ * rotation, and a changed prompt forces one.
+ */
+describe('a changed system prompt', () => {
+  const fresh = () => {
+    const built = build()('slack-watcher', 'manual');
+
+    if ('problem' in built) throw new Error(built.problem);
+
+    return built;
+  };
+
+  it('reports the hash of the prompt a new session starts with', () => {
+    const built = fresh();
+
+    expect(built.promptHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('reports no hash for a resumed wake, whose session keeps its own prompt', () => {
+    stored['slack-watcher'] = { ...EMPTY, sessionUuid: 'earlier', promptHash: promptHashNow() };
+
+    const built = fresh();
+
+    expect(built.args).toContain('--resume');
+    expect(built.promptHash).toBeUndefined();
+  });
+
+  it('resumes without a handoff while the prompt is unchanged', () => {
+    stored['slack-watcher'] = { ...EMPTY, sessionUuid: 'earlier', promptHash: promptHashNow() };
+
+    expect(fresh().lastTurn).toBe(false);
+  });
+
+  it('asks for a handoff on the wake after the definition changes', () => {
+    stored['slack-watcher'] = { ...EMPTY, sessionUuid: 'earlier', promptHash: promptHashNow() };
+    files['/home/u/.hive/agents/slack-watcher/AGENT.md'] = AGENT_MD.replace(
+      'Read the channel and report.',
+      'Read the channel and never relay.',
+    );
+
+    const built = fresh();
+
+    expect(built.lastTurn).toBe(true);
+    expect(built.args).toContain('earlier');
+  });
+
+  it('asks for a handoff when the session predates prompt hashes', () => {
+    stored['slack-watcher'] = { ...EMPTY, sessionUuid: 'earlier' };
+
+    expect(fresh().lastTurn).toBe(true);
+  });
+
+  it('asks a lane for a handoff on its own stale prompt', () => {
+    stored['slack-watcher'] = {
+      ...EMPTY,
+      sessionUuid: 'standing',
+      promptHash: promptHashNow(),
+      lanes: { 'thread:A': { sessionUuid: 'lane', runsSinceRotate: 0, promptHash: 'other' } },
+    };
+
+    const lane = build()('slack-watcher', 'ledger', undefined, { lane: 'thread:A' });
+    const standing = fresh();
+
+    if ('problem' in lane) throw new Error(lane.problem);
+    expect(lane.lastTurn).toBe(true);
+    expect(standing.lastTurn).toBe(false);
   });
 });
