@@ -14,6 +14,7 @@ import {
   recencyOf,
 } from '@/types/entity';
 
+import { StatusComb } from '@components/ui/status-comb';
 import { statusLabel, statusText } from '@components/ui/status-dot';
 import { SwarmCreature } from '@components/ui/swarm-creature';
 import { effectiveSelId } from '@features/orchestrator/utils/selection';
@@ -107,12 +108,16 @@ import { useActiveTab, useExpandEnded, useSelId, useSessionsProject, useSetSelId
  *
  * Not "at no width at all" — that would be the same over-claim the budget made,
  * one threshold lower. Once the flexible three are at zero, what is left is the
- * `shrink-0` cells, and **they** overflow: 12 caret + 132 `STATUS` + 96 `PLAN`
- * + 80 `LAST USED` + 34 `PR` + 52 Resume + 64 gaps (eight of `gap-2`) + 16
- * `px-2` = **486px**. Below a 486px flex line the fixed cells overflow their wrapper —
+ * `shrink-0` cells, and **they** overflow: 12 caret + 11 comb + 132 `STATUS` +
+ * 96 `PLAN` + 80 `LAST USED` + 34 `PR` + 52 Resume + 72 gaps (nine of `gap-2`)
+ * + 16 `px-2` = **505px**. Below a 505px flex line the fixed cells overflow their wrapper —
  * the header's and a row's alike, since the header mirrors the row's box — and
  * `LAST USED` paints under `PR`. `PR` and Resume still share an x with the
  * header; before the mirror they did not, and diverged by the overflow.
+ *
+ * **The status comb raised it by 19px**, from 486 (HIVE-229): an 11px
+ * hexagon and its gap, on every row and as an empty slot in the header, so
+ * every group moves right by the same amount and `STATUS` keeps one x.
  *
  * **The Plan column raised it by 60px**, from 426 (HIVE-197). The count left
  * `STATUS` for a column of its own (a 44px bar and `done/total`, 96px plus its
@@ -126,7 +131,7 @@ import { useActiveTab, useExpandEnded, useSelId, useSessionsProject, useSetSelId
  * **Round two below 1,200px gives the column back (HIVE-211, D8).** The 58px
  * was measured with round two's list panel taking its column beside the
  * stage. Under 1,200px that panel overlays the stage instead and starts closed,
- * so the 1100px window hands the table `--cc-list-w` more and the 486px floor
+ * so the 1100px window hands the table `--cc-list-w` more and the 505px floor
  * fits. `table-alignment.spec.ts` holds the 1100px window with a Resume
  * column.
  *
@@ -147,7 +152,7 @@ import { useActiveTab, useExpandEnded, useSelId, useSessionsProject, useSetSelId
  * the threshold, instead of to every row at every width.
  *
  * The basis moved that threshold from ~518px to 396px (426px since HIVE-182
- * and retro D, 486px since HIVE-197). Until HIVE-197 that put every default
+ * and retro D, 486px since HIVE-197, 505px since HIVE-229). Until HIVE-197 that put every default
  * layout inside it, the 1100px window with a Resume column by 2px; the Plan
  * column spent that margin and 58px more (above). What remains outside is
  * a user's own doing: the stage keeps its own width and the table never forces
@@ -220,6 +225,8 @@ import { useActiveTab, useExpandEnded, useSelId, useSessionsProject, useSetSelId
  */
 const COL = {
   caret: 'w-3 shrink-0',
+  /** The status comb (HIVE-229), on session and agent rows alike; the header keeps the slot empty. */
+  comb: 'w-[11px] shrink-0',
   session: 'flex-[2_1_88px] truncate',
   /*
     Wide enough for `working (scripts)`, and `whitespace-nowrap` rather than
@@ -395,6 +402,7 @@ export function SessionTable() {
         */}
         <div className="flex min-w-0 flex-1 items-center gap-2">
         <span className={COL.caret} />
+        <span className={COL.comb} />
         {/*
           `title` on the truncating header cells, for the reason every row cell
           carries one: these labels are the map, and a narrow window now
@@ -427,7 +435,7 @@ export function SessionTable() {
         </span>
         {/*
           A third measurement handle. `LAST USED` is a `shrink-0` cell, so it is
-          a term in the 486px threshold above rather than something that gives
+          a term in the 505px threshold above rather than something that gives
           way — which makes it exactly the kind of column that takes the ones to
           its right with it when it is re-sized by someone who has not read the
           arithmetic.
@@ -753,6 +761,7 @@ function SessionTableRow({
       >
         ▸
       </span>
+      <StatusComb status={entity.status} detail={entity.idleDetail} className={COL.comb} />
       {/*
         `title` on every truncating column, so a value the width cuts short is
         still readable on hover. Without it the ellipsis is a dead end — the
@@ -1036,6 +1045,7 @@ function AgentTableRow({
         >
           ▸
         </span>
+        <StatusComb status={entity.status} className={COL.comb} />
         {/*
           `data-col` is a handle, not a style hook — the convention the header's
           `status`, `last-used` and `pr` cells already follow. Here it is what
@@ -1046,15 +1056,10 @@ function AgentTableRow({
           {id}
         </span>
         {/*
-          The word alone, coloured — no dot, unlike the rail.
-
-          Deliberate, and the reason is the column rather than the vocabulary: a
-          9px dot and its gap would push the status word ~14px right on agent
-          rows only, so `STATUS` would stop lining up between this group and the
-          two around it. In a column of words that misalignment is the first
-          thing the eye finds. The colour comes from the same `STATUS_TEXT` the
-          dot is filled from, so the two surfaces still agree about what the
-          state *means*; only the glyph is spent differently.
+          The status glyph is the comb at the row's start (HIVE-229), never a
+          dot beside the word: a glyph inside `STATUS` on agent rows only would
+          push the word right of every session row's. The comb has its own
+          slot in every group and the header, so the columns still line up.
         */}
         {/*
           `PROJECT` and `BRANCH`, spent on the wake — see `COL.wake`. `title`

@@ -1192,6 +1192,17 @@ describe('SessionTable — plan progress', () => {
     expect(within(rowFor('hero-refresh')).getByText('0/1')).toBeInTheDocument();
   });
 
+  it('keeps a finished plan as N/N (HIVE-229)', () => {
+    act(() =>
+      useHiveStore
+        .getState()
+        .setPlan('hero-refresh', { ...plan('hero-refresh', ['completed', 'completed']), allDone: true }),
+    );
+    render(<SessionTable />);
+
+    expect(shellOf(rowFor('hero-refresh')).querySelector('[data-col="plan"]')).toHaveTextContent('2/2');
+  });
+
   it('follows the plan as it changes', () => {
     act(() => useHiveStore.getState().setPlan('hero-refresh', plan('hero-refresh', ['pending', 'pending'])));
     render(<SessionTable />);
@@ -1233,6 +1244,30 @@ describe('SessionTable — columns (HIVE-197)', () => {
     const cell = screen.getByTestId('agent-row').querySelector('[data-col="plan"]');
     expect(cell).not.toBeNull();
     expect(cell).toBeEmptyDOMElement();
+  });
+
+  it('draws the status comb after the caret on session and agent rows, with a header slot to match (HIVE-229)', () => {
+    useHiveStore.getState().hydrateAgents([
+      {
+        name: 'builder', description: 'Builds.', icon: 'Robot', status: 'sleeping', wake: { on: [] },
+        mcp: [], tools: [], rotateAfter: 50, runs: [], live: [],
+      } as unknown as AgentSummary,
+    ]);
+    render(<SessionTable />);
+
+    const session = rows().find((row) => within(row).queryByText('hero-refresh') !== null)!;
+    const sessionComb = session.children[1];
+    expect(sessionComb).toHaveAttribute('data-shape', 'filled');
+    expect(sessionComb).toHaveClass('text-green', 'animate-ccpulse');
+
+    const agentComb = within(screen.getByTestId('agent-row')).getByRole('button').children[1];
+    expect(agentComb).toHaveAttribute('data-shape', 'hollow');
+    expect(agentComb).toHaveClass('text-subtle');
+
+    // The header holds the same width, so SESSION and STATUS keep one x across groups.
+    const header = screen.getByText('SESSION').parentElement as HTMLElement;
+    expect(header.children[1]).toHaveClass('w-[11px]');
+    expect(sessionComb).toHaveClass('w-[11px]');
   });
 });
 

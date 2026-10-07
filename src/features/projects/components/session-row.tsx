@@ -1,9 +1,8 @@
-import { Hexagon } from '@phosphor-icons/react';
-
 import { cn } from '@/lib/utils';
 import { branchLabel, entityLabel, isSession, terminalOf } from '@/types/entity';
 
 import { Badge } from '@components/ui/badge';
+import { StatusComb } from '@components/ui/status-comb';
 import { statusLabel, statusText } from '@components/ui/status-dot';
 import { Tag } from '@components/ui/tag';
 import {
@@ -66,16 +65,7 @@ export function SessionRow({ id, compact = false }: SessionRowProps) {
     >
       <span className="flex w-full items-center gap-2">
         {/* Decoration: the status label sits right beside it. */}
-        <Hexagon
-          size={11}
-          weight={entity.status === 'idle' ? 'bold' : 'fill'}
-          aria-hidden="true"
-          className={cn(
-            'shrink-0',
-            statusText(entity.status, entity.idleDetail),
-            entity.status === 'working' && 'animate-ccpulse',
-          )}
-        />
+        <StatusComb status={entity.status} detail={entity.idleDetail} />
         <span className="min-w-0 truncate text-left text-ui">{label}</span>
         {/* The id after the name; an unnamed session already reads as its id. */}
         {label === entity.id ? null : (
