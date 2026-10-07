@@ -15,7 +15,7 @@ export interface ServerLockIo {
 
 export type ServerLockClaim =
   | { kind: 'claimed'; release: () => void }
-  | { kind: 'active' };
+  | { kind: 'active'; pid: number | null };
 
 function errorCode(cause: unknown): string | undefined {
   if (typeof cause !== 'object' || cause === null) return undefined;
@@ -99,8 +99,26 @@ function lockRecord(contents: string): LockRecord | null {
   return null;
 }
 
+/** The pid a lock file names, or null when it names none we can read. */
+function holderPid(path: string, io: ServerLockIo): number | null {
+  try {
+    return lockRecord(io.read(path))?.pid ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function serverLockPath(): string {
   return join(dirname(configPath()), 'server.lock');
+}
+
+/**
+ * One app process per hive folder (HIVE-227). The dev build and the
+ * installed app have separate single-instance locks, so this file, not
+ * Electron, is what stops two of them writing one ledger.
+ */
+export function hiveLockPath(): string {
+  return join(dirname(configPath()), 'hive.lock');
 }
 
 export function hasActiveServerLock(path: string, io: ServerLockIo = defaultIo()): boolean {
@@ -130,7 +148,9 @@ export function claimServerLock(
     io.createRecoveryGuard(recoveryGuardPath, contents);
   } catch (cause) {
     if (errorCode(cause) === 'EEXIST') {
-      if (hasActiveServerLock(recoveryGuardPath, io)) return { kind: 'active' };
+      if (hasActiveServerLock(recoveryGuardPath, io)) {
+        return { kind: 'active', pid: holderPid(recoveryGuardPath, io) };
+      }
       try {
         io.removeRecoveryGuard(recoveryGuardPath);
       } catch (removeCause) {
@@ -161,7 +181,7 @@ export function claimServerLock(
 
     if (exists) {
       if (hasActiveServerLock(path, io)) {
-        result = { kind: 'active' };
+        result = { kind: 'active', pid: holderPid(path, io) };
       } else {
         io.remove(path);
       }
@@ -171,7 +191,7 @@ export function claimServerLock(
       try {
         io.create(path, contents);
       } catch (cause) {
-        if (errorCode(cause) === 'EEXIST') result = { kind: 'active' };
+        if (errorCode(cause) === 'EEXIST') result = { kind: 'active', pid: holderPid(path, io) };
         else throw cause;
       }
     }

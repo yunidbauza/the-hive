@@ -19,7 +19,7 @@ vi.mock('electron', () => ({
 vi.mock('../../../../electron/main/aux-windows', () => ({ primaryWindow: () => undefined }));
 
 vi.mock('../../../../electron/main/server/server-lock', () => ({
-  claimServerLock: () => ({ kind: 'active' }),
+  claimServerLock: () => ({ kind: 'active', pid: 42 }),
   serverLockPath: () => '/tmp/never-used',
 }));
 

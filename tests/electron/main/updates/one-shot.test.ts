@@ -42,7 +42,7 @@ function harness({
   const installFailure = vi.fn();
   const release = vi.fn();
   const acquireLock = vi.fn<() => ServerLockClaim>(() =>
-    serverActive ? { kind: 'active' } : { kind: 'claimed', release },
+    serverActive ? { kind: 'active', pid: 42 } : { kind: 'claimed', release },
   );
   const engine = {
     check: vi.fn().mockResolvedValue(found),
