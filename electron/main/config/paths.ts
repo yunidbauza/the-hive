@@ -20,7 +20,7 @@ import { CONFIG_PATH_ENV } from '@shared/config-contract';
 let hiveDir = '.hive';
 
 /** Called once, at boot, by an unpackaged build. `HIVE_CONFIG_PATH` still wins. */
-export function useDevHiveDir(): void {
+export function switchToDevHiveDir(): void {
   hiveDir = '.hive-dev';
 }
 

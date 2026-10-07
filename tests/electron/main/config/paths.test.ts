@@ -22,16 +22,16 @@ describe('configPath', () => {
 
   it('moves to ~/.hive-dev for an unpackaged build (HIVE-227)', async () => {
     vi.stubEnv('HIVE_CONFIG_PATH', '');
-    const { configPath, useDevHiveDir } = await load();
-    useDevHiveDir();
+    const { configPath, switchToDevHiveDir } = await load();
+    switchToDevHiveDir();
     expect(configPath()).toBe(join(homedir(), '.hive-dev', 'config.json'));
   });
 
   it('lets HIVE_CONFIG_PATH win over both', async () => {
     vi.stubEnv('HIVE_CONFIG_PATH', '/tmp/elsewhere/config.json');
-    const { configPath, useDevHiveDir } = await load();
+    const { configPath, switchToDevHiveDir } = await load();
     expect(configPath()).toBe('/tmp/elsewhere/config.json');
-    useDevHiveDir();
+    switchToDevHiveDir();
     expect(configPath()).toBe('/tmp/elsewhere/config.json');
   });
 });

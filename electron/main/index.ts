@@ -1,6 +1,6 @@
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
-import { app, powerSaveBlocker } from 'electron';
+import { app, dialog, powerSaveBlocker } from 'electron';
 
 import { APP_IDENTITY_NAME } from '@shared/app-name';
 
@@ -9,6 +9,7 @@ import { primaryWindow } from './aux-windows';
 import { parseInvocation } from './cli';
 import { getConfig } from './config';
 import { startLoginEnvImport } from './config/login-env';
+import { configPath, switchToDevHiveDir } from './config/paths';
 import { installContentSecurityPolicy } from './csp';
 import {
   fleetIsIdle,
@@ -27,7 +28,7 @@ import {
 } from './server/devices';
 import { fileBackedIo, serverDeviceStore } from './server/file-backed-io';
 import { runOneShot } from './server/one-shot';
-import { claimServerLock } from './server/server-lock';
+import { claimServerLock, hiveLockPath } from './server/server-lock';
 import { setServerMode } from './server-mode';
 import { onShutdown } from './shutdown';
 import { createServerTray } from './tray';
@@ -90,6 +91,14 @@ app.setName(APP_IDENTITY_NAME);
 if (!app.isPackaged && !app.commandLine.hasSwitch('user-data-dir')) {
   app.setPath('userData', join(app.getPath('appData'), 'the-hive'));
 }
+
+/*
+  The hive folder follows the same split as userData (HIVE-227): a dev run
+  beside the installed app must not share its ledger, agents and
+  scheduler. `HIVE_CONFIG_PATH` still wins, which is how Playwright and
+  the live suites point a build at a scratch folder.
+*/
+if (!app.isPackaged) switchToDevHiveDir();
 
 /*
   Before the single-instance lock, and before `whenReady`, deliberately.
@@ -202,6 +211,25 @@ if (!app.requestSingleInstanceLock()) {
    */
   const serverMode = invocation.server || getConfig().server.enabled;
   setServerMode(serverMode);
+
+  /*
+    One app process per hive folder (HIVE-227). The single-instance lock
+    above is per userData, so the dev build and the installed app pass it
+    together; this is what stops both appending to one ledger, minting the
+    same refs and waking the same agents. Before the local IPC registration,
+    which composes the ledger and the scheduler. Server mode logs only: a
+    dialog on an unattended machine would block this exit forever.
+    `process.exit`, as the server lock does, because `app.exit` returns and
+    lets boot carry on.
+  */
+  const hiveLock = claimServerLock(hiveLockPath());
+  if (hiveLock.kind === 'active') {
+    const message = `Another copy of The Hive (pid ${hiveLock.pid === null ? 'unknown' : String(hiveLock.pid)}) is using ${dirname(configPath())}. Quit it first, or point this one at another folder with HIVE_CONFIG_PATH.`;
+    console.error(`[hive] ${message}`);
+    if (!serverMode) dialog.showErrorBox('The Hive is already running', message);
+    process.exit(1);
+  }
+  onShutdown(hiveLock.release);
 
   if (serverMode) {
     const serverLock = claimServerLock();

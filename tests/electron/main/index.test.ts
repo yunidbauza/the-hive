@@ -117,3 +117,26 @@ describe('the boot path of a served machine', () => {
     expect(source).toContain('runHeadlessUpdate({ relaunch: !getConfig().server.enabled })');
   });
 });
+
+describe('the boot path holds one hive folder (HIVE-227)', () => {
+  const at = (needle: string): number => source.indexOf(needle);
+
+  it('moves an unpackaged build to ~/.hive-dev before anything reads the config', () => {
+    expect(source).toContain('if (!app.isPackaged) switchToDevHiveDir();');
+    expect(at('switchToDevHiveDir();')).toBeLessThan(at('parseInvocation(process.argv'));
+    expect(at('switchToDevHiveDir();')).toBeLessThan(at('getConfig()'));
+  });
+
+  it('claims the hive lock after the single-instance lock and before anything is composed', () => {
+    const claim = at('claimServerLock(hiveLockPath())');
+    expect(claim).toBeGreaterThan(at('app.requestSingleInstanceLock()'));
+    expect(claim).toBeLessThan(at('claimServerLock()'));
+    expect(claim).toBeLessThan(at("registerIpc('local')"));
+  });
+
+  it('refuses with the folder and the holder, and releases on shutdown', () => {
+    expect(source).toContain('onShutdown(hiveLock.release)');
+    expect(source).toContain("dialog.showErrorBox('The Hive is already running'");
+    expect(source).toContain('if (!serverMode) dialog.showErrorBox');
+  });
+});
