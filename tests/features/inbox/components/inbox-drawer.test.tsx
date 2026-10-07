@@ -159,6 +159,21 @@ describe('InboxDrawer (HIVE-198)', () => {
     delete (window as { hive?: unknown }).hive;
   });
 
+  it('Clear leaves an update ready to install, the news that waits on you (HIVE-231)', async () => {
+    const dismiss = vi.fn((_id: string) => Promise.resolve());
+    (window as { hive?: unknown }).hive = { notifications: { dismiss } };
+    useHiveStore.getState().pushNotif(notif({ id: 'r1', kind: 'app.update_ready', action: { type: 'update.install' } }));
+    useUiStore.getState().openInboxDrawer();
+    render(<InboxDrawer onStage={null} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Clear the news' }));
+    expect(dismiss.mock.calls.map(([id]) => id)).toEqual(['e1']);
+    const news = screen.getByRole('region', { name: 'New' });
+    expect(news.querySelector('[data-notification="r1"]')).not.toBeNull();
+    // Nothing left that Clear would take, so it is not offered.
+    expect(within(news).queryByRole('button', { name: 'Clear the news' })).toBeNull();
+    delete (window as { hive?: unknown }).hive;
+  });
+
   it('says so when everything has been answered', () => {
     useHiveStore.setState({ notifs: [] });
     useUiStore.getState().openInboxDrawer();

@@ -2,7 +2,7 @@ import { X } from '@phosphor-icons/react';
 import { useEffect, useRef } from 'react';
 
 import { useLeavingAsks } from '@features/inbox/hooks/use-leaving-asks';
-import { useDismissNotif, useEchoes, useSummons } from '@stores/hive-store';
+import { rises, useDismissNotif, useEchoes, useSummons } from '@stores/hive-store';
 import { NEWS_SECTION, useInboxActions, useInboxDrawer } from '@stores/ui-store';
 
 import { AskCard } from './ask-card';
@@ -36,6 +36,8 @@ export function InboxDrawer({ onStage }: InboxDrawerProps) {
   const { asks, sessions } = useSummons(onStage);
   const echoes = useEchoes();
   const dismiss = useDismissNotif();
+  // An update ready to install waits on you, so Clear never takes it: only its own click does.
+  const clearable = echoes.filter((row) => !rises(row));
   // A closed ask keeps its place for one beat with its reason (HIVE-218); the count stays on live rows.
   const placed = useLeavingAsks(asks);
   const ref = useRef<HTMLElement>(null);
@@ -130,15 +132,17 @@ export function InboxDrawer({ onStage }: InboxDrawerProps) {
             <span>New</span>
             <span className="tabular-nums tracking-normal">{echoes.length}</span>
             <span className="flex-1" />
-            <button
-              type="button"
-              aria-label="Clear the news"
-              // One dismiss per row, never `clearNotifs`: that empties what waits on you too.
-              onClick={() => echoes.forEach((row) => dismiss(row.id))}
-              className="tracking-normal normal-case text-brand hover:underline"
-            >
-              Clear
-            </button>
+            {clearable.length > 0 ? (
+              <button
+                type="button"
+                aria-label="Clear the news"
+                // One dismiss per row, never `clearNotifs`: that empties what waits on you too.
+                onClick={() => clearable.forEach((row) => dismiss(row.id))}
+                className="tracking-normal normal-case text-brand hover:underline"
+              >
+                Clear
+              </button>
+            ) : null}
           </div>
           {echoes.map((row) => (
             <NotificationCard key={row.id} notif={row} />
