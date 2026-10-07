@@ -2933,7 +2933,6 @@ export function createSessions(options: SessionsOptions): Sessions {
       activity.dispose();
       ptyIpc.dispose();
       disposeErrors();
-      plans.dispose();
       /**
        * The socket goes down with everything else.
        *

@@ -29,8 +29,8 @@ interface Link {
  * - **Ticks.** A `build` post from the builder in the ask's thread, with an
  *   integer `meta.task`: `state: 'started'` is in progress, otherwise done.
  * - **End.** An answer in the thread: `failed:` or `blocked:` marks the build
- *   and keeps the ticks; anything else completes every task, so the usual
- *   all-done grace runs. The link is forgotten either way.
+ *   and keeps the ticks; anything else completes every task, and the plan
+ *   stays all done. The link is forgotten either way.
  *
  * A plan that has since been replaced — another source, another file, another
  * build — is never edited on this build's word.

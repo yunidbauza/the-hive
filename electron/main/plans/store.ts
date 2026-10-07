@@ -1,10 +1,5 @@
 import { CH } from '@shared/ipc-contract';
-import {
-  PLAN_GRACE_MS,
-  type PlanChangedEvent,
-  type PlanSource,
-  type SessionPlan,
-} from '@shared/plan-contract';
+import type { PlanChangedEvent, PlanSource, SessionPlan } from '@shared/plan-contract';
 
 import { parsePlanFile } from './parse-plan-file';
 import { parsePlanMode } from './parse-plan-mode';
@@ -27,8 +22,6 @@ export interface Plans {
   /** Session ended: the plan and the plan file it was read from (HIVE-201). */
   forget(entityId: string): void;
   list(): SessionPlan[];
-  /** Cancel every pending all-done drop. */
-  dispose(): void;
 }
 
 /** Lower wins. A source is accepted over a live plan of the same or a higher number. */
@@ -39,47 +32,36 @@ export const PLAN_SOURCE_RANK: Readonly<Record<PlanSource, number>> = {
 };
 
 /**
- * The plans store: one plan per session, the rank rule between sources, and
- * the all-done grace timer.
+ * The plans store: one plan per session, and the rank rule between sources.
  *
  * Every accepted change publishes the full plan on `CH.planChanged`. A plan
- * that becomes all done stays for `graceMs`, so the panel can say so, then
- * drops; any accepted change in the meantime cancels the drop.
+ * that becomes all done stays, `N/N`, until the session ends (`forget`) or a
+ * new plan replaces it (HIVE-229).
  */
 export function createPlans({
   send,
-  graceMs = PLAN_GRACE_MS,
   now = Date.now,
 }: {
   send: (channel: string, payload: unknown) => void;
-  graceMs?: number;
   /** Stamps task times and the plan file's read (HIVE-201). */
   now?: () => number;
 }): Plans {
   const plans = new Map<string, SessionPlan>();
-  const timers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Plan-file paths already refused once, so a refused file warns once, not per edit. */
   const refused = new Set<string>();
-  /** The last plan file each session read, kept across sources and the grace drop (HIVE-201). */
+  /** The last plan file each session read, kept across sources and a finished plan's replacement (HIVE-201). */
   const planFiles = new Map<string, { file: string; at: number }>();
 
   const publish = (entityId: string, plan: SessionPlan | null): void => {
     send(CH.planChanged, { entityId, plan } satisfies PlanChangedEvent);
   };
 
-  const cancel = (entityId: string): void => {
-    clearTimeout(timers.get(entityId));
-    timers.delete(entityId);
-  };
-
   function drop(entityId: string): void {
-    cancel(entityId);
     if (plans.delete(entityId)) publish(entityId, null);
   }
 
   function set(entityId: string, proposed: SessionPlan | undefined): void {
     if (proposed === plans.get(entityId)) return;
-    cancel(entityId);
     if (proposed === undefined || proposed.tasks.length === 0) {
       drop(entityId);
       return;
@@ -92,15 +74,6 @@ export function createPlans({
     }
     plans.set(entityId, next);
     publish(entityId, next);
-    if (next.allDone) {
-      timers.set(
-        entityId,
-        setTimeout(() => {
-          timers.delete(entityId);
-          drop(entityId);
-        }, graceMs),
-      );
-    }
   }
 
   const accepts = (current: SessionPlan | undefined, source: PlanSource): boolean =>
@@ -174,8 +147,5 @@ export function createPlans({
       drop(entityId);
     },
     list: () => [...plans.values()],
-    dispose() {
-      for (const entityId of [...timers.keys()]) cancel(entityId);
-    },
   };
 }

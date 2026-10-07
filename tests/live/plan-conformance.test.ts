@@ -141,7 +141,6 @@ describe.skipIf(!enabled)('plan conformance (HIVE-179)', () => {
   });
 
   afterAll(async () => {
-    plans.dispose();
     await receiver.stop();
   });
 

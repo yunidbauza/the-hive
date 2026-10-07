@@ -165,9 +165,10 @@ than half-read.
 
 Main owns every rule, so the renderer holds none of them. Which source wins
 when more than one offers a plan (task tools, then a plan file, then plan
-mode), how long an all-done plan stays on screen (`PLAN_GRACE_MS`, five
-seconds), and when a plan goes — `/clear`, `/done`, any other exit, a restart,
-a terminal's end — are all decided in main and arrive as the result.
+mode), and when a plan goes — `/clear`, `/done`, any other exit, a restart,
+a terminal's end — are all decided in main and arrive as the result. A plan
+that reaches all done stays, `N/N`, until one of those endings or until a new
+plan replaces it; no timer removes it (HIVE-229).
 
 It reaches the store two ways, the ledger's two: a `plan:changed` push per
 change, which `setPlan` applies (`plan: null` deletes the key), and a

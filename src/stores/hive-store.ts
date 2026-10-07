@@ -561,8 +561,7 @@ interface HiveState {
   /**
    * Every session's plan, keyed by entity id (HIVE-179).
    *
-   * Main owns every rule — which source wins, the all-done grace, the drop on
-   * every ending — and this mirrors it: a push per change plus the
+   * Main owns every rule — which source wins, the drop on every ending — and this mirrors it: a push per change plus the
    * `plans:list` snapshot. Cleared on a mode switch for the reason `metrics`
    * is.
    */

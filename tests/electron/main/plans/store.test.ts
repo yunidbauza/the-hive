@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPlans, type PlanToolCall } from '../../../../electron/main/plans';
 import { parsePlanFile } from '../../../../electron/main/plans/parse-plan-file';
 import { CH } from '../../../../electron/shared/ipc-contract';
-import { PLAN_GRACE_MS, type SessionPlan } from '../../../../electron/shared/plan-contract';
+import { type SessionPlan } from '../../../../electron/shared/plan-contract';
 
 const create = (id: string, subject: string, entityId = 'sess-01'): PlanToolCall => ({
   entityId,
@@ -71,45 +71,33 @@ describe('createPlans', () => {
     expect(plans.get('sess-01')).toBeUndefined();
   });
 
-  it('drops an all-done plan after the grace period, and a new change cancels the drop', () => {
-    const plans = createPlans({ send: vi.fn() });
-
-    plans.onTool(create('1', 'A'));
-    plans.onTool(update('1', 'completed'));
-
-    expect(plans.get('sess-01')?.allDone).toBe(true);
-
-    vi.advanceTimersByTime(PLAN_GRACE_MS - 1);
-
-    expect(plans.get('sess-01')).toBeDefined();
-
-    // A new plan inside the grace window.
-    plans.onTool(create('2', 'B'));
-    vi.advanceTimersByTime(PLAN_GRACE_MS);
-
-    expect(plans.get('sess-01')?.tasks.map((t) => t.id)).toEqual(['2']);
-  });
-
-  it('publishes plan: null on drop', () => {
+  it('keeps an all-done plan with no timer, and a new plan replaces it (HIVE-229)', () => {
     const send = vi.fn();
     const plans = createPlans({ send });
 
     plans.onTool(create('1', 'A'));
     plans.onTool(update('1', 'completed'));
-    vi.advanceTimersByTime(PLAN_GRACE_MS);
+    vi.advanceTimersByTime(24 * 60 * 60 * 1000);
 
-    expect(plans.get('sess-01')).toBeUndefined();
-    expect(send).toHaveBeenLastCalledWith(CH.planChanged, { entityId: 'sess-01', plan: null });
+    expect(plans.get('sess-01')?.allDone).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(send).not.toHaveBeenCalledWith(CH.planChanged, { entityId: 'sess-01', plan: null });
+
+    plans.onTool(create('2', 'B'));
+
+    expect(plans.get('sess-01')?.tasks.map((t) => t.id)).toEqual(['2']);
   });
 
-  it('honours a custom grace period', () => {
-    const plans = createPlans({ send: vi.fn(), graceMs: 10 });
+  it('forget removes a finished plan and publishes plan: null', () => {
+    const send = vi.fn();
+    const plans = createPlans({ send });
 
     plans.onTool(create('1', 'A'));
     plans.onTool(update('1', 'completed'));
-    vi.advanceTimersByTime(10);
+    plans.forget('sess-01');
 
     expect(plans.get('sess-01')).toBeUndefined();
+    expect(send).toHaveBeenLastCalledWith(CH.planChanged, { entityId: 'sess-01', plan: null });
   });
 
   it('drops on demand, and a second drop publishes nothing', () => {
@@ -178,17 +166,6 @@ describe('createPlans', () => {
     plans.onTool(create('1', 'B', 'sess-02'));
 
     expect(plans.list().map((p) => p.entityId).sort()).toEqual(['sess-01', 'sess-02']);
-  });
-
-  it('dispose cancels pending drops', () => {
-    const plans = createPlans({ send: vi.fn() });
-
-    plans.onTool(create('1', 'A'));
-    plans.onTool(update('1', 'completed'));
-    plans.dispose();
-    vi.advanceTimersByTime(PLAN_GRACE_MS);
-
-    expect(plans.get('sess-01')?.allDone).toBe(true);
   });
 });
 
@@ -374,12 +351,11 @@ describe('createPlans: plan file and plan mode (HIVE-180)', () => {
     expect(plans.get('sess-01')).toMatchObject({ source: 'task-tools', file, fileAt: 42 });
   });
 
-  it('keeps the plan-file record across the all-done grace drop, and forget clears it (HIVE-201)', async () => {
+  it('keeps the plan-file record across the replacement of a finished plan, and forget clears it (HIVE-201)', async () => {
     const plans = createPlans({ send: vi.fn(), now: () => 7 });
     await plans.onTool(fileCall());
     void plans.onTool(create('1', 'A'));
     void plans.onTool(update('1', 'completed'));
-    vi.advanceTimersByTime(PLAN_GRACE_MS);
     void plans.onTool(create('2', 'B'));
     expect(plans.get('sess-01')?.file).toBe(file);
     plans.forget('sess-01');

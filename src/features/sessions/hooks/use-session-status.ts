@@ -203,8 +203,8 @@ export function useSessionStatus(): void {
     let live = true;
 
     /**
-     * Plans (HIVE-179). Main owns every rule — which source wins, the
-     * all-done grace, the drop on every ending — so this mirrors each change
+     * Plans (HIVE-179). Main owns every rule — which source wins, the drop
+     * on every ending — so this mirrors each change
      * and reads the whole set once on mount. Armed before the read, so a
      * change that lands while `list()` is in flight is merged rather than
      * lost. A failed read leaves the pushes to fill the slice in.

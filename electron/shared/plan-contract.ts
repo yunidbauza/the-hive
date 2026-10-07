@@ -38,7 +38,7 @@ export interface SessionPlan {
   entityId: string;
   source: PlanSource;
   tasks: PlanTask[];
-  /** No task left unfinished. Main drops the plan {@link PLAN_GRACE_MS} later. */
+  /** No task left unfinished. The plan stays until the session ends or a new plan replaces it (HIVE-229). */
   allDone: boolean;
   /** The session's last plan file, absolute (HIVE-180). Set on a plan-file plan, and carried onto a later plan from any source (HIVE-201). */
   file?: string;
@@ -57,6 +57,3 @@ export interface PlanChangedEvent {
 export interface PlansSnapshot {
   plans: SessionPlan[];
 }
-
-/** How long an all-done plan stays on screen before main drops it. */
-export const PLAN_GRACE_MS = 5_000;
