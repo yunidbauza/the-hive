@@ -70,7 +70,7 @@ describe('InboxDrawer (HIVE-198)', () => {
     expect(within(drawer).getAllByRole('button', { name: /^Open builder ›$/ })).toHaveLength(2);
     expect(within(drawer).getAllByRole('button', { name: 'yes' })).toHaveLength(2);
     expect(within(drawer).getByText('Sessions off stage')).toBeInTheDocument();
-    expect(within(drawer).getByRole('button', { name: 'Open ›' })).toBeInTheDocument();
+    expect(within(drawer).getByRole('button', { name: /^Open \S+, / })).toBeInTheDocument();
   });
 
   it('a review request is the plain notification card', () => {

@@ -56,13 +56,15 @@ describe('SessionNote (HIVE-198)', () => {
     expect(screen.getByText('the-hive · pick it up in the session')).toBeInTheDocument();
   });
 
-  it('a drawer row: what it wants and Open ›', async () => {
+  it('a drawer row: what it wants, and the whole row opens the session', async () => {
     const openEntity = vi.fn(() => true);
     useHiveStore.setState({ openEntity });
     render(<SessionNote notif={blocked()} variant="row" />);
     expect(screen.getByText('needs approval')).toBeInTheDocument();
     expect(screen.getByText('the-hive · answer it in the session')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Open ›' }));
+    expect(screen.queryByText('Open ›')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByText('answer it', { exact: false }));
     expect(openEntity).toHaveBeenCalledWith('sess-03');
+    expect(screen.getByRole('button', { name: 'Open sess-03, needs approval' })).toBeInTheDocument();
   });
 });

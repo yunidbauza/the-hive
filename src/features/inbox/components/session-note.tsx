@@ -1,4 +1,4 @@
-import { X } from '@phosphor-icons/react';
+import { CaretRight, X } from '@phosphor-icons/react';
 
 import { isSession } from '@/types/entity';
 import type { HiveNotification } from '@/types/notification';
@@ -29,8 +29,14 @@ export function SessionNote({ notif, variant, onFold }: SessionNoteProps) {
   const asked = notif.kind === 'session.blocked';
 
   if (variant === 'row') {
+    // The whole row opens the session; its caret shows only on hover or focus.
     return (
-      <div className="flex items-center gap-2.5 rounded-lg p-2 text-control">
+      <button
+        type="button"
+        onClick={open}
+        aria-label={`Open ${name}, ${notif.title}`}
+        className="group flex w-full items-center gap-2.5 rounded-lg p-2 text-left text-control hover:bg-hover focus-visible:bg-hover"
+      >
         <span aria-hidden className="size-2 shrink-0 rounded-full bg-amber" />
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate">
@@ -40,10 +46,12 @@ export function SessionNote({ notif, variant, onFold }: SessionNoteProps) {
             {`${project} · ${asked ? 'answer it in the session' : 'pick it up in the session'}`}
           </span>
         </span>
-        <button type="button" onClick={open} className="text-control text-brand hover:underline">
-          Open ›
-        </button>
-      </div>
+        <CaretRight
+          aria-hidden
+          size={14}
+          className="shrink-0 text-brand opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none"
+        />
+      </button>
     );
   }
 
