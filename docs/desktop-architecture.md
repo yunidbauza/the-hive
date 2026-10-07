@@ -154,6 +154,14 @@ rather than `node:crypto`.
 shown in the Sessions panel to a real directory on this machine. It is the only thing
 that makes a PTY's `cwd` real; everything else about a project is still fixtures.
 
+An unpackaged build (`pnpm desktop:dev`, `desktop:preview`) uses `~/.hive-dev`
+instead, the same split userData already makes, so a dev run beside the
+installed app never shares its ledger, agents or scheduler. `HIVE_CONFIG_PATH`
+overrides both. A fresh `~/.hive-dev` has no projects: copy `config.json`
+across to start from yours. Whichever folder it is, one app process holds it:
+`hive.lock` beside `config.json` (pid plus start time, taken over when that
+process is gone) refuses a second one at boot (HIVE-227).
+
 `~/.hive/skills/<name>/SKILL.md` is its sibling: the custom slash
 commands the app injects into every session it starts. Main reads that tree
 before **every** spawn — a readdir over a handful of small files — which is what

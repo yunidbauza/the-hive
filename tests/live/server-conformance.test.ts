@@ -203,7 +203,7 @@ import {
  * `~/.hive` tree, not only the config file: `ledger-contract.ts` derives the
  * ledger, agents and work directories from `dirname(configPath())`, so this
  * suite cannot reach a developer's ledger or agent state either.
- * {@link REAL_CONFIG_PATH} is asserted against on every scratch path this
+ * {@link REAL_CONFIG_PATHS} is asserted against on every scratch path this
  * file is about to write to, at the moment it is computed — not as a
  * formality, but because a mistake here writes a real device credential into
  * the person running this suite's actual config, which is exactly how the
@@ -237,15 +237,16 @@ const RUN = process.env['HIVE_LIVE_SERVER_PROOF'] === '1';
 
 const execFileAsync = promisify(execFile);
 
-/** The one path this file must never write to. See the header comment. */
-const REAL_CONFIG_PATH = join(homedir(), '.hive', 'config.json');
+/** The paths this file must never write to: the real workspace configs. */
+const REAL_CONFIG_PATHS = [
+  join(homedir(), '.hive', 'config.json'),
+  join(homedir(), '.hive-dev', 'config.json'),
+];
 
-/** Refuses to proceed if `path` is the developer's real config file. */
+/** Refuses to proceed if `path` is one of the developer's real config files. */
 function assertScratchPath(path: string): void {
-  if (path === REAL_CONFIG_PATH) {
-    throw new Error(
-      `refusing to run: this suite would write to ${REAL_CONFIG_PATH}, the real workspace config`,
-    );
+  if (REAL_CONFIG_PATHS.includes(path)) {
+    throw new Error(`refusing to run: this suite would write to ${path}, a real workspace config`);
   }
 }
 
@@ -500,7 +501,7 @@ interface ProcessRecord {
 
 const processLog: ProcessRecord[] = [];
 
-/** Every scratch `config.json` path this run wrote to — part of the evidence, and a second, independent confirmation that none of them is {@link REAL_CONFIG_PATH}. */
+/** Every scratch `config.json` path this run wrote to — part of the evidence, and a second, independent confirmation that none of them is one of {@link REAL_CONFIG_PATHS}. */
 const scratchConfigPaths: string[] = [];
 
 /**

@@ -124,8 +124,10 @@ open* asks, and an ask that's aged out no longer needs one.
 
 `ledger.answer` accepts **either** form in its `thread` field —
 `resolveRef` (`electron/shared/ledger-derive.ts`) checks for an exact id match
-first, then a ref match — and always stores the resolved canonical id, never
-the ref, in the written entry's `thread`. That's what keeps `thread()` (the
+first, then a ref match, and refuses a handle that matches more than one entry
+as ambiguous rather than taking the first (HIVE-227) — and always stores the
+resolved canonical id, never the ref, in the written entry's `thread`. That's
+what keeps `thread()` (the
 function that reconstructs a whole conversation) a simple `id === x || thread
 === x` filter: if refs could also appear in a stored `thread`, every reader of
 history would need to know how to resolve them too, forever, even after the
