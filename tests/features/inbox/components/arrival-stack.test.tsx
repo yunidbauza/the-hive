@@ -257,10 +257,10 @@ describe('ArrivalStack (HIVE-198, HIVE-228)', () => {
   });
 
   it('announcement reads as the ticket words it', () => {
-    expect(announcement(notif({ kind: 'agent.permission', title: 'Run the ledger tests?' }), 'builder')).toBe(
+    expect(announcement(notif({ kind: 'agent.permission', title: 'Run the ledger tests?', action: { type: 'ask', thread: 't1' } }), 'builder')).toBe(
       'builder wants to run a command: Run the ledger tests?',
     );
-    expect(announcement(notif({ kind: 'agent.ask', title: 'Which repo?' }), 'pr-patrol')).toBe(
+    expect(announcement(notif({ kind: 'agent.ask', title: 'Which repo?', action: { type: 'ask', thread: 't2' } }), 'pr-patrol')).toBe(
       'pr-patrol asks: Which repo?',
     );
     expect(announcement(notif({ kind: 'session.blocked', title: 'asked a question' }), 'inbox-redesign')).toBe(
@@ -269,5 +269,17 @@ describe('ArrivalStack (HIVE-198, HIVE-228)', () => {
     expect(announcement(notif({ kind: 'session.idle', title: 'is yours again' }), 'inbox-redesign')).toBe(
       'inbox-redesign is yours again',
     );
+  });
+
+  it('a card nobody asked reads its own words, with no empty asker (HIVE-231)', () => {
+    const ready = notif({
+      kind: 'app.update_ready',
+      title: 'Update ready — 1.2.0',
+      body: 'Click to restart Hive TTY on the new version.',
+      action: { type: 'update.install' },
+    });
+    expect(announcement(ready, '')).toBe('Update ready — 1.2.0. Click to restart Hive TTY on the new version.');
+    const review = notif({ kind: 'pr.review_requested', title: 'Review #12', body: '', action: { type: 'none' } });
+    expect(announcement(review, '')).toBe('Review #12');
   });
 });

@@ -15,11 +15,16 @@ import { SessionNote } from './session-note';
 /** How long an answered card takes to diffuse out before the next one rises (HIVE-228). */
 export const CARD_OUT_MS = 280;
 
-/** What the corner's polite live region says for the newest arrival. */
-export const announcement = (row: HiveNotification, asker: string): string =>
-  isSessionSummons(row)
-    ? `${asker} ${row.title}`
-    : `${asker} ${row.kind === 'agent.permission' ? 'wants to run a command' : 'asks'}: ${row.title}`;
+/**
+ * What the corner's polite live region says for the newest arrival. A card
+ * nobody asked (an update ready, a review request) reads its own words: there
+ * is no asker to name (HIVE-231).
+ */
+export const announcement = (row: HiveNotification, asker: string): string => {
+  if (isSessionSummons(row)) return `${asker} ${row.title}`;
+  if (row.action.type !== 'ask') return row.body === '' ? row.title : `${row.title}. ${row.body}`;
+  return `${asker} ${row.kind === 'agent.permission' ? 'wants to run a command' : 'asks'}: ${row.title}`;
+};
 
 /**
  * Everything that needs you, as the stack deals it: asks and sessions off stage
