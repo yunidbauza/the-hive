@@ -12,6 +12,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const appMock = { isPackaged: false };
 vi.mock('electron', () => ({ app: appMock }));
+// `tests/setup.ts` mocks the seed for every other spec (HIVE-230).
+vi.unmock('../../../../electron/main/seed');
 
 const { seedShippedIntoHive } = await import('../../../../electron/main/seed');
 
