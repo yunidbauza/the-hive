@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { cn } from '@/lib/utils';
 import type { HiveNotification } from '@/types/notification';
@@ -35,23 +35,25 @@ export function useStackCards(onStage: string | null): HiveNotification[] {
  * The card that was on top until it left the queue (answered, expired, opened), held for
  * {@link CARD_OUT_MS} so it can diffuse out. A card hidden by ✕ never leaves the queue, so
  * it never comes back through here. Nothing is held under reduced motion.
+ *
+ * Derived while rendering, not in an effect: an effect runs after the commit, so the next
+ * card would be put in the DOM for a frame before the leaving one swapped back over it.
  */
 function useOutgoing(cards: readonly HiveNotification[], reduced: boolean): HiveNotification | null {
   const [out, setOut] = useState<HiveNotification | null>(null);
-  const top = useRef(cards[0]);
-  // Held across renders, not per effect run: a queue change mid-beat must not strand `out`.
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [lastTop, setLastTop] = useState(cards[0]);
+  const top = cards[0];
+  if (top?.id !== lastTop?.id) {
+    setLastTop(top);
+    if (!reduced && lastTop !== undefined && !cards.some((row) => row.id === lastTop.id)) setOut(lastTop);
+  }
 
+  // Keyed on the leaving card alone, so a queue change mid-beat never restarts or strands it.
   useEffect(() => {
-    const was = top.current;
-    top.current = cards[0];
-    if (reduced || was === undefined || cards.some((row) => row.id === was.id)) return;
-    clearTimeout(timer.current);
-    setOut(was);
-    timer.current = setTimeout(() => setOut(null), CARD_OUT_MS);
-  }, [cards, reduced]);
-
-  useEffect(() => () => clearTimeout(timer.current), []);
+    if (out === null) return;
+    const timer = setTimeout(() => setOut(null), CARD_OUT_MS);
+    return () => clearTimeout(timer);
+  }, [out]);
 
   return out;
 }
@@ -74,7 +76,8 @@ interface ArrivalStackProps {
  *
  * Up while `stackUp` holds: an arrival or the pill raises it, ✕ or the drawer
  * takes it down, and the rows stay in the queue either way. Answering the top
- * card resolves it: it diffuses out and the next rises in its place.
+ * card resolves it: it diffuses out and the next rises in its place. Answering
+ * the last one lowers it, so a quiet arrival after that only pulses the pill.
  *
  * Not drawn while Settings is open: it rises again when Settings closes.
  */
@@ -85,6 +88,12 @@ export function ArrivalStack({ onStage }: ArrivalStackProps) {
   const { hideStack } = useInboxActions();
   const reduced = useReducedMotion();
   const out = useOutgoing(cards, reduced);
+
+  // An emptied queue lowers the stack, so the next quiet arrival pulses the pill instead of drawing it.
+  const emptied = stackUp && cards.length === 0 && out === null;
+  useEffect(() => {
+    if (emptied) hideStack();
+  }, [emptied, hideStack]);
 
   const shown = out ?? cards[0];
   if (!stackUp || settings || shown === undefined) return null;

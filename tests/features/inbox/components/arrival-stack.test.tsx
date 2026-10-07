@@ -144,6 +144,41 @@ describe('ArrivalStack (HIVE-198, HIVE-228)', () => {
     expect(screen.queryByTestId('arrival-stack')).toBeNull();
   });
 
+  it('the next card never paints before the answered one has left: no one-frame swap', () => {
+    useUiStore.getState().pushArrival('a3', false);
+    render(<ArrivalStack onStage={null} />);
+    const stack = screen.getByTestId('arrival-stack');
+    // Every card ever inserted, whether or not a later commit in the same act took it out again.
+    const seen: (string | null)[] = [];
+    const collect = (records: MutationRecord[]) =>
+      records.forEach((record) =>
+        record.addedNodes.forEach((node) => {
+          if (node instanceof HTMLElement) seen.push(node.querySelector('article')?.getAttribute('data-notification') ?? null);
+        }),
+      );
+    const observer = new MutationObserver(collect);
+    observer.observe(stack, { childList: true, subtree: true });
+    answer('a3');
+    collect(observer.takeRecords());
+    observer.disconnect();
+    expect(seen).not.toContain('a2');
+    expect(top()).toBe('a3');
+  });
+
+  it('an emptied queue lowers the stack, so a later quiet arrival only pulses', () => {
+    motion.reduced = true;
+    only(askRow('a1', 0));
+    useUiStore.getState().pushArrival('a1', false);
+    render(<ArrivalStack onStage={null} />);
+    answer('a1');
+    expect(useUiStore.getState().stackUp).toBe(false);
+    act(() => {
+      useHiveStore.getState().pushNotif(askRow('a4', 3));
+      useUiStore.getState().pushArrival('a4', true);
+    });
+    expect(screen.queryByTestId('arrival-stack')).toBeNull();
+  });
+
   it('under reduced motion the next card takes the place at once', () => {
     motion.reduced = true;
     useUiStore.getState().pushArrival('a3', false);

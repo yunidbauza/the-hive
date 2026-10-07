@@ -51,7 +51,8 @@ the picker from re-rendering thirteen live terminals.
   in Summons either way; `openInboxDrawer(thread?)` hides the stack and opens;
   `closeInboxDrawer()`. What the stack deals is `useSummons(onStage)` whole,
   newest first (`useStackCards`), so an answered ask or the on-stage session
-  drop out without anyone re-checking. Nothing folds it on a timer.
+  drop out without anyone re-checking. Nothing folds it on a timer; an emptied
+  queue lowers it (the stack calls `hideStack`), so a later quiet arrival only pulses.
   `consoleShown` (`false`) is the overmind's transcript in the dock,
   flipped by `toggleConsole`; folded, the stage hides the transcript and the
   table takes the page.
