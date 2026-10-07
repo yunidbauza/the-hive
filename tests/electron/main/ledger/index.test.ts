@@ -42,11 +42,12 @@ describe('createLedger', () => {
       join(dir, '2026-08-28.jsonl'),
       `${ask('20260828-141529-0001', 'sess-a')}\n${ask('20260828-141529-0002', 'sess-b')}\n`,
     );
-    const twice = createLedger({ dir, now: () => clock, knowsParty: () => true });
+    const twice = createLedger({ dir, now: () => clock, knowsParty: (id) => id !== 'sess-gone' });
     const refusal = { ok: false, status: 400, reason: 'a5 is ambiguous: use the full id' };
 
     expect(twice.answer({ thread: 'a5', body: 'yes' }, 'sess-a')).toMatchObject(refusal);
     expect(twice.append({ from: 'builder', kind: 'done', thread: 'a5', body: 'never mind' })).toMatchObject(refusal);
+    expect(twice.append({ from: 'builder', to: 'sess-gone', kind: 'done', thread: 'a5', body: 'x' })).toMatchObject(refusal);
     expect(twice.read({}).entries).toHaveLength(2);
 
     expect(twice.answer({ thread: '20260828-141529-0001', body: 'yes' }, 'sess-a')).toMatchObject({ ok: true });

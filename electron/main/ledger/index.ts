@@ -130,6 +130,11 @@ export function createLedger(options: LedgerOptions): Ledger {
         `knowsParty` to say yes, same as an unthreaded one.
       */
       if (request.to !== undefined && !options.knowsParty(request.to)) {
+        // An ambiguous thread is refused as that, not as the unknown party it
+        // would otherwise look like below (HIVE-227).
+        if (request.thread !== undefined && resolveRef(store.all(), request.thread).kind === 'ambiguous') {
+          return refuse(400, ambiguous(request.thread));
+        }
         const ask = askOfThread(request.thread);
         const trusted = ask !== undefined && (request.to === ask.from || request.to === ask.to);
         if (!trusted) {

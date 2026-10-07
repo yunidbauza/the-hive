@@ -730,6 +730,12 @@ export function matches(entry: LedgerEntry, query: LedgerReadQuery): boolean {
   return true;
 }
 
+/** What a handle names: one entry, none, or more than one (HIVE-227). */
+export type RefResolution =
+  | { kind: 'found'; id: string }
+  | { kind: 'none' }
+  | { kind: 'ambiguous' };
+
 /**
  * A short ref, or a canonical id, to a canonical id.
  *
@@ -741,11 +747,6 @@ export function matches(entry: LedgerEntry, query: LedgerReadQuery): boolean {
  * processes on one hive folder each minted `a383`..`a387`, and "the first in
  * load order" sent answers to the wrong thread. An exact id outranks a ref.
  */
-export type RefResolution =
-  | { kind: 'found'; id: string }
-  | { kind: 'none' }
-  | { kind: 'ambiguous' };
-
 export function resolveRef(entries: readonly LedgerEntry[], refOrId: string): RefResolution {
   let matches = entries.filter((entry) => entry.id === refOrId);
   if (matches.length === 0) {
