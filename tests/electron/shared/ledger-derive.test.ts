@@ -483,20 +483,35 @@ describe('resolveRef', () => {
   const entries = [entry({ id: '20260828-100000-0001', kind: 'ask', ref: 'a7' })];
 
   it('resolves a short ref to the canonical id', () => {
-    expect(resolveRef(entries, 'a7')).toBe('20260828-100000-0001');
+    expect(resolveRef(entries, 'a7')).toEqual({ kind: 'found', id: '20260828-100000-0001' });
   });
 
   it('passes a canonical id straight through', () => {
-    expect(resolveRef(entries, '20260828-100000-0001')).toBe('20260828-100000-0001');
+    expect(resolveRef(entries, '20260828-100000-0001')).toEqual({ kind: 'found', id: '20260828-100000-0001' });
   });
 
-  it('returns undefined for anything it does not know', () => {
-    expect(resolveRef(entries, 'a9')).toBeUndefined();
+  it('says none for anything it does not know', () => {
+    expect(resolveRef(entries, 'a9')).toEqual({ kind: 'none' });
   });
 
   it('resolves a ref in any case, since A7 is the same handle to whoever types it', () => {
-    expect(resolveRef(entries, 'A7')).toBe('20260828-100000-0001');
-    expect(resolveRef([entry({ id: '20260828-100000-0002', kind: 'ask', ref: 'A8' })], 'a8')).toBe('20260828-100000-0002');
+    expect(resolveRef(entries, 'A7')).toEqual({ kind: 'found', id: '20260828-100000-0001' });
+    expect(resolveRef([entry({ id: '20260828-100000-0002', kind: 'ask', ref: 'A8' })], 'a8')).toEqual({ kind: 'found', id: '20260828-100000-0002' });
+  });
+
+  it('refuses a ref two writers both minted (HIVE-227)', () => {
+    const twice = [...entries, entry({ id: '20260828-100500-0001', kind: 'ask', ref: 'A7' })];
+    expect(resolveRef(twice, 'a7')).toEqual({ kind: 'ambiguous' });
+  });
+
+  it('refuses an id written twice (HIVE-227)', () => {
+    const twice = [...entries, entry({ id: '20260828-100000-0001', kind: 'post' })];
+    expect(resolveRef(twice, '20260828-100000-0001')).toEqual({ kind: 'ambiguous' });
+  });
+
+  it('lets an exact id win over a ref that happens to equal it', () => {
+    const odd = [...entries, entry({ id: 'x', kind: 'ask', ref: '20260828-100000-0001' })];
+    expect(resolveRef(odd, '20260828-100000-0001')).toEqual({ kind: 'found', id: '20260828-100000-0001' });
   });
 });
 

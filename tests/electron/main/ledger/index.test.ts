@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -33,6 +33,23 @@ describe('createLedger', () => {
 
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('refuses a ref two writers both minted, and still takes the full id (HIVE-227)', () => {
+    const ask = (id: string, to: string): string =>
+      JSON.stringify({ id, ts: AT - 1000, from: 'builder', to, kind: 'ask', ref: 'a5', body: 'which?' });
+    writeFileSync(
+      join(dir, '2026-08-28.jsonl'),
+      `${ask('20260828-141529-0001', 'sess-a')}\n${ask('20260828-141529-0002', 'sess-b')}\n`,
+    );
+    const twice = createLedger({ dir, now: () => clock, knowsParty: () => true });
+    const refusal = { ok: false, status: 400, reason: 'a5 is ambiguous: use the full id' };
+
+    expect(twice.answer({ thread: 'a5', body: 'yes' }, 'sess-a')).toMatchObject(refusal);
+    expect(twice.append({ from: 'builder', kind: 'done', thread: 'a5', body: 'never mind' })).toMatchObject(refusal);
+    expect(twice.read({}).entries).toHaveLength(2);
+
+    expect(twice.answer({ thread: '20260828-141529-0001', body: 'yes' }, 'sess-a')).toMatchObject({ ok: true });
   });
 
   it('re-addresses an ask to a session that is gone to the overmind, naming who it was for (HIVE-167)', () => {

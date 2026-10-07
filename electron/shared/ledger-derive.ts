@@ -736,19 +736,26 @@ export function matches(entry: LedgerEntry, query: LedgerReadQuery): boolean {
  * Accepting both is what lets one call site serve a human typing `a12` in the
  * console and a model echoing back the id it read. A ref matches in any case:
  * refs are minted lowercase, but `A12` is the same handle to whoever types it.
+ *
+ * More than one match is `ambiguous`, never the first one (HIVE-227): two
+ * processes on one hive folder each minted `a383`..`a387`, and "the first in
+ * load order" sent answers to the wrong thread. An exact id outranks a ref.
  */
-export function resolveRef(
-  entries: readonly LedgerEntry[],
-  refOrId: string,
-): string | undefined {
-  for (const entry of entries) {
-    if (entry.id === refOrId) return entry.id;
+export type RefResolution =
+  | { kind: 'found'; id: string }
+  | { kind: 'none' }
+  | { kind: 'ambiguous' };
+
+export function resolveRef(entries: readonly LedgerEntry[], refOrId: string): RefResolution {
+  let matches = entries.filter((entry) => entry.id === refOrId);
+  if (matches.length === 0) {
+    const ref = refOrId.toLowerCase();
+    matches = entries.filter((entry) => entry.ref?.toLowerCase() === ref);
   }
-  const ref = refOrId.toLowerCase();
-  for (const entry of entries) {
-    if (entry.ref?.toLowerCase() === ref) return entry.id;
-  }
-  return undefined;
+  const [only, second] = matches;
+  if (only === undefined) return { kind: 'none' };
+  if (second !== undefined) return { kind: 'ambiguous' };
+  return { kind: 'found', id: only.id };
 }
 
 /**

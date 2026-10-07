@@ -1005,8 +1005,9 @@ export function createReceiver(options: ReceiverOptions): Receiver {
         entry.to === caller &&
         (entry.kind === 'ask' || entry.kind === 'answer' || entry.kind === 'post'),
     );
-    const id = resolveRef(mine, token);
-    const entry = mine.find((candidate) => candidate.id === id);
+    const resolved = resolveRef(mine, token);
+    if (resolved.kind !== 'found') return undefined;
+    const entry = mine.find((candidate) => candidate.id === resolved.id);
     if (entry === undefined) return undefined;
     if (entry.kind === 'post') return entryContext(entry);
     if (entry.kind === 'ask') {

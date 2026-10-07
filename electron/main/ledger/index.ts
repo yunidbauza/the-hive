@@ -64,6 +64,9 @@ const refuse = (status: number, reason: string): LedgerResult => ({
   reason,
 });
 
+/** Two entries answer to one handle (HIVE-227): only the full id is safe. */
+const ambiguous = (thread: string): string => `${thread} is ambiguous: use the full id`;
+
 const describeCause = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
@@ -79,9 +82,9 @@ export function createLedger(options: LedgerOptions): Ledger {
   const askOfThread = (thread: string | undefined): LedgerEntry | undefined => {
     if (thread === undefined) return undefined;
     const all = store.all();
-    const canonical = resolveRef(all, thread);
-    if (canonical === undefined) return undefined;
-    return all.find((entry) => entry.id === canonical && entry.kind === 'ask');
+    const resolved = resolveRef(all, thread);
+    if (resolved.kind !== 'found') return undefined;
+    return all.find((entry) => entry.id === resolved.id && entry.kind === 'ask');
   };
 
   const ledger: Ledger = {
@@ -160,10 +163,10 @@ export function createLedger(options: LedgerOptions): Ledger {
       let to = request.to;
       if (thread !== undefined) {
         const all = store.all();
-        const canonical = resolveRef(all, thread);
-        if (canonical === undefined) {
-          return refuse(400, `no such thread: ${thread}`);
-        }
+        const resolved = resolveRef(all, thread);
+        if (resolved.kind === 'none') return refuse(400, `no such thread: ${thread}`);
+        if (resolved.kind === 'ambiguous') return refuse(400, ambiguous(thread));
+        const canonical = resolved.id;
         /*
           The ask this thread names, if it names one.
 
@@ -428,10 +431,10 @@ export function createLedger(options: LedgerOptions): Ledger {
         resolved it to.
       */
       const all = store.all();
-      const canonical = resolveRef(all, request.thread);
-      if (canonical === undefined) {
-        return refuse(400, `no such thread: ${request.thread}`);
-      }
+      const resolved = resolveRef(all, request.thread);
+      if (resolved.kind === 'none') return refuse(400, `no such thread: ${request.thread}`);
+      if (resolved.kind === 'ambiguous') return refuse(400, ambiguous(request.thread));
+      const canonical = resolved.id;
       const ask = openAsks(all, now()).find((open) => open.id === canonical);
       if (ask === undefined) {
         return refuse(400, `thread is not open: ${request.thread}`);
