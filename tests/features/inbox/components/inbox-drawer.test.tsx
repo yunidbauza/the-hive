@@ -54,6 +54,13 @@ describe('InboxDrawer (HIVE-198)', () => {
     expect(screen.getByRole('dialog', { name: 'Needs you' })).toHaveClass('[-webkit-app-region:no-drag]');
   });
 
+  it('casts its shadow left, onto the stage it covers (HIVE-228)', () => {
+    // happy-dom resolves no box-shadow, so the token's class is the witness; its value lives in tokens.css.
+    useUiStore.getState().openInboxDrawer();
+    render(<InboxDrawer onStage={null} />);
+    expect(screen.getByRole('dialog', { name: 'Needs you' })).toHaveClass('shadow-drawer');
+  });
+
   it('renders in light on tokens alone (HIVE-210)', () => {
     useUiStore.getState().openInboxDrawer();
     inLight();

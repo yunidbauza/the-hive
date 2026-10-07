@@ -99,18 +99,21 @@ input.
   always on it. Turning a kind **Off** in Settings › Notifications keeps it off
   the pill too. It is
   absent at zero, and reads **99+** past ninety-nine; a screen reader still
-  hears the exact number.
-- **Cards.** A new ask rises above the pill as an answerable card. It stays 5
-  seconds, then folds into the pill. Pointing at it, focusing in it, or
-  answering it holds it up; ✕ folds it at once. Several at once stack, the
-  newest on top, under "N arrived just now · newest first". Each arrival
-  restarts the 5 seconds. A card never takes the keyboard.
+  hears the exact number. With one thing waiting it reads **1 needs you**; with
+  more, **5 need you | Open all**. The count shows or hides the cards over it;
+  **Open all** opens the drawer.
+- **Cards.** A new ask rises above the pill as an answerable card, and stays
+  until you deal with it. Everything waiting stacks under it, the newest on
+  top. Answering the top card resolves it: it fades out and the next one
+  rises in its place. ✕ folds the cards into the pill without answering
+  anything, so the count stays; the count brings them back. A card never takes
+  the keyboard.
 - **Notes.** A session off stage that asks a question, or becomes yours again, rises as a note:
-  **Open the session** takes you there, **Later** folds it.
+  **Open the session** takes you there, **Later** folds the cards into the pill.
 - **The quiet rules.** With the keyboard in a terminal, nothing rises; the
   pill pulses once instead. With Settings open, arrivals wait and rise when it
   closes. The session on stage never shows.
-- **The drawer.** The pill opens a 400px panel on the right, "Needs you", with
+- **The drawer.** **Open all** opens a 400px panel on the right, "Needs you", with
   every ask whole and the sessions off stage under it. Esc or ✕ closes it.
   Clicking an ask's desktop notification opens the drawer on that ask.
 - **Yours again.** A session in the Sessions panel that finished and is

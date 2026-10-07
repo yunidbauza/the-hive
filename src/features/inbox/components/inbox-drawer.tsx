@@ -72,7 +72,7 @@ export function InboxDrawer({ onStage }: InboxDrawerProps) {
       aria-modal="false"
       aria-label="Needs you"
       tabIndex={-1}
-      className="fixed inset-y-0 right-0 z-40 flex w-[400px] flex-col gap-2.5 overflow-y-auto border-l border-border bg-panel px-3.5 py-3 shadow-2xl outline-none [-webkit-app-region:no-drag]"
+      className="fixed inset-y-0 right-0 z-40 flex w-[400px] flex-col gap-2.5 overflow-y-auto border-l border-border bg-panel px-3.5 py-3 shadow-drawer outline-none [-webkit-app-region:no-drag]"
     >
       <div className="flex items-baseline gap-2.5 px-0.5 pb-1.5 text-control">
         <b className="text-ui-lg text-ink">Needs you</b>

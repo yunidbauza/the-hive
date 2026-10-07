@@ -153,8 +153,8 @@ test('guide shots', async ({}, testInfo) => {
   await expect(pill).toBeVisible();
   await page.screenshot({ path: HERO });
 
-  // 05: the drawer with both cards.
-  await pill.click();
+  // 05: the drawer with both cards, which the split pill's Open all opens (HIVE-228).
+  await page.getByRole('button', { name: 'Open all' }).click();
   const drawer = page.getByRole('dialog', { name: 'Needs you' });
   await expect(drawer.getByText('Deploy nova-web to staging?')).toBeVisible();
   await shot(page, '05-inbox-asks.png');

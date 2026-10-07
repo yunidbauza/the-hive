@@ -789,47 +789,51 @@ describe('the Checks tab selection (HIVE-206)', () => {
   });
 });
 
-describe('ui-store — the inbox arrival queue (HIVE-198)', () => {
+describe('ui-store — the inbox stack (HIVE-198, HIVE-228)', () => {
   beforeEach(() => useUiStore.getState().reset());
 
-  it('starts empty with the drawer shut', () => {
+  it('starts down with the drawer shut', () => {
     const s = useUiStore.getState();
-    expect(s.arrivals).toEqual([]);
+    expect(s.stackUp).toBe(false);
     expect(s.arrivalPulse).toBeNull();
     expect(s.inboxDrawer).toEqual({ open: false, thread: null });
   });
 
-  it('pushes newest first and never twice', () => {
-    const { pushArrival } = useUiStore.getState();
-    pushArrival('a', false);
-    pushArrival('b', false);
-    pushArrival('a', false);
-    expect(useUiStore.getState().arrivals).toEqual(['a', 'b']);
+  it('an arrival raises the stack', () => {
+    useUiStore.getState().pushArrival('a', false);
+    expect(useUiStore.getState().stackUp).toBe(true);
   });
 
   it('a quiet arrival pulses instead of rising', () => {
     useUiStore.getState().pushArrival('a', true);
-    expect(useUiStore.getState().arrivals).toEqual([]);
+    expect(useUiStore.getState().stackUp).toBe(false);
     expect(useUiStore.getState().arrivalPulse).toBe('a');
   });
 
   it('nothing rises while the drawer is open', () => {
     useUiStore.getState().openInboxDrawer();
     useUiStore.getState().pushArrival('a', false);
-    expect(useUiStore.getState().arrivals).toEqual([]);
+    expect(useUiStore.getState().stackUp).toBe(false);
   });
 
-  it('folds the queue', () => {
+  it('✕ hides the stack', () => {
     useUiStore.getState().pushArrival('a', false);
-    useUiStore.getState().foldArrivals();
-    expect(useUiStore.getState().arrivals).toEqual([]);
+    useUiStore.getState().hideStack();
+    expect(useUiStore.getState().stackUp).toBe(false);
   });
 
-  it('opens the drawer on a thread, folding what was up, and closes it', () => {
+  it('the pill toggles the stack', () => {
+    useUiStore.getState().toggleStack();
+    expect(useUiStore.getState().stackUp).toBe(true);
+    useUiStore.getState().toggleStack();
+    expect(useUiStore.getState().stackUp).toBe(false);
+  });
+
+  it('opens the drawer on a thread, hiding the stack, and closes it', () => {
     useUiStore.getState().pushArrival('a', false);
     useUiStore.getState().openInboxDrawer('t1');
     expect(useUiStore.getState().inboxDrawer).toEqual({ open: true, thread: 't1' });
-    expect(useUiStore.getState().arrivals).toEqual([]);
+    expect(useUiStore.getState().stackUp).toBe(false);
     useUiStore.getState().closeInboxDrawer();
     expect(useUiStore.getState().inboxDrawer).toEqual({ open: false, thread: null });
   });

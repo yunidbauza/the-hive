@@ -171,6 +171,27 @@ body {
   }
 }
 
+/* An answered card leaving the inbox stack (HIVE-228): it fades, drifts right and blurs. */
+@keyframes ccdiffuse {
+  to {
+    opacity: 0;
+    transform: translateX(48px) scale(0.98);
+    filter: blur(6px);
+  }
+}
+
+/* The next card in the inbox stack lifting off the sliver into the top place (HIVE-228). */
+@keyframes ccrise {
+  from {
+    opacity: 0.4;
+    transform: translateY(12px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* The Hatchery's panel arriving when the first PR appears (HIVE-205, R4). */
 @keyframes ccslidein {
   from {

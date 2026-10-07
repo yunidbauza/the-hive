@@ -445,4 +445,16 @@ body[data-theme='light'] {
   --animate-ccslideout: ccslideout 220ms cubic-bezier(0.4, 0, 0.6, 1) forwards;
   /* The Hatchery's panel sliding in on the quiet → listed change (HIVE-205). */
   --animate-ccslidein: ccslidein 220ms cubic-bezier(0.2, 0, 0, 1) both;
+  /*
+    An answered card leaving the inbox stack, and the next one rising off the
+    sliver in its place (HIVE-228). The 280ms is `CARD_OUT_MS` in
+    `arrival-stack.tsx`, which holds the card for exactly that long.
+  */
+  --animate-ccdiffuse: ccdiffuse 280ms cubic-bezier(0.4, 0, 0.6, 1) forwards;
+  --animate-ccrise: ccrise 260ms cubic-bezier(0.2, 0, 0, 1) both;
+  /*
+    The Inbox drawer over the stage (HIVE-228): cast left, onto the stage it
+    covers. A plain drop shadow falls under the panel and is lost on the dark stage.
+  */
+  --shadow-drawer: -28px 0 64px -8px rgb(0 0 0 / 0.5), -1px 0 0 rgb(0 0 0 / 0.35);
 }

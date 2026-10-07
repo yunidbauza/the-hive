@@ -339,20 +339,25 @@ interface UiState {
   /** Conversation, scrolled to `key` (`c-<url>`, `r-<url>`, `e-<ledger id>`); `everything` for a Hive event (HIVE-208). */
   focusPrEvent: (key: string, everything: boolean) => void;
   clearPrFocus: () => void;
-  /** Notification ids up as a card or note, newest first (HIVE-198). Not persisted. */
-  arrivals: string[];
+  /**
+   * The arrival stack is up over the pill (HIVE-198, HIVE-228): raised by a loud arrival or
+   * the pill, down on ✕ or the drawer. It stays until one of those, never on a timer. Not persisted.
+   */
+  stackUp: boolean;
   /** The latest arrival that came in while the keyboard was in a terminal: the pill pulses once for it. */
   arrivalPulse: string | null;
   /** The Inbox drawer, and the ask thread it was opened on. */
   inboxDrawer: { open: boolean; thread: string | null };
   /**
    * A live Summons arrival (HIVE-198). `quiet` (the keyboard is in a terminal) only pulses
-   * the pill; otherwise it rises, deduped, newest first. Nothing rises over an open drawer.
+   * the pill; otherwise it raises the stack. Nothing rises over an open drawer.
    */
   pushArrival: (id: string, quiet: boolean) => void;
-  /** Everything up folds into the pill. The rows stay in the Summons queue. */
-  foldArrivals: () => void;
-  /** Open the drawer, on an ask's thread when one is named, folding what was up. */
+  /** ✕ on a card: the stack folds into the pill. The rows stay in the Summons queue. */
+  hideStack: () => void;
+  /** The pill's count: show the whole queue as the stack, or hide it. */
+  toggleStack: () => void;
+  /** Open the drawer, on an ask's thread when one is named, hiding the stack. */
   openInboxDrawer: (thread?: string) => void;
   closeInboxDrawer: () => void;
   /**
@@ -421,7 +426,7 @@ const initialUiState = {
   prFileFilter: '',
   prDiffView: 'unified' as PrDiffView,
   prFocus: null as string | null,
-  arrivals: [] as string[],
+  stackUp: false,
   arrivalPulse: null as string | null,
   inboxDrawer: { open: false, thread: null } as { open: boolean; thread: string | null },
   answeredHere: new Set<string>() as ReadonlySet<string>,
@@ -729,11 +734,11 @@ export const useUiStore = create<UiState>()((set) => ({
   pushArrival: (id, quiet) =>
     set((state) => {
       if (quiet) return { arrivalPulse: id };
-      if (state.inboxDrawer.open) return {};
-      return { arrivals: [id, ...state.arrivals.filter((x) => x !== id)] };
+      return state.inboxDrawer.open ? {} : { stackUp: true };
     }),
-  foldArrivals: () => set({ arrivals: [] }),
-  openInboxDrawer: (thread) => set({ inboxDrawer: { open: true, thread: thread ?? null }, arrivals: [] }),
+  hideStack: () => set({ stackUp: false }),
+  toggleStack: () => set((state) => ({ stackUp: !state.stackUp })),
+  openInboxDrawer: (thread) => set({ inboxDrawer: { open: true, thread: thread ?? null }, stackUp: false }),
   closeInboxDrawer: () => set({ inboxDrawer: { open: false, thread: null } }),
   markAnsweredHere: (thread) =>
     set((state) => (state.answeredHere.has(thread) ? {} : { answeredHere: new Set([...state.answeredHere, thread]) })),
@@ -769,7 +774,8 @@ const settingsActionsSelector = (state: UiState) => ({
 
 const inboxActionsSelector = (state: UiState) => ({
   pushArrival: state.pushArrival,
-  foldArrivals: state.foldArrivals,
+  hideStack: state.hideStack,
+  toggleStack: state.toggleStack,
   openInboxDrawer: state.openInboxDrawer,
   closeInboxDrawer: state.closeInboxDrawer,
 });
@@ -938,8 +944,8 @@ export const useOverlayOpen = () => useUiStore((state) => state.picker || state.
 export const useWhatsNewOpen = () => useUiStore((state) => state.whatsNewOpen);
 export const useSetWhatsNewOpen = () => useUiStore((state) => state.setWhatsNewOpen);
 
-/** The inbox arrival queue, newest first (HIVE-198). */
-export const useArrivals = () => useUiStore((state) => state.arrivals);
+/** Whether the arrival stack is up over the pill (HIVE-228). */
+export const useStackUp = () => useUiStore((state) => state.stackUp);
 
 /** The latest quiet arrival, which the pill pulses once for. */
 export const useArrivalPulse = () => useUiStore((state) => state.arrivalPulse);

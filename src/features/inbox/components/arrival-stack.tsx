@@ -1,22 +1,19 @@
-import { useEffect, useMemo, useState } from 'react';
-
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { cn } from '@/lib/utils';
 import type { HiveNotification } from '@/types/notification';
 
-import { useLeavingAsks } from '@features/inbox/hooks/use-leaving-asks';
 import { useReducedMotion } from '@hooks/use-reduced-motion';
 import { isSessionSummons } from '@shared/notification-lanes';
 import { useSummons } from '@stores/hive-store';
-import { useArrivals, useInboxActions, useSettingsOpen } from '@stores/ui-store';
+import { useInboxActions, useSettingsOpen, useStackUp } from '@stores/ui-store';
 
 import { AskCard } from './ask-card';
-import { AskLeaving, useLeaveReason } from './ask-leaving';
 import { NotificationCard } from './notification-card';
 import { SessionNote } from './session-note';
 
-/** How long an arrival stays up untouched before it folds into the pill. */
-export const ARRIVAL_FOLD_MS = 5000;
+/** How long an answered card takes to diffuse out before the next one rises (HIVE-228). */
+export const CARD_OUT_MS = 280;
 
 /** What the corner's polite live region says for the newest arrival. */
 export const announcement = (row: HiveNotification, asker: string): string =>
@@ -25,18 +22,44 @@ export const announcement = (row: HiveNotification, asker: string): string =>
     : `${asker} ${row.kind === 'agent.permission' ? 'wants to run a command' : 'asks'}: ${row.title}`;
 
 /**
- * Arrivals still in the queue, newest first (HIVE-198).
- *
- * Filtered here rather than when pushed: the on-stage session, an answered
- * ask, a dismissed row all drop out of `useSummons`, and so out of this.
+ * Everything that needs you, as the stack deals it: asks and sessions off stage
+ * together, newest first (HIVE-228). The top card is the newest, so an arrival
+ * that raises the stack is the card it shows.
  */
-export function useVisibleArrivals(onStage: string | null): HiveNotification[] {
-  const arrivals = useArrivals();
+export function useStackCards(onStage: string | null): HiveNotification[] {
   const { asks, sessions } = useSummons(onStage);
-  return useMemo(() => {
-    const byId = new Map([...asks, ...sessions].map((row) => [row.id, row]));
-    return arrivals.flatMap((id) => byId.get(id) ?? []);
-  }, [arrivals, asks, sessions]);
+  return useMemo(() => [...asks, ...sessions].sort((a, b) => b.createdAt - a.createdAt), [asks, sessions]);
+}
+
+/**
+ * The card that was on top until it left the queue (answered, expired, opened), held for
+ * {@link CARD_OUT_MS} so it can diffuse out. A card hidden by ✕ never leaves the queue, so
+ * it never comes back through here. Nothing is held under reduced motion.
+ */
+function useOutgoing(cards: readonly HiveNotification[], reduced: boolean): HiveNotification | null {
+  const [out, setOut] = useState<HiveNotification | null>(null);
+  const top = useRef(cards[0]);
+  // Held across renders, not per effect run: a queue change mid-beat must not strand `out`.
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(() => {
+    const was = top.current;
+    top.current = cards[0];
+    if (reduced || was === undefined || cards.some((row) => row.id === was.id)) return;
+    clearTimeout(timer.current);
+    setOut(was);
+    timer.current = setTimeout(() => setOut(null), CARD_OUT_MS);
+  }, [cards, reduced]);
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  return out;
+}
+
+function Card({ row, onHide }: { row: HiveNotification; onHide: () => void }) {
+  if (isSessionSummons(row)) return <SessionNote notif={row} variant="note" onFold={onHide} />;
+  if (row.action.type === 'ask') return <AskCard notif={row} thread={row.action.thread} onClose={onHide} />;
+  return <NotificationCard notif={row} />;
 }
 
 interface ArrivalStackProps {
@@ -45,100 +68,57 @@ interface ArrivalStackProps {
 }
 
 /**
- * What just arrived, over the pill (HIVE-198): the newest as an answerable
- * card, or a note for a session off stage, with up to two slivers under it
- * for the rest of a burst. It never takes focus.
+ * The queue over the pill (HIVE-198, HIVE-228): the newest as an answerable card,
+ * or a note for a session off stage, with up to two slivers under it for the
+ * rest. It never takes focus, and it never folds on a timer.
  *
- * Not drawn while Settings is open: the queue waits, and rises when it closes,
- * and its 5 seconds start then, since the fold timer runs only while it is up.
- * Every arrival restarts the clock (the burst); the pointer over it, or focus
- * in it (a reply being typed, a button pressed), holds it up.
+ * Up while `stackUp` holds: an arrival or the pill raises it, ✕ or the drawer
+ * takes it down, and the rows stay in the queue either way. Answering the top
+ * card resolves it: it diffuses out and the next rises in its place.
+ *
+ * Not drawn while Settings is open: it rises again when Settings closes.
  */
 export function ArrivalStack({ onStage }: ArrivalStackProps) {
-  const visible = useVisibleArrivals(onStage);
+  const cards = useStackCards(onStage);
+  const stackUp = useStackUp();
   const settings = useSettingsOpen();
-  const { foldArrivals } = useInboxActions();
+  const { hideStack } = useInboxActions();
   const reduced = useReducedMotion();
-  const arrivals = useArrivals();
-  const [held, setHeld] = useState({ hover: false, focus: false });
-  const up = !settings && visible.length > 0;
-  /*
-    The slot's content (HIVE-218): the newest live arrival, or an ask that just
-    closed, held one beat with its reason. `up`, the fold timer and the burst
-    count stay on live rows only.
-  */
-  const placed = useLeavingAsks(visible);
+  const out = useOutgoing(cards, reduced);
 
-  /*
-    A hold belongs to the stack it was taken on. Folded under the pointer (✕,
-    Later), the stack unmounts before any pointerleave or blur can fire, and a
-    hold left set would keep every later arrival up for good.
-  */
-  useEffect(() => {
-    if (!up) setHeld({ hover: false, focus: false });
-  }, [up]);
+  const shown = out ?? cards[0];
+  if (!stackUp || settings || shown === undefined) return null;
 
-  // The burst rule: every arrival restarts the clock, so `arrivals` is a dependency.
-  useEffect(() => {
-    if (!up || held.hover || held.focus) return;
-    const timer = setTimeout(foldArrivals, ARRIVAL_FOLD_MS);
-    return () => clearTimeout(timer);
-  }, [up, held.hover, held.focus, arrivals, foldArrivals]);
-
-  const [shown] = placed;
-  // A row folded or dismissed by hand left without closing: nothing to say, so no box either.
-  const leftClosed =
-    useLeaveReason(shown?.leaving === true && shown.row.action.type === 'ask' ? shown.row.action.thread : '') !== null;
-  if (settings || shown === undefined || (shown.leaving && !leftClosed)) return null;
-  const newest = shown.row;
-
-  const slivers = Math.max(0, Math.min(visible.length - 1, 2));
+  const under = Math.max(0, Math.min(out === null ? cards.length - 1 : cards.length, 2));
 
   return (
-    <div
-      data-testid="arrival-stack"
-      className="flex flex-col items-end gap-1.5"
-      onPointerEnter={() => setHeld((h) => ({ ...h, hover: true }))}
-      onPointerLeave={() => setHeld((h) => ({ ...h, hover: false }))}
-      onFocus={() => setHeld((h) => ({ ...h, focus: true }))}
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-          setHeld((h) => ({ ...h, focus: false }));
-        }
-      }}
-    >
-      {visible.length > 1 ? (
-        <span className="rounded-full border border-border bg-panel-2 px-2.5 py-1 text-ui-sm text-muted">
-          {`${String(visible.length)} arrived just now · newest first`}
-        </span>
-      ) : null}
-      <div className={cn('relative w-[380px] max-w-full', !reduced && 'motion-safe:animate-ccslidein')}>
-        <div className="relative z-[2] rounded-xl shadow-xl [&>article]:border-amber-edge">
-          {shown.leaving && newest.action.type === 'ask' ? (
-            <AskLeaving notif={newest} thread={newest.action.thread} />
-          ) : isSessionSummons(newest) ? (
-            <SessionNote notif={newest} variant="note" onFold={foldArrivals} />
-          ) : newest.action.type === 'ask' ? (
-            <AskCard key={newest.id} notif={newest} thread={newest.action.thread} onClose={foldArrivals} />
-          ) : (
-            <NotificationCard notif={newest} />
-          )}
-        </div>
-        {slivers >= 1 ? (
-          <span
-            data-sliver
-            aria-hidden
-            className="absolute inset-x-3 -bottom-[7px] z-[1] h-3 rounded-b-xl border border-t-0 border-border bg-panel-2"
-          />
-        ) : null}
-        {slivers >= 2 ? (
-          <span
-            data-sliver
-            aria-hidden
-            className="absolute inset-x-6 -bottom-[13px] z-0 h-3 rounded-b-xl border border-t-0 border-border bg-panel-2 opacity-70"
-          />
-        ) : null}
+    <div data-testid="arrival-stack" className="relative w-[380px] max-w-full">
+      <div
+        // Keyed by the card shown, so the next one rises fresh, and a newer ask never inherits a draft.
+        key={shown.id}
+        data-leaving={out === null ? undefined : true}
+        inert={out !== null}
+        className={cn(
+          'relative z-[2] rounded-xl shadow-xl [&>article]:border-amber-edge',
+          !reduced && (out === null ? 'motion-safe:animate-ccrise' : 'motion-safe:animate-ccdiffuse'),
+        )}
+      >
+        <Card row={shown} onHide={hideStack} />
       </div>
+      {under >= 1 ? (
+        <span
+          data-sliver
+          aria-hidden
+          className="absolute inset-x-3 -bottom-[7px] z-[1] h-3 rounded-b-xl border border-t-0 border-border bg-panel-2"
+        />
+      ) : null}
+      {under >= 2 ? (
+        <span
+          data-sliver
+          aria-hidden
+          className="absolute inset-x-6 -bottom-[13px] z-0 h-3 rounded-b-xl border border-t-0 border-border bg-panel-2 opacity-70"
+        />
+      ) : null}
     </div>
   );
 }

@@ -60,6 +60,14 @@ describe('InboxCorner (HIVE-198)', () => {
     expect(screen.getByTestId('inbox-live')).toBeEmptyDOMElement();
   });
 
+  it('says nothing while the stack is down, however much waits (HIVE-228)', () => {
+    useHiveStore.getState().hydrateNotifs([
+      notif({ id: 'a1', kind: 'agent.ask', title: 'Run the ledger tests?', action: { type: 'ask', thread: 'a1' } }),
+    ]);
+    render(<InboxCorner stage={stage()} viewKey="home" />);
+    expect(screen.getByTestId('inbox-live')).toBeEmptyDOMElement();
+  });
+
   it('keeps the live region mounted and silent with nothing up', () => {
     render(<InboxCorner stage={stage()} viewKey="home" />);
     expect(screen.getByTestId('inbox-live')).toBeEmptyDOMElement();

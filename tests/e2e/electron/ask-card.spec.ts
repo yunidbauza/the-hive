@@ -243,7 +243,8 @@ test('the scope ladder keeps one row however long the path is', async ({}, testI
 
     // The ask came from the session's own shell, so the keyboard is in its
     // terminal and the ask waits in the pill (the quiet rule, inbox-pill.spec.ts).
-    await page.getByRole('button', { name: /^Inbox, / }).click();
+    // Two asks: the pill splits, and Open all opens the drawer (HIVE-228).
+    await page.getByRole('button', { name: 'Open all' }).click();
     const drawer = page.getByRole('dialog', { name: 'Needs you' });
     await expect(drawer).toBeVisible();
 
@@ -316,12 +317,13 @@ test('a permission card names the call the click authorises, not the body', asyn
 
     // The ask came from the session's own shell, so the keyboard is in its
     // terminal and the ask waits in the pill (the quiet rule, inbox-pill.spec.ts).
+    // One ask: the pill's count raises the stack, which draws the same card (HIVE-228).
     await page.getByRole('button', { name: /^Inbox, / }).click();
-    const drawer = page.getByRole('dialog', { name: 'Needs you' });
-    await expect(drawer).toBeVisible();
+    const stack = page.getByTestId('arrival-stack');
+    await expect(stack).toBeVisible();
 
     // The title is main's, so the card is addressable by the tool it will run.
-    const card = drawer.getByRole('article', {
+    const card = stack.getByRole('article', {
       name: new RegExp(`^Ask from ${SESSION}: Allow Bash\\?`),
     });
     await expect(card).toBeVisible();
@@ -388,9 +390,10 @@ test('an ask posted to the ledger becomes a card, and answering it collapses the
 
     // The ask came from the session's own shell, so the keyboard is in its
     // terminal and the ask waits in the pill (the quiet rule, inbox-pill.spec.ts).
+    // One ask: the pill's count raises the stack, which draws the same card (HIVE-228).
     await page.getByRole('button', { name: /^Inbox, / }).click();
-    const drawer = page.getByRole('dialog', { name: 'Needs you' });
-    await expect(drawer).toBeVisible();
+    const stack = page.getByTestId('arrival-stack');
+    await expect(stack).toBeVisible();
 
     /*
       The card's `aria-label` is `Ask from ${asker}: ${notif.title}`
@@ -399,7 +402,7 @@ test('an ask posted to the ledger becomes a card, and answering it collapses the
       Asserting on it here is asserting on the asker's name, not on the id
       coincidentally matching it.
     */
-    const card = drawer.getByRole('article', {
+    const card = stack.getByRole('article', {
       name: new RegExp(`^Ask from ${SESSION}: ${ASK_TITLE}`),
     });
     await expect(card).toBeVisible();
@@ -411,7 +414,7 @@ test('an ask posted to the ledger becomes a card, and answering it collapses the
 
     await approve.click();
 
-    // Answered, the card leaves the drawer; the ledger holds both entries.
+    // Answered, the card leaves the stack; the ledger holds both entries.
     await expect(card).toHaveCount(0);
     await expect(approve).toHaveCount(0);
 

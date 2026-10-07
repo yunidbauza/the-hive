@@ -19,7 +19,8 @@ import { launchHive, writeProjectConfig } from './fixtures/hive-app';
  * An ask posted from a real session's shell, through the receiver, as
  * `ask-card.spec.ts` posts one. What only the built app shows: the quiet rule
  * reading the real focused element, the card rising without taking it, the
- * real 5-second fold, and an answer from the drawer closing the ledger thread.
+ * card still up on the real clock past the old 5-second fold (HIVE-228), the
+ * split pill, and answers from the drawer and the stack closing ledger threads.
  */
 
 const PROJECT = 'nova-web';
@@ -75,7 +76,7 @@ function postAskCommand(body: string, options: string[], statusMarker: string): 
   );
 }
 
-test('an ask rises without taking the keyboard, folds into the pill, and is answered from the drawer', async ({}, testInfo) => {
+test('an ask rises without taking the keyboard, stays until handled, and is answered from the drawer and the stack', async ({}, testInfo) => {
   const configPath = testInfo.outputPath('hive-config.json');
   writeProjectConfig(configPath, { id: PROJECT, path: REAL_DIRECTORY });
   const app = await launchHive({ userDataDir: testInfo.outputPath('user-data'), configPath });
@@ -110,14 +111,24 @@ test('an ask rises without taking the keyboard, folds into the pill, and is answ
     await page.screenshot({ path: testInfo.outputPath('inbox-pill-card.png') });
     expect(await page.evaluate(() => document.activeElement?.closest('article') ?? null)).toBeNull();
 
-    // Untouched, it folds into the pill.
+    // Untouched, it stays: nothing folds it on a timer (HIVE-228).
     await page.mouse.move(0, 0);
-    await expect(card).toBeHidden({ timeout: 8000 });
+    await page.waitForTimeout(6000);
+    await expect(card).toBeVisible();
     const pill = page.getByRole('button', { name: 'Inbox, 2 need you' });
-    await expect(pill).toBeVisible();
+    await expect(pill).toHaveAttribute('aria-expanded', 'true');
 
-    // Answered from the drawer.
+    // ✕ folds the stack into the pill, and the count stays: nothing was answered.
+    await card.getByRole('button', { name: 'Fold into the pill' }).click();
+    await expect(card).toBeHidden();
+    await expect(pill).toHaveAttribute('aria-expanded', 'false');
+
+    // The count brings the stack back, newest on top.
     await pill.click();
+    await expect(card).toBeVisible();
+
+    // Answered from the drawer, which Open all opens.
+    await page.getByRole('button', { name: 'Open all' }).click();
     const drawer = page.getByRole('dialog', { name: 'Needs you' });
     await expect(drawer).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('inbox-drawer.png') });
@@ -131,6 +142,17 @@ test('an ask rises without taking the keyboard, folds into the pill, and is answ
     await expect(leaving).not.toContainText(' on ');
     await page.screenshot({ path: testInfo.outputPath('inbox-drawer-leaving.png') });
     await expect(leaving).toBeHidden({ timeout: 4000 });
+
+    // One left: the pill is the count alone, and answering in the stack empties the corner.
+    await drawer.getByRole('button', { name: 'Close the inbox' }).click();
+    const last = page.getByRole('button', { name: 'Inbox, 1 needs you' });
+    await expect(page.getByRole('button', { name: 'Open all' })).toHaveCount(0);
+    await last.click();
+    const ledgerCard = page.getByRole('article', { name: /^Ask from .*: Run the ledger tests\?/ });
+    await expect(ledgerCard).toBeVisible();
+    await ledgerCard.getByRole('button', { name: 'yes' }).click();
+    await expect(page.getByTestId('arrival-stack')).toBeHidden({ timeout: 4000 });
+    await expect(last).toBeHidden();
   } finally {
     await app.close();
   }

@@ -1,13 +1,13 @@
 import type { RefObject } from 'react';
 
 
-import { ArrivalStack, announcement, useVisibleArrivals } from '@features/inbox/components/arrival-stack';
+import { ArrivalStack, announcement, useStackCards } from '@features/inbox/components/arrival-stack';
 import { InboxPill } from '@features/inbox/components/inbox-pill';
 import { useOnStage } from '@hooks/use-on-stage';
 import { useStageInset } from '@hooks/use-stage-inset';
 import { isSessionSummons } from '@shared/notification-lanes';
 import { useDisplayName, useThread } from '@stores/hive-store';
-import { useSettingsOpen } from '@stores/ui-store';
+import { useSettingsOpen, useStackUp } from '@stores/ui-store';
 
 interface InboxCornerProps {
   /** The stage it sits on, measured for the page's own input. */
@@ -26,7 +26,9 @@ interface InboxCornerProps {
 export function InboxCorner({ stage, viewKey }: InboxCornerProps) {
   const onStage = useOnStage();
   const bottom = useStageInset(stage, viewKey);
-  const [newest] = useVisibleArrivals(onStage);
+  // The stack's top card, which an arrival puts there (HIVE-228); read out only while it is drawn.
+  const [top] = useStackCards(onStage);
+  const newest = useStackUp() ? top : undefined;
 
   // Both lookups run every render (hooks are unconditional); each reads '' when it does not apply.
   const thread = newest?.action.type === 'ask' ? newest.action.thread : '';
