@@ -221,6 +221,11 @@ if (!app.requestSingleInstanceLock()) {
     dialog on an unattended machine would block this exit forever.
     `process.exit`, as the server lock does, because `app.exit` returns and
     lets boot carry on.
+    Released on `exit`, not through `onShutdown`: runShutdown starts every
+    hook together, so a hook would drop the lock while the agent runs and the
+    ledger teardown are still appending, and a relaunch could claim it beside
+    this process. `exit` fires after they settle, and on `app.exit` too;
+    `release` is all sync fs, so it is safe there.
   */
   const hiveLock = claimServerLock(hiveLockPath());
   if (hiveLock.kind === 'active') {
@@ -229,7 +234,7 @@ if (!app.requestSingleInstanceLock()) {
     if (!serverMode) dialog.showErrorBox('The Hive is already running', message);
     process.exit(1);
   }
-  onShutdown(hiveLock.release);
+  process.on('exit', hiveLock.release);
 
   if (serverMode) {
     const serverLock = claimServerLock();
