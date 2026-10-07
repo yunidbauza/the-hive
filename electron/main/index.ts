@@ -56,11 +56,11 @@ import { createWindow } from './window';
  * **What this does not fix**, and cannot: the *leftmost* menu title. macOS
  * takes that from `CFBundleName` in the running bundle's `Info.plist`, and
  * under `pnpm desktop:dev` the running bundle is Electron's own — so dev shows
- * `Electron` no matter what any API says. The packaged app sets `CFBundleName`
- * properly through `mac.extendInfo` in `electron-builder.yml`, which is the real
- * fix and the only honest one. Patching Electron's `Info.plist` in
- * `node_modules` would make dev *look* right while changing nothing about what
- * ships. See `docs/packaging-and-updates.md`.
+ * `Electron` no matter what any API says. The packaged app's `CFBundleName` is
+ * `productName` ("The Hive"), and it has to be: Electron finds its helper apps
+ * by that key (see `mac.extendInfo` in `electron-builder.yml`). Patching
+ * Electron's `Info.plist` in `node_modules` would make dev *look* right while
+ * changing nothing about what ships. See `docs/packaging-and-updates.md`.
  */
 app.setName(APP_IDENTITY_NAME);
 

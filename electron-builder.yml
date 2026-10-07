@@ -17,8 +17,8 @@ appId: com.behiques.the-hive
 # The app's identity, not its display name: it names the bundle (`The Hive.app`),
 # its executable, the dmg and zip the updater fetches, and so the Finder
 # label and the path a server's LaunchAgent runs. The name people read,
-# "Hive TTY", is set over it below as `CFBundleName` (`mac.extendInfo`) and in
-# `electron/shared/app-name.ts`. Changing this one is a migration, not a rename:
+# "Hive TTY", is set over it below as `CFBundleDisplayName` (`mac.extendInfo`)
+# and in `electron/shared/app-name.ts`. Changing this one is a migration, not a rename:
 # see "The app's name" in `docs/packaging-and-updates.md`.
 productName: The Hive
 
@@ -76,13 +76,18 @@ mac:
   category: public.app-category.developer-tools
   icon: resources/icon.icns
   # The name people read, over the identity `productName` keeps
-  # (`electron/shared/app-name.ts`). `CFBundleName` is the menu bar's leftmost
-  # title, and the Dock, Cmd-Tab and Launchpad read these keys too, so they are
-  # expected to say "Hive TTY"; Finder still says "The Hive" (the file name).
-  # Neither key is part of the code signature's designated requirement, so
-  # in-place updates are unaffected.
+  # (`electron/shared/app-name.ts`): the Dock, Cmd-Tab and Launchpad prefer
+  # the display name, so they say "Hive TTY"; Finder still says "The Hive"
+  # (the file name). The key is not part of the code signature's designated
+  # requirement, so in-place updates are unaffected.
+  #
+  # `CFBundleName` must stay `productName`. Electron locates its helper apps
+  # as `<CFBundleName> Helper.app` under Contents/Frameworks and aborts at
+  # launch (`FATAL: Unable to find helper app`, electron_main_delegate_mac.mm)
+  # when that bundle is missing, while electron-builder names the helpers
+  # from `productName`. Overriding it shipped 1.0.0 crashing 85ms after
+  # launch on every install; so the leftmost menu title reads "The Hive".
   extendInfo:
-    CFBundleName: Hive TTY
     CFBundleDisplayName: Hive TTY
   target:
     - target: dmg

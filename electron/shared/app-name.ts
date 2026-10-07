@@ -3,8 +3,10 @@
  *
  * **`APP_DISPLAY_NAME` is what people read**: the app menu and its About, Hide
  * and Quit items, the About window, the update dialogs and the server's tray.
- * The menu bar's leftmost title says it too, through `CFBundleName` in
- * `electron-builder.yml`'s `mac.extendInfo`.
+ * The Dock, Cmd-Tab and Launchpad say it too, through `CFBundleDisplayName`
+ * in `electron-builder.yml`'s `mac.extendInfo`. The menu bar's leftmost title
+ * does not: it reads `CFBundleName`, which must stay the identity (Electron
+ * finds its helper apps by it).
  *
  * **`APP_IDENTITY_NAME` is what the app *is***, and changing it is not cosmetic:
  * - `app.setName` takes it, and `userData` is derived from it
@@ -16,7 +18,7 @@
  *   bundle (`The Hive.app`), its executable, the dmg and zip the updater
  *   fetches, and the path a server's LaunchAgent runs. Finder shows the bundle's
  *   file name, so it keeps saying "The Hive" until it changes (the Dock and
- *   Launchpad read `CFBundleName`/`CFBundleDisplayName`, so they say Hive TTY).
+ *   Launchpad prefer `CFBundleDisplayName`, so they say Hive TTY).
  *
  * See `docs/packaging-and-updates.md` ("The app's name") for what moving the
  * identity would take.
