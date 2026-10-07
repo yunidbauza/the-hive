@@ -6,7 +6,7 @@ import { InboxDrawer } from '@features/inbox/components/inbox-drawer';
 import { LEAVE_MS } from '@features/inbox/hooks/use-leaving-asks';
 import { useAppearanceStore } from '@stores/appearance-store';
 import { useHiveStore } from '@stores/hive-store';
-import { useUiStore } from '@stores/ui-store';
+import { NEWS_SECTION, useUiStore } from '@stores/ui-store';
 
 import { seedLedger } from '@tests/support/ledger';
 import { notif, resetNotifIds } from '@tests/support/notifications';
@@ -128,6 +128,35 @@ describe('InboxDrawer (HIVE-198)', () => {
     useUiStore.getState().openInboxDrawer('a1');
     render(<InboxDrawer onStage={null} />);
     expect(document.activeElement?.getAttribute('data-thread')).toBe('a1');
+  });
+
+  it('lists the news under its own New heading, after what waits on you (HIVE-231)', () => {
+    useUiStore.getState().openInboxDrawer();
+    render(<InboxDrawer onStage={null} />);
+    const news = screen.getByRole('region', { name: 'New' });
+    expect(within(news).getByText('1')).toBeInTheDocument();
+    expect([...news.querySelectorAll('[data-notification]')].map((el) => el.getAttribute('data-notification'))).toEqual([
+      'e1',
+    ]);
+  });
+
+  it('opened at New, the section has focus (HIVE-231)', () => {
+    useUiStore.getState().openInboxDrawer(NEWS_SECTION);
+    render(<InboxDrawer onStage={null} />);
+    expect(document.activeElement).toBe(screen.getByRole('region', { name: 'New' }));
+  });
+
+  it('Clear empties New and leaves what waits on you (HIVE-231)', async () => {
+    const dismiss = vi.fn((_id: string) => Promise.resolve());
+    (window as { hive?: unknown }).hive = { notifications: { dismiss } };
+    useHiveStore.getState().pushNotif(notif({ id: 'e2', kind: 'pr.merged', action: { type: 'none' } }));
+    useUiStore.getState().openInboxDrawer();
+    render(<InboxDrawer onStage={null} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Clear the news' }));
+    expect(screen.queryByRole('region', { name: 'New' })).toBeNull();
+    expect(dismiss.mock.calls.map(([id]) => id).sort()).toEqual(['e1', 'e2']);
+    expect(useHiveStore.getState().notifs.map((n) => n.id).sort()).toEqual(['a1', 'a2', 's1']);
+    delete (window as { hive?: unknown }).hive;
   });
 
   it('says so when everything has been answered', () => {

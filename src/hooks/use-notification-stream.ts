@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 
-import { laneOf } from '@shared/notification-lanes';
 import {
+  rises,
   useApplyDismiss,
   useApplyRead,
   useHydrateNotifs,
@@ -77,7 +77,8 @@ export function useNotificationStream(): void {
       pushNotif(notification);
       // What is drawn is filtered again at render by `useSummons(onStage)`, so
       // the on-stage session and an answered ask never show though pushed here.
-      if (laneOf(notification.kind) === 'summons') pushArrival(notification.id, inTerminal());
+      // News only pulses the pill, unless it is the one Echo that rises (HIVE-231).
+      pushArrival(notification.id, rises(notification) ? inTerminal() : true);
     });
 
     const unsubscribeRead = bridge.notifications.onRead(({ id, unread }) => {

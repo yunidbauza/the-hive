@@ -51,10 +51,18 @@ describe('useNotificationStream — arrivals (HIVE-198)', () => {
     expect(useUiStore.getState().stackUp).toBe(true);
   });
 
-  it('an echo does not', () => {
+  it('an echo does not rise; it pulses the pill (HIVE-231)', () => {
     renderHook(() => useNotificationStream());
-    onNew(notif({ kind: 'clone.done', action: { type: 'none' } }));
+    const row = notif({ kind: 'clone.done', action: { type: 'none' } });
+    onNew(row);
     expect(useUiStore.getState().stackUp).toBe(false);
+    expect(useUiStore.getState().arrivalPulse).toBe(row.id);
+  });
+
+  it('an update ready to install rises, since the restart waits on you (HIVE-231)', () => {
+    renderHook(() => useNotificationStream());
+    onNew(notif({ kind: 'app.update_ready', action: { type: 'update.install' } }));
+    expect(useUiStore.getState().stackUp).toBe(true);
   });
 
   it('the boot snapshot raises nothing', async () => {

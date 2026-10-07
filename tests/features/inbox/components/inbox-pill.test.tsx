@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { InboxPill } from '@features/inbox/components/inbox-pill';
 import { useReducedMotion } from '@hooks/use-reduced-motion';
 import { useHiveStore } from '@stores/hive-store';
-import { useUiStore } from '@stores/ui-store';
+import { NEWS_SECTION, useUiStore } from '@stores/ui-store';
 
 import { notif, resetNotifIds } from '@tests/support/notifications';
 
@@ -94,6 +94,41 @@ describe('InboxPill (HIVE-198)', () => {
     useUiStore.getState().pushArrival('a1', true);
     rerender(<InboxPill onStage="lead" />);
     expect(screen.getByRole('button', { name: /^Inbox/ }).parentElement?.className).not.toContain('animate-ccpulse');
+  });
+});
+
+describe('InboxPill, news (HIVE-231)', () => {
+  const update = (id: string) => notif({ id, kind: 'app.update_available', action: { type: 'update.download' } });
+
+  it('news alone draws a neutral "new" segment and no amber count', () => {
+    useHiveStore.getState().hydrateNotifs([update('u1')]);
+    render(<InboxPill onStage={null} />);
+    expect(screen.queryByRole('button', { name: /^Inbox,/ })).toBeNull();
+    const news = screen.getByRole('button', { name: 'Inbox news, 1 new' });
+    expect(news).toHaveTextContent('1 new');
+    expect(news.className).not.toContain('amber');
+    expect(news.parentElement?.className).not.toContain('border-amber-edge');
+  });
+
+  it('both: the amber count and the news side by side', () => {
+    useHiveStore.getState().hydrateNotifs([ask('a1'), update('u1'), update('u2')]);
+    render(<InboxPill onStage={null} />);
+    expect(screen.getByRole('button', { name: 'Inbox, 1 needs you' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Inbox news, 2 new' })).toHaveTextContent('2 new');
+  });
+
+  it('the news segment opens the drawer at its New section', async () => {
+    useHiveStore.getState().hydrateNotifs([update('u1')]);
+    render(<InboxPill onStage={null} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Inbox news, 1 new' }));
+    expect(useUiStore.getState().inboxDrawer).toEqual({ open: true, thread: NEWS_SECTION });
+  });
+
+  it('pulses once for a quiet echo', () => {
+    useHiveStore.getState().hydrateNotifs([update('u1')]);
+    useUiStore.getState().pushArrival('u1', true);
+    render(<InboxPill onStage={null} />);
+    expect(screen.getByRole('button', { name: /^Inbox news/ }).parentElement?.className).toContain('animate-ccpulse');
   });
 });
 

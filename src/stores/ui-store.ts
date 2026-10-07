@@ -346,10 +346,10 @@ interface UiState {
   stackUp: boolean;
   /** The latest arrival that came in while the keyboard was in a terminal: the pill pulses once for it. */
   arrivalPulse: string | null;
-  /** The Inbox drawer, and the ask thread it was opened on. */
+  /** The Inbox drawer, and the ask thread (or {@link NEWS_SECTION}) it was opened on. */
   inboxDrawer: { open: boolean; thread: string | null };
   /**
-   * A live Summons arrival (HIVE-198). `quiet` (the keyboard is in a terminal) only pulses
+   * A live arrival (HIVE-198; news is always quiet, HIVE-231). `quiet` (the keyboard is in a terminal) only pulses
    * the pill; otherwise it raises the stack. Nothing rises over an open drawer.
    */
   pushArrival: (id: string, quiet: boolean) => void;
@@ -372,6 +372,12 @@ interface UiState {
   markAway: (at: number) => void;
   reset: () => void;
 }
+
+/**
+ * The drawer's New section, as the `thread` it opens on (HIVE-231): the pill's
+ * `N new` sends focus there. Ask threads are ledger ids, so this never names one.
+ */
+export const NEWS_SECTION = '#news';
 
 const initialUiState = {
   activeTab: 'orch' as 'orch' | string,

@@ -5,7 +5,7 @@ import type { HiveNotification } from '@/types/notification';
 
 import { useReducedMotion } from '@hooks/use-reduced-motion';
 import { isSessionSummons } from '@shared/notification-lanes';
-import { useSummons } from '@stores/hive-store';
+import { rises, useEchoes, useSummons } from '@stores/hive-store';
 import { useInboxActions, useSettingsOpen, useStackUp } from '@stores/ui-store';
 
 import { AskCard } from './ask-card';
@@ -23,12 +23,17 @@ export const announcement = (row: HiveNotification, asker: string): string =>
 
 /**
  * Everything that needs you, as the stack deals it: asks and sessions off stage
- * together, newest first (HIVE-228). The top card is the newest, so an arrival
+ * together, newest first (HIVE-228), and an update ready to install, the one
+ * piece of news that rises (HIVE-231). The top card is the newest, so an arrival
  * that raises the stack is the card it shows.
  */
 export function useStackCards(onStage: string | null): HiveNotification[] {
   const { asks, sessions } = useSummons(onStage);
-  return useMemo(() => [...asks, ...sessions].sort((a, b) => b.createdAt - a.createdAt), [asks, sessions]);
+  const echoes = useEchoes();
+  return useMemo(
+    () => [...asks, ...sessions, ...echoes.filter(rises)].sort((a, b) => b.createdAt - a.createdAt),
+    [asks, sessions, echoes],
+  );
 }
 
 /**

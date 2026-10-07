@@ -2,8 +2,8 @@ import { X } from '@phosphor-icons/react';
 import { useEffect, useRef } from 'react';
 
 import { useLeavingAsks } from '@features/inbox/hooks/use-leaving-asks';
-import { useSummons } from '@stores/hive-store';
-import { useInboxActions, useInboxDrawer } from '@stores/ui-store';
+import { useDismissNotif, useEchoes, useSummons } from '@stores/hive-store';
+import { NEWS_SECTION, useInboxActions, useInboxDrawer } from '@stores/ui-store';
 
 import { AskCard } from './ask-card';
 import { AskLeaving } from './ask-leaving';
@@ -19,7 +19,7 @@ const plural = (n: number, one: string): string => `${String(n)} ${one}${n === 1
 
 /**
  * Everything that needs you, whole (HIVE-198): every ask as an answerable
- * card, then the sessions off stage. A 400px panel at the window's right edge
+ * card, then the sessions off stage, then the news under New (HIVE-231). A 400px panel at the window's right edge
  * with no veil, so the stage stays readable beside it.
  *
  * Focus moves in because the user asked for it (the pill, the bell, a toast),
@@ -34,6 +34,8 @@ export function InboxDrawer({ onStage }: InboxDrawerProps) {
   const { open, thread } = useInboxDrawer();
   const { closeInboxDrawer } = useInboxActions();
   const { asks, sessions } = useSummons(onStage);
+  const echoes = useEchoes();
+  const dismiss = useDismissNotif();
   // A closed ask keeps its place for one beat with its reason (HIVE-218); the count stays on live rows.
   const placed = useLeavingAsks(asks);
   const ref = useRef<HTMLElement>(null);
@@ -116,6 +118,32 @@ export function InboxDrawer({ onStage }: InboxDrawerProps) {
             <SessionNote key={row.id} notif={row} variant="row" />
           ))}
         </>
+      ) : null}
+      {echoes.length > 0 ? (
+        <section
+          aria-label="New"
+          data-thread={NEWS_SECTION}
+          tabIndex={-1}
+          className="flex flex-col gap-2.5 outline-none"
+        >
+          <div className="flex items-baseline gap-1.5 px-2 pt-3.5 pb-1 text-micro font-semibold tracking-[.06em] text-subtle uppercase">
+            <span>New</span>
+            <span className="tabular-nums tracking-normal">{echoes.length}</span>
+            <span className="flex-1" />
+            <button
+              type="button"
+              aria-label="Clear the news"
+              // One dismiss per row, never `clearNotifs`: that empties what waits on you too.
+              onClick={() => echoes.forEach((row) => dismiss(row.id))}
+              className="tracking-normal normal-case text-brand hover:underline"
+            >
+              Clear
+            </button>
+          </div>
+          {echoes.map((row) => (
+            <NotificationCard key={row.id} notif={row} />
+          ))}
+        </section>
       ) : null}
     </aside>
   );

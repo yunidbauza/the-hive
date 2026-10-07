@@ -181,7 +181,7 @@ import {
   type ShipTrack,
 } from '@shared/ledger-derive';
 import type { SessionMetrics } from '@shared/metrics-contract';
-import { isSessionSummons, trimNotifications, waitsOnYou, type AskOpen } from '@shared/notification-lanes';
+import { isSessionSummons, laneOf, trimNotifications, waitsOnYou, type AskOpen } from '@shared/notification-lanes';
 import type { PlansSnapshot, SessionPlan } from '@shared/plan-contract';
 import {
   hiveNameFromTitle,
@@ -9001,6 +9001,24 @@ export const useSummons = (onStage: string | null): Summons => {
   const closedAsks = useHiveStore((state) => state.closedAsks);
   return useMemo(() => summonsOf(notifs, closedAsks, onStage), [notifs, closedAsks, onStage]);
 };
+
+/**
+ * The Echo rows: news, newest first (HIVE-231). They never count as needing
+ * you, but every row in the Inbox must be reachable, so the pill shows them
+ * as `N new` and the drawer lists them under New.
+ */
+export const useEchoes = (): HiveNotification[] => {
+  const notifs = useHiveStore((state) => state.notifs);
+  return useMemo(() => notifs.filter((notif) => laneOf(notif.kind) === 'echo'), [notifs]);
+};
+
+/**
+ * The one Echo that rises as a card instead of only pulsing the pill: the
+ * restart waits on the user, and a prompt to restart that sits in a list is a
+ * download that never lands (HIVE-231).
+ */
+export const rises = (notif: HiveNotification): boolean =>
+  laneOf(notif.kind) === 'summons' || notif.kind === 'app.update_ready';
 
 /** The queue's length, as a number, so a subscriber re-renders only when it moves. */
 export const useSummonsCount = (onStage: string | null): number =>

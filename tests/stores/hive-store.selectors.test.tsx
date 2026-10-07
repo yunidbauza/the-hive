@@ -77,6 +77,7 @@ import {
   useTickets,
   useTicketSessions,
   useUnreadCount,
+  useEchoes,
   useSummons,
   useSummonsCount,
   useYoursAgain,
@@ -895,6 +896,21 @@ describe('hive-store selectors', () => {
     it('returns nothing for an unknown ticket', () => {
       const { result } = renderHook(() => useTicketPrs('NOPE-1'));
       expect(result.current).toEqual([]);
+    });
+  });
+
+  describe('useEchoes (HIVE-231)', () => {
+    it('keeps the news, newest first, and none of what waits on you', () => {
+      act(() => {
+        useHiveStore.setState({ notifs: [], ledger: [], closedAsks: new Set() });
+        useHiveStore.getState().hydrateNotifs([
+          notif({ id: 'u', kind: 'app.update_available', action: { type: 'update.download' }, createdAt: 3 }),
+          notif({ id: 'q', kind: 'agent.ask', action: { type: 'ask', thread: 'q' }, createdAt: 2 }),
+          notif({ id: 'm', kind: 'pr.merged', action: { type: 'none' }, createdAt: 1 }),
+        ]);
+      });
+
+      expect(renderHook(() => useEchoes()).result.current.map((n) => n.id)).toEqual(['u', 'm']);
     });
   });
 

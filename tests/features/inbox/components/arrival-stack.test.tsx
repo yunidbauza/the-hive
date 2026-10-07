@@ -67,6 +67,18 @@ describe('ArrivalStack (HIVE-198, HIVE-228)', () => {
     expect(screen.queryByText(/arrived just now/)).toBeNull();
   });
 
+  it('deals an update ready to install, and no other news (HIVE-231)', () => {
+    only(
+      askRow('a1', 0),
+      notif({ id: 'm1', kind: 'pr.merged', createdAt: BASE + 5, action: { type: 'none' } }),
+      notif({ id: 'r1', kind: 'app.update_ready', createdAt: BASE + 9, action: { type: 'update.install' } }),
+    );
+    useUiStore.getState().toggleStack();
+    const { container } = render(<ArrivalStack onStage={null} />);
+    expect(container.querySelector('[data-notification]')?.getAttribute('data-notification')).toBe('r1');
+    expect(container.querySelectorAll('[data-sliver]')).toHaveLength(1);
+  });
+
   it('one row: the card and no slivers; two rows: one sliver', () => {
     only(askRow('a1', 0));
     useUiStore.getState().pushArrival('a1', false);
