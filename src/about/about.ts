@@ -113,10 +113,9 @@ function renderUpdate(
 }
 
 /**
- * The person's own theme (HIVE-224). The splash stays on its built-in dark
- * tokens because it opens before preferences exist; About opens on demand,
- * long after, on the same origin, so it reads them. Before the palette read
- * below, which is what the globe paints with.
+ * The person's own theme (HIVE-224), read from the same origin's `localStorage`
+ * as the splash reads it. Before the palette read below, which is what the
+ * globe paints with.
  */
 applyPersistedAppearance(localStorage, matchMedia('(prefers-color-scheme: dark)').matches);
 

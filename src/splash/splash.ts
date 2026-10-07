@@ -1,3 +1,5 @@
+import { applyPersistedAppearance } from '@lib/theme/persisted';
+
 import { scheduleCopy } from './chamber';
 import { paletteFrom, startGlobe } from './stage';
 
@@ -15,7 +17,8 @@ import './splash.css';
  *
  * No store, no IPC, and from `src/` outside this directory only the pure `lib/`
  * modules the globe draws with — the Brood mutalisk (`swarm/muta`, with its
- * `tone` and `kit`), the palette, `MUTA_SCALE` from the comb and the colour helpers. The splash exists to be on screen before
+ * `tone` and `kit`), the palette, `MUTA_SCALE` from the comb and the colour helpers —
+ * and `theme/persisted`, which paints the person's theme. The splash exists to be on screen before
  * the app has loaded, and the ESLint zones in `eslint.config.mjs` make that a
  * build failure rather than a convention.
  *
@@ -23,6 +26,13 @@ import './splash.css';
  * document's clock, the one the CSS animations and `scheduleCopy` share, so a
  * cell and its log line cannot drift apart.
  */
+
+/**
+ * The person's own theme, as About reads it (HIVE-224). The splash loads from the
+ * same origin as the app, so the appearance the last session saved is already in
+ * `localStorage`. Before the palette read below, which is what the globe paints with.
+ */
+applyPersistedAppearance(localStorage, matchMedia('(prefers-color-scheme: dark)').matches);
 
 scheduleCopy(document);
 

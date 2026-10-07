@@ -69,10 +69,11 @@ of their chambers and circle that ring, the comb globe's flight (HIVE-212). `src
 and the frame, `src/splash/stage.ts` the palette and the loop; the clock is the
 document's, the one `chamber.ts` schedules the copy on. Under reduced motion it
 draws one frame at `GLOBE_STILL_T` and schedules none. About draws the same globe,
-formed and turning.
+formed and turning. Both paint in the person's saved theme (`lib/theme/persisted`,
+read from the shared origin's `localStorage`) before the globe reads its palette.
 
 Its fence: the splash may import from `src/lib/` only the mutalisk, its palette
-type and tone, the Brood kit, the comb's `MUTA_SCALE` and `lib/theme/colour` (`eslint.config.mjs`, proved both ways by
+type and tone, the Brood kit, the comb's `MUTA_SCALE`, `lib/theme/colour` and `lib/theme/persisted` (`eslint.config.mjs`, proved both ways by
 `pnpm verify:boundaries`). The CSP has no `media-src`: the splash used to inline
 an mp4 and needed one; nothing in the app plays media now.
 

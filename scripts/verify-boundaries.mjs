@@ -167,11 +167,11 @@ const CASES = [
     },
   },
   {
-    name: 'ALLOWED: splash/ may import the creature, the comb and the colour helpers',
+    name: 'ALLOWED: splash/ may import the creature, the comb, the colour helpers and the persisted theme',
     rule: null,
     files: {
       'src/splash/probe-allowed.ts':
-        "import { MUTA_SCALE } from '@lib/swarm/comb';\nimport { drawMuta } from '@lib/swarm/muta';\nimport { toneOf } from '@lib/swarm/tone';\nimport { mixColour } from '@lib/theme/colour';\n\nexport const probe = [MUTA_SCALE, drawMuta, toneOf, mixColour];\n",
+        "import { MUTA_SCALE } from '@lib/swarm/comb';\nimport { drawMuta } from '@lib/swarm/muta';\nimport { toneOf } from '@lib/swarm/tone';\nimport { mixColour } from '@lib/theme/colour';\nimport { applyPersistedAppearance } from '@lib/theme/persisted';\n\nexport const probe = [MUTA_SCALE, drawMuta, toneOf, mixColour, applyPersistedAppearance];\n",
     },
   },
   /**

@@ -15,9 +15,10 @@
  * `tests/splash/splash-tokens.test.ts` parses both files and fails if any value
  * here has drifted from `:root` in `tokens.css`.
  *
- * The dark values only. The splash does not follow the theme: it opens before
- * anything has read the user's preference, and `WINDOW_BACKGROUND` has already
- * committed the window to `#10152a` for exactly that reason.
+ * The dark values only: the built-in Hive, dark. The person's theme, either mode,
+ * is painted over them at run time by `applyPersistedAppearance` (`splash.ts`,
+ * `about.ts`), which reads what the app saved; these are what shows when nothing
+ * was saved.
  */
 
 :root {

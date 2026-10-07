@@ -70,8 +70,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
- * The saved appearance, read without the store (HIVE-224): for the About window,
- * a second document on the same origin that may not import the app's runtime.
+ * The saved appearance, read without the store (HIVE-224): for the About and
+ * splash windows, documents on the same origin that may not import the app's runtime.
  * localStorage is a trust boundary, so an imported theme counts only if it is
  * still a valid theme, and anything unreadable is the built-in. Never throws.
  */

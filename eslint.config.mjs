@@ -222,9 +222,10 @@ export default tseslint.config(
              * modules the brood world draws with — the Brood mutalisk
              * (`swarm/muta`, HIVE-221) with its tone and kit, the palette,
              * `MUTA_SCALE` from the comb, and the colour helpers that derive
-             * the creature's colours. They import nothing outside `lib/swarm/`
-             * and `lib/theme/colour`, so the chunk they share with the app
-             * holds them and nothing behind them.
+             * the creature's colours — and `theme/persisted`, which paints the
+             * person's saved theme as About does (HIVE-224). Behind them is
+             * nothing outside `lib/swarm/` and `lib/theme/`: theme data and
+             * its validator, no React, no store.
              *
              * A zone of its own because `except` must be ABSOLUTE (see the
              * note above `featureIsolationZones`); a relative one silently
@@ -235,9 +236,9 @@ export default tseslint.config(
             {
               target: './src/splash/**/*',
               from: './src/lib/**/*',
-              except: [`${appRoot}/src/lib/{swarm/comb,swarm/muta,swarm/tone,swarm/kit,swarm/palette,theme/colour}.ts`],
+              except: [`${appRoot}/src/lib/{swarm/comb,swarm/muta,swarm/tone,swarm/kit,swarm/palette,theme/colour,theme/persisted}.ts`],
               message:
-                'splash/ may import from lib/ only the mutalisk (muta, tone, kit), the palette, the comb (for MUTA_SCALE) and the colour helpers (HIVE-212, HIVE-221).',
+                'splash/ may import from lib/ only the mutalisk (muta, tone, kit), the palette, the comb (for MUTA_SCALE), the colour helpers and the persisted theme (HIVE-212, HIVE-221, HIVE-224).',
             },
 
             /**
