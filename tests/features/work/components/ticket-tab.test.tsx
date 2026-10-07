@@ -255,14 +255,19 @@ describe('TicketTab links (HIVE-202)', () => {
     expect(screen.getByRole('heading', { name: 'Links 3' })).toBeInTheDocument();
     const lead = screen.getByText('Clear to go.');
     expect(lead.tagName).toBe('B');
-    expect(lead.parentElement).toHaveTextContent('Clear to go. Its one blocker is done; 1 ticket waits on it.');
-    expect(lead.parentElement).toHaveClass('text-green');
+    const clear = lead.closest('p')!;
+    expect(clear).toHaveTextContent('Clear to go. Its one blocker is done; 1 ticket waits on it.');
+    // Both tones sit in their soft box, with a leading icon (HIVE-229).
+    expect(clear).toHaveClass('text-green', 'bg-green-soft');
+    expect(clear.firstElementChild).toHaveAttribute('data-icon', 'check');
     unmount();
 
     seed({ links: [link('HIVE-188', 'todo', 'Blocks', 'inward')] });
     render(<TicketTab ticketKey="HIVE-193" sessionId="hero-refresh" />);
 
-    expect(screen.getByText('Blocked by 1 open:').parentElement).toHaveClass('text-amber-text');
+    const blocked = screen.getByText('Blocked by 1 open:').closest('p')!;
+    expect(blocked).toHaveClass('text-amber-text', 'bg-amber-soft');
+    expect(blocked.firstElementChild).toHaveAttribute('data-icon', 'x');
   });
 
   it('says there are no linked tickets, with no drawing, when only remote links exist', () => {

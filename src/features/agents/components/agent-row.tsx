@@ -162,7 +162,7 @@ export function AgentRow({ id }: AgentRowProps) {
         <AgentTile icon={entity.icon} tone={tone} live={live} size="sm" />
         <span className="flex min-w-0 flex-1 flex-col gap-[3px]">
           <span className="flex items-center gap-2">
-            <b className="truncate text-ui font-normal text-ink">{id}</b>
+            <b className="truncate text-ui font-semibold text-ink">{id}</b>
             <span className="flex-1" />
             <span className="w-[44px] shrink-0 text-right text-ui-sm text-subtle group-focus-within:invisible group-hover:invisible">
               {last === undefined ? '' : age}

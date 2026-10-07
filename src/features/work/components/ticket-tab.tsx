@@ -1,4 +1,4 @@
-import { ArrowSquareOut, CaretDown, Kanban } from '@phosphor-icons/react';
+import { ArrowSquareOut, CaretDown, Check, Kanban, X } from '@phosphor-icons/react';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { createPoller } from '@/hooks/create-poller';
@@ -114,12 +114,20 @@ function TicketLinks({ ticketKey, sessionId }: { ticketKey: string; sessionId: s
         <>
           <p
             className={cn(
-              'rounded-md px-2 py-1.5 text-control',
-              model.verdict.tone === 'amber' ? 'bg-amber-soft text-amber-text' : 'text-green',
+              'flex items-start gap-2 rounded-md px-2 py-1.5 text-control',
+              model.verdict.tone === 'amber' ? 'bg-amber-soft text-amber-text' : 'bg-green-soft text-green',
             )}
           >
-            <b>{model.verdict.lead}</b>
-            <span className="text-muted">{model.verdict.rest}</span>
+            {/* Decoration: the lead beside it says the same thing in words (HIVE-229). */}
+            {model.verdict.tone === 'amber' ? (
+              <X size={14} weight="bold" aria-hidden="true" data-icon="x" className="mt-[3px] shrink-0" />
+            ) : (
+              <Check size={14} weight="bold" aria-hidden="true" data-icon="check" className="mt-[3px] shrink-0" />
+            )}
+            <span>
+              <b>{model.verdict.lead}</b>
+              <span className="text-muted">{model.verdict.rest}</span>
+            </span>
           </p>
           <TicketConstellation
             me={ticketKey}

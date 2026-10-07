@@ -83,6 +83,13 @@ describe('AgentRow', () => {
     expect(actions()).toHaveClass('top-2');
   });
 
+  it('sets the name semibold, as the Projects list sets a project (HIVE-229)', () => {
+    hydrate();
+    render(<AgentRow id="watcher" />);
+
+    expect(screen.getByText('watcher', { selector: 'b' })).toHaveClass('font-semibold');
+  });
+
   it('renders nothing for an id that is not an agent', () => {
     const { container } = render(<AgentRow id="nobody" />);
 
