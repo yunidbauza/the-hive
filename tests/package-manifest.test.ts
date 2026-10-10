@@ -79,4 +79,40 @@ describe('electron-builder.yml', () => {
   it('runs the composed afterPack hook, not the signer alone', () => {
     expect(config).toMatch(/^afterPack: scripts\/after-pack\.mjs$/m);
   });
+
+  /**
+   * Under the hardened runtime macOS refuses the microphone, silently, to a
+   * bundle whose signature lacks `audio-input`, and a `claude` in a Hive pty
+   * asks as The Hive (#307). The helpers, the pty host among them, are signed
+   * with `entitlementsInherit`; left unset they fall back to electron-builder's
+   * template, which has no microphone either.
+   */
+  it('signs the app and its helpers with the entitlements file in resources', () => {
+    expect(config).toMatch(/^ {2}entitlements: resources\/entitlements\.mac\.plist$/m);
+    expect(config).toMatch(/^ {2}entitlementsInherit: resources\/entitlements\.mac\.plist$/m);
+  });
+});
+
+describe('resources/entitlements.mac.plist', () => {
+  const plist = readFileSync(
+    join(process.cwd(), 'resources', 'entitlements.mac.plist'),
+    'utf8',
+  );
+  const granted = [...plist.matchAll(/<key>([^<]+)<\/key>\s*<true\/>/g)].map(
+    ([, key]) => key,
+  );
+
+  it('grants the microphone, so voice mode in a pty is not silently denied', () => {
+    expect(granted).toContain('com.apple.security.device.audio-input');
+  });
+
+  it("keeps electron-builder's three defaults, which V8 and node-pty need", () => {
+    expect(granted).toEqual(
+      expect.arrayContaining([
+        'com.apple.security.cs.allow-jit',
+        'com.apple.security.cs.allow-unsigned-executable-memory',
+        'com.apple.security.cs.disable-library-validation',
+      ]),
+    );
+  });
 });

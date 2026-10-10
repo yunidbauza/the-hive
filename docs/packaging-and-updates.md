@@ -387,11 +387,29 @@ assumed:
   the signing step, so an unsigned build never reaches it.
 
 `hardenedRuntime: true` is required by notarization, and it is what makes
-entitlements matter. electron-builder's default `entitlements.mac.plist` already
-grants the three this app needs — `allow-jit` and
-`allow-unsigned-executable-memory` for V8, and `disable-library-validation` for
-`node-pty`, whose `.node` and `spawn-helper` are loaded and executed out of
-`app.asar.unpacked`. No custom plist is carried until one proves insufficient.
+entitlements matter. electron-builder's default template grants three —
+`allow-jit` and `allow-unsigned-executable-memory` for V8, and
+`disable-library-validation` for `node-pty`, whose `.node` and `spawn-helper` are
+loaded and executed out of `app.asar.unpacked`.
+
+The template proved insufficient at the microphone (#307), so
+`resources/entitlements.mac.plist` carries it verbatim plus
+`com.apple.security.device.audio-input`. A `claude` running in a Hive pty asks
+for the microphone as The Hive, the process macOS holds responsible, and the
+hardened runtime refuses a bundle without that entitlement silently: no prompt,
+no row under Privacy › Microphone, and Claude Code's voice mode (hold space)
+records nothing. `entitlements` signs the app, `entitlementsInherit` every
+helper inside it, the pty host's utility process included; both name the file.
+`tests/package-manifest.test.ts` pins all four keys, because the copy no longer
+follows the template when Electron changes it.
+
+Only a Developer ID build proves this. `pnpm desktop:dev` runs Electron's own
+`Electron.app`, ad-hoc signed without the hardened runtime, so voice mode works
+there with or without the entitlement; an ad-hoc `desktop:dist` is the same.
+After installing a signed build, holding space in a session should raise
+"The Hive would like to access the microphone"; if an earlier build was already
+refused, `tccutil reset Microphone com.behiques.the-hive` clears it, and
+`codesign -d --entitlements - "/Applications/The Hive.app"` lists what shipped.
 
 `scripts/adhoc-sign.mjs` skips itself when a real identity is available. It runs
 in `afterPack`, which electron-builder documents as happening *before* signing,
