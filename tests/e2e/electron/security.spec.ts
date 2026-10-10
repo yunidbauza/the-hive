@@ -38,6 +38,22 @@ test('the three non-negotiable webPreferences flags hold', async ({ hive, page }
   expect(prefs?.sandbox).toBe(true);
 });
 
+/**
+ * `pty.droppedPath` hands a real path back to the renderer, which is safe only
+ * because the real `webUtils.getPathForFile` answers for a `File` a real drop
+ * produced and for nothing else. The unit suite mocks `webUtils`; this is the
+ * one place the property is checked against Electron itself.
+ */
+test('a File the page builds itself names no path', async ({ page }) => {
+  await page.waitForSelector('nav[aria-label="Places"]');
+
+  const path = await page.evaluate(() =>
+    window.hive!.pty.droppedPath(new File(['x'], 'passwd', { type: 'text/plain' })),
+  );
+
+  expect(path).toBeNull();
+});
+
 test('the renderer cannot reach Node', async ({ page }) => {
   await page.waitForSelector('nav[aria-label="Places"]');
 
@@ -666,6 +682,14 @@ test('window.hive exposes only the documented verbs', async ({ page }) => {
     // Story 093 added `ack` — the renderer reporting what it has parsed, which
     // is what lets main apply backpressure.
     'ack',
+    /**
+     * Dropping files onto a terminal added `droppedPath`, and it reaches no
+     * channel at all: `webUtils.getPathForFile` runs in preload and answers
+     * only for a `File` a real drop produced, `null` for one the page built.
+     * What it grants is the path of a file the user just dragged in, which
+     * the renderer then types into a pty it could already type anything into.
+     */
+    'droppedPath',
     'kill',
     'onData',
     'onExit',

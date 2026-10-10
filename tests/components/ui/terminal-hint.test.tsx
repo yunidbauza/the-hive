@@ -23,6 +23,15 @@ describe('TerminalHint', () => {
     expect(strip.textContent).toBe('← went to the session⌘[returns to the overmind');
   });
 
+  it('says only what happened when there is no key to offer', () => {
+    // A refused drop: there is nothing to press, only something to know.
+    render(<TerminalHint said="Not pasted" />);
+
+    const strip = screen.getByTestId('terminal-hint');
+    expect(strip.textContent).toBe('Not pasted');
+    expect(strip.querySelector('kbd')).toBeNull();
+  });
+
   it('draws the chord as a key, not as prose', () => {
     render(<TerminalHint said="x" chord="Ctrl+Shift+←" does="y" />);
     expect(screen.getByText('Ctrl+Shift+←').tagName).toBe('KBD');

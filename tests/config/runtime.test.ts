@@ -203,6 +203,7 @@ describe('can', () => {
       expect(can.chooseDirectory()).toBe(true);
       expect(can.importSkillFiles()).toBe(true);
       expect(can.revealConfig()).toBe(true);
+      expect(can.dropFilePaths()).toBe(true);
     });
 
     it('permits every capability once the config read finds no socket open', async () => {
@@ -213,6 +214,7 @@ describe('can', () => {
       expect(can.chooseDirectory()).toBe(true);
       expect(can.importSkillFiles()).toBe(true);
       expect(can.revealConfig()).toBe(true);
+      expect(can.dropFilePaths()).toBe(true);
     });
 
     it('withholds every capability while a socket is open, though the proxied snapshot reads local', async () => {
@@ -227,6 +229,9 @@ describe('can', () => {
       expect(can.chooseDirectory()).toBe(false);
       expect(can.importSkillFiles()).toBe(false);
       expect(can.revealConfig()).toBe(false);
+      // Not a channel, but the same fact: a path read off this device names
+      // nothing on the server the pty runs on.
+      expect(can.dropFilePaths()).toBe(false);
     });
 
     /**
@@ -256,6 +261,7 @@ describe('can', () => {
       expect(can.chooseDirectory()).toBe(true);
       expect(can.importSkillFiles()).toBe(true);
       expect(can.revealConfig()).toBe(true);
+      expect(can.dropFilePaths()).toBe(true);
     });
 
     /**

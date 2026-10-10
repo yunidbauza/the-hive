@@ -54,6 +54,8 @@ interface TerminalHostProps {
    */
   resolveFileLinks?: (paths: string[]) => Promise<Array<ResolvedLink | null>>;
   onOpenFile?: (target: FileLinkTarget) => void;
+  /** What a drop of files types. Forwarded verbatim; see the surface's prop. */
+  dropText?: (files: File[]) => string | null;
 }
 
 /**
@@ -79,6 +81,7 @@ export function TerminalHost({
   scrollback,
   resolveFileLinks,
   onOpenFile,
+  dropText,
 }: TerminalHostProps) {
   const [visited, setVisited] = useState<string[]>([]);
 
@@ -148,6 +151,7 @@ export function TerminalHost({
           ended={entry.id === endedId}
           resolveFileLinks={resolveFileLinks}
           onOpenFile={onOpenFile}
+          dropText={dropText}
         />
       ))}
     </>

@@ -3,8 +3,12 @@ import { cn } from '@/lib/utils';
 interface TerminalHintProps {
   /** What just happened, in the user's terms. Left-aligned. */
   said: string;
-  /** The key that fixes it, drawn as a cap. Right-aligned. */
-  chord: string;
+  /**
+   * The key that fixes it, drawn as a cap. Right-aligned. Absent when there
+   * is nothing to press — a refused drop is news with no remedy — and the
+   * strip is then the statement alone.
+   */
+  chord?: string;
   /**
    * What the chord does — **and where it goes**.
    *
@@ -14,7 +18,7 @@ interface TerminalHintProps {
    * be. The word is the app's own — it is what the bar above this one calls
    * the same action.
    */
-  does: string;
+  does?: string;
   className?: string;
 }
 
@@ -61,13 +65,17 @@ export function TerminalHint({
       )}
     >
       <span className="min-w-0 truncate">{said}</span>
-      <span className="flex-1" />
-      <span className="flex shrink-0 items-center gap-1.5">
-        <kbd className="rounded bg-chip px-1.5 py-0.5 font-semibold text-ink">
-          {chord}
-        </kbd>
-        {does}
-      </span>
+      {chord === undefined ? null : (
+        <>
+          <span className="flex-1" />
+          <span className="flex shrink-0 items-center gap-1.5">
+            <kbd className="rounded bg-chip px-1.5 py-0.5 font-semibold text-ink">
+              {chord}
+            </kbd>
+            {does}
+          </span>
+        </>
+      )}
     </div>
   );
 }

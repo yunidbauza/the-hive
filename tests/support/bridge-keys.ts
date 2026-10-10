@@ -96,5 +96,5 @@ export const BRIDGE_REMOTE_KEYS = [
 
 export const BRIDGE_PTY_KEYS = [
   'ack', 'spawn', 'spawnTerminal', 'write', 'resize', 'kill', 'onData', 'onExit', 'onLost',
-  'restart', 'prompt',
+  'restart', 'prompt', 'droppedPath',
 ] as const satisfies readonly (keyof HiveBridge['pty'])[];

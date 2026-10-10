@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetFitAddonInstances } from '../../../__mocks__/@xterm/addon-fit';
@@ -262,6 +262,21 @@ describe('TerminalHost', () => {
       'a.ts',
     );
     expect(onOpenFile).toHaveBeenCalledWith({ relPath: 'a.ts', rootKey: '' });
+  });
+
+  it('forwards what a drop of files types to the surface it mounts', () => {
+    const dropText = vi.fn(() => "'/a' ");
+    render(
+      <TerminalHost entries={entries} activeId="orch" palette={TERM} dropText={dropText} />,
+    );
+    const file = new File(['x'], 'a');
+
+    fireEvent.drop(surfaces()[0]!, {
+      dataTransfer: { types: ['Files'], files: [file] },
+    });
+
+    expect(dropText).toHaveBeenCalledWith([file]);
+    expect(terminalInstances[0]!.paste).toHaveBeenCalledWith("'/a' ");
   });
 
 });

@@ -115,6 +115,32 @@ click: terminal text is selected and copied constantly, so a plain click that
 opened a file would eat the click-drag that starts on a path. A URL has no such
 conflict. VS Code draws the same line in the same place.
 
+### Dropping files onto a terminal
+
+Dragging files from Finder onto a live terminal types their paths at the
+caret, the way a macOS terminal does: each one single-quoted (`'` inside a
+path becomes `'\''`), space-separated, with one trailing space. A path holding
+a control character (C0, DEL or C1) is left out whole: quoting is for the
+shell, and the terminal reads the bytes first, so an `ESC [ 201 ~` in a file
+name would otherwise close bracketed paste and type the rest. Same shape as
+file links: the surface takes **one opaque prop**, `dropText(files)`, and
+pastes whatever string it answers through `terminal.paste`, never
+`transport.write`, so bracketed paste is honoured and Claude Code sees one
+paste, which is how it recognises a dropped image path as an attachment.
+
+The surface claims the drag only when it is live (not `readOnly`, not
+`ended`), a `dropText` was given, and the drag carries `Files`. Otherwise
+`dragover` goes unclaimed, the browser's default drop is a navigation to
+`file://`, and main's `will-navigate` guard refuses it. That guard is why an
+unhandled drop does nothing at all rather than replacing the app.
+
+The composition root answers `dropText`. A path only preload can read
+(`pty.droppedPath`, over `webUtils.getPathForFile`, which crosses no channel
+and is `null` for a `File` the page built), formatted by
+`lib/terminal/drop-paths.ts`. While attached to a server, `can.dropFilePaths()`
+is false: the pty runs on the server and the path names a file on this
+device, so nothing is pasted and a `TerminalHint` says why for four seconds.
+
 ### Did the seam hold?
 
 The real pty backend was the test of that claim.

@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react';
+import { createEvent, fireEvent, render } from '@testing-library/react';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -1931,6 +1931,109 @@ describe('TerminalSurface input-box report', () => {
       expect((await links(1))?.[0]?.text).toBe('b.ts');
       expect(first).not.toHaveBeenCalled();
       expect(terminal().linkProviders).toHaveLength(1);
+    });
+  });
+
+  describe('files dropped onto the terminal', () => {
+    const shot = () => new File(['x'], 'shot.png');
+
+    function surfaceEl(container: HTMLElement): HTMLElement {
+      return container.querySelector('[data-testid="terminal-surface"]') as HTMLElement;
+    }
+
+    function fileTransfer(files: File[]) {
+      return { dataTransfer: { types: ['Files'], files, dropEffect: 'none' } };
+    }
+
+    it('pastes what the stage makes of the files, so bracketed paste is honoured', () => {
+      const dropText = vi.fn(() => "'/Users/me/shot.png' ");
+      const { transport } = fakeTransport();
+      const { container } = render(
+        <TerminalSurface transport={transport} palette={TERM} dropText={dropText} />,
+      );
+      const file = shot();
+
+      fireEvent.drop(surfaceEl(container), fileTransfer([file]));
+
+      expect(dropText).toHaveBeenCalledWith([file]);
+      expect(terminal().paste).toHaveBeenCalledWith("'/Users/me/shot.png' ");
+      // Through `paste`, never straight to the transport.
+      expect(transport.write).not.toHaveBeenCalled();
+      expect(terminal().focus).toHaveBeenCalled();
+    });
+
+    it('claims the drag, so the drop is not handed to the browser as a navigation', () => {
+      const { transport } = fakeTransport();
+      const { container } = render(
+        <TerminalSurface transport={transport} palette={TERM} dropText={() => null} />,
+      );
+
+      const over = createEvent.dragOver(surfaceEl(container), fileTransfer([shot()]));
+      fireEvent(surfaceEl(container), over);
+      const drop = createEvent.drop(surfaceEl(container), fileTransfer([shot()]));
+      fireEvent(surfaceEl(container), drop);
+
+      expect(over.defaultPrevented).toBe(true);
+      expect(drop.defaultPrevented).toBe(true);
+    });
+
+    it('pastes nothing when the stage answers null', () => {
+      const { transport } = fakeTransport();
+      const { container } = render(
+        <TerminalSurface transport={transport} palette={TERM} dropText={() => null} />,
+      );
+
+      fireEvent.drop(surfaceEl(container), fileTransfer([shot()]));
+
+      expect(terminal().paste).not.toHaveBeenCalled();
+    });
+
+    it('leaves a drag that carries no files alone, such as selected text', () => {
+      const dropText = vi.fn(() => 'x');
+      const { transport } = fakeTransport();
+      const { container } = render(
+        <TerminalSurface transport={transport} palette={TERM} dropText={dropText} />,
+      );
+
+      const over = createEvent.dragOver(surfaceEl(container), {
+        dataTransfer: { types: ['text/plain'], files: [] },
+      });
+      fireEvent(surfaceEl(container), over);
+      fireEvent.drop(surfaceEl(container), {
+        dataTransfer: { types: ['text/plain'], files: [] },
+      });
+
+      expect(over.defaultPrevented).toBe(false);
+      expect(dropText).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['read-only', { readOnly: true }],
+      ['ended', { ended: true }],
+    ])('ignores a drop on a %s surface', (_label, props) => {
+      const dropText = vi.fn(() => 'x');
+      const { transport } = fakeTransport();
+      const { container } = render(
+        <TerminalSurface transport={transport} palette={TERM} dropText={dropText} {...props} />,
+      );
+
+      const over = createEvent.dragOver(surfaceEl(container), fileTransfer([shot()]));
+      fireEvent(surfaceEl(container), over);
+      fireEvent.drop(surfaceEl(container), fileTransfer([shot()]));
+
+      expect(over.defaultPrevented).toBe(false);
+      expect(dropText).not.toHaveBeenCalled();
+      expect(terminal().paste).not.toHaveBeenCalled();
+    });
+
+    it('ignores a drop when no one said what a drop types', () => {
+      const { transport } = fakeTransport();
+      const { container } = render(<TerminalSurface transport={transport} palette={TERM} />);
+
+      const over = createEvent.dragOver(surfaceEl(container), fileTransfer([shot()]));
+      fireEvent(surfaceEl(container), over);
+
+      expect(over.defaultPrevented).toBe(false);
     });
   });
 

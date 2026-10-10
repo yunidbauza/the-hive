@@ -438,6 +438,9 @@ const bridge: HiveBridge = {
       subscribe<SessionLostEvent>(CH.ptyLost, callback),
     restart: (request: SpawnRequest): Promise<void> =>
       ipcRenderer.invoke(CH.ptyRestart, request),
+    // No channel: the path is read here, where `webUtils` lives, and `''`
+    // (a `File` the page constructed) becomes `null` rather than a path.
+    droppedPath: (file: File): string | null => webUtils.getPathForFile(file) || null,
   },
   /*
     The project filesystem — the explorer and the editor.

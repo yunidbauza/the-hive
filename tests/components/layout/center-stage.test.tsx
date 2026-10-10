@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,6 +12,7 @@ import {
 } from '../../../__mocks__/@xterm/xterm';
 
 import { CenterStage } from '@components/layout/center-stage';
+import { can } from '@config/runtime';
 import { EDITOR_FILE_PANEL, editorTabId } from '@features/editor/components/editor-tab-strip';
 import { STAGE_MIN, useAppearanceStore } from '@stores/appearance-store';
 import { fileKey, useEditorStore } from '@stores/editor-store';
@@ -324,6 +325,8 @@ describe('CenterStage — interactive terminals', () => {
         onData: vi.fn(() => vi.fn()),
         onExit: vi.fn(() => vi.fn()),
         onLost: vi.fn(() => vi.fn()),
+        // A dropped file's path, as preload would read it off a real drop.
+        droppedPath: vi.fn((file: File) => `/Users/me/${file.name}`),
       },
     };
   }
@@ -399,6 +402,57 @@ describe('CenterStage — interactive terminals', () => {
     no terminal in it at all, which `builds no terminal at all for an agent`
     above is the assertion for.
   */
+
+  describe('files dropped onto a live session', () => {
+    const dropOnSession = (...names: string[]) => {
+      const session = visibleSurfaces()[0]!;
+      fireEvent.drop(session, {
+        dataTransfer: {
+          types: ['Files'],
+          files: names.map((name) => new File(['x'], name)),
+        },
+      });
+    };
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('types each path single-quoted, through the session terminal', () => {
+      withBridge();
+      render(<CenterStage />);
+      act(() => useUiStore.getState().openTab('hero-refresh'));
+
+      dropOnSession('My Shot.png', "it's.txt");
+
+      expect(terminalInstances[1]!.paste).toHaveBeenCalledWith(
+        "'/Users/me/My Shot.png' '/Users/me/it'\\''s.txt' ",
+      );
+      expect(screen.queryByTestId('terminal-hint')).toBeNull();
+    });
+
+    it('refuses while attached to a server, and says why', () => {
+      vi.useFakeTimers();
+      try {
+        withBridge();
+        vi.spyOn(can, 'dropFilePaths').mockReturnValue(false);
+        render(<CenterStage />);
+        act(() => useUiStore.getState().openTab('hero-refresh'));
+
+        act(() => dropOnSession('shot.png'));
+
+        expect(terminalInstances[1]!.paste).not.toHaveBeenCalled();
+        expect(screen.getByTestId('terminal-hint').textContent).toContain(
+          'names a file on this device',
+        );
+
+        act(() => vi.advanceTimersByTime(DECLINED_BACK_MS));
+        expect(screen.queryByTestId('terminal-hint')).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 
   describe('the message row (story 108)', () => {
     const messageRow = () => screen.queryByLabelText(/^Message /);

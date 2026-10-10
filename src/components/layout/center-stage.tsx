@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useDeclinedBack } from '@/hooks/use-declined-back';
 import { useOnStage } from '@/hooks/use-on-stage';
 import { useOpenFileAt } from '@/hooks/use-open-file-at';
+import { useRefusedDrop } from '@/hooks/use-refused-drop';
 import { isTerminalView, resolveView } from '@/lib/resolve-view';
 import { cn } from '@/lib/utils';
 import {
@@ -19,6 +20,7 @@ import { SessionHeader } from '@components/layout/session-header';
 import { TerminalHost } from '@components/terminal/terminal-host';
 import { SplitHandle } from '@components/ui/split-handle';
 import { TerminalHint } from '@components/ui/terminal-hint';
+import { can } from '@config/runtime';
 import { AgentPage } from '@features/agents/components/agent-page';
 import { AgentsStage } from '@features/agents/components/agents-stage';
 import { EditorPane } from '@features/editor/components/editor-pane';
@@ -46,6 +48,7 @@ import { SettingsOverlay } from '@features/settings/components/settings-overlay'
 import { WorkStage } from '@features/work/components/ticket-page';
 import { resolvePaths } from '@lib/explorer/fs-client';
 import { isMacPlatform } from '@lib/platform';
+import { droppedPaths, quoteDroppedPaths } from '@lib/terminal/drop-paths';
 import type { FileLinkTarget } from '@lib/terminal/file-links';
 import {
   TERMINAL_CHORD_EVENT,
@@ -385,6 +388,26 @@ export function CenterStage() {
    */
   const declinedBack = useDeclinedBack(activeTab);
 
+  /**
+   * What a drop of files onto a live terminal types: each path, single-quoted.
+   *
+   * Refused while attached to a server, and said so. The session runs on the
+   * server and the path names a file on this device — pasting it would hand
+   * the agent a path that is not there, or worse, one that is but is a
+   * different file. The skills drop is refused remotely for the same reason.
+   */
+  const { refused: refusedDrop, refuse: refuseDrop } = useRefusedDrop(activeTab);
+  const dropText = useCallback(
+    (files: File[]) => {
+      if (!can.dropFilePaths()) {
+        refuseDrop();
+        return null;
+      }
+      return quoteDroppedPaths(droppedPaths(files));
+    },
+    [refuseDrop],
+  );
+
   const backToOrch = useBackToOrch();
   useEffect(() => {
     const onChord = (event: Event) => {
@@ -588,6 +611,7 @@ export function CenterStage() {
             scrollback={terminalAppearance.scrollback}
             resolveFileLinks={resolveFileLinks}
             onOpenFile={onOpenFile}
+            dropText={dropText}
           />
 
           {/*
@@ -650,6 +674,18 @@ export function CenterStage() {
               said="← went to the session"
               chord={backChordLabel(isMacPlatform())}
               does="returns to the overmind"
+            />
+          ) : null}
+
+          {/*
+            A refused drop changes nothing in the terminal, so without this it
+            is silent — which is what made dropping files look broken. Same
+            strip, same place; the declined-back news wins if both are up.
+          */}
+          {refusedDrop && !declinedBack ? (
+            <TerminalHint
+              className="absolute inset-x-0 bottom-0"
+              said="Not pasted — a dropped path names a file on this device, not the server"
             />
           ) : null}
         </div>

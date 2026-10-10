@@ -198,6 +198,15 @@ export const can = {
   importSkillFiles: (): boolean => canFor(currentRemote()).importSkillFiles,
   importSkill: (): boolean => canFor(currentRemote()).importSkill,
   revealConfig: (): boolean => canFor(currentRemote()).revealConfig,
+  /**
+   * Whether a file dropped onto a terminal may be typed in as its path.
+   *
+   * Not a `WINDOW_BOUND` channel — reading a dropped file's path crosses no
+   * channel at all — but bound to the window for the same reason: while
+   * attached, the pty runs on the server and a path read off this device
+   * names a file it does not have. Off the runtime, like the four above.
+   */
+  dropFilePaths: (): boolean => currentRemote().mode === 'local',
 } as const;
 
 /**

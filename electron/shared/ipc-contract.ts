@@ -2331,6 +2331,17 @@ export interface HiveBridge {
      * is the only way back, and it is a thing the user chose to do.
      */
     restart(request: SpawnRequest): Promise<void>;
+    /**
+     * The absolute path of a file dropped onto a terminal, or `null`.
+     *
+     * Synchronous and local: `webUtils.getPathForFile` crosses no channel, so
+     * there is nothing here for the remote proxy to route or refuse. It
+     * answers only for a `File` the browser built from a real drop; one the
+     * page constructed is `null`. The path is handed back, unlike
+     * `skills.pathToken`'s, because the only use of it is text pasted into a
+     * pty the renderer can already type anything into.
+     */
+    droppedPath(file: File): string | null;
   };
   /**
    * The project filesystem — the explorer and the editor.

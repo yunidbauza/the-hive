@@ -2,7 +2,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal, type IBufferCell, type IBufferLine } from '@xterm/xterm';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type DragEvent } from 'react';
 
 import { isMacPlatform } from '@lib/platform';
 import { xtermThemeFor, type TermPalette } from '@lib/terminal/ansi';
@@ -163,6 +163,19 @@ interface TerminalSurfaceProps {
    */
   resolveFileLinks?: (paths: string[]) => Promise<Array<ResolvedLink | null>>;
   onOpenFile?: (target: FileLinkTarget) => void;
+  /**
+   * What dropping these files onto the terminal types, or `null` for nothing.
+   *
+   * Opaque for the same reason as {@link TerminalSurfaceProps.resolveFileLinks}:
+   * whether a dropped `File` has a path, and whether a path on this device
+   * means anything to the machine the pty runs on, are the composition root's
+   * questions. This component only knows that a live terminal takes a drop of
+   * files, and pastes the answer the way the clipboard is pasted.
+   *
+   * Absent, or on a read-only or ended surface, the drag is never claimed and
+   * the browser's own default runs — which main refuses as a navigation.
+   */
+  dropText?: (files: File[]) => string | null;
 }
 
 /** What the mount effect builds, held together so dependents can re-run. */
@@ -357,6 +370,7 @@ export function TerminalSurface({
   ended = false,
   resolveFileLinks,
   onOpenFile,
+  dropText,
 }: TerminalSurfaceProps) {
   /**
    * Container and instance both live in state behind callback refs rather than
@@ -1108,6 +1122,39 @@ export function TerminalSurface({
     instance.terminal.focus();
   };
 
+  /**
+   * Whether a drag is files headed for a terminal that can take them.
+   *
+   * `types`, not `files`: during `dragover` the browser keeps the file list
+   * empty and exposes only that files are coming. A drag of selected text is
+   * left alone, and so is anything over a surface that cannot be typed into.
+   */
+  const takesDrop = (event: DragEvent<HTMLDivElement>) =>
+    !readOnly &&
+    !ended &&
+    dropText !== undefined &&
+    Array.from(event.dataTransfer.types).includes('Files');
+
+  /** Claiming `dragover` is what lets `drop` fire here at all. */
+  const claimDrag = (event: DragEvent<HTMLDivElement>) => {
+    if (!takesDrop(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  };
+
+  /**
+   * Paste rather than `transport.write`, as {@link pasteFromClipboard} does:
+   * with bracketed paste on, the program sees one paste, which is how Claude
+   * Code recognises a dropped image path as an attachment.
+   */
+  const pasteDrop = (event: DragEvent<HTMLDivElement>) => {
+    if (!takesDrop(event) || !instance || !dropText) return;
+    event.preventDefault();
+    const text = dropText(Array.from(event.dataTransfer.files));
+    if (text !== null) instance.terminal.paste(text);
+    instance.terminal.focus();
+  };
+
   return (
     // eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events
     <div
@@ -1115,6 +1162,8 @@ export function TerminalSurface({
       // Kept alive, not unmounted: hiding preserves scrollback and selection.
       style={visible ? undefined : { display: 'none' }}
       onClick={focusTerminal}
+      onDragOver={claimDrag}
+      onDrop={pasteDrop}
       data-testid="terminal-surface"
       data-terminal-id={id}
     >

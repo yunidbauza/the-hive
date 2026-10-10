@@ -743,6 +743,26 @@ describe('the skills rename verb routes to its channel (HIVE-99)', () => {
   });
 });
 
+describe('pty.droppedPath, for files dropped onto a terminal', () => {
+  it('answers the real path of a file a drop produced', () => {
+    getPathForFileMock.mockReturnValueOnce('/Users/me/Desktop/My Shot.png');
+    expect(pty().droppedPath(new File(['x'], 'My Shot.png'))).toBe(
+      '/Users/me/Desktop/My Shot.png',
+    );
+  });
+
+  it('answers null for a File the page constructed, never an empty path', () => {
+    expect(pty().droppedPath(new File(['x'], 'x.txt'))).toBeNull();
+  });
+
+  it('crosses no channel', () => {
+    getPathForFileMock.mockReturnValueOnce('/tmp/a');
+    pty().droppedPath(new File(['x'], 'a'));
+    expect(ipcRendererMock.send).not.toHaveBeenCalled();
+    expect(ipcRendererMock.invoke).not.toHaveBeenCalled();
+  });
+});
+
 describe('the skills bundle verbs (HIVE-148)', () => {
   it('mints a token for a real dropped file and nothing for a constructed one', () => {
     // A `File` the page built itself. `webUtils.getPathForFile` answers '' for
