@@ -1,7 +1,7 @@
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import type { Extension } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
-import { tags } from '@lezer/highlight';
+import { tagHighlighter, tags, type Tag } from '@lezer/highlight';
 
 /**
  * The editor's colour, expressed entirely in `--cc-*` tokens.
@@ -203,53 +203,98 @@ export const editorTheme: Extension = EditorView.theme({
  * `import` across every grammar, which is why nine roles are enough for
  * seventeen languages. A per-language style would be seventeen files to keep
  * consistent and would still look like one editor only by coincidence.
+ *
+ * One row per role: the tags, the CSS the editor's `HighlightStyle` applies,
+ * and the Tailwind classes the markdown preview's fences apply. One table, so
+ * a code block in the preview can never drift from the same code in the editor.
+ * The class strings are literals because Tailwind only generates what it finds
+ * spelled out in source.
  */
+interface CodeRole {
+  tag: Tag | readonly Tag[];
+  style: { color?: string; fontStyle?: string; fontWeight?: string; textDecoration?: string };
+  className: string;
+}
+
+const CODE_ROLES: readonly CodeRole[] = [
+  {
+    tag: [tags.keyword, tags.moduleKeyword],
+    style: { color: 'var(--cc-code-keyword)' },
+    className: 'text-code-keyword',
+  },
+  {
+    tag: [tags.controlKeyword, tags.operatorKeyword],
+    style: { color: 'var(--cc-code-keyword)' },
+    className: 'text-code-keyword',
+  },
+  {
+    tag: [tags.string, tags.special(tags.string), tags.regexp],
+    style: { color: 'var(--cc-code-string)' },
+    className: 'text-code-string',
+  },
+  {
+    tag: [tags.number, tags.bool, tags.null],
+    style: { color: 'var(--cc-code-number)' },
+    className: 'text-code-number',
+  },
+  {
+    tag: [tags.comment, tags.lineComment, tags.blockComment, tags.docComment],
+    style: { color: 'var(--cc-code-comment)', fontStyle: 'italic' },
+    className: 'text-code-comment italic',
+  },
+  {
+    tag: [tags.function(tags.variableName), tags.function(tags.propertyName)],
+    style: { color: 'var(--cc-code-name)' },
+    className: 'text-code-name',
+  },
+  {
+    tag: [tags.typeName, tags.className, tags.namespace, tags.tagName],
+    style: { color: 'var(--cc-code-type)' },
+    className: 'text-code-type',
+  },
+  {
+    tag: [tags.operator, tags.punctuation, tags.separator, tags.bracket],
+    style: { color: 'var(--cc-code-operator)' },
+    className: 'text-code-operator',
+  },
+  {
+    tag: [tags.constant(tags.variableName), tags.standard(tags.variableName)],
+    style: { color: 'var(--cc-code-constant)' },
+    className: 'text-code-constant',
+  },
+  {
+    tag: [tags.attributeName, tags.propertyName],
+    style: { color: 'var(--cc-code-name)' },
+    className: 'text-code-name',
+  },
+  { tag: tags.invalid, style: { color: 'var(--cc-code-invalid)' }, className: 'text-code-invalid' },
+  /**
+   * Markdown's structural tags, which otherwise render as plain text.
+   *
+   * Included because `AGENTS.md`, `README.md` and the spec files are among
+   * the most-opened documents in this repository, and a markdown file with no
+   * visible heading structure is the one case where "unhighlighted is fine"
+   * stops being true.
+   */
+  {
+    tag: tags.heading,
+    style: { color: 'var(--cc-code-name)', fontWeight: '600' },
+    className: 'text-code-name font-semibold',
+  },
+  {
+    tag: tags.link,
+    style: { color: 'var(--cc-code-type)', textDecoration: 'underline' },
+    className: 'text-code-type underline',
+  },
+  { tag: tags.emphasis, style: { fontStyle: 'italic' }, className: 'italic' },
+  { tag: tags.strong, style: { fontWeight: '600' }, className: 'font-semibold' },
+];
+
 export const editorHighlight = syntaxHighlighting(
-  HighlightStyle.define([
-    { tag: [tags.keyword, tags.moduleKeyword], color: 'var(--cc-code-keyword)' },
-    {
-      tag: [tags.controlKeyword, tags.operatorKeyword],
-      color: 'var(--cc-code-keyword)',
-    },
-    {
-      tag: [tags.string, tags.special(tags.string), tags.regexp],
-      color: 'var(--cc-code-string)',
-    },
-    { tag: [tags.number, tags.bool, tags.null], color: 'var(--cc-code-number)' },
-    {
-      tag: [tags.comment, tags.lineComment, tags.blockComment, tags.docComment],
-      color: 'var(--cc-code-comment)',
-      fontStyle: 'italic',
-    },
-    {
-      tag: [tags.function(tags.variableName), tags.function(tags.propertyName)],
-      color: 'var(--cc-code-name)',
-    },
-    {
-      tag: [tags.typeName, tags.className, tags.namespace, tags.tagName],
-      color: 'var(--cc-code-type)',
-    },
-    {
-      tag: [tags.operator, tags.punctuation, tags.separator, tags.bracket],
-      color: 'var(--cc-code-operator)',
-    },
-    {
-      tag: [tags.constant(tags.variableName), tags.standard(tags.variableName)],
-      color: 'var(--cc-code-constant)',
-    },
-    { tag: [tags.attributeName, tags.propertyName], color: 'var(--cc-code-name)' },
-    { tag: tags.invalid, color: 'var(--cc-code-invalid)' },
-    /**
-     * Markdown's structural tags, which otherwise render as plain text.
-     *
-     * Included because `AGENTS.md`, `README.md` and the spec files are among
-     * the most-opened documents in this repository, and a markdown file with no
-     * visible heading structure is the one case where "unhighlighted is fine"
-     * stops being true.
-     */
-    { tag: tags.heading, color: 'var(--cc-code-name)', fontWeight: '600' },
-    { tag: tags.link, color: 'var(--cc-code-type)', textDecoration: 'underline' },
-    { tag: tags.emphasis, fontStyle: 'italic' },
-    { tag: tags.strong, fontWeight: '600' },
-  ]),
+  HighlightStyle.define(CODE_ROLES.map((role) => ({ tag: role.tag, ...role.style }))),
+);
+
+/** The same roles as classes, for `highlightCode` outside an editor. */
+export const codeClassHighlighter = tagHighlighter(
+  CODE_ROLES.map((role) => ({ tag: role.tag, class: role.className })),
 );

@@ -373,6 +373,8 @@ a `tint-exempt: <why>` comment on its line or the line above, which the scan in
   One deliberate exception: the team name at the right of Home's headline is
   a small mono label (11px, caps, 0.12em, `text-subtle`), set like the comb's
   own mono patch labels such as THE SWARM.
+- **The markdown preview** sets prose in the body sans at the editor's size plus
+  one pixel, headings in sans 600 at `em` sizes, code in `--font-mono`.
 - **Type scale:** five sizes in `tokens.css`, app-wide, nothing between them
   (HIVE-225). Weight and colour carry the rest. `cn()` knows all five as sizes,
   so `text-micro text-muted` keeps both.

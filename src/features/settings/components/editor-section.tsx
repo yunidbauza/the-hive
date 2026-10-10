@@ -15,6 +15,7 @@ import {
   type EditorNav,
   type EditorPlacement,
   type EditorSplitAxis,
+  type MarkdownOpensIn,
 } from '@stores/appearance-store';
 
 /**
@@ -39,6 +40,11 @@ const PLACEMENT_OPTIONS: readonly SegmentedOption<EditorPlacement>[] = [
 const AXIS_OPTIONS: readonly SegmentedOption<EditorSplitAxis>[] = [
   { value: 'vertical', label: 'Side by side' },
   { value: 'horizontal', label: 'Stacked' },
+];
+
+const MARKDOWN_OPTIONS: readonly SegmentedOption<MarkdownOpensIn>[] = [
+  { value: 'preview', label: 'Preview' },
+  { value: 'source', label: 'Source' },
 ];
 
 const NAV_OPTIONS: readonly SegmentedOption<EditorNav>[] = [
@@ -66,6 +72,7 @@ export function EditorSection() {
     setEditorPlacement,
     setEditorSplitAxis,
     setEditorNav,
+    setMarkdownOpensIn,
     setEditorEditable,
     setEditorFont,
     setEditorFontSize,
@@ -130,6 +137,18 @@ export function EditorSection() {
           options={NAV_OPTIONS}
           value={settings.editorNav}
           onChange={setEditorNav}
+        />
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="Markdown"
+        description="How a .md file opens. Source, Preview and Split on the file itself switch it for that file."
+      >
+        <SegmentedControl
+          label="Markdown opens in"
+          options={MARKDOWN_OPTIONS}
+          value={settings.markdownOpensIn}
+          onChange={setMarkdownOpensIn}
         />
       </SettingsGroup>
 

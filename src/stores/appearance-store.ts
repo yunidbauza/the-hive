@@ -77,6 +77,12 @@ export type EditorSplitAxis = 'horizontal' | 'vertical';
  */
 export type EditorNav = 'tabs' | 'single';
 
+/**
+ * How a `.md` file opens (the markdown preview). Preview by default: in this
+ * app markdown is mostly read — specs, plans, `AGENTS.md` — not written.
+ */
+export type MarkdownOpensIn = 'preview' | 'source';
+
 /** Round two's session panel tabs (HIVE-201). Ticket is HIVE-202's, PR is HIVE-209's. */
 export type SessionPanelTab = 'plan' | 'ticket' | 'pr' | 'files';
 
@@ -168,6 +174,7 @@ interface AppearanceState {
    */
   agentSplitRatio: number;
   editorNav: EditorNav;
+  markdownOpensIn: MarkdownOpensIn;
   /**
    * Whether the editor accepts keystrokes and offers a save. **On by default.**
    *
@@ -246,6 +253,7 @@ interface AppearanceState {
   setListPanelWidth: (px: number) => void;
   setSessionPanelWidth: (px: number) => void;
   setEditorNav: (nav: EditorNav) => void;
+  setMarkdownOpensIn: (value: MarkdownOpensIn) => void;
   setEditorEditable: (editable: boolean) => void;
   setEditorFont: (font: TerminalFontId) => void;
   setEditorFontSize: (size: number) => void;
@@ -429,6 +437,7 @@ const initialAppearanceState = {
   runLogSplitRatio: 0.4,
   agentSplitRatio: DEFAULT_AGENT_SPLIT_RATIO,
   editorNav: 'tabs' as EditorNav,
+  markdownOpensIn: 'preview' as MarkdownOpensIn,
   editorEditable: true,
   editorFont: DEFAULT_TERMINAL_FONT,
   editorFontSize: 13,
@@ -461,6 +470,7 @@ interface PersistedAppearanceState {
   runLogSplitRatio: number;
   agentSplitRatio: number;
   editorNav: EditorNav;
+  markdownOpensIn: MarkdownOpensIn;
   editorEditable: boolean;
   editorFont: TerminalFontId;
   editorFontSize: number;
@@ -701,6 +711,7 @@ export const useAppearanceStore = create<AppearanceState>()(
       setListPanelWidth: (px) => set({ listPanelWidth: clampPanelWidth('list', px) }),
       setSessionPanelWidth: (px) => set({ sessionPanelWidth: clampPanelWidth('session', px) }),
       setEditorNav: (editorNav) => set({ editorNav }),
+      setMarkdownOpensIn: (markdownOpensIn) => set({ markdownOpensIn }),
       setEditorEditable: (editorEditable) => set({ editorEditable }),
       setEditorFont: (editorFont) => set({ editorFont }),
       setEditorFontSize: (editorFontSize) => set({ editorFontSize }),
@@ -799,6 +810,7 @@ export const useAppearanceStore = create<AppearanceState>()(
         runLogSplitRatio: state.runLogSplitRatio,
         agentSplitRatio: state.agentSplitRatio,
         editorNav: state.editorNav,
+        markdownOpensIn: state.markdownOpensIn,
         editorEditable: state.editorEditable,
         editorFont: state.editorFont,
         editorFontSize: state.editorFontSize,
@@ -1042,6 +1054,7 @@ const editorSettingsSelector = (state: AppearanceState) => ({
   editorWordWrap: state.editorWordWrap,
   editorLineNumbers: state.editorLineNumbers,
   editorTabWidth: state.editorTabWidth,
+  markdownOpensIn: state.markdownOpensIn,
 });
 
 const editorSettingsActionsSelector = (state: AppearanceState) => ({
@@ -1054,6 +1067,7 @@ const editorSettingsActionsSelector = (state: AppearanceState) => ({
   setEditorWordWrap: state.setEditorWordWrap,
   setEditorLineNumbers: state.setEditorLineNumbers,
   setEditorTabWidth: state.setEditorTabWidth,
+  setMarkdownOpensIn: state.setMarkdownOpensIn,
 });
 
 export const useEditorAppearance = () =>
@@ -1061,6 +1075,9 @@ export const useEditorAppearance = () =>
 
 export const useEditorLayout = () =>
   useAppearanceStore(useShallow(editorLayoutSelector));
+
+/** The preview's default — read by the view hook, not by the store holding buffers. */
+export const useMarkdownOpensIn = () => useAppearanceStore((state) => state.markdownOpensIn);
 
 /** Written by dragging the divider, not by a settings control. */
 export const useSetEditorSplitRatio = () =>

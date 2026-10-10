@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
 
 import { Icon } from '@components/ui/icon';
+import { ViewToggle } from '@features/editor/components/view-toggle';
 import { onTablistKeyDown } from '@lib/tablist';
 import { useActiveFileKey, useEditorActions, useEditorTabs } from '@stores/editor-store';
 
@@ -53,105 +54,112 @@ export function EditorTabStrip({ showTerminalTab }: EditorTabStripProps) {
   if (tabs.length === 0) return null;
 
   return (
-    <div
-      ref={stripRef}
-      role="tablist"
-      aria-label="Open files"
-      className="flex shrink-0 items-stretch gap-px overflow-x-auto border-b border-border-soft bg-panel"
-    >
-      {showTerminalTab ? (
-        <button
-          type="button"
-          role="tab"
-          id={editorTabId(null)}
-          aria-selected={activeKey === null}
-          aria-controls={EDITOR_TERMINAL_PANEL}
-          tabIndex={activeKey === null ? 0 : -1}
-          onKeyDown={onTablistKeyDown}
-          onClick={showTerminal}
-          className={cn(
-            'flex shrink-0 items-center gap-1.5 px-3 py-1.5 tabular-nums text-ui-sm whitespace-nowrap',
-            activeKey === null
-              ? 'bg-panel-2 text-ink'
-              : 'text-subtle hover:bg-hover hover:text-muted',
-          )}
-        >
-          <Icon name="ph-terminal" size={13} />
-          Terminal
-        </button>
-      ) : null}
-
-      {tabs.map((tab) => {
-        const active = tab.key === activeKey;
-        return (
-          /*
-            A div wrapping two buttons, not a button containing a button —
-            which is invalid HTML and gives the close control no reliable
-            activation. The row is a tab; the × is a mouse affordance outside
-            the accessibility tree, and Delete on the tab is its keyboard path
-            (HIVE-225).
-          */
-          <div
-            key={tab.key}
+    <div className="flex shrink-0 items-stretch border-b border-border-soft bg-panel">
+      <div
+        ref={stripRef}
+        role="tablist"
+        aria-label="Open files"
+        className="flex min-w-0 flex-1 items-stretch gap-px overflow-x-auto"
+      >
+        {showTerminalTab ? (
+          <button
+            type="button"
+            role="tab"
+            id={editorTabId(null)}
+            aria-selected={activeKey === null}
+            aria-controls={EDITOR_TERMINAL_PANEL}
+            tabIndex={activeKey === null ? 0 : -1}
+            onKeyDown={onTablistKeyDown}
+            onClick={showTerminal}
             className={cn(
-              'group flex shrink-0 items-center',
-              active ? 'bg-panel-2' : 'hover:bg-hover',
+              'flex shrink-0 items-center gap-1.5 px-3 py-1.5 tabular-nums text-ui-sm whitespace-nowrap',
+              activeKey === null
+                ? 'bg-panel-2 text-ink'
+                : 'text-subtle hover:bg-hover hover:text-muted',
             )}
           >
-            <button
-              type="button"
-              role="tab"
-              id={editorTabId(tab.key)}
-              aria-selected={active}
-              aria-controls={EDITOR_FILE_PANEL}
-              aria-keyshortcuts="Delete"
-              tabIndex={active ? 0 : -1}
-              onKeyDown={(event) => {
-                if (event.key === 'Delete') {
-                  event.preventDefault();
-                  refocus.current = true;
-                  closeFile(tab.key);
-                  return;
-                }
-                onTablistKeyDown(event);
-              }}
-              onClick={() => setActive(tab.key)}
-              title={tab.relPath}
+            <Icon name="ph-terminal" size={13} />
+            Terminal
+          </button>
+        ) : null}
+
+        {tabs.map((tab) => {
+          const active = tab.key === activeKey;
+          return (
+            /*
+              A div wrapping two buttons, not a button containing a button —
+              which is invalid HTML and gives the close control no reliable
+              activation. The row is a tab; the × is a mouse affordance outside
+              the accessibility tree, and Delete on the tab is its keyboard path
+              (HIVE-225).
+            */
+            <div
+              key={tab.key}
               className={cn(
-                'flex items-center gap-1.5 py-1.5 pr-1 pl-3 tabular-nums text-ui-sm whitespace-nowrap',
-                active ? 'text-ink' : 'text-subtle group-hover:text-muted',
+                'group flex shrink-0 items-center',
+                active ? 'bg-panel-2' : 'hover:bg-hover',
               )}
             >
-              {tab.name}
-              {/*
-                The dirty dot is inside the label button rather than replacing
-                the ×, as some editors do. Swapping the close control for a dot
-                means the one moment you most want to close a tab deliberately
-                — when it has unsaved changes — is the one moment the control
-                moves.
-              */}
-              {tab.dirty ? (
-                <span
-                  aria-hidden="true"
-                  className="size-1.5 shrink-0 rounded-full bg-amber"
-                />
-              ) : null}
-              {tab.dirty ? <span className="sr-only">unsaved changes</span> : null}
-            </button>
+              <button
+                type="button"
+                role="tab"
+                id={editorTabId(tab.key)}
+                aria-selected={active}
+                aria-controls={EDITOR_FILE_PANEL}
+                aria-keyshortcuts="Delete"
+                tabIndex={active ? 0 : -1}
+                onKeyDown={(event) => {
+                  if (event.key === 'Delete') {
+                    event.preventDefault();
+                    refocus.current = true;
+                    closeFile(tab.key);
+                    return;
+                  }
+                  onTablistKeyDown(event);
+                }}
+                onClick={() => setActive(tab.key)}
+                title={tab.relPath}
+                className={cn(
+                  'flex items-center gap-1.5 py-1.5 pr-1 pl-3 tabular-nums text-ui-sm whitespace-nowrap',
+                  active ? 'text-ink' : 'text-subtle group-hover:text-muted',
+                )}
+              >
+                {tab.name}
+                {/*
+                  The dirty dot is inside the label button rather than replacing
+                  the ×, as some editors do. Swapping the close control for a dot
+                  means the one moment you most want to close a tab deliberately
+                  — when it has unsaved changes — is the one moment the control
+                  moves.
+                */}
+                {tab.dirty ? (
+                  <span
+                    aria-hidden="true"
+                    className="size-1.5 shrink-0 rounded-full bg-amber"
+                  />
+                ) : null}
+                {tab.dirty ? <span className="sr-only">unsaved changes</span> : null}
+              </button>
 
-            <button
-              type="button"
-              tabIndex={-1}
-              aria-hidden="true"
-              title={`Close ${tab.name}`}
-              onClick={() => closeFile(tab.key)}
-              className="mr-1.5 rounded-full p-0.5 text-subtle hover:bg-active hover:text-ink"
-            >
-              <Icon name="ph-x" size={11} />
-            </button>
-          </div>
-        );
-      })}
+              <button
+                type="button"
+                tabIndex={-1}
+                aria-hidden="true"
+                title={`Close ${tab.name}`}
+                onClick={() => closeFile(tab.key)}
+                className="mr-1.5 rounded-full p-0.5 text-subtle hover:bg-active hover:text-ink"
+              >
+                <Icon name="ph-x" size={11} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      {/*
+        Outside the tablist: it is not a tab, and inside the scrolling list it
+        would scroll away with a long row of tabs.
+      */}
+      <ViewToggle />
     </div>
   );
 }

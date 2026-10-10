@@ -161,4 +161,13 @@ describe('EditorTabStrip', () => {
     expect(screen.queryByRole('tab', { name: /b\.ts/ })).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /a\.ts/ })).toHaveFocus();
   });
+
+  it('puts the markdown view toggle beside the tabs, outside the tab list', async () => {
+    await act(async () => {
+      store().openFile('demo', 'README.md');
+    });
+    render(<EditorTabStrip showTerminalTab />);
+    const toggle = screen.getByRole('radiogroup', { name: 'Markdown view' });
+    expect(screen.getByRole('tablist')).not.toContainElement(toggle);
+  });
 });

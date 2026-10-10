@@ -313,4 +313,27 @@ describe('EditorSurface', () => {
     });
   });
 
+  it('reports its first visible line when its scroller scrolls', () => {
+    const onTopLineChange = vi.fn();
+    const { container } = render(
+      <EditorSurface {...baseProps} value={'a\nb\nc\n'} onTopLineChange={onTopLineChange} />,
+    );
+    container.querySelector('.cm-scroller')?.dispatchEvent(new Event('scroll'));
+    expect(onTopLineChange).toHaveBeenCalledWith(0);
+  });
+
+  /*
+    A reveal is a request, like `cursor`: applied once and reported, so a
+    re-render cannot drag the view back to it while the user scrolls away.
+  */
+  it('applies a reveal once and reports it', () => {
+    const onRevealApplied = vi.fn();
+    const props = { ...baseProps, value: 'a\nb\nc\n', onRevealApplied };
+    const { rerender } = render(<EditorSurface {...props} revealLine={2} />);
+    expect(onRevealApplied).toHaveBeenCalledTimes(1);
+
+    rerender(<EditorSurface {...props} revealLine={null} />);
+    rerender(<EditorSurface {...props} revealLine={null} />);
+    expect(onRevealApplied).toHaveBeenCalledTimes(1);
+  });
 });

@@ -100,6 +100,17 @@ interface EditorSurfaceProps {
    */
   cursor?: { line: number; col: number } | null;
   onCursorApplied?: () => void;
+  /**
+   * The first visible line, 0-based, reported as the user scrolls. Split view's
+   * sync; the surface does not know a preview exists.
+   */
+  onTopLineChange?: (line: number) => void;
+  /**
+   * A 0-based line to scroll to the top **once**, or `null`. Cleared by the
+   * parent through {@link EditorSurfaceProps.onRevealApplied}, like `cursor`.
+   */
+  revealLine?: number | null;
+  onRevealApplied?: () => void;
 }
 
 /** The compartment the lazily-loaded grammar lands in. */
@@ -141,6 +152,9 @@ export function EditorSurface({
   ariaLabel,
   cursor,
   onCursorApplied,
+  onTopLineChange,
+  revealLine,
+  onRevealApplied,
 }: EditorSurfaceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -173,6 +187,8 @@ export function EditorSurface({
   onChangeRef.current = onChange;
   const onSaveRef = useRef(onSave);
   onSaveRef.current = onSave;
+  const onTopLineChangeRef = useRef(onTopLineChange);
+  onTopLineChangeRef.current = onTopLineChange;
 
   /**
    * Everything that must be baked into a state, as one string.
@@ -209,12 +225,21 @@ export function EditorSurface({
     const view = new EditorView({ parent: host });
     viewRef.current = view;
 
+    const onScroll = () => {
+      const report = onTopLineChangeRef.current;
+      if (!report) return;
+      const block = view.lineBlockAtHeight(view.scrollDOM.scrollTop);
+      report(view.state.doc.lineAt(block.from).number - 1);
+    };
+    view.scrollDOM.addEventListener('scroll', onScroll);
+
     // Captured now rather than read in the cleanup: the ref's identity is
     // stable, but the lint rule cannot know that and the copy costs nothing.
     const states = statesRef.current;
     const grammars = grammarsRef.current;
 
     return () => {
+      view.scrollDOM.removeEventListener('scroll', onScroll);
       view.destroy();
       viewRef.current = null;
       activeKeyRef.current = null;
@@ -426,6 +451,17 @@ export function EditorSurface({
     view.focus();
     onCursorApplied?.();
   }, [cursor, onCursorApplied, fileKey]);
+
+  /** Scroll a line to the top, once — the preview asked, in split view. */
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || revealLine === null || revealLine === undefined) return;
+
+    const { doc } = view.state;
+    const line = doc.line(Math.min(Math.max(revealLine + 1, 1), doc.lines));
+    view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: 'start' }) });
+    onRevealApplied?.();
+  }, [revealLine, onRevealApplied, fileKey]);
 
   return <div ref={hostRef} className="min-h-0 flex-1 overflow-hidden" />;
 }

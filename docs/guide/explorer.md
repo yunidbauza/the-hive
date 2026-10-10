@@ -4,7 +4,8 @@ The **Files** tab of the session panel shows the repository of the session you a
 Click a file to open it in a CodeMirror editor on the stage.
 
 **On this page:** [Browse the project](#browse-the-project) · [Search](#search) ·
-[Edit a file](#edit-a-file) · [When the file changes on disk](#when-the-file-changes-on-disk) ·
+[Edit a file](#edit-a-file) · [Preview markdown](#preview-markdown) ·
+[When the file changes on disk](#when-the-file-changes-on-disk) ·
 [Changed files](#changed-files) · [Editor layouts](#editor-layouts) · [Limits](#limits)
 
 ![The Files tab in the session panel, README.md open in the editor, the terminal one tab away](../assets/guide/04-explorer-editor.png)
@@ -34,6 +35,20 @@ Searches stop at 200 files or 500 matches and show `500+` when capped.
 Editing is on by default; turn off **Allow editing** in **Settings › Editor** for a
 read-only viewer. Save with `⌘S`. Seventeen languages get syntax colours; anything else
 opens as plain text.
+
+## Preview markdown
+
+A `.md` file opens rendered. **Source · Preview · Split**, at the right of the tab strip,
+switches it: Split puts the source beside the preview, and the two scroll together.
+`⇧⌘V` flips between Source and Preview. To open markdown as source, set
+**Settings › Editor › Markdown** to Source; a choice made on a file wins until you close it.
+
+The preview follows the buffer, so it changes as you type and as an agent rewrites the file.
+
+- **Links.** A link to another file in the project opens it; one that names nothing in the
+  project says so. `http(s)` links open in your browser. Other links show as text.
+- **Not rendered.** Images show as a placeholder naming the file. HTML other than
+  `<details>`, `<summary>`, `<br>`, `<kbd>`, `<sub>` and `<sup>` shows as its source.
 
 ## When the file changes on disk
 

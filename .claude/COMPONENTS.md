@@ -138,6 +138,25 @@ Props: `fileKey`, `value`, `languageLoad`, `readOnly`, `fontFamily`,
 - **`readOnly` and `editable` are both set.** `readOnly` alone leaves a blinking
   cursor in a document that swallows every keystroke — a hung editor, not a
   read-only one.
+- **Split-view sync props:** `onTopLineChange` reports the first visible line;
+  `revealLine` scrolls a line to the top once and is cleared through
+  `onRevealApplied`, the same request-and-consume shape as `cursor`.
+
+### `<MarkdownPreview />` and `<MarkdownCode />`
+
+`src/components/editor/markdown-preview.tsx`, `markdown-code.tsx` — built.
+
+Props only, inside the editor fence. `MarkdownPreview` takes an `MdDocument`
+(`lib/markdown/`), `fontSize`, `onOpenLink(RelativeHref)`, and for split view
+`topLine` / `onTopLineChange`.
+
+- **Every element is made from the model; nothing sets HTML.** Raw HTML was
+  decided in `lib/markdown/html.ts`, every link goes through `classifyHref`.
+- **Only `http(s)` becomes an `<a>`.** Relative and `#anchor` links are
+  buttons, so no href resolves against the renderer's own origin.
+- **Headings carry `data-anchor`, not `id`.**
+- `MarkdownCode` is one fenced block: plain mono at once, highlighted through
+  `codeClassHighlighter` when its grammar arrives.
 
 ## Hive atoms
 
@@ -698,6 +717,10 @@ the disk and the buffer disagree, and the CodeMirror surface itself.
   a tab deliberately.
 - **Notices are amber, never red.** An agent rewriting a file under you is the
   entire point of the app, not a failure.
+- **`<ViewToggle />`** (Source · Preview · Split) mounts beside the tablist, never
+  inside it, or in the single-file header, for a markdown file with text.
+  **`<MarkdownStage />`** renders Preview or Split and falls back to the source
+  with a notice if the parse fails.
 
 ### `<PlanTab />` and `<PlanGlyph />`
 

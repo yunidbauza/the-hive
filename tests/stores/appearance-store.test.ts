@@ -330,6 +330,7 @@ describe('appearance-store — persistence', () => {
       editorWordWrap: true,
       editorLineNumbers: true,
       editorTabWidth: 2,
+      markdownOpensIn: 'preview',
       themes: {},
       activeThemeId: 'hive',
       whatsNewSeen: null,
@@ -434,6 +435,7 @@ describe('appearance-store — the editor', () => {
     expect(state.editorWordWrap).toBe(true);
     expect(state.editorLineNumbers).toBe(true);
     expect(state.editorTabWidth).toBe(2);
+    expect(state.markdownOpensIn).toBe('preview');
   });
 
   it('sets each preference independently', () => {
@@ -448,6 +450,7 @@ describe('appearance-store — the editor', () => {
     store.setEditorWordWrap(false);
     store.setEditorLineNumbers(false);
     store.setEditorTabWidth(8);
+    store.setMarkdownOpensIn('source');
 
     expect(useAppearanceStore.getState()).toMatchObject({
       editorPlacement: 'split',
@@ -459,6 +462,7 @@ describe('appearance-store — the editor', () => {
       editorWordWrap: false,
       editorLineNumbers: false,
       editorTabWidth: 8,
+      markdownOpensIn: 'source',
     });
   });
 

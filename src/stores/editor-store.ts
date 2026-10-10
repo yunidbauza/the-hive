@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
 import { baseName, readFile, writeFile } from '@lib/explorer/fs-client';
+import { isMarkdownFile } from '@lib/markdown/is-markdown';
 
 /**
  * Open file buffers — the fourth store.
@@ -46,6 +47,9 @@ import { baseName, readFile, writeFile } from '@lib/explorer/fs-client';
  * have the tab vanish.
  */
 type BufferRefusal = 'binary' | 'too-large';
+
+/** How a markdown file is shown. Files with no preview never get one. */
+export type MarkdownView = 'source' | 'preview' | 'split';
 
 interface OpenFile {
   /** `${projectId}:${relPath}` — unique across projects, stable across renames of neither. */
@@ -126,6 +130,16 @@ interface OpenFile {
    * reading line 400.
    */
   pendingCursor: { line: number; col: number } | null;
+  /**
+   * The view the user **chose** for this markdown file, or `null` to follow
+   * `markdownOpensIn`.
+   *
+   * Only the choice is stored; the effective view is derived where it is read
+   * (`use-markdown-view.ts`). Storing the default as well would be a second
+   * copy of a preference this store does not own, and the two would disagree
+   * the moment the setting changed.
+   */
+  view: MarkdownView | null;
 }
 
 /** An `AGENT.md` buffer and the text on disk it was read from (HIVE-204). */
@@ -156,6 +170,8 @@ interface EditorState {
   /** Show the terminal without closing anything. */
   showTerminal: () => void;
   setActive: (key: string) => void;
+  /** Choose a markdown file's view. A no-op for a file with no preview. */
+  setView: (key: string, view: MarkdownView) => void;
   edit: (key: string, text: string) => void;
   /** Re-read from disk, discarding local edits. */
   reload: (key: string) => Promise<void>;
@@ -241,6 +257,7 @@ const blank = (
   saving: false,
   selfWriteMtimeMs: null,
   pendingCursor: null,
+  view: null,
 });
 
 const initialEditorState = {
@@ -414,6 +431,11 @@ export const useEditorStore = create<EditorState>()((set, get) => {
     showTerminal: () => set({ activeKey: null }),
 
     setActive: (key) => set({ activeKey: key }),
+
+    setView: (key, view) => {
+      const file = get().openFiles.find((entry) => entry.key === key);
+      if (file && isMarkdownFile(file.name)) patch(key, { view });
+    },
 
     /**
      * A keystroke in the editor.
@@ -613,6 +635,7 @@ const editorActionsSelector = (state: EditorState) => ({
   consumeCursor: state.consumeCursor,
   showTerminal: state.showTerminal,
   setActive: state.setActive,
+  setView: state.setView,
   edit: state.edit,
   reload: state.reload,
   save: state.save,
@@ -684,6 +707,21 @@ export const useActiveFile = (): OpenFile | null =>
     (state) =>
       state.openFiles.find((file) => file.key === state.activeKey) ?? null,
   );
+
+/**
+ * The active file when it can be previewed — markdown, read, not refused —
+ * with the view the user chose for it. Primitives only, so a keystroke in the
+ * buffer does not re-render the toggle.
+ */
+const activeMarkdownSelector = (state: EditorState) => {
+  const file = state.openFiles.find((entry) => entry.key === state.activeKey);
+  if (!file || !isMarkdownFile(file.name) || file.refusal !== null || file.text === null) {
+    return null;
+  }
+  return { key: file.key, chosen: file.view };
+};
+
+export const useActiveMarkdownFile = () => useEditorStore(useShallow(activeMarkdownSelector));
 
 /** Whether anything is open — the stage asks this to decide on the tab strip. */
 export const useHasOpenFiles = () =>

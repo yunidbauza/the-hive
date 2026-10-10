@@ -1,7 +1,13 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { fileKey, useAgentDraft, useAgentDraftActions, useEditorStore } from '@stores/editor-store';
+import {
+  fileKey,
+  useActiveMarkdownFile,
+  useAgentDraft,
+  useAgentDraftActions,
+  useEditorStore,
+} from '@stores/editor-store';
 
 /**
  * Open file buffers.
@@ -736,5 +742,39 @@ describe('useAgentDraft (HIVE-204)', () => {
       result.current.dropAgentDraft('scout');
     });
     expect(useEditorStore.getState().agentDrafts).toEqual({});
+  });
+});
+
+describe('markdown view', () => {
+  const README = fileKey('demo', 'README.md');
+
+  it('starts every file with no chosen view', () => {
+    store().openFile('demo', 'README.md');
+    expect(fileAt(README)?.view).toBeNull();
+  });
+
+  it('stores a view chosen for a markdown file', () => {
+    store().openFile('demo', 'README.md');
+    store().setView(README, 'split');
+    expect(fileAt(README)?.view).toBe('split');
+  });
+
+  it('ignores a view for a file with no preview', () => {
+    store().openFile('demo', 'src/app.ts');
+    store().setView(KEY, 'preview');
+    expect(fileAt(KEY)?.view).toBeNull();
+  });
+
+  it('names the active markdown file once it has text, and nothing else', async () => {
+    const { result } = renderHook(() => useActiveMarkdownFile());
+    await act(async () => {
+      store().openFile('demo', 'README.md');
+    });
+    expect(result.current).toEqual({ key: README, chosen: null });
+
+    await act(async () => {
+      store().openFile('demo', 'src/app.ts');
+    });
+    expect(result.current).toBeNull();
   });
 });

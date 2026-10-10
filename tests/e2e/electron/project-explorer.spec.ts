@@ -279,6 +279,8 @@ test('the Terminal tab returns to the terminal without closing the file', async 
   try {
     const tree = page.locator('[data-panel="explorer"]');
     await tree.getByRole('button', { name: 'README.md' }).click();
+    // Markdown opens rendered now; this test is about the editor, so ask for it.
+    await page.getByRole('radio', { name: 'Source' }).click();
     await expect(page.locator('.cm-content')).toContainText('# Fixture');
 
     await page.getByRole('tab', { name: 'Terminal' }).click();
@@ -333,6 +335,8 @@ test('the split placement setting puts the terminal and the editor side by side'
     await page.locator('[data-panel="explorer"]')
       .getByRole('button', { name: 'README.md' })
       .click();
+    // Markdown opens rendered now; this test is about the editor, so ask for it.
+    await page.getByRole('radio', { name: 'Source' }).click();
     await expect(page.locator('.cm-content')).toContainText('# Fixture');
 
     // In full placement the terminal is hidden behind the editor.

@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -81,6 +81,18 @@ describe('EditorSection', () => {
     await userEvent.click(screen.getByRole('radio', { name: 'One at a time' }));
 
     expect(settings().editorNav).toBe('single');
+  });
+
+  it('sets how a markdown file opens', async () => {
+    render(<EditorSection />);
+    const group = screen.getByRole('radiogroup', { name: 'Markdown opens in' });
+    expect(within(group).getByRole('radio', { name: 'Preview' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+
+    await userEvent.click(within(group).getByRole('radio', { name: 'Source' }));
+    expect(settings().markdownOpensIn).toBe('source');
   });
 
   it('turns editing off, and back on', async () => {

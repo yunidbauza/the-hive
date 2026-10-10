@@ -164,6 +164,8 @@ test('guide shots', async ({}, testInfo) => {
   // 04: the Files tab with README.md open in the editor.
   await panel.getByRole('tab', { name: /^Files/ }).click();
   await panel.locator('[data-panel="explorer"]').getByText('README.md', { exact: true }).click();
+  // Markdown opens rendered; this shot is of the editor, so ask for the source.
+  await page.getByRole('radio', { name: 'Source' }).click();
   await expect(page.locator('.cm-editor')).toBeVisible();
   await shot(page, '04-explorer-editor.png');
   await page.getByRole('button', { name: 'Close README.md' }).click();

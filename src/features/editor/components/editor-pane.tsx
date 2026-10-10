@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { useSwarmPhrase } from '@/hooks/use-swarm-phrase';
 
@@ -9,6 +9,9 @@ import {
   EditorNotice,
   NoticeAction,
 } from '@features/editor/components/editor-notice';
+import { MarkdownStage, type SourceSync } from '@features/editor/components/markdown-stage';
+import { ViewToggle } from '@features/editor/components/view-toggle';
+import { useMarkdownView } from '@features/editor/hooks/use-markdown-view';
 import { languageFor } from '@lib/explorer/language';
 import { humanSize } from '@lib/human-size';
 import { useEditorAppearance, useEditorLayout } from '@stores/appearance-store';
@@ -43,6 +46,8 @@ export function EditorPane() {
   const { nav } = useEditorLayout();
   const { edit, save, reload, closeFile, consumeCursor } = useEditorActions();
   const emptyPhrase = useSwarmPhrase('empty.editor');
+  const markdown = useMarkdownView();
+  const paneRef = useRef<HTMLDivElement>(null);
   const readingPhrase = useSwarmPhrase('loading.file');
   /** Escape belongs to whichever overlay is up, not to this pane. */
   const settingsOpen = useSettingsOpen();
@@ -133,6 +138,40 @@ export function EditorPane() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [nav, key, overlayOpen, closeFile]);
 
+  const markdownView = markdown?.view ?? null;
+  const setMarkdownView = markdown?.setView;
+
+  /**
+   * ⇧⌘V flips Source and Preview, as in VS Code (Split goes to Source).
+   *
+   * Only from inside this pane, or with nothing focused. The terminal, the
+   * message row and the console keep the chord for themselves, and an open
+   * overlay owns the keyboard. ⇧⌘V is bound by no menu item here (no
+   * `pasteAndMatchStyle` role in `menu.ts`); `preventDefault` stops Chromium
+   * pasting into the source while the view changes under it.
+   */
+  useEffect(() => {
+    if (markdownView === null || !setMarkdownView) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      const chord =
+        (event.metaKey || event.ctrlKey) &&
+        event.shiftKey &&
+        !event.altKey &&
+        event.key.toLowerCase() === 'v';
+      if (!chord || overlayOpen) return;
+
+      const target = event.target;
+      const inPane = target instanceof Node && (paneRef.current?.contains(target) ?? false);
+      if (!inPane && target !== document.body) return;
+
+      event.preventDefault();
+      setMarkdownView(markdownView === 'source' ? 'preview' : 'source');
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [markdownView, setMarkdownView, overlayOpen]);
+
   /**
    * The pane is mounted but has no file to show.
    *
@@ -160,8 +199,34 @@ export function EditorPane() {
     );
   }
 
+  /** The text to show, or `null` while loading or refused. */
+  const text = file.refusal === null ? file.text : null;
+
+  /**
+   * The one editor surface, whichever view is on. Split passes the sync props;
+   * every other caller passes `null`, and the spread adds nothing.
+   */
+  const renderSource = (value: string, sync: SourceSync | null) => (
+    <EditorSurface
+      fileKey={file.key}
+      value={value}
+      languageLoad={languageLoad}
+      readOnly={!appearance.editable}
+      fontFamily={appearance.fontFamily}
+      fontSize={appearance.fontSize}
+      wordWrap={appearance.wordWrap}
+      lineNumbers={appearance.lineNumbers}
+      tabWidth={appearance.tabWidth}
+      onChange={onChange}
+      onSave={onSave}
+      cursor={file.pendingCursor}
+      onCursorApplied={onCursorApplied}
+      {...(sync ?? {})}
+    />
+  );
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-panel-2">
+    <div ref={paneRef} className="flex min-h-0 flex-1 flex-col bg-panel-2">
       {/*
         Single-file mode has no tab strip, so the filename and the way out live
         here instead. In `tabs` mode both are in the strip and this row would be
@@ -172,6 +237,7 @@ export function EditorPane() {
           <span className="flex-1 truncate tabular-nums text-ui-sm text-muted">
             {file.relPath}
           </span>
+          <ViewToggle />
           {file.dirty ? (
             <span className="size-1.5 shrink-0 rounded-full bg-amber">
               <span className="sr-only">unsaved changes</span>
@@ -259,23 +325,16 @@ export function EditorPane() {
         <PaneMessage icon="ph-file">{readingPhrase}</PaneMessage>
       ) : null}
 
-      {file.refusal === null && file.text !== null ? (
-        <EditorSurface
-          fileKey={file.key}
-          value={file.text}
-          languageLoad={languageLoad}
-          readOnly={!appearance.editable}
-          fontFamily={appearance.fontFamily}
-          fontSize={appearance.fontSize}
-          wordWrap={appearance.wordWrap}
-          lineNumbers={appearance.lineNumbers}
-          tabWidth={appearance.tabWidth}
-          onChange={onChange}
-          onSave={onSave}
-          cursor={file.pendingCursor}
-          onCursorApplied={onCursorApplied}
+      {text === null ? null : markdown && markdown.view !== 'source' ? (
+        <MarkdownStage
+          key={file.key}
+          file={{ ...file, text }}
+          view={markdown.view}
+          renderSource={(sync) => renderSource(text, sync)}
         />
-      ) : null}
+      ) : (
+        renderSource(text, null)
+      )}
     </div>
   );
 }

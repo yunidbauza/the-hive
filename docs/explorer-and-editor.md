@@ -12,6 +12,8 @@ what follows is about the two seams that made necessary.
 > - One recursive watcher, on the visible project, 300 ms debounce, 2 s ceiling.
 > - The editor seam is fenced like the terminal's, but its colour is CSS (`--cc-code-*`).
 > - Clean buffers reload silently; saves use optimistic concurrency on mtime.
+> - A markdown file previews from the buffer through an app-owned model: no
+>   `innerHTML`, links decided by `classifyHref`, relative ones answered by `fs:resolve`.
 
 **On this page:** [The filesystem seam](#the-filesystem-seam) ·
 [The watcher](#the-watcher) ·
@@ -19,7 +21,7 @@ what follows is about the two seams that made necessary.
 [The tree](#the-tree) · [The editor seam](#the-editor-seam) ·
 [Placement](#placement-and-the-one-rule-that-unifies-it) ·
 [Freshness and saving](#freshness-and-saving) ·
-[Testing](#testing)
+[Markdown preview](#markdown-preview) · [Testing](#testing)
 
 ## The filesystem seam
 
@@ -400,6 +402,102 @@ agent and a user are interleaving writes to one file at that rate has worse
 problems than this check. Hashing the previous content is the right upgrade if
 the coarse case is ever actually hit, and the wrong default.
 
+## Markdown preview
+
+A `.md` or `.markdown` file gets **Source · Preview · Split**, at the right of
+the tab strip (or the single-file header), and ⇧⌘V flips Source and Preview.
+It opens in Preview unless Settings › Editor › Markdown says Source; a choice
+made on the file wins over the setting until the tab closes. Only the choice
+is stored (`OpenFile.view`); the effective view is derived in
+`use-markdown-view.ts`. `.mdx` stays source-only.
+
+**The preview renders the buffer**, not the disk, so typing, a dirty buffer
+and the watcher's silent reload all reach it with no plumbing of its own.
+The first parse runs at once; later ones wait out 150 ms of typing.
+
+### No `innerHTML`, by construction
+
+`marked`'s lexer produces tokens; `lib/markdown/` turns them into an
+app-owned model, and `components/editor/markdown-preview.tsx` makes React
+elements from that model and nothing else. Raw HTML is decided tag by tag in
+`lib/markdown/html.ts`: `details`, `summary`, `br`, `kbd`, `sub`, `sup`
+render; `img` becomes a placeholder chip naming the file; everything else —
+`<script>`, `on*=`, `<a href="javascript:">` — shows as its own text. No
+attribute survives except `open` on `details`.
+
+Three things about that scanner are load-bearing:
+
+- **It is linear.** It runs on an untrusted file on the renderer's thread; an
+  earlier pattern let the attribute run and a trailing `\s*` share whitespace,
+  and 100k spaces inside one tag took eight seconds.
+- **Nesting is capped at 32** (`MAX_HTML_NESTING`), for inline tags and for
+  `<details>`. The preview renders recursively, 5000 nested `<kbd>` overflowed
+  React's stack, and with no error boundary that blanks the whole app.
+- **`<details>` pairs per container.** A `</details>` inside a list item cannot
+  close a disclosure opened at the top level.
+
+marked escapes inline text for its own renderer; the converter unescapes it,
+because React escapes again.
+
+### Links
+
+`classifyHref` decides, and it is a security predicate:
+
+| Link | Becomes |
+| --- | --- |
+| `http:`, `https:` | an `<a target="_blank">`, which main's `isSafeExternalUrl` re-checks |
+| `#fragment` | a button that scrolls the preview to the heading |
+| a path | a button that asks main, through `fs:resolve` |
+| anything else | text |
+
+`mailto:` is text, not a link: main opens `http(s)` only, so an anchor would
+be dead. A control character anywhere refuses the link (a browser strips tabs
+and newlines, so `java\tscript:` is `javascript:` to it), as do `//host`,
+`\\host` and `/\host`. Headings carry `data-anchor`, never `id`, so a heading
+called "root" cannot collide with an element in the app's document.
+
+A relative path is **a question for main**. `linkCandidate` composes it;
+main's realpath and containment answer it, and a climb out of the root is sent
+as written for main to refuse. A root file asks **without** a `sessionId`,
+because main resolves a relative candidate under the session's cwd first and
+would otherwise answer with a worktree's copy; a widened root sends an absolute
+candidate with the session, because only the session names that root. An
+empty candidate is sent as `.` and a leading `~` as `./~…`, so main answers a
+miss instead of refusing the request or expanding `$HOME`. A miss, or a
+resolve call that failed, is named in the pane.
+
+**Following a link never costs an edit.** One-at-a-time mode replaces the open
+file, as the explorer does, unless something open is dirty — in split view the
+unsaved source sits beside the link — and a target already open is focused,
+never re-read. Only the latest click acts on its answer.
+
+**v1 limitation:** a root-relative link (`/docs/x.md`) in a file under an
+in-project worktree is read from the project root, because the file's
+project-relative path does not say where its own repository starts.
+
+### Split and scroll sync
+
+Top-level blocks carry their source line (`data-line`), found by searching
+each token's `raw` from a moving cursor — marked drops link-reference
+definitions without a token, so summing `raw` lengths drifts. Each side
+reports its top line; `use-scroll-sync.ts` gives the side that moved a 100 ms
+latch so the other side's echo is dropped rather than fought.
+
+### Code fences
+
+`highlightCode` with `codeClassHighlighter`, built from the same role table as
+the editor's `HighlightStyle`, so a fence and the same code in the editor
+never differ. Classes rather than the style's generated ones, because those
+exist only once an `EditorView` mounts them.
+
+### Two markdown renderers
+
+`features/shared/components/markdown.tsx` renders PR bodies and comments
+(HIVE-205) the same way, marked tokens to React. The preview does not reuse
+it: the editor fence cannot import `features/`, and the preview needs source
+lines, `<details>`, link classes and highlighted fences. Moving PR markdown
+onto `lib/markdown/` is the natural follow-up.
+
 ## Testing
 
 - **The containment guard has its own suite** (`tests/electron/main/fs/`), with
@@ -415,7 +513,9 @@ the coarse case is ever actually hit, and the wrong default.
 
 ## Explicitly not in this feature
 
-- Image and binary previews — refused with a reason, not rendered.
+- Image and binary previews — refused with a reason, not rendered. Markdown
+  images render as a placeholder chip; loading repo images needs a contained
+  fs verb returning bytes as `data:` (the CSP is `img-src 'self' data:`).
 - Creating, renaming, deleting or moving files. The tree reads; the terminal is
   where the filesystem is mutated, and it already is.
 - Git status decoration and a diff view. The `M` and `A` marks are not that:

@@ -57,8 +57,8 @@ Mode (System, Dark or Light; the bar's sun or moon flips it too), [themes](theme
 
 ## Editor
 
-Placement (Full stage or Split), split direction, Tabs or One at a time, **Allow editing**,
-font, size, tab width, wrapping, line numbers. See [Files and the editor](explorer.md).
+Placement (Full stage or Split), split direction, Tabs or One at a time, **Markdown** (opens
+in Preview or Source), **Allow editing**, font, size, tab width, wrapping, line numbers. See [Files and the editor](explorer.md).
 
 ## Integrations
 
